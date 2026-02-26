@@ -1430,7 +1430,7 @@ const Dashboard = ({ isAdmin = false }) => {
                           </summary>
                           <div className="divide-y divide-gray-100 dark:divide-gray-700 max-h-64 overflow-y-auto">
                             {presentCount === 0 ? (
-                              <div className="px-3 py-4 text-center text-sm text-gray-400 dark:text-gray-500">No one present</div>
+                              <div className="px-3 py-4 text-center text-xs sm:text-sm text-gray-400 dark:text-gray-500">No one present</div>
                             ) : (
                               presentMembers.map((member, index) => {
                                 const name = member['full_name'] || member['Full Name'] || 'Unknown'
@@ -1477,7 +1477,7 @@ const Dashboard = ({ isAdmin = false }) => {
                           </summary>
                           <div className="divide-y divide-gray-100 dark:divide-gray-700 max-h-64 overflow-y-auto">
                             {absentCount === 0 ? (
-                              <div className="px-3 py-4 text-center text-sm text-gray-400 dark:text-gray-500">No one absent</div>
+                              <div className="px-3 py-4 text-center text-xs sm:text-sm text-gray-400 dark:text-gray-500">No one absent</div>
                             ) : (
                               absentMembers.map((member, index) => {
                                 const name = member['full_name'] || member['Full Name'] || 'Unknown'
@@ -1531,21 +1531,21 @@ const Dashboard = ({ isAdmin = false }) => {
             {/* Control Bar */}
             <div className={`rounded-lg p-3 ${isDarkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className={`text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                <div className={`text-xs sm:text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                   {duplicateGroups.length} names with duplicates
                   {selectedDuplicateIds.size > 0 && <span className="ml-2 text-primary-600 dark:text-primary-400">({selectedDuplicateIds.size} selected)</span>}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
                     onClick={selectedDuplicateIds.size === 0 ? selectAllDuplicates : deselectAllDuplicates}
-                    className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${selectedDuplicateIds.size === 0 ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-400 dark:bg-gray-600 text-white hover:bg-gray-500 dark:hover:bg-gray-500'}`}
+                    className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium transition-colors ${selectedDuplicateIds.size === 0 ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-400 dark:bg-gray-600 text-white hover:bg-gray-500 dark:hover:bg-gray-500'}`}
                   >
                     {selectedDuplicateIds.size === 0 ? 'Select All' : 'Deselect All'}
                   </button>
                   <button
                     onClick={deleteSelectedDuplicates}
                     disabled={selectedDuplicateIds.size === 0}
-                    className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${selectedDuplicateIds.size === 0 ? 'bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
+                    className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium transition-colors ${selectedDuplicateIds.size === 0 ? 'bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
                   >
                     Delete All
                   </button>
@@ -1553,7 +1553,7 @@ const Dashboard = ({ isAdmin = false }) => {
               </div>
             </div>
             {duplicateGroups.length === 0 && (
-              <div className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>No duplicate names found</div>
+              <div className={`text-xs sm:text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>No duplicate names found</div>
             )}
             {duplicateGroups.map(group => {
               const keepId = groupKeepId(group.members)
@@ -1657,7 +1657,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {/* Fixed Bottom Selection Toolbar */}
       {longPressSelectedIds.size > 0 && (
-        <div className="fixed bottom-20 left-4 right-4 z-50 flex justify-center pointer-events-none animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <div className="fixed bottom-20 left-4 right-4 z-30 flex justify-center pointer-events-none animate-in fade-in slide-in-from-bottom-4 duration-300">
           <div className="w-full max-w-4xl pointer-events-auto">
             <SelectionToolbar
               selectedCount={longPressSelectedIds.size}
@@ -1883,7 +1883,7 @@ const Dashboard = ({ isAdmin = false }) => {
                             <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4 p-3 sm:p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 transition-colors duration-300`}>
                               <div className="space-y-3">
                                 <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Member Info</h4>
-                                <div className="space-y-2 text-sm">
+                                <div className="space-y-2 text-xs sm:text-sm">
                                   <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
                                     <span className="text-gray-500 dark:text-gray-400">Gender</span>
                                     <span className="font-medium capitalize text-gray-900 dark:text-white truncate ml-2">
@@ -2000,7 +2000,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                 {(member['parent_name_1'] || member['parent_name_2']) && (
                                   <div className="mt-4 pt-3 border-t border-gray-200 dark:border-gray-700">
                                     <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Guardians</h4>
-                                    <div className="space-y-2 text-sm">
+                                    <div className="space-y-2 text-xs sm:text-sm">
                                       {member['parent_name_1'] && (
                                         <div className="flex justify-between items-start py-1">
                                           <span className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">Primary</span>
@@ -2058,7 +2058,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                       <StickyNote className="w-3 h-3" />
                                       Note
                                     </h4>
-                                    <p className="text-sm text-gray-600 dark:text-gray-300 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg p-2 italic">
+                                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg p-2 italic">
                                       {member.notes}
                                     </p>
                                   </div>
@@ -2756,7 +2756,7 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Bottom Search Bar */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 z-40 safe-area-bottom">
+      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 z-30 safe-area-bottom">
         <div className="mx-auto px-0 sm:px-4 py-3">
           <div className="flex items-center gap-2">
             {dashboardTab === 'edited' ? (
