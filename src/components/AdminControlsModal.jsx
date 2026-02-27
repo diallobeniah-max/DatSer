@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { X, Lock, Calendar, Check, Bell } from 'lucide-react'
+import { X, Lock, Calendar, Check } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -28,7 +28,6 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
     const [stickyMonth, setStickyMonth] = useState('')
     const [stickySundays, setStickySundays] = useState([])
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
-    const [notificationMode, setNotificationMode] = useState('banner')
     const [initialized, setInitialized] = useState(false)
     
     const hasLoadedRef = useRef(false)
@@ -81,7 +80,7 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
             try {
                 const { data, error } = await supabase
                     .from('user_preferences')
-                    .select('admin_sticky_month, admin_sticky_year, admin_sticky_sundays, admin_sync_mode')
+                    .select('admin_sticky_month, admin_sticky_year, admin_sticky_sundays')
                     .eq('user_id', user.id)
                     .single()
                 
@@ -104,9 +103,6 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
                     
                     if (data.admin_sticky_sundays) {
                         setStickySundays(data.admin_sticky_sundays)
-                    }
-                    if (data.admin_sync_mode) {
-                        setNotificationMode(data.admin_sync_mode)
                     }
                 }
             } catch (err) {
@@ -224,38 +220,6 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
         } catch (err) {
             console.error('Error setting sticky Sundays:', err)
             toast.error('Failed to set sticky Sundays')
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    const handleSaveNotificationMode = async () => {
-        setLoading(true)
-        try {
-            if (isSupabaseConfigured()) {
-                const { error: prefError } = await supabase
-                    .from('user_preferences')
-                    .upsert({
-                        user_id: user.id,
-                        admin_sync_mode: notificationMode,
-                        updated_at: new Date().toISOString()
-                    }, {
-                        onConflict: 'user_id'
-                    })
-
-                if (prefError) {
-                    console.error('Error saving notification mode:', prefError)
-                    toast.error('Failed to save notification mode')
-                    return
-                }
-
-                toast.success('Notification mode saved for collaborators')
-            } else {
-                toast.success('Notification mode saved (Demo mode)')
-            }
-        } catch (err) {
-            console.error('Error saving notification mode:', err)
-            toast.error('Failed to save notification mode')
         } finally {
             setLoading(false)
         }
@@ -400,52 +364,6 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
                                 </p>
                             </div>
                         )}
-                    </section>
-
-                    <section className="bg-gradient-to-br from-purple-50 to-fuchsia-50 dark:from-purple-900/20 dark:to-fuchsia-900/20 rounded-xl p-4 border border-purple-200 dark:border-purple-800">
-                        <div className="flex items-center gap-2 mb-3">
-                            <Bell className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                            <h3 className="font-semibold text-gray-900 dark:text-white">Admin Change Alerts</h3>
-                        </div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                            Choose how collaborators are notified when you change the working period.
-                        </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <button
-                                onClick={() => setNotificationMode('banner')}
-                                className={`p-4 rounded-xl border-2 text-left transition-all ${
-                                    notificationMode === 'banner'
-                                        ? 'border-purple-500 bg-white dark:bg-gray-800 shadow-sm'
-                                        : 'border-purple-200 dark:border-purple-800 bg-white/70 dark:bg-gray-800/60 hover:border-purple-300'
-                                }`}
-                            >
-                                <div className="text-sm font-semibold text-gray-900 dark:text-white">Banner (Non-blocking)</div>
-                                <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                                    Shows a notification with Refresh Now, users can keep working.
-                                </div>
-                            </button>
-                            <button
-                                onClick={() => setNotificationMode('blocking')}
-                                className={`p-4 rounded-xl border-2 text-left transition-all ${
-                                    notificationMode === 'blocking'
-                                        ? 'border-purple-500 bg-white dark:bg-gray-800 shadow-sm'
-                                        : 'border-purple-200 dark:border-purple-800 bg-white/70 dark:bg-gray-800/60 hover:border-purple-300'
-                                }`}
-                            >
-                                <div className="text-sm font-semibold text-gray-900 dark:text-white">Blocking Modal</div>
-                                <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                                    Locks the screen until Refresh is clicked.
-                                </div>
-                            </button>
-                        </div>
-                        <button
-                            onClick={handleSaveNotificationMode}
-                            disabled={loading}
-                            className="mt-4 w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                        >
-                            <Bell className="w-4 h-4" />
-                            {loading ? 'Saving...' : 'Save Notification Mode'}
-                        </button>
                     </section>
 
                     {/* Info */}

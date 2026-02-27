@@ -35,8 +35,7 @@ import {
     Sparkles,
     Plus,
     List,
-    Archive,
-    Bell
+    Archive
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
@@ -58,7 +57,7 @@ import ArchiveMonthModal from './ArchiveMonthModal'
 const SettingsPage = ({ onBack, navigateToSection }) => {
     const { user, signOut, preferences, resetPassword } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
-    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, dataOwnerId, lockedDefaultDate, saveLockedDefaultDate, adminSyncMode, setAdminSyncMode } = useApp()
+    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, dataOwnerId, lockedDefaultDate, saveLockedDefaultDate } = useApp()
 
     const [activeSection, setActiveSection] = useState(null) // null = show main list
     const [showHelpCenter, setShowHelpCenter] = useState(false)
@@ -74,12 +73,6 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
     const [autoAllDatesEnabled, setAutoAllDatesEnabled] = useState(() => {
         return localStorage.getItem('autoAllDatesEnabled') === 'true'
     })
-    const [notificationMode, setNotificationMode] = useState(adminSyncMode || 'banner')
-    const [savingNotificationMode, setSavingNotificationMode] = useState(false)
-
-    useEffect(() => {
-        setNotificationMode(adminSyncMode || 'banner')
-    }, [adminSyncMode])
     useEffect(() => {
         const scrollToTop = () => {
             try {
@@ -108,35 +101,6 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
         }
     }
 
-    const handleSaveNotificationMode = async () => {
-        if (!user?.id) return
-        setSavingNotificationMode(true)
-        try {
-            if (isSupabaseConfigured()) {
-                const { error } = await supabase
-                    .from('user_preferences')
-                    .upsert({
-                        user_id: user.id,
-                        admin_sync_mode: notificationMode,
-                        updated_at: new Date().toISOString()
-                    }, {
-                        onConflict: 'user_id'
-                    })
-                if (error) {
-                    console.error('Error saving notification mode:', error)
-                    toast.error('Failed to save notification mode')
-                    return
-                }
-            }
-            setAdminSyncMode(notificationMode)
-            toast.success('Notification mode saved')
-        } catch (err) {
-            console.error('Error saving notification mode:', err)
-            toast.error('Failed to save notification mode')
-        } finally {
-            setSavingNotificationMode(false)
-        }
-    }
 
     // Quick Attendance Access toggle
     const [quickAttendanceEnabled, setQuickAttendanceEnabled] = useState(() => {
@@ -1004,55 +968,6 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
                 </div>
             )}
 
-            {!isCollaborator && (
-                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-                    <div className="flex items-center gap-4 mb-4">
-                        <div className="p-3 bg-purple-100 dark:bg-purple-900/30 rounded-xl">
-                            <Bell className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-                        </div>
-                        <div className="flex-1">
-                            <h4 className="font-semibold text-gray-900 dark:text-white">Admin Change Alerts</h4>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">Choose how collaborators are notified when you change the working period</p>
-                        </div>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <button
-                            onClick={() => setNotificationMode('banner')}
-                            className={`p-4 rounded-xl border-2 text-left transition-all ${
-                                notificationMode === 'banner'
-                                    ? 'border-purple-500 bg-purple-50/60 dark:bg-purple-900/20'
-                                    : 'border-gray-200 dark:border-gray-700 hover:border-purple-300'
-                            }`}
-                        >
-                            <div className="text-sm font-semibold text-gray-900 dark:text-white">Banner (Non-blocking)</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                Shows a notification with Refresh Now, users can keep working.
-                            </div>
-                        </button>
-                        <button
-                            onClick={() => setNotificationMode('blocking')}
-                            className={`p-4 rounded-xl border-2 text-left transition-all ${
-                                notificationMode === 'blocking'
-                                    ? 'border-purple-500 bg-purple-50/60 dark:bg-purple-900/20'
-                                    : 'border-gray-200 dark:border-gray-700 hover:border-purple-300'
-                            }`}
-                        >
-                            <div className="text-sm font-semibold text-gray-900 dark:text-white">Blocking Modal</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                Locks the screen until Refresh is clicked.
-                            </div>
-                        </button>
-                    </div>
-                    <button
-                        onClick={handleSaveNotificationMode}
-                        disabled={savingNotificationMode}
-                        className="mt-4 w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                        <Bell className="w-4 h-4" />
-                        {savingNotificationMode ? 'Saving...' : 'Save Notification Mode'}
-                    </button>
-                </div>
-            )}
 
             {/* Share Access Card */}
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">

@@ -190,33 +190,7 @@ function AppContent({ isMobile }) {
         onCreateMonth={() => setShowMonthModal(true)}
         onToggleAIChat={() => setShowAIChat(prev => !prev)}
       />
-      {isCollaborator && adminSyncNotice && !adminSyncNotice.blocking && (
-        <div className="fixed top-20 sm:top-16 left-0 right-0 z-50 px-3">
-          <div className="mx-auto max-w-4xl w-full rounded-2xl border border-blue-200/70 dark:border-blue-700/60 bg-white/95 dark:bg-gray-900/95 shadow-xl backdrop-blur px-4 sm:px-5 py-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center text-lg font-semibold shadow-md">
-                  !
-                </div>
-                <div className="text-sm sm:text-base text-gray-800 dark:text-gray-100">
-                  <div className="font-semibold">Admin has changed the working period.</div>
-                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-300">
-                    Please refresh to continue.
-                    {adminTargetLabel && <span className="ml-2 font-semibold text-blue-700 dark:text-blue-300">New: {adminTargetLabel}</span>}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={acknowledgeAdminSync}
-                className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-sm transition-colors"
-              >
-                Refresh Now
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {isCollaborator && adminSyncNotice?.blocking && (
+      {isCollaborator && adminSyncNotice && (
         <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-900 rounded-3xl w-full max-w-md shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="px-6 pt-6 pb-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">

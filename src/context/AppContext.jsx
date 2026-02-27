@@ -128,7 +128,6 @@ export const AppProvider = ({ children }) => {
   const [ownerStickyMonth, setOwnerStickyMonth] = useState(null)
   const [ownerStickySundays, setOwnerStickySundays] = useState([])
   const [adminSyncNotice, setAdminSyncNotice] = useState(null)
-  const [adminSyncMode, setAdminSyncMode] = useState('banner')
   const adminBroadcastRef = useRef({ month: null, date: null })
 
   // Load saved month from user preferences on app startup
@@ -302,7 +301,7 @@ export const AppProvider = ({ children }) => {
     try {
       const { data, error } = await supabase
         .from('user_preferences')
-        .select('admin_sticky_month, admin_sticky_sundays, locked_default_date, admin_sync_mode')
+        .select('admin_sticky_month, admin_sticky_sundays, locked_default_date')
         .eq('user_id', ownerId)
         .single()
 
@@ -310,21 +309,18 @@ export const AppProvider = ({ children }) => {
         setOwnerStickyMonth(data.admin_sticky_month || null)
         setOwnerStickySundays(Array.isArray(data.admin_sticky_sundays) ? data.admin_sticky_sundays : [])
         setLockedDefaultDate(data.locked_default_date || null)
-        setAdminSyncMode(data.admin_sync_mode || 'banner')
         return data
       }
 
       setOwnerStickyMonth(null)
       setOwnerStickySundays([])
       setLockedDefaultDate(null)
-      setAdminSyncMode('banner')
       return null
     } catch (err) {
       console.error('Error fetching owner sticky defaults:', err)
       setOwnerStickyMonth(null)
       setOwnerStickySundays([])
       setLockedDefaultDate(null)
-      setAdminSyncMode('banner')
       return null
     }
   }, [isSupabaseConfigured])
@@ -373,8 +369,7 @@ export const AppProvider = ({ children }) => {
     const targetDateKey = targetDate ? getLocalDateString(targetDate) : null
     const currentDateKey = selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null
     const differs = (targetTable && targetTable !== currentTable) || (targetDateKey && targetDateKey !== currentDateKey)
-    const mode = adminSyncMode || 'banner'
-    const noticeKey = `${targetTable || 'none'}|${targetDateKey || 'none'}|${mode}`
+    const noticeKey = `${targetTable || 'none'}|${targetDateKey || 'none'}|blocking`
     if (adminSyncNotice?.key === noticeKey) return
     if (!differs) {
       if (!adminSyncNotice) {
@@ -386,15 +381,14 @@ export const AppProvider = ({ children }) => {
       key: noticeKey,
       targetTable,
       targetDate: targetDateKey,
-      blocking: mode === 'blocking'
+      blocking: true
     })
   }, [
     isCollaborator,
     buildAdminTarget,
     selectedAttendanceDate,
     currentTable,
-    adminSyncNotice,
-    adminSyncMode
+    adminSyncNotice
   ])
 
   useEffect(() => {
@@ -577,7 +571,6 @@ export const AppProvider = ({ children }) => {
       setOwnerStickyMonth(null)
       setOwnerStickySundays([])
       setAdminSyncNotice(null)
-      setAdminSyncMode('banner')
       return
     }
     fetchOwnerStickyDefaults(dataOwnerId)
@@ -611,11 +604,9 @@ export const AppProvider = ({ children }) => {
             ? payload.new.admin_sticky_sundays
             : []
           const nextLockedDate = payload?.new?.locked_default_date || null
-          const nextSyncMode = payload?.new?.admin_sync_mode || 'banner'
           setOwnerStickyMonth(nextStickyMonth)
           setOwnerStickySundays(nextStickySundays)
           setLockedDefaultDate(nextLockedDate)
-          setAdminSyncMode(nextSyncMode)
           updateAdminSyncNotice(nextStickyMonth, nextLockedDate, nextStickySundays)
         }
       )
@@ -628,7 +619,7 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     updateAdminSyncNotice(ownerStickyMonth, lockedDefaultDate, ownerStickySundays)
-  }, [ownerStickyMonth, lockedDefaultDate, ownerStickySundays, adminSyncMode, updateAdminSyncNotice])
+  }, [ownerStickyMonth, lockedDefaultDate, ownerStickySundays, updateAdminSyncNotice])
 
   // Activity Logging Helper
   const logActivity = useCallback(async (action, details) => {
@@ -3226,8 +3217,6 @@ export const AppProvider = ({ children }) => {
     dataOwnerId,
     adminSyncNotice,
     acknowledgeAdminSync,
-    adminSyncMode,
-    setAdminSyncMode,
     lockedDefaultDate,
     saveLockedDefaultDate,
     fetchLockedDefaultDate
@@ -3247,7 +3236,7 @@ export const AppProvider = ({ children }) => {
     initializeAttendanceDates, getSundaysInMonth, toggleBadgeFilter,
     focusDateSelector, validateMemberData, getPastSundays, getMissingAttendance,
     autoAllDatesEnabled, setAutoAllDatesEnabled,
-    hasAccess, isCollaborator, dataOwnerId, adminSyncNotice, acknowledgeAdminSync, adminSyncMode, setAdminSyncMode,
+    hasAccess, isCollaborator, dataOwnerId, adminSyncNotice, acknowledgeAdminSync,
     lockedDefaultDate, saveLockedDefaultDate, fetchLockedDefaultDate
   ])
 
