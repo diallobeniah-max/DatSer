@@ -8,27 +8,7 @@ import Dashboard from './components/Dashboard'
 import ErrorBoundary from './components/ErrorBoundary'
 import LoginPage from './components/LoginPage'
 import TutorialPromptBar from './components/TutorialPromptBar'
-
-const lazyWithRetry = (factory, key) => {
-  return lazy(() => new Promise((resolve, reject) => {
-    const storageKey = `lazy-retry-${key}`
-    const hasRetried = sessionStorage.getItem(storageKey)
-    factory()
-      .then((module) => {
-        sessionStorage.removeItem(storageKey)
-        resolve(module)
-      })
-      .catch((error) => {
-        if (!hasRetried) {
-          sessionStorage.setItem(storageKey, '1')
-          window.location.reload()
-          return
-        }
-        sessionStorage.removeItem(storageKey)
-        reject(error)
-      })
-  }))
-}
+import MonthModal from './components/MonthModal'
 
 // Lazy-loaded components - loaded on demand for faster initial load
 const MemberModal = lazy(() => import('./components/MemberModal'))
@@ -39,7 +19,6 @@ const DeleteAccountModal = lazy(() => import('./components/DeleteAccountModal'))
 const ExportDataModal = lazy(() => import('./components/ExportDataModal'))
 const SettingsPage = lazy(() => import('./components/SettingsPage'))
 const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'))
-const MonthModal = lazyWithRetry(() => import('./components/MonthModal'), 'MonthModal')
 const AIChatAssistant = lazy(() => import('./components/AIChatAssistant'))
 const CommandPalette = lazy(() => import('./components/CommandPalette'))
 const ExecAttendancePage = lazy(() => import('./components/ExecAttendancePage'))

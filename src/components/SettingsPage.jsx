@@ -578,6 +578,26 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
                             {user?.app_metadata?.provider === 'google' ? 'View' : window.__needsPasswordSetup ? 'Set Up' : 'Change'}
                         </button>
                     </div>
+                    {user?.app_metadata?.provider !== 'google' && (
+                        <div className="p-4 flex items-center justify-between">
+                            <div>
+                                <p className="font-medium text-gray-900 dark:text-white">Create Password</p>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">Open the password setup screen</p>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    if (window.__openSetPassword) {
+                                        window.__openSetPassword()
+                                    } else {
+                                        toast.info('Password setup is not available right now')
+                                    }
+                                }}
+                                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                            >
+                                Create
+                            </button>
+                        </div>
+                    )}
                     <div className="p-4 flex items-center justify-between">
                         <div>
                             <p className="font-medium text-gray-900 dark:text-white">Sign Out</p>
@@ -1465,6 +1485,22 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
             keywords: 'password security reset change login',
             icon: Lock,
             action: () => setActiveSection('account')
+        },
+        {
+            id: 'set_password',
+            section: 'account',
+            label: 'Create Password',
+            description: 'Open password setup',
+            keywords: 'password create set setup login',
+            icon: Lock,
+            action: () => {
+                setActiveSection('account')
+                if (window.__openSetPassword) {
+                    window.__openSetPassword()
+                } else {
+                    toast.info('Password setup is not available right now')
+                }
+            }
         },
         {
             id: 'sign_out',
