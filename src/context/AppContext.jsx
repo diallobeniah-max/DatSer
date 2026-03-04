@@ -2358,6 +2358,7 @@ export const AppProvider = ({ children }) => {
     try {
       const monthIdentifier = `${monthName}_${year}`
       const resolvedCopyMode = copyMode === 'attendance' ? 'custom' : copyMode
+      const ownerId = dataOwnerId || user?.id
 
       if (!isSupabaseConfigured()) {
         // Demo mode - simulate table creation locally
@@ -2439,13 +2440,11 @@ export const AppProvider = ({ children }) => {
 
       await ensureTableReady(monthIdentifier)
 
-      // Handle custom/empty copy after table creation
       if (resolvedCopyMode === 'custom' || resolvedCopyMode === 'empty') {
-        // Always clear the auto-copied rows first so we start from desired baseline
-        const { error: clearError } = await supabase
-          .from(monthIdentifier)
-          .delete()
-          .not('id', 'is', null)
+        const { error: clearError } = await supabase.rpc(
+          'reset_month_members',
+          { target_table: monthIdentifier }
+        )
 
         if (clearError) {
           console.error('Failed clearing auto-copied rows:', clearError)
@@ -2474,13 +2473,27 @@ export const AppProvider = ({ children }) => {
       }
 
 
-      // Register this month table for the current user (owner)
+      const { error: ownerAssignError } = await supabase.rpc(
+        'set_month_owner_user',
+        {
+          target_table: monthIdentifier,
+          owner_user_id: ownerId
+        }
+      )
+
+      if (ownerAssignError) {
+        console.error('Failed to assign owner user_id on new month rows:', ownerAssignError)
+        throw new Error(`Failed to finalize month ownership: ${ownerAssignError.message}`)
+      }
+
       const { error: registerError } = await supabase
         .from('user_month_tables')
-        .insert({
-          user_id: user?.id,
+        .upsert({
+          user_id: ownerId,
           table_name: monthIdentifier,
           month_year: `${monthName} ${year}`
+        }, {
+          onConflict: 'user_id,table_name'
         })
 
       if (registerError) {
@@ -2492,7 +2505,7 @@ export const AppProvider = ({ children }) => {
         const { data: registeredCount, error: collabRegError } = await supabase.rpc(
           'register_collaborators_for_month',
           {
-            p_owner_id: user?.id,
+            p_owner_id: ownerId,
             p_table_name: monthIdentifier,
             p_month_year: `${monthName} ${year}`
           }
