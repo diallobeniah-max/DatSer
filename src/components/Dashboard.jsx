@@ -7,6 +7,7 @@ import ConfirmModal from './ConfirmModal'
 import TableSkeleton from './TableSkeleton'
 import SelectionToolbar from './SelectionToolbar'
 import { useLongPressSelection } from '../hooks/useLongPressSelection'
+import useHapticFeedback from '../hooks/useHapticFeedback'
 import { toast } from 'react-toastify'
 
 // Lazy load heavy modals for better initial load performance
@@ -75,6 +76,7 @@ const Dashboard = ({ isAdmin = false }) => {
     isCollaborator
   } = useApp()
   const { isDarkMode } = useTheme()
+  const { selection, success } = useHapticFeedback()
   const [editingMember, setEditingMember] = useState(null)
   const [attendanceLoading, setAttendanceLoading] = useState({})
   const [expandedMembers, setExpandedMembers] = useState({})
@@ -911,6 +913,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   const handleAttendanceForDate = async (memberId, present, specificDate) => {
+    selection()
     const loadingKey = `${memberId}_${specificDate}`
     setAttendanceLoading(prev => ({ ...prev, [loadingKey]: true }))
     try {
@@ -922,11 +925,13 @@ const Dashboard = ({ isAdmin = false }) => {
         await markAttendance(memberId, new Date(specificDate), null)
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
+        success()
         toast.success(`Attendance cleared for ${new Date(specificDate).toLocaleDateString()}`)
       } else {
         await markAttendance(memberId, new Date(specificDate), present)
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
+        success()
         toast.success(`Marked as ${present ? 'present' : 'absent'} for ${new Date(specificDate).toLocaleDateString()}`)
       }
     } catch (error) {
@@ -938,6 +943,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   const handleBulkAttendance = async (present, specificDate = null) => {
+    selection()
     // Use the selected attendance date from the picker
     const targetString = getDateString(selectedAttendanceDate)
     const dateToUse = specificDate ? new Date(specificDate) : (targetString ? new Date(targetString) : new Date())
@@ -958,6 +964,7 @@ const Dashboard = ({ isAdmin = false }) => {
           memberIds.forEach(id => {
             actionTimestampsRef.current[`${id}_${bulkDateKey}`] = bulkNow
           })
+          success()
           toast.success(`All members marked as ${present ? 'present' : 'absent'} successfully!`, {
             style: { background: present ? '#10b981' : '#ef4444', color: '#ffffff' }
           })
@@ -972,6 +979,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   const toggleMemberExpansion = (memberId) => {
+    selection()
     setExpandedMembers(prev => ({
       ...prev,
       [memberId]: !prev[memberId]
@@ -2820,7 +2828,7 @@ const Dashboard = ({ isAdmin = false }) => {
             </button>
             {/* Add Member Button */}
             <button
-              onClick={() => setShowMemberModal(true)}
+              onClick={() => { selection(); setShowMemberModal(true) }}
               className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm"
               title="Add New Member"
             >

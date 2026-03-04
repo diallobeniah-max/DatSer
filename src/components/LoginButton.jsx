@@ -26,11 +26,13 @@ import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { useApp } from '../context/AppContext'
 import { toast } from 'react-toastify'
+import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboardTab, currentView, dashboardTab }) => {
   const { user, loading, signInWithGoogle, signOut, isAuthenticated, preferences } = useAuth()
   const { isDarkMode, toggleTheme } = useTheme()
   const { members, currentTable, filteredMembers, attendanceData } = useApp()
+  const { selection } = useHapticFeedback()
   const [showDropdown, setShowDropdown] = useState(false)
   const [isSigningIn, setIsSigningIn] = useState(false)
   const dropdownRef = useRef(null)
@@ -69,6 +71,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
   }, [])
 
   const handleSignIn = useCallback(async () => {
+    selection()
     setIsSigningIn(true)
     try {
       await signInWithGoogle()
@@ -77,16 +80,17 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
     } finally {
       setIsSigningIn(false)
     }
-  }, [signInWithGoogle])
+  }, [selection, signInWithGoogle])
 
   const handleSignOut = useCallback(async () => {
+    selection()
     setShowDropdown(false)
     try {
       await signOut()
     } catch (error) {
       console.error('Sign out error:', error)
     }
-  }, [signOut])
+  }, [selection, signOut])
 
   if (loading) {
     return (
@@ -139,7 +143,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
   return (
     <div className="relative z-[9999]" ref={dropdownRef}>
       <button
-        onClick={() => setShowDropdown(!showDropdown)}
+        onClick={() => { selection(); setShowDropdown(!showDropdown) }}
         className="flex items-center gap-2 px-2 py-1 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
       >
         {userPhoto ? (
@@ -174,7 +178,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
             <div className="md:hidden flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Profile</h2>
               <button
-                onClick={() => setShowDropdown(false)}
+                onClick={() => { selection(); setShowDropdown(false) }}
                 className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
                 <X className="w-5 h-5 text-gray-500" />
@@ -215,14 +219,14 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
               <div className="mb-3">
                 <p className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Views</p>
                 <button
-                  onClick={() => { setShowDropdown(false); setCurrentView?.('dashboard'); setDashboardTab?.('all') }}
+                  onClick={() => { selection(); setShowDropdown(false); setCurrentView?.('dashboard'); setDashboardTab?.('all') }}
                   className={`w-full flex items-center gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm transition-colors ${currentView === 'dashboard' && dashboardTab === 'all' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                 >
                   <Users className="w-5 h-5 md:w-4 md:h-4" />
                   <span>Members</span>
                 </button>
                 <button
-                  onClick={() => { setShowDropdown(false); setCurrentView?.('dashboard'); setDashboardTab?.('edited') }}
+                  onClick={() => { selection(); setShowDropdown(false); setCurrentView?.('dashboard'); setDashboardTab?.('edited') }}
                   className={`w-full flex items-center gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm transition-colors ${currentView === 'dashboard' && dashboardTab === 'edited' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                 >
                   <CheckSquare className="w-5 h-5 md:w-4 md:h-4" />
@@ -230,14 +234,14 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                   {editedCount > 0 && <span className="ml-auto px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">{editedCount}</span>}
                 </button>
                 <button
-                  onClick={() => { setShowDropdown(false); setCurrentView?.('dashboard'); setDashboardTab?.('duplicates') }}
+                  onClick={() => { selection(); setShowDropdown(false); setCurrentView?.('dashboard'); setDashboardTab?.('duplicates') }}
                   className={`w-full flex items-center gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm transition-colors ${currentView === 'dashboard' && dashboardTab === 'duplicates' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                 >
                   <Copy className="w-5 h-5 md:w-4 md:h-4" />
                   <span>Duplicates</span>
                 </button>
                 <button
-                  onClick={() => { setShowDropdown(false); setCurrentView?.('admin') }}
+                  onClick={() => { selection(); setShowDropdown(false); setCurrentView?.('admin') }}
                   className={`w-full flex items-center gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm transition-colors ${currentView === 'admin' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                 >
                   <TrendingUp className="w-5 h-5 md:w-4 md:h-4" />
@@ -249,14 +253,14 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
               <div className="mb-3">
                 <p className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Actions</p>
                 <button
-                  onClick={() => { setShowDropdown(false); onCreateMonth?.() }}
+                  onClick={() => { selection(); setShowDropdown(false); onCreateMonth?.() }}
                   className="w-full flex items-center gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
                   <Calendar className="w-5 h-5 md:w-4 md:h-4" />
                   <span>Create New Month</span>
                 </button>
                 <button
-                  onClick={() => { setShowDropdown(false); onToggleAIChat?.() }}
+                  onClick={() => { selection(); setShowDropdown(false); onToggleAIChat?.() }}
                   className="w-full flex items-center gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
                   <Sparkles className="w-5 h-5 md:w-4 md:h-4" />
@@ -268,7 +272,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
               <div>
                 <p className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Preferences</p>
                 <button
-                  onClick={() => { toggleTheme(); }}
+                  onClick={() => { selection(); toggleTheme(); }}
                   className="w-full flex items-center justify-between gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
                   <span className="flex items-center gap-3">
@@ -281,6 +285,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                 </button>
                                 <button
                   onClick={() => {
+                    selection()
                     setShowDropdown(false)
                     if (window.openSettings) window.openSettings()
                   }}

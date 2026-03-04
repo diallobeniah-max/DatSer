@@ -10,6 +10,7 @@ import {
 import MonthPickerPopup from './MonthPickerPopup'
 import { useApp } from '../context/AppContext'
 import LoginButton from './LoginButton'
+import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember, onCreateMonth, onToggleAIChat }) => {
   const {
@@ -31,6 +32,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     focusDateSelector,
     isCollaborator
   } = useApp()
+  const { selection } = useHapticFeedback()
   const [showMonthPicker, setShowMonthPicker] = useState(false)
   const monthButtonRef = useRef(null)
   // Debounced search input for performance on low-end devices
@@ -146,7 +148,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
           {/* Compact brand label */}
           <div className="flex items-center">
             <button
-              onClick={() => { setCurrentView('dashboard'); setDashboardTab('all') }}
+              onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('all') }}
               className="text-xs sm:text-sm font-bold text-gray-900 dark:text-white hover:underline"
               title="Go to Dashboard"
             >
@@ -160,7 +162,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
             <nav className="flex items-center gap-1">
               {/* Home/Dashboard */}
               <button
-                onClick={() => { setCurrentView('dashboard'); setDashboardTab('all') }}
+                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('all') }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'all'
                   ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
                   : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -172,7 +174,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
               {/* Marked - Quick access */}
               <button
-                onClick={() => { setCurrentView('dashboard'); setDashboardTab('edited') }}
+                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('edited') }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'edited'
                   ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
                   : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -189,7 +191,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
               {/* Admin Panel */}
               <button
-                onClick={() => setCurrentView('admin')}
+                onClick={() => { selection(); setCurrentView('admin') }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'admin'
                   ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
                   : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -215,7 +217,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
               {/* Help/Settings Button */}
               <button
-                onClick={() => setCurrentView('settings')}
+                onClick={() => { selection(); setCurrentView('settings') }}
                 className="relative p-2 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 title="Settings"
               >
@@ -247,6 +249,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
             <div className="flex items-center gap-1">
               <button
                 onClick={() => {
+                  selection()
                   setCurrentView('dashboard');
                   setDashboardTab('all');
                 }}
@@ -260,7 +263,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 <span>Members</span>
               </button>
               <button
-                onClick={() => { setCurrentView('dashboard'); setDashboardTab('edited') }}
+                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('edited') }}
                 className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'edited'
                   ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
                   : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -313,7 +316,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
               <button
                 ref={monthButtonRef}
-                onClick={() => setShowMonthPicker(true)}
+                onClick={() => { selection(); setShowMonthPicker(true) }}
                 className="flex items-center gap-0.5 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium transition-colors"
                 title={isCollaborator ? "Click to switch month" : "Select Month"}
               >
