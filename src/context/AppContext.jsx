@@ -105,7 +105,7 @@ export const useApp = () => {
 
 export const AppProvider = ({ children }) => {
   // Get user from auth context - may be null during initial load
-  const authContext = useContext(useAuth) || {}
+  const authContext = useAuth()
   const user = authContext?.user
   const authLoading = authContext?.loading
   const [members, setMembers] = useState([])
@@ -176,7 +176,7 @@ export const AppProvider = ({ children }) => {
     }
 
     loadSavedMonth()
-  }, [user, authLoading, authContext?.preferences?.current_month_table, isCollaborator, dataOwnerId, ownerStickyMonth, currentTable])
+  }, [user, authLoading, authContext?.preferences?.current_month_table, isCollaborator, dataOwnerId, ownerStickyMonth])
   const [monthlyTables, setMonthlyTables] = useState(FALLBACK_MONTHLY_TABLES)
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState(null)
   const [availableSundayDates, setAvailableSundayDates] = useState([])
@@ -276,7 +276,7 @@ export const AppProvider = ({ children }) => {
     if (tableName && authContext?.updatePreference) {
       authContext.updatePreference('current_month_table', tableName)
     }
-  }, [getMonthStorageKey, authContext])
+  }, [getMonthStorageKey, authContext?.updatePreference])
 
   const pruneMissingTable = useCallback((tableName) => {
     if (!tableName) return

@@ -336,17 +336,24 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   // Generate Sunday dates dynamically based on current table
-  const sundayDates = generateSundayDates(currentTable)
+  const sundayDates = useMemo(() => generateSundayDates(currentTable), [currentTable])
 
   // Admin-locked default date: apply locked date for all users
   useEffect(() => {
     if (!lockedDefaultDate || sundayDates.length === 0) return
     if (sundayDates.includes(lockedDefaultDate)) {
-      setSelectedSundayDate(lockedDefaultDate)
-      const [year, month, day] = lockedDefaultDate.split('-')
-      setAndSaveAttendanceDate(new Date(year, parseInt(month) - 1, parseInt(day)))
+      if (selectedSundayDate !== lockedDefaultDate) {
+        setSelectedSundayDate(lockedDefaultDate)
+      }
+      const selectedKey = selectedAttendanceDate
+        ? selectedAttendanceDate.toISOString().split('T')[0]
+        : null
+      if (selectedKey !== lockedDefaultDate) {
+        const [year, month, day] = lockedDefaultDate.split('-')
+        setAndSaveAttendanceDate(new Date(year, parseInt(month) - 1, parseInt(day)))
+      }
     }
-  }, [lockedDefaultDate, sundayDates, currentTable, setAndSaveAttendanceDate])
+  }, [lockedDefaultDate, sundayDates, selectedSundayDate, selectedAttendanceDate, setAndSaveAttendanceDate])
 
   // Aggregated counts across selected or all Sundays for Edited Members
   const selectedDatesForCounting = selectedBulkSundayDates && selectedBulkSundayDates.size > 0
@@ -765,9 +772,9 @@ const Dashboard = ({ isAdmin = false }) => {
   // Ensure attendance map loads when a Sunday is selected (local state)
   useEffect(() => {
     const loadMap = async () => {
-      if (selectedSundayDate && !attendanceData[selectedSundayDate]) {
+      if (selectedSundayDate && !Object.prototype.hasOwnProperty.call(attendanceData, selectedSundayDate)) {
         const map = await fetchAttendanceForDate(new Date(selectedSundayDate))
-        setAttendanceData(prev => ({ ...prev, [selectedSundayDate]: map }))
+        setAttendanceData(prev => ({ ...prev, [selectedSundayDate]: map || {} }))
       }
     }
     loadMap()
