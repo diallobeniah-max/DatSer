@@ -1839,7 +1839,7 @@ const Dashboard = ({ isAdmin = false }) => {
                               return (
                                 <>
                                   <button
-                                    onClick={() => handleAttendance(member.id, true)}
+                                    onClick={() => { selection(); handleAttendance(member.id, true) }}
                                     disabled={attendanceLoading[member.id]}
                                     className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
                                       ? 'bg-green-600 dark:bg-green-700 text-white shadow ring-1 ring-green-300 dark:ring-green-500'
@@ -1852,7 +1852,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                     {attendanceLoading[member.id] ? '...' : 'Present'}
                                   </button>
                                   <button
-                                    onClick={() => handleAttendance(member.id, false)}
+                                    onClick={() => { selection(); handleAttendance(member.id, false) }}
                                     disabled={attendanceLoading[member.id]}
                                     className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
                                       ? 'bg-red-600 dark:bg-red-700 text-white shadow ring-1 ring-red-300 dark:ring-red-500'
@@ -2111,7 +2111,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                       </div>
                                       <div className="flex space-x-1">
                                         <button
-                                          onClick={() => handleAttendanceForDate(member.id, true, date)}
+                                          onClick={() => { selection(); handleAttendanceForDate(member.id, true, date) }}
                                           disabled={isLoading}
                                           className={`flex-1 px-2 py-1 rounded text-xs font-bold transition-colors duration-150 ${isPresent
                                             ? 'bg-green-800 dark:bg-green-700 text-white shadow-lg ring-2 ring-green-300 dark:ring-green-400 border border-green-900 dark:border-green-300 font-extrabold'
@@ -2123,7 +2123,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                           {isLoading ? '...' : 'P'}
                                         </button>
                                         <button
-                                          onClick={() => handleAttendanceForDate(member.id, false, date)}
+                                          onClick={() => { selection(); handleAttendanceForDate(member.id, false, date) }}
                                           disabled={isLoading}
                                           className={`flex-1 px-2 py-1 rounded text-xs font-bold transition-colors duration-150 ${isAbsent
                                             ? 'bg-red-800 dark:bg-red-700 text-white shadow-lg ring-2 ring-red-300 dark:ring-red-400 border border-red-900 dark:border-red-300 font-extrabold'
@@ -2400,6 +2400,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{m['full_name'] || m['Full Name']}</span>
                     <button
                       onClick={(e) => {
+                        selection()
                         e.stopPropagation();
                         // Assuming toggleLongPressSelection logic handles removal correctly
                         toggleLongPressSelection(id);

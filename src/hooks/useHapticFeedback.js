@@ -61,11 +61,11 @@ const useHapticFeedback = () => {
       } else {
         trigger()
       }
+      playClick(tone)
+    } catch {
       if (useSoundFallback) {
         playClick(tone)
       }
-    } catch {
-      playClick(tone)
     }
   }, [playClick, shouldUseSoundFallback, trigger])
 

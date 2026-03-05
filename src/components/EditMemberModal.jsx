@@ -278,6 +278,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
   useEffect(() => {
     const handleEscKey = (event) => {
       if (event.key === 'Escape' && isOpen) {
+        selection()
         onClose()
       }
     }
@@ -286,14 +287,14 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
     return () => {
       document.removeEventListener('keydown', handleEscKey)
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, selection])
 
   if (!isOpen || !member) return null
 
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center p-4 z-[60] backdrop-animate"
-      onClick={onClose}
+      onClick={() => { selection(); onClose() }}
     >
       <div 
         className={`shadow-2xl ring-1 max-w-md w-full mx-4 max-h-[90vh] flex flex-col transition-all duration-300 animate-scale-in ${overrideMode
