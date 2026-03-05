@@ -504,8 +504,8 @@ export const AppProvider = ({ children }) => {
     console.log('User ID:', user?.id)
     console.log('Supabase configured?', isSupabaseConfigured())
 
-    if (!user?.email || !isSupabaseConfigured()) {
-      console.log('Skipping collaborator check - no email or Supabase not configured')
+    if (!user?.id || !isSupabaseConfigured()) {
+      console.log('Skipping collaborator check - no user ID or Supabase not configured')
       setIsCollaborator(false)
       setDataOwnerId(null)
       setOwnerEmail(null)
@@ -513,14 +513,31 @@ export const AppProvider = ({ children }) => {
     }
 
     try {
-      // Check if this user's email exists in the collaborators table
-      console.log('Querying collaborators table for email:', user.email.toLowerCase())
-      const { data, error } = await supabase
+      const normalizedEmail = user.email?.trim().toLowerCase()
+      let data = null
+      let error = null
+
+      const userLookup = await supabase
         .from('collaborators')
-        .select('owner_id, status')
-        .eq('email', user.email.toLowerCase())
+        .select('owner_id, status, email')
+        .eq('collaborator_user_id', user.id)
         .in('status', ['pending', 'accepted', 'active'])
-        .single()
+        .maybeSingle()
+
+      data = userLookup.data
+      error = userLookup.error
+
+      if (!data && normalizedEmail) {
+        console.log('Collaborator lookup by user id returned no match. Falling back to email lookup:', normalizedEmail)
+        const emailLookup = await supabase
+          .from('collaborators')
+          .select('owner_id, status, email')
+          .ilike('email', normalizedEmail)
+          .in('status', ['pending', 'accepted', 'active'])
+          .maybeSingle()
+        data = emailLookup.data
+        error = emailLookup.error
+      }
 
       console.log('Collaborators query result:', { data, error })
 
@@ -2227,6 +2244,10 @@ export const AppProvider = ({ children }) => {
 
       if (tableNames.length === 0) {
         console.log('No tables found for this user/owner.')
+        if (isCollaborator && ownerStickyMonth) {
+          setMonthlyTables(sortMonthTables([ownerStickyMonth]))
+          return
+        }
         setMonthlyTables([])
         clearInvalidTable()
         return
@@ -2239,7 +2260,7 @@ export const AppProvider = ({ children }) => {
       console.error('Unexpected error in fetchMonthlyTables:', error)
       // Do not force fallback tables on error to avoid "ghost" months
     }
-  }, [isSupabaseConfigured, dataOwnerId, user?.id, isCollaborator, changeCurrentTable])
+  }, [isSupabaseConfigured, dataOwnerId, user?.id, isCollaborator, ownerStickyMonth, changeCurrentTable])
 
   const deleteMonthTable = useCallback(async (tableName) => {
     if (!tableName) return
