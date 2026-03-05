@@ -3,9 +3,11 @@ import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { X, User, Phone, Calendar, BookOpen, ChevronDown, ChevronUp, Users, StickyNote } from 'lucide-react'
 import { toast } from 'react-toastify'
+import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const EditMemberModal = ({ isOpen, onClose, member }) => {
   const { updateMember, markAttendance, refreshSearch, currentTable, attendanceData, loadAllAttendanceData, members } = useApp()
+  const { selection, success } = useHapticFeedback()
 
   // Get the latest member data from the members array to ensure we have up-to-date info
   const latestMember = useMemo(() => {
@@ -246,6 +248,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         }
       }
 
+      success()
       onClose()
 
       // Reset Sunday attendance state
@@ -318,7 +321,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
               {overrideMode ? 'Override Active' : 'Override'}
             </button>
             <button
-              onClick={onClose}
+              onClick={() => { selection(); onClose() }}
               className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
             >
               <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
@@ -764,12 +767,12 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
           {/* Form Actions */}
           <div className="flex space-x-3 pt-4">
             <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-800 transition-colors btn-press"
-            >
-              Cancel
-            </button>
+                  type="button"
+                  onClick={() => { selection(); onClose() }}
+                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 transition-colors btn-press"
+                >
+                  Cancel
+                </button>
             <button
               type="submit"
               disabled={loading || !formData.full_name}
