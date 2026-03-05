@@ -196,6 +196,7 @@ export const AppProvider = ({ children }) => {
 
   // Admin-locked default date — forces collaborators to a specific date
   const [lockedDefaultDate, setLockedDefaultDate] = useState(null)
+  const suppressDateBroadcastRef = useRef(false)
 
   // Fetch the owner's locked default date (for collaborators)
   const fetchLockedDefaultDate = useCallback(async (ownerId) => {
@@ -467,6 +468,7 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     if (isCollaborator || !isSupabaseConfigured() || !user?.id || !selectedAttendanceDate) return
+    if (suppressDateBroadcastRef.current) return
 
     const dateStr = getLocalDateString(selectedAttendanceDate)
     if (!dateStr || adminBroadcastRef.current.date === dateStr) return
@@ -1044,6 +1046,7 @@ export const AppProvider = ({ children }) => {
     setAvailableSundayDates(sundays)
 
     if (sundays.length > 0) {
+      suppressDateBroadcastRef.current = true
       // 1. Check locked configuration (highest priority)
       if (lockedDefaultDate) {
         const [lyear, lmonth, lday] = lockedDefaultDate.split('-')
@@ -1054,6 +1057,7 @@ export const AppProvider = ({ children }) => {
         ))
         if (lockedMatch) {
           setAndSaveAttendanceDate(lockedMatch)
+          setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
           return
         }
       }
@@ -1069,6 +1073,7 @@ export const AppProvider = ({ children }) => {
         ))
         if (defaultDate) {
           setAndSaveAttendanceDate(defaultDate)
+          setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
           return
         }
       }
@@ -1089,6 +1094,7 @@ export const AppProvider = ({ children }) => {
 
         if (matchingDate) {
           setSelectedAttendanceDate(matchingDate)
+          setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
           return
         }
       }
@@ -1099,6 +1105,7 @@ export const AppProvider = ({ children }) => {
       // Prefer 30th if available, then 23rd, then second Sunday, then first
       const defaultDate = thirtieth || twentyThird || (sundays.length >= 2 ? sundays[1] : sundays[0])
       setAndSaveAttendanceDate(defaultDate)
+      setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
     }
   }
 
