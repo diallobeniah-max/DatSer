@@ -1,15 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useApp } from '../context/AppContext'
-import { Calendar, X, Lock } from 'lucide-react'
+import { Calendar, X } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext'
 
 const DateSelector = ({ variant = 'icon' }) => {
   const { 
     selectedAttendanceDate, 
     setAndSaveAttendanceDate, 
-    availableSundayDates,
-    lockedDefaultDate,
-    isCollaborator
+    availableSundayDates
   } = useApp()
   const { isDarkMode } = useTheme()
   
@@ -63,28 +61,8 @@ const DateSelector = ({ variant = 'icon' }) => {
   }
 
   const handleDateSelect = (date) => {
-    // Block collaborators from changing away from locked date
-    if (isCollaborator && lockedDefaultDate) {
-      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-      if (dateStr !== lockedDefaultDate) {
-        return // silently block
-      }
-    }
     setAndSaveAttendanceDate(date)
     setIsOpen(false)
-  }
-
-  // Helper to check if a Date object matches the locked date string
-  const isDateLocked = (date) => {
-    if (!lockedDefaultDate || !isCollaborator) return false
-    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-    return dateStr === lockedDefaultDate
-  }
-
-  const isDateNotLocked = (date) => {
-    if (!lockedDefaultDate || !isCollaborator) return false
-    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-    return dateStr !== lockedDefaultDate
   }
 
   return (
@@ -144,24 +122,14 @@ const DateSelector = ({ variant = 'icon' }) => {
                 </div>
               ) : (
                 <div className="py-4">
-                  {isCollaborator && lockedDefaultDate && (
-                    <div className="mx-6 mb-3 flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                      <Lock className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-                      <span className="text-xs text-blue-700 dark:text-blue-300 font-medium">Date locked by admin</span>
-                    </div>
-                  )}
                   {availableSundayDates.map((date, index) => {
                     const isSelected = selectedAttendanceDate && date.getTime() === selectedAttendanceDate.getTime()
-                    const locked = isDateLocked(date)
-                    const dimmed = isDateNotLocked(date)
                     return (
                       <button
                         key={index}
                         onClick={() => handleDateSelect(date)}
                         className={`w-full text-left px-6 py-4 transition-all duration-200 border-l-4 hover:shadow-sm ${
-                          dimmed
-                            ? 'opacity-40 cursor-not-allowed border-l-transparent'
-                            : isSelected
+                          isSelected
                               ? isDarkMode 
                                 ? 'bg-blue-900 bg-opacity-30 border-l-blue-400 text-blue-300 shadow-sm'
                                 : 'bg-blue-50 border-l-blue-500 text-blue-700 shadow-sm'
@@ -171,15 +139,12 @@ const DateSelector = ({ variant = 'icon' }) => {
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            {locked && <Lock className="w-4 h-4 text-blue-500 flex-shrink-0" />}
-                            <div>
-                              <div className={`text-base ${isSelected ? 'font-semibold' : 'font-medium'}`}>
-                                {formatDateWithOrdinal(date)}
-                              </div>
-                              <div className={`text-sm mt-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                                {locked ? 'Locked by admin' : 'Sunday Service'}
-                              </div>
+                          <div>
+                            <div className={`text-base ${isSelected ? 'font-semibold' : 'font-medium'}`}>
+                              {formatDateWithOrdinal(date)}
+                            </div>
+                            <div className={`text-sm mt-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                              Sunday Service
                             </div>
                           </div>
                           {isSelected && (

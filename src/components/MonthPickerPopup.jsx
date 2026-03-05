@@ -1,18 +1,25 @@
-import React, { useCallback, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Calendar, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const MonthPickerPopup = ({ isOpen, onClose, anchorRef }) => {
-    const { monthlyTables, currentTable, setCurrentTable, isCollaborator } = useApp()
+    const { monthlyTables, currentTable, setCurrentTable, isCollaborator, selectedAttendanceDate, setAndSaveAttendanceDate, getSundaysInMonth, ownerStickySundays } = useApp()
     const { selection } = useHapticFeedback()
     const popupRef = useRef(null)
+    const [previewTable, setPreviewTable] = useState(currentTable)
 
     const handleClose = useCallback(() => {
         selection()
         onClose()
     }, [selection, onClose])
+
+    useEffect(() => {
+        if (isOpen) {
+            setPreviewTable(currentTable)
+        }
+    }, [isOpen, currentTable])
 
     // Close on outside click
     useEffect(() => {
@@ -42,6 +49,44 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef }) => {
     const handleSelectMonth = (table) => {
         selection()
         setCurrentTable(table)
+        setPreviewTable(table)
+    }
+
+    const previewSundays = useMemo(() => {
+        if (!previewTable) return []
+        const [monthName, yearStr] = previewTable.split('_')
+        const yearNum = parseInt(yearStr, 10)
+        if (!monthName || Number.isNaN(yearNum)) return []
+        const toDateKey = (date) => {
+            const y = date.getFullYear()
+            const m = String(date.getMonth() + 1).padStart(2, '0')
+            const d = String(date.getDate()).padStart(2, '0')
+            return `${y}-${m}-${d}`
+        }
+        const stickyInMonth = isCollaborator
+            ? ownerStickySundays
+                .filter((dateStr) => {
+                    const [y, m] = dateStr.split('-').map(Number)
+                    return y === yearNum && m === (new Date(`${monthName} 1, ${yearNum}`)).getMonth() + 1
+                })
+                .sort()
+            : []
+        if (stickyInMonth.length > 0) return stickyInMonth
+        return getSundaysInMonth(monthName, yearNum).map(toDateKey)
+    }, [previewTable, getSundaysInMonth, isCollaborator, ownerStickySundays])
+
+    const selectedDateKey = selectedAttendanceDate
+        ? `${selectedAttendanceDate.getFullYear()}-${String(selectedAttendanceDate.getMonth() + 1).padStart(2, '0')}-${String(selectedAttendanceDate.getDate()).padStart(2, '0')}`
+        : null
+
+    const handleSelectSunday = (dateStr) => {
+        const [y, m, d] = dateStr.split('-').map(Number)
+        if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return
+        selection()
+        if (previewTable && previewTable !== currentTable) {
+            setCurrentTable(previewTable)
+        }
+        setAndSaveAttendanceDate(new Date(y, m - 1, d))
         onClose()
     }
 
@@ -148,6 +193,30 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef }) => {
                         </div>
                     )}
                 </div>
+                {previewSundays.length > 0 && (
+                    <div className="px-3 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Sundays</div>
+                        <div className="flex flex-wrap gap-1.5">
+                            {previewSundays.map((dateStr) => {
+                                const [y, m, d] = dateStr.split('-').map(Number)
+                                const label = new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                const isSelected = selectedDateKey === dateStr
+                                return (
+                                    <button
+                                        key={dateStr}
+                                        onClick={() => handleSelectSunday(dateStr)}
+                                        className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${isSelected
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-600 border border-gray-200 dark:border-gray-600'
+                                            }`}
+                                    >
+                                        {label}
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
             </div>
         </>,
         document.body

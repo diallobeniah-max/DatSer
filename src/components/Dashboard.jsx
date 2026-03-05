@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, memo, lazy, Suspense } from 'react'
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
-import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Lock } from 'lucide-react'
+import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye } from 'lucide-react'
 import DateSelector from './DateSelector'
 import ConfirmModal from './ConfirmModal'
 import TableSkeleton from './TableSkeleton'
@@ -73,7 +73,6 @@ const Dashboard = ({ isAdmin = false }) => {
     validateMemberData,
     getPastSundays,
     getMissingAttendance,
-    lockedDefaultDate,
     isCollaborator
   } = useApp()
   const { isDarkMode } = useTheme()
@@ -340,23 +339,6 @@ const Dashboard = ({ isAdmin = false }) => {
 
   // Generate Sunday dates dynamically based on current table
   const sundayDates = useMemo(() => generateSundayDates(currentTable), [currentTable])
-
-  // Admin-locked default date: apply locked date for all users
-  useEffect(() => {
-    if (!lockedDefaultDate || sundayDates.length === 0) return
-    if (sundayDates.includes(lockedDefaultDate)) {
-      if (selectedSundayDate !== lockedDefaultDate) {
-        setSelectedSundayDate(lockedDefaultDate)
-      }
-      const selectedKey = selectedAttendanceDate
-        ? selectedAttendanceDate.toISOString().split('T')[0]
-        : null
-      if (selectedKey !== lockedDefaultDate) {
-        const [year, month, day] = lockedDefaultDate.split('-')
-        setAndSaveAttendanceDate(new Date(year, parseInt(month) - 1, parseInt(day)))
-      }
-    }
-  }, [lockedDefaultDate, sundayDates, selectedSundayDate, selectedAttendanceDate, setAndSaveAttendanceDate])
 
   // Aggregated counts across selected or all Sundays for Edited Members
   const selectedDatesForCounting = selectedBulkSundayDates && selectedBulkSundayDates.size > 0
@@ -1357,17 +1339,10 @@ const Dashboard = ({ isAdmin = false }) => {
               const absentCount = map
                 ? Object.values(map).filter(v => v === false).length
                 : 0
-              const isDateLocked = isCollaborator && lockedDefaultDate && lockedDefaultDate === dateStr
-              const isLockedAndNotThis = isCollaborator && lockedDefaultDate && lockedDefaultDate !== dateStr
               return (
                 <button
                   key={dateStr}
                   onClick={async () => {
-                    // Prevent collaborators from changing away from locked date
-                    if (isCollaborator && lockedDefaultDate && dateStr !== lockedDefaultDate) {
-                      toast.info('This date is locked by the admin')
-                      return
-                    }
                     setSelectedSundayDate(dateStr)
                     if (!attendanceData[dateStr]) {
                       const map = await fetchAttendanceForDate(new Date(dateStr))
@@ -1376,13 +1351,10 @@ const Dashboard = ({ isAdmin = false }) => {
                   }}
                   className={`flex-shrink-0 flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors duration-150 border ${isSelected
                     ? 'bg-[#D9E8FF] dark:bg-[#1E3A8B] text-blue-900 dark:text-white border-blue-300 dark:border-blue-700 shadow-lg scale-[1.02]'
-                    : isLockedAndNotThis
-                      ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-gray-700 opacity-50 cursor-not-allowed'
-                      : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm'
+                    : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm'
                     }`}
-                  title={isDateLocked ? `${label} (Locked by admin)` : `${label}: ${presentCount} present, ${absentCount} absent`}
+                  title={`${label}: ${presentCount} present, ${absentCount} absent`}
                 >
-                  {isDateLocked && <Lock className="w-3 h-3 text-blue-500 flex-shrink-0" />}
                   <span className="font-medium whitespace-nowrap">{label}</span>
                   <div className="flex items-center gap-0.5 sm:gap-1">
                     <span className={`text-[10px] sm:text-xs px-1 sm:px-1.5 py-0.5 rounded font-semibold ${isSelected ? 'bg-green-200/60 dark:bg-green-400/30 text-green-700 dark:text-green-100' : 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400'}`}>
