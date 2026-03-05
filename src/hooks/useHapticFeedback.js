@@ -42,22 +42,32 @@ const useHapticFeedback = () => {
     } catch { }
   }, [createAudioContext])
 
+  const shouldUseSoundFallback = useCallback(() => {
+    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') {
+      return true
+    }
+    try {
+      return navigator.vibrate(0) === false
+    } catch {
+      return true
+    }
+  }, [])
+
   const tap = useCallback((pattern = null, tone = 'tap') => {
     const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
-    if (!canVibrate) {
-      playClick(tone)
-      return
-    }
     try {
       if (pattern) {
         trigger(pattern)
       } else {
         trigger()
       }
+      if (!canVibrate) {
+        playClick(tone)
+      }
     } catch {
       playClick(tone)
     }
-  }, [playClick, trigger])
+  }, [playClick, shouldUseSoundFallback, trigger])
 
   const selection = useCallback(() => {
     tap(null, 'tap')

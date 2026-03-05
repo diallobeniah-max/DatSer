@@ -4,10 +4,8 @@ import { Mail, Lock, User, Eye, EyeOff, ArrowLeft, Check, X, Sparkles } from 'lu
 import { Turnstile } from '@marsidev/react-turnstile'
 import { supabase } from '../lib/supabase'
 
-// Turnstile site key from environment - use test key that always passes if not configured
-const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA'
+const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY
 
-// Password strength calculator
 const getPasswordStrength = (password) => {
   if (!password) return { score: 0, label: '', color: '' }
 
@@ -73,6 +71,7 @@ const LoginPage = () => {
   const [loginAttempts, setLoginAttempts] = useState(0)
   const [captchaToken, setCaptchaToken] = useState(null)
   const turnstileRef = useRef(null)
+  const hasTurnstile = Boolean(TURNSTILE_SITE_KEY)
 
 
 
@@ -631,16 +630,17 @@ const LoginPage = () => {
               </div>
             )}
 
-            {/* Turnstile CAPTCHA */}
-            <div className="mb-4 flex justify-center">
-              <Turnstile
-                ref={turnstileRef}
-                siteKey={TURNSTILE_SITE_KEY}
-                onSuccess={(token) => setCaptchaToken(token)}
-                onError={() => setCaptchaToken(null)}
-                onExpire={() => setCaptchaToken(null)}
-              />
-            </div>
+            {hasTurnstile && (
+              <div className="mb-4 flex justify-center">
+                <Turnstile
+                  ref={turnstileRef}
+                  siteKey={TURNSTILE_SITE_KEY}
+                  onSuccess={(token) => setCaptchaToken(token)}
+                  onError={() => setCaptchaToken(null)}
+                  onExpire={() => setCaptchaToken(null)}
+                />
+              </div>
+            )}
 
             {/* Forgot Password & Magic Link - Login only */}
             {mode === 'login' && (

@@ -9,6 +9,7 @@ import SelectionToolbar from './SelectionToolbar'
 import { useLongPressSelection } from '../hooks/useLongPressSelection'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { toast } from 'react-toastify'
+import { normalizeMinistry } from '../utils/dataUtils'
 
 // Lazy load heavy modals for better initial load performance
 const EditMemberModal = lazy(() => import('./EditMemberModal'))
@@ -864,6 +865,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   const handleAttendance = async (memberId, present) => {
+    selection()
     // Check for missing data before marking attendance
     const member = members.find(m => m.id === memberId)
     if (member && checkMissingDataBeforeAttendance(member, present)) {
@@ -1839,7 +1841,7 @@ const Dashboard = ({ isAdmin = false }) => {
                               return (
                                 <>
                                   <button
-                                    onClick={() => handleAttendance(member.id, true)}
+                                    onClick={() => { selection(); handleAttendance(member.id, true) }}
                                     disabled={attendanceLoading[member.id]}
                                     className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
                                       ? 'bg-green-600 dark:bg-green-700 text-white shadow ring-1 ring-green-300 dark:ring-green-500'
@@ -1852,7 +1854,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                     {attendanceLoading[member.id] ? '...' : 'Present'}
                                   </button>
                                   <button
-                                    onClick={() => handleAttendance(member.id, false)}
+                                    onClick={() => { selection(); handleAttendance(member.id, false) }}
                                     disabled={attendanceLoading[member.id]}
                                     className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
                                       ? 'bg-red-600 dark:bg-red-700 text-white shadow ring-1 ring-red-300 dark:ring-red-500'
@@ -1992,18 +1994,24 @@ const Dashboard = ({ isAdmin = false }) => {
                                 </div>
 
                                 {/* Ministry Tags */}
-                                {member.ministry && (Array.isArray(member.ministry) ? member.ministry : [member.ministry]).filter(Boolean).length > 0 && (
+                                {(() => {
+                                  // normalizeMinistry is imported from utils
+
+                                  const ministries = normalizeMinistry(member.ministry)
+                                  if (ministries.length === 0) return null
+                                  return (
                                   <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
                                     <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Ministry</h4>
-                                    <div className="flex flex-wrap gap-1">
-                                      {(Array.isArray(member.ministry) ? member.ministry : [member.ministry]).filter(Boolean).map(m => (
-                                        <span key={m} className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300">
-                                          {m}
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {ministries.map(m => (
+                                        <span key={m} className="px-2.5 py-1 rounded-full text-[11px] sm:text-xs font-medium bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 border border-primary-200/70 dark:border-primary-700/50">
+                                          {m.length > 22 ? m.slice(0, 20) + '…' : m}
                                         </span>
                                       ))}
                                     </div>
                                   </div>
-                                )}
+                                  )
+                                })()}
 
                                 {/* Parent Information (if available) */}
                                 {(member['parent_name_1'] || member['parent_name_2']) && (
@@ -2111,7 +2119,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                       </div>
                                       <div className="flex space-x-1">
                                         <button
-                                          onClick={() => handleAttendanceForDate(member.id, true, date)}
+                                          onClick={() => { selection(); handleAttendanceForDate(member.id, true, date) }}
                                           disabled={isLoading}
                                           className={`flex-1 px-2 py-1 rounded text-xs font-bold transition-colors duration-150 ${isPresent
                                             ? 'bg-green-800 dark:bg-green-700 text-white shadow-lg ring-2 ring-green-300 dark:ring-green-400 border border-green-900 dark:border-green-300 font-extrabold'
@@ -2123,7 +2131,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                           {isLoading ? '...' : 'P'}
                                         </button>
                                         <button
-                                          onClick={() => handleAttendanceForDate(member.id, false, date)}
+                                          onClick={() => { selection(); handleAttendanceForDate(member.id, false, date) }}
                                           disabled={isLoading}
                                           className={`flex-1 px-2 py-1 rounded text-xs font-bold transition-colors duration-150 ${isAbsent
                                             ? 'bg-red-800 dark:bg-red-700 text-white shadow-lg ring-2 ring-red-300 dark:ring-red-400 border border-red-900 dark:border-red-300 font-extrabold'
@@ -2295,7 +2303,7 @@ const Dashboard = ({ isAdmin = false }) => {
       {isDeleteConfirmOpen && (
         <div
           className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm"
-          onClick={() => { setIsDeleteConfirmOpen(false); setMemberToDelete(null) }}
+          onClick={() => { selection(); setIsDeleteConfirmOpen(false); setMemberToDelete(null) }}
           onKeyDown={(e) => e.key === 'Escape' && (setIsDeleteConfirmOpen(false), setMemberToDelete(null))}
         >
           <div
@@ -2313,7 +2321,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 <h3 className="text-lg font-semibold text-red-800 dark:text-red-300">Confirm Deletion</h3>
               </div>
               <button
-                onClick={() => { setIsDeleteConfirmOpen(false); setMemberToDelete(null) }}
+                onClick={() => { selection(); setIsDeleteConfirmOpen(false); setMemberToDelete(null) }}
                 className="p-2 hover:bg-red-100 dark:hover:bg-red-800 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5 text-red-600 dark:text-red-400" />
@@ -2348,13 +2356,13 @@ const Dashboard = ({ isAdmin = false }) => {
             {/* Enhanced action buttons */}
             <div className="px-6 py-4 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-600 flex gap-3">
               <button
-                onClick={() => { setIsDeleteConfirmOpen(false); setMemberToDelete(null) }}
+                onClick={() => { selection(); setIsDeleteConfirmOpen(false); setMemberToDelete(null) }}
                 className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500"
               >
                 Cancel
               </button>
               <button
-                onClick={confirmDelete}
+                onClick={() => { selection(); confirmDelete() }}
                 className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 shadow-lg hover:shadow-xl"
               >
                 Delete Member
@@ -2400,6 +2408,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{m['full_name'] || m['Full Name']}</span>
                     <button
                       onClick={(e) => {
+                        selection()
                         e.stopPropagation();
                         // Assuming toggleLongPressSelection logic handles removal correctly
                         toggleLongPressSelection(id);
@@ -2426,7 +2435,7 @@ const Dashboard = ({ isAdmin = false }) => {
       {showTransferModal && selectedSundayDate && (
         <div
           className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm"
-          onClick={() => { setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
+          onClick={() => { selection(); setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
           onKeyDown={(e) => e.key === 'Escape' && (setShowTransferModal(false), setTransferTargetDate(null), setSelectedTransferIds(new Set()))}
         >
           <div
@@ -2445,7 +2454,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 </div>
               </div>
               <button
-                onClick={() => { setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
+                onClick={() => { selection(); setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
                 className="p-2 hover:bg-blue-100 dark:hover:bg-blue-800 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5 text-blue-600 dark:text-blue-400" />
@@ -2580,7 +2589,7 @@ const Dashboard = ({ isAdmin = false }) => {
             {/* Actions */}
             <div className="px-4 py-3 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-700 flex gap-3 flex-shrink-0">
               <button
-                onClick={() => { setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
+                onClick={() => { selection(); setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
                 className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-500 transition-colors"
               >
                 Cancel
@@ -2648,7 +2657,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 Filter Members
               </h3>
               <button
-                onClick={closeFilters}
+                onClick={() => { selection(); closeFilters() }}
                 className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -2756,7 +2765,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 Clear All
               </button>
               <button
-                onClick={closeFilters}
+                onClick={() => { selection(); closeFilters() }}
                 className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 shadow-md transition-colors"
               >
                 Apply Filters

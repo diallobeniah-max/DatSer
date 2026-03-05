@@ -1,5 +1,6 @@
 import React from 'react'
 import { X, AlertTriangle } from 'lucide-react'
+import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const ConfirmModal = ({
   isOpen,
@@ -13,6 +14,8 @@ const ConfirmModal = ({
   cancelButtonClass = "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600",
   children
 }) => {
+  const { selection, success } = useHapticFeedback()
+
   if (!isOpen) return null
 
   return (
@@ -27,7 +30,7 @@ const ConfirmModal = ({
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
           </div>
           <button
-            onClick={onClose}
+            onClick={() => { selection(); onClose() }}
             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors btn-press"
           >
             <X className="w-5 h-5 text-gray-600 dark:text-gray-400" />
@@ -57,13 +60,14 @@ const ConfirmModal = ({
         {/* Action Buttons */}
         <div className="px-6 py-4 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-600 flex gap-3">
           <button
-            onClick={onClose}
+            onClick={() => { selection(); onClose() }}
             className={`flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 btn-press ${cancelButtonClass}`}
           >
             {cancelText}
           </button>
           <button
             onClick={() => {
+              selection()
               onConfirm()
               onClose()
             }}

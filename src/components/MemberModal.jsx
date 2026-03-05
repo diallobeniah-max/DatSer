@@ -3,10 +3,12 @@ import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { X, User, Phone, Calendar, BookOpen, ChevronDown, ChevronUp, Info, Users, StickyNote } from 'lucide-react'
 import { toast } from 'react-toastify'
+import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const MemberModal = ({ isOpen, onClose }) => {
   const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember } = useApp()
   const { isDarkMode } = useTheme()
+  const { selection, success } = useHapticFeedback()
 
   // Helper function to get month display name from table name
   const getMonthDisplayName = (tableName) => {
@@ -249,6 +251,7 @@ const MemberModal = ({ isOpen, onClose }) => {
       setNewlyAddedMemberId(newMember.id)
       onClose()
       setIsOverrideMode(false)
+      success()
 
       // Success toast handled in global state
     } catch (error) {
@@ -284,7 +287,7 @@ const MemberModal = ({ isOpen, onClose }) => {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setIsOverrideMode(!isOverrideMode)}
+              onClick={() => { selection(); setIsOverrideMode(!isOverrideMode) }}
               className={`px-3 py-1 rounded text-xs border transition-colors ${isOverrideMode
                 ? 'bg-orange-200 dark:bg-orange-700 text-orange-800 dark:text-orange-200 border-orange-300 dark:border-orange-600 font-medium'
                 : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'
@@ -294,7 +297,7 @@ const MemberModal = ({ isOpen, onClose }) => {
               {isOverrideMode ? 'Override Active' : 'Override'}
             </button>
             <button
-              onClick={onClose}
+              onClick={() => { selection(); onClose() }}
               className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
             >
               <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
@@ -439,7 +442,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() => setIsLevelOpen(!isLevelOpen)}
+                    onClick={() => { selection(); setIsLevelOpen(!isLevelOpen) }}
                     className={`w-full pl-3 pr-4 py-2 text-left rounded-lg focus:outline-none focus:ring-1 bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-colors duration-200 border flex items-center justify-between ${showErrors && !formData.current_level ? 'border-red-500 ring-1 ring-red-400' : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500'}`}
                   >
                     <div className="flex items-center">
@@ -458,6 +461,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                           key={level}
                           type="button"
                           onClick={() => {
+                            selection()
                             handleInputChange({ target: { name: 'current_level', value: level } })
                             setIsLevelOpen(false)
                           }}
@@ -498,7 +502,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                         <div className="flex space-x-2">
                           <button
                             type="button"
-                            onClick={() => setSundayAttendance(prev => ({ ...prev, [date]: true }))}
+                            onClick={() => { selection(); setSundayAttendance(prev => ({ ...prev, [date]: true })) }}
                             className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${sundayAttendance[date] === true
                               ? 'bg-green-600 text-white shadow-sm'
                               : 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800'
@@ -508,7 +512,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setSundayAttendance(prev => ({ ...prev, [date]: false }))}
+                            onClick={() => { selection(); setSundayAttendance(prev => ({ ...prev, [date]: false })) }}
                             className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${sundayAttendance[date] === false
                               ? 'bg-red-600 text-white shadow-sm'
                               : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800'
@@ -518,7 +522,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setSundayAttendance(prev => ({ ...prev, [date]: null }))}
+                            onClick={() => { selection(); setSundayAttendance(prev => ({ ...prev, [date]: null })) }}
                             className="px-3 py-1 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-500 transition-colors"
                           >
                             Clear
@@ -537,7 +541,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                 }`}>
                 <button
                   type="button"
-                  onClick={() => setShowParentSection(!showParentSection)}
+                  onClick={() => { selection(); setShowParentSection(!showParentSection) }}
                   className={`w-full flex items-center justify-between p-3 transition-colors ${showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
                     ? 'bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30'
                     : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'
@@ -662,6 +666,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                       key={ministry}
                       type="button"
                       onClick={() => {
+                        selection()
                         setFormData(prev => ({
                           ...prev,
                           ministry: prev.ministry.includes(ministry)
@@ -686,7 +691,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Mark as Visitor</span>
                 <button
                   type="button"
-                  onClick={() => setFormData(prev => ({ ...prev, is_visitor: !prev.is_visitor }))}
+                  onClick={() => { selection(); setFormData(prev => ({ ...prev, is_visitor: !prev.is_visitor })) }}
                   className={`relative w-11 h-6 rounded-full transition-colors ${
                     formData.is_visitor ? 'bg-amber-500' : 'bg-gray-300 dark:bg-gray-600'
                   }`}
@@ -719,7 +724,7 @@ const MemberModal = ({ isOpen, onClose }) => {
               <div className="flex space-x-3 pt-4">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={() => { selection(); onClose() }}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 transition-colors btn-press"
                 >
                   Cancel

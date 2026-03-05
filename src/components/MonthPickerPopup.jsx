@@ -71,7 +71,7 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef }) => {
             {/* Backdrop with blur - very high z-index to cover everything */}
             <div
                 className="fixed inset-0 bg-black/50 z-[9998] backdrop-blur-sm"
-                onClick={handleClose}
+                onClick={onClose}
             />
 
             {/* Popup */}
@@ -89,7 +89,7 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef }) => {
                         </span>
                     </div>
                     <button
-                        onClick={handleClose}
+                        onClick={onClose}
                         className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors btn-press"
                     >
                         <X className="w-4 h-4 text-gray-500" />

@@ -102,21 +102,7 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
     }
 
 
-    // Quick Attendance Access toggle
-    const [quickAttendanceEnabled, setQuickAttendanceEnabled] = useState(() => {
-        return localStorage.getItem('quickAttendanceEnabled') === 'true'
-    })
-
-    const toggleQuickAttendance = () => {
-        const newValue = !quickAttendanceEnabled
-        setQuickAttendanceEnabled(newValue)
-        localStorage.setItem('quickAttendanceEnabled', newValue.toString())
-        if (newValue) {
-            toast.success('Quick Attendance Access enabled: button will appear on main app')
-        } else {
-            toast.info('Quick Attendance Access disabled')
-        }
-    }
+    // Quick Attendance Access toggle removed
 
     const [isShareModalOpen, setIsShareModalOpen] = useState(false)
     const [collaborators, setCollaborators] = useState([])
@@ -1259,25 +1245,7 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
                 </div>
             </div>
 
-            {/* Quick Attendance Access */}
-            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <p className="font-medium text-gray-900 dark:text-white">Quick Attendance Access</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">Show attendance button on main app (secondary option)</p>
-                    </div>
-                    <button
-                        onClick={toggleQuickAttendance}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${quickAttendanceEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600'
-                            }`}
-                    >
-                        <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${quickAttendanceEnabled ? 'translate-x-6' : 'translate-x-1'
-                                }`}
-                        />
-                    </button>
-                </div>
-            </div>
+            {/* Quick Attendance Access removed */}
         </div>
     )
 

@@ -8,7 +8,9 @@ export const isSupabaseConfigured = Boolean(
   supabaseUrl &&
   supabaseAnonKey &&
   supabaseUrl !== 'your_supabase_url_here' &&
-  supabaseUrl !== 'https://placeholder.supabase.co'
+  supabaseUrl !== 'https://placeholder.supabase.co' &&
+  supabaseUrl !== 'undefined' &&
+  supabaseAnonKey !== 'undefined'
 )
 
 // Only create the client when config exists; otherwise export null

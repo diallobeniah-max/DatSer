@@ -3,9 +3,12 @@ import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { X, User, Phone, Calendar, BookOpen, ChevronDown, ChevronUp, Users, StickyNote } from 'lucide-react'
 import { toast } from 'react-toastify'
+import useHapticFeedback from '../hooks/useHapticFeedback'
+import { normalizeMinistry } from '../utils/dataUtils'
 
 const EditMemberModal = ({ isOpen, onClose, member }) => {
   const { updateMember, markAttendance, refreshSearch, currentTable, attendanceData, loadAllAttendanceData, members } = useApp()
+  const { selection, success } = useHapticFeedback()
 
   // Get the latest member data from the members array to ensure we have up-to-date info
   const latestMember = useMemo(() => {
@@ -106,7 +109,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         age: latestMember['Age'] || '',
         current_level: latestMember['Current Level'] || '',
         notes: latestMember['notes'] || '',
-        ministry: Array.isArray(latestMember['ministry']) ? latestMember['ministry'] : (latestMember['ministry'] ? [latestMember['ministry']] : []),
+        ministry: normalizeMinistry(latestMember['ministry']),
         is_visitor: latestMember['is_visitor'] || false
       })
       // Initialize parent info from member
@@ -220,6 +223,9 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
     setLoading(true)
 
     try {
+      // Ensure ministry data is clean before saving
+      const cleanMinistries = normalizeMinistry(formData.ministry)
+
       await updateMember(latestMember.id, {
         // Pass normalized fields; AppContext will map to the correct table column
         full_name: formData.full_name,
@@ -235,7 +241,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         // Notes
         notes: formData.notes || null,
         // Ministry and visitor status
-        ministry: formData.ministry || [],
+        ministry: cleanMinistries,
         is_visitor: formData.is_visitor || false
       })
 
@@ -246,6 +252,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         }
       }
 
+      success()
       onClose()
 
       // Reset Sunday attendance state
@@ -275,6 +282,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
   useEffect(() => {
     const handleEscKey = (event) => {
       if (event.key === 'Escape' && isOpen) {
+        selection()
         onClose()
       }
     }
@@ -283,14 +291,14 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
     return () => {
       document.removeEventListener('keydown', handleEscKey)
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, selection])
 
   if (!isOpen || !member) return null
 
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center p-4 z-[60] backdrop-animate"
-      onClick={onClose}
+      onClick={() => { selection(); onClose() }}
     >
       <div 
         className={`shadow-2xl ring-1 max-w-md w-full mx-4 max-h-[90vh] flex flex-col transition-all duration-300 animate-scale-in ${overrideMode
@@ -318,7 +326,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
               {overrideMode ? 'Override Active' : 'Override'}
             </button>
             <button
-              onClick={onClose}
+              onClick={() => { selection(); onClose() }}
               className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
             >
               <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
@@ -764,12 +772,12 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
           {/* Form Actions */}
           <div className="flex space-x-3 pt-4">
             <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-800 transition-colors btn-press"
-            >
-              Cancel
-            </button>
+                  type="button"
+                  onClick={() => { selection(); onClose() }}
+                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 transition-colors btn-press"
+                >
+                  Cancel
+                </button>
             <button
               type="submit"
               disabled={loading || !formData.full_name}

@@ -204,16 +204,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
             {/* Right: Help + Profile + Menu */}
             <div className="flex items-center gap-2">
-              {/* Quick Attendance Access Button - only show for admins/collaborators if enabled */}
-              {(isAdmin || isCollaborator) && localStorage.getItem('quickAttendanceEnabled') === 'true' && (
-                <button
-                  onClick={() => setCurrentView('simple')}
-                  className="p-2 rounded-lg text-gray-400 hover:text-green-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                  title="Quick Attendance"
-                >
-                  <Calendar className="w-4 h-4" />
-                </button>
-              )}
+              {/* Quick Attendance Access Button removed */}
 
               {/* Help/Settings Button */}
               <button

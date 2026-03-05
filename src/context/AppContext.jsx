@@ -105,7 +105,7 @@ export const useApp = () => {
 
 export const AppProvider = ({ children }) => {
   // Get user from auth context - may be null during initial load
-  const authContext = useAuth()
+  const authContext = useContext(useAuth) || {}
   const user = authContext?.user
   const authLoading = authContext?.loading
   const [members, setMembers] = useState([])
@@ -196,6 +196,7 @@ export const AppProvider = ({ children }) => {
 
   // Admin-locked default date — forces collaborators to a specific date
   const [lockedDefaultDate, setLockedDefaultDate] = useState(null)
+  const suppressDateBroadcastRef = useRef(false)
 
   // Fetch the owner's locked default date (for collaborators)
   const fetchLockedDefaultDate = useCallback(async (ownerId) => {
@@ -291,7 +292,7 @@ export const AppProvider = ({ children }) => {
 
   // Check if Supabase is properly configured
   const isSupabaseConfigured = useCallback(() => {
-    const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL
+    const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL
     return supabase && supabaseUrl &&
       supabaseUrl !== 'your_supabase_url_here' &&
       supabaseUrl !== 'https://placeholder.supabase.co'
@@ -467,6 +468,7 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     if (isCollaborator || !isSupabaseConfigured() || !user?.id || !selectedAttendanceDate) return
+    if (suppressDateBroadcastRef.current) return
 
     const dateStr = getLocalDateString(selectedAttendanceDate)
     if (!dateStr || adminBroadcastRef.current.date === dateStr) return
@@ -504,8 +506,8 @@ export const AppProvider = ({ children }) => {
     console.log('User ID:', user?.id)
     console.log('Supabase configured?', isSupabaseConfigured())
 
-    if (!user?.email || !isSupabaseConfigured()) {
-      console.log('Skipping collaborator check - no email or Supabase not configured')
+    if (!user?.id || !isSupabaseConfigured()) {
+      console.log('Skipping collaborator check - no user ID or Supabase not configured')
       setIsCollaborator(false)
       setDataOwnerId(null)
       setOwnerEmail(null)
@@ -513,14 +515,31 @@ export const AppProvider = ({ children }) => {
     }
 
     try {
-      // Check if this user's email exists in the collaborators table
-      console.log('Querying collaborators table for email:', user.email.toLowerCase())
-      const { data, error } = await supabase
+      const normalizedEmail = user.email?.trim().toLowerCase()
+      let data = null
+      let error = null
+
+      const userLookup = await supabase
         .from('collaborators')
-        .select('owner_id, status')
-        .eq('email', user.email.toLowerCase())
+        .select('owner_id, status, email')
+        .eq('collaborator_user_id', user.id)
         .in('status', ['pending', 'accepted', 'active'])
-        .single()
+        .maybeSingle()
+
+      data = userLookup.data
+      error = userLookup.error
+
+      if (!data && normalizedEmail) {
+        console.log('Collaborator lookup by user id returned no match. Falling back to email lookup:', normalizedEmail)
+        const emailLookup = await supabase
+          .from('collaborators')
+          .select('owner_id, status, email')
+          .ilike('email', normalizedEmail)
+          .in('status', ['pending', 'accepted', 'active'])
+          .maybeSingle()
+        data = emailLookup.data
+        error = emailLookup.error
+      }
 
       console.log('Collaborators query result:', { data, error })
 
@@ -1027,6 +1046,7 @@ export const AppProvider = ({ children }) => {
     setAvailableSundayDates(sundays)
 
     if (sundays.length > 0) {
+      suppressDateBroadcastRef.current = true
       // 1. Check locked configuration (highest priority)
       if (lockedDefaultDate) {
         const [lyear, lmonth, lday] = lockedDefaultDate.split('-')
@@ -1037,6 +1057,7 @@ export const AppProvider = ({ children }) => {
         ))
         if (lockedMatch) {
           setAndSaveAttendanceDate(lockedMatch)
+          setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
           return
         }
       }
@@ -1052,6 +1073,7 @@ export const AppProvider = ({ children }) => {
         ))
         if (defaultDate) {
           setAndSaveAttendanceDate(defaultDate)
+          setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
           return
         }
       }
@@ -1072,6 +1094,7 @@ export const AppProvider = ({ children }) => {
 
         if (matchingDate) {
           setSelectedAttendanceDate(matchingDate)
+          setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
           return
         }
       }
@@ -1082,6 +1105,7 @@ export const AppProvider = ({ children }) => {
       // Prefer 30th if available, then 23rd, then second Sunday, then first
       const defaultDate = thirtieth || twentyThird || (sundays.length >= 2 ? sundays[1] : sundays[0])
       setAndSaveAttendanceDate(defaultDate)
+      setTimeout(() => { suppressDateBroadcastRef.current = false }, 300)
     }
   }
 
@@ -2227,6 +2251,10 @@ export const AppProvider = ({ children }) => {
 
       if (tableNames.length === 0) {
         console.log('No tables found for this user/owner.')
+        if (isCollaborator && ownerStickyMonth) {
+          setMonthlyTables(sortMonthTables([ownerStickyMonth]))
+          return
+        }
         setMonthlyTables([])
         clearInvalidTable()
         return
@@ -2239,7 +2267,7 @@ export const AppProvider = ({ children }) => {
       console.error('Unexpected error in fetchMonthlyTables:', error)
       // Do not force fallback tables on error to avoid "ghost" months
     }
-  }, [isSupabaseConfigured, dataOwnerId, user?.id, isCollaborator, changeCurrentTable])
+  }, [isSupabaseConfigured, dataOwnerId, user?.id, isCollaborator, ownerStickyMonth, changeCurrentTable])
 
   const deleteMonthTable = useCallback(async (tableName) => {
     if (!tableName) return
