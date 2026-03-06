@@ -3011,6 +3011,7 @@ export const AppProvider = ({ children }) => {
   const acknowledgeAdminSync = useCallback(async () => {
     if (!adminSyncNotice) return
     const { targetTable, targetDate, blocking } = adminSyncNotice
+    setAdminSyncNotice(null)
     const applyDate = async () => {
       if (!targetDate) return
       const [y, m, d] = targetDate.split('-').map(Number)
@@ -3025,25 +3026,28 @@ export const AppProvider = ({ children }) => {
       }))
     }
 
-    if (targetTable && targetTable !== currentTable) {
-      changeCurrentTable(targetTable)
-      if (import.meta.env.MODE === 'test') {
-        await applyDate()
+    try {
+      if (targetTable && targetTable !== currentTable) {
+        changeCurrentTable(targetTable)
+        if (import.meta.env.MODE === 'test') {
+          await applyDate()
+        } else {
+          setTimeout(() => {
+            applyDate()
+          }, 200)
+        }
       } else {
-        setTimeout(() => {
-          applyDate()
-        }, 200)
+        await applyDate()
       }
-    } else {
-      await applyDate()
-    }
 
-    await logActivity('admin_period_refresh_ack', {
-      targetTable,
-      targetDate,
-      blocking
-    })
-    setAdminSyncNotice(null)
+      await logActivity('admin_period_refresh_ack', {
+        targetTable,
+        targetDate,
+        blocking
+      })
+    } catch (err) {
+      console.error('Error acknowledging admin sync:', err)
+    }
   }, [
     adminSyncNotice,
     currentTable,

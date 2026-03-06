@@ -41,3 +41,5 @@ test-gemini.js
 *.pem
 *.key
 *.cert
+.vercel
+.env*.local
