@@ -43,3 +43,4 @@ test-gemini.js
 *.cert
 .vercel
 .env*.local
+.trae/rules/project_rules.md
