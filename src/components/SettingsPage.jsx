@@ -53,11 +53,13 @@ import ExportCenterPage from './ExportCenterPage'
 import ConfirmModal from './ConfirmModal'
 import AdminControlsModal from './AdminControlsModal'
 import ArchiveMonthModal from './ArchiveMonthModal'
+import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const SettingsPage = ({ onBack, navigateToSection }) => {
     const { user, signOut, preferences, resetPassword } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
     const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, dataOwnerId, lockedDefaultDate, saveLockedDefaultDate } = useApp()
+    const { selection } = useHapticFeedback()
 
     const [activeSection, setActiveSection] = useState(null) // null = show main list
     const [showHelpCenter, setShowHelpCenter] = useState(false)
@@ -219,6 +221,16 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
     const [searchQuery, setSearchQuery] = useState('')
     const [showUsageDetails, setShowUsageDetails] = useState(false)
     const [showStorageLimits, setShowStorageLimits] = useState(false)
+
+    const handleInteractionFeedback = useCallback((event) => {
+        if (event.defaultPrevented) return
+        const target = event.target instanceof Element
+            ? event.target.closest('button, a, [role="button"], summary, input[type="checkbox"], input[type="radio"], input[type="range"]')
+            : null
+        if (!target) return
+        if (target.matches(':disabled')) return
+        selection()
+    }, [selection])
 
     // Fetch collaborators for Team section display
     useEffect(() => {
@@ -2181,7 +2193,7 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
 
     // Main render
     return (
-        <>
+        <div onClickCapture={handleInteractionFeedback}>
             {activeSection === null ? renderMainList() : renderDetailView()}
 
             {/* Modals */}
@@ -2344,7 +2356,7 @@ const SettingsPage = ({ onBack, navigateToSection }) => {
                     toast.success(`${archivedTable.replace('_', ' ')} archived successfully!`)
                 }}
             />
-        </>
+        </div>
     )
 }
 

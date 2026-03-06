@@ -7,7 +7,7 @@ import useHapticFeedback from '../hooks/useHapticFeedback'
 import { normalizeMinistry } from '../utils/dataUtils'
 
 const EditMemberModal = ({ isOpen, onClose, member }) => {
-  const { updateMember, markAttendance, refreshSearch, currentTable, attendanceData, loadAllAttendanceData, members } = useApp()
+  const { updateMember, markAttendance, refreshSearch, currentTable, attendanceData, members, toggleMemberBadge, updateMemberBadges, memberHasBadge } = useApp()
   const { selection, success } = useHapticFeedback()
 
   // Get the latest member data from the members array to ensure we have up-to-date info
@@ -90,6 +90,8 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
   // Generate Sunday dates dynamically based on current table, memoized to avoid ref churn
   const sundayDates = useMemo(() => generateSundayDates(currentTable), [currentTable])
   const [sundayAttendance, setSundayAttendance] = useState({})
+  const [selectedTags, setSelectedTags] = useState([])
+  const badgeTags = ['member', 'regular', 'newcomer']
 
   const levels = [
     'SHS1', 'SHS2', 'SHS3',
@@ -105,14 +107,24 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
       const normalizedGender = typeof rawGender === 'string' ? rawGender.toLowerCase() : ''
       setFormData({
         full_name: (latestMember['full_name'] || latestMember['Full Name'] || ''),
-        gender: normalizedGender,
-        phone_number: latestMember['Phone Number'] || '',
-        age: latestMember['Age'] || '',
-        current_level: latestMember['Current Level'] || '',
+        gender: normalizedGender || (typeof latestMember.gender === 'string' ? latestMember.gender.toLowerCase() : ''),
+        phone_number: latestMember['Phone Number'] || latestMember.phone_number || '',
+        age: latestMember['Age'] || latestMember.age || '',
+        current_level: latestMember['Current Level'] || latestMember.current_level || '',
         notes: latestMember['notes'] || '',
-        ministry: normalizeMinistry(latestMember['ministry']),
+        ministry: normalizeMinistry(latestMember['ministry'] ?? latestMember['Ministry']),
         is_visitor: latestMember['is_visitor'] || false
       })
+      const resolvedTags = badgeTags.filter(tag => {
+        if (typeof memberHasBadge === 'function') {
+          return memberHasBadge(latestMember, tag)
+        }
+        if (tag === 'member') return latestMember['Member'] === 'Yes'
+        if (tag === 'regular') return latestMember['Regular'] === 'Yes'
+        if (tag === 'newcomer') return latestMember['Newcomer'] === 'Yes'
+        return false
+      })
+      setSelectedTags(resolvedTags)
       // Initialize parent info from member
       setParentInfo({
         parent_name_1: latestMember['parent_name_1'] || '',
@@ -125,7 +137,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         setShowParentSection(true)
       }
     }
-  }, [latestMember])
+  }, [latestMember, memberHasBadge])
 
   // Initialize attendance snapshot when modal opens (stable deps, no loop)
   useEffect(() => {
@@ -246,6 +258,28 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         is_visitor: formData.is_visitor || false
       })
 
+      const existingTags = badgeTags.filter(tag => {
+        if (typeof memberHasBadge === 'function') {
+          return memberHasBadge(latestMember, tag)
+        }
+        if (tag === 'member') return latestMember['Member'] === 'Yes'
+        if (tag === 'regular') return latestMember['Regular'] === 'Yes'
+        if (tag === 'newcomer') return latestMember['Newcomer'] === 'Yes'
+        return false
+      })
+
+      const tagsChanged = badgeTags.some(tag => existingTags.includes(tag) !== selectedTags.includes(tag))
+      if (tagsChanged) {
+        for (const tag of badgeTags) {
+          const shouldHaveTag = selectedTags.includes(tag)
+          const hasTag = existingTags.includes(tag)
+          if (shouldHaveTag !== hasTag) {
+            await toggleMemberBadge(latestMember.id, tag, { suppressToast: true })
+          }
+        }
+        await updateMemberBadges()
+      }
+
       // Mark attendance for selected Sunday dates
       for (const [date, attendance] of Object.entries(sundayAttendance)) {
         if (attendance !== null) {
@@ -258,6 +292,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
 
       // Reset Sunday attendance state
       setSundayAttendance({})
+      setSelectedTags([])
 
       // Refresh search results to show updated information
       setTimeout(() => refreshSearch(), 100)
@@ -704,6 +739,36 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
                 </div>
               </div>
             )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Member Tags
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {badgeTags.map(tag => {
+                const active = selectedTags.includes(tag)
+                const label = tag === 'member' ? 'Member' : tag === 'regular' ? 'Regular' : 'Newcomer'
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => {
+                      setSelectedTags(prev =>
+                        prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+                      )
+                    }}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                      active
+                        ? 'bg-primary-600 text-white shadow-sm'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Ministry/Groups Section */}

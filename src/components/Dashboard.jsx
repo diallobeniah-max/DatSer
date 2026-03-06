@@ -391,7 +391,7 @@ const Dashboard = ({ isAdmin = false }) => {
     // Level filter
     if (levelFilter) {
       filteredMembers = filteredMembers.filter(member => {
-        const level = (member['Current Level'] || '').toString().toUpperCase()
+        const level = (member['Current Level'] || member.current_level || '').toString().toUpperCase()
         return level === levelFilter.toUpperCase()
       })
     }
@@ -399,7 +399,7 @@ const Dashboard = ({ isAdmin = false }) => {
     // Ministry filter
     if (ministryFilter) {
       filteredMembers = filteredMembers.filter(member => {
-        const ministry = member.ministry || []
+        const ministry = normalizeMinistry(member.ministry ?? member['Ministry'])
         return Array.isArray(ministry) && ministry.includes(ministryFilter)
       })
     }
