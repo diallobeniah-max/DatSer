@@ -258,7 +258,7 @@ const LoginPage = () => {
   if (isPasswordResetFlow) {
     if (resetSuccess) {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-blue-50 flex items-center justify-center p-4">
+        <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-orange-50 flex items-center justify-center p-4">
           <div className="w-full max-w-md">
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
               <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
@@ -280,7 +280,7 @@ const LoginPage = () => {
     }
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-blue-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-orange-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           {/* Logo/Brand Section */}
           <div className="text-center mb-6">
@@ -423,11 +423,11 @@ const LoginPage = () => {
   // Invite flow loading screen - shown while Supabase processes the invite token
   if (isInviteFlow) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-blue-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-orange-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8 text-center">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-100 flex items-center justify-center">
-              <Mail className="w-8 h-8 text-blue-600 animate-pulse" />
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-orange-100 flex items-center justify-center">
+              <Mail className="w-8 h-8 text-orange-600 animate-pulse" />
             </div>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">
               Accepting your invite...
@@ -436,7 +436,7 @@ const LoginPage = () => {
               Setting up your access. This will only take a moment.
             </p>
             <div className="flex justify-center">
-              <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              <div className="w-8 h-8 border-3 border-orange-600 border-t-transparent rounded-full animate-spin" />
             </div>
           </div>
         </div>
@@ -447,7 +447,7 @@ const LoginPage = () => {
   // Confirmation sent screen
   if (confirmationSent) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-blue-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-orange-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8 text-center">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 flex items-center justify-center">
@@ -480,7 +480,7 @@ const LoginPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-blue-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-orange-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo/Brand Section */}
         <div className="text-center mb-6">
@@ -648,7 +648,7 @@ const LoginPage = () => {
                 <button
                   type="button"
                   onClick={() => switchMode('magiclink')}
-                  className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  className="flex items-center gap-1 text-sm text-orange-600 dark:text-orange-400 hover:underline"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   Magic link

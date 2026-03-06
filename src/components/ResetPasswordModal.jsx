@@ -79,7 +79,7 @@ const ResetPasswordModal = ({ isOpen, onClose }) => {
             {/* Modal */}
             <div className="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
                 {/* Header */}
-                <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-5 text-white">
+                <div className="bg-gradient-to-r from-orange-600 to-purple-600 px-6 py-5 text-white">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                             <div className="p-2 bg-white/20 rounded-xl">
@@ -112,9 +112,9 @@ const ResetPasswordModal = ({ isOpen, onClose }) => {
                         </div>
                     ) : (
                         <form onSubmit={handleSubmit} className="space-y-4">
-                            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 flex items-start gap-2">
-                                <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
-                                <p className="text-xs text-blue-700 dark:text-blue-300">
+                            <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-3 flex items-start gap-2">
+                                <ShieldCheck className="w-4 h-4 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
+                                <p className="text-xs text-orange-700 dark:text-orange-300">
                                     Choose a strong password with at least 6 characters. Use a mix of letters, numbers, and symbols.
                                 </p>
                             </div>
@@ -136,7 +136,7 @@ const ResetPasswordModal = ({ isOpen, onClose }) => {
                                         value={newPassword}
                                         onChange={(e) => setNewPassword(e.target.value)}
                                         placeholder="Enter new password"
-                                        className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 transition-all"
+                                        className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-orange-500 focus:border-transparent pr-12 transition-all"
                                         autoFocus
                                     />
                                     <button
@@ -183,7 +183,7 @@ const ResetPasswordModal = ({ isOpen, onClose }) => {
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}
                                         placeholder="Confirm new password"
-                                        className={`w-full px-4 py-3 rounded-xl border bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 transition-all ${
+                                        className={`w-full px-4 py-3 rounded-xl border bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-orange-500 focus:border-transparent pr-12 transition-all ${
                                             confirmPassword && confirmPassword !== newPassword
                                                 ? 'border-red-400 dark:border-red-500'
                                                 : confirmPassword && confirmPassword === newPassword
@@ -211,7 +211,7 @@ const ResetPasswordModal = ({ isOpen, onClose }) => {
                             <button
                                 type="submit"
                                 disabled={isLoading || !newPassword || !confirmPassword || newPassword !== confirmPassword}
-                                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-orange-600 to-purple-600 hover:from-orange-700 hover:to-purple-700 text-white font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 {isLoading ? (
                                     <>

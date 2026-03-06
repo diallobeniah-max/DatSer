@@ -408,7 +408,7 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                         </button>
                         <div>
                             <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                                <HelpCircle className="w-5 h-5 text-blue-500" />
+                                <HelpCircle className="w-5 h-5 text-orange-500" />
                                 Help Center
                             </h1>
                             <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -428,7 +428,7 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                         placeholder="Search questions..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-12 pr-4 py-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all input-focus"
+                        className="w-full pl-12 pr-4 py-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent shadow-sm transition-all input-focus"
                     />
                     {searchQuery && (
                         <button
@@ -466,7 +466,7 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                                     key={cat.id}
                                     onClick={() => setSelectedCategory(cat.id)}
                                     className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all btn-press ${isActive
-                                        ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/25'
+                                        ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/25'
                                         : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
                                         }`}
                                 >
@@ -495,7 +495,7 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                         {filteredFaqs.length} {filteredFaqs.length === 1 ? 'question' : 'questions'} found
                     </span>
                     {searchQuery && (
-                        <span className="text-blue-500">
+                        <span className="text-orange-500">
                             Searching for "{searchQuery}"
                         </span>
                     )}
@@ -519,11 +519,11 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                                     className="w-full flex items-start gap-4 p-4 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
                                 >
                                     <div className={`p-2 rounded-xl flex-shrink-0 ${isExpanded
-                                        ? 'bg-blue-100 dark:bg-blue-900/30'
+                                        ? 'bg-orange-100 dark:bg-orange-900/30'
                                         : 'bg-gray-100 dark:bg-gray-700'
                                         }`}>
                                         <CategoryIcon className={`w-5 h-5 ${isExpanded
-                                            ? 'text-blue-600 dark:text-blue-400'
+                                            ? 'text-orange-600 dark:text-orange-400'
                                             : 'text-gray-500 dark:text-gray-400'
                                             }`} />
                                     </div>
@@ -576,7 +576,7 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                                             {faq.quickAction && (
                                                 <button
                                                     onClick={() => handleQuickAction(faq.quickAction)}
-                                                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl text-sm font-medium hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors btn-press"
+                                                    className="inline-flex items-center gap-2 px-4 py-2 bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 rounded-xl text-sm font-medium hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors btn-press"
                                                 >
                                                     <ExternalLink className="w-4 h-4" />
                                                     {faq.quickAction.label}
@@ -607,7 +607,7 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                                 setSearchQuery('')
                                 setSelectedCategory('all')
                             }}
-                            className="mt-4 px-4 py-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg text-sm font-medium transition-colors btn-press"
+                            className="mt-4 px-4 py-2 text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-lg text-sm font-medium transition-colors btn-press"
                         >
                             Clear filters
                         </button>
@@ -619,7 +619,7 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                     <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
                         Can't find what you're looking for?
                     </p>
-                    <div className="flex items-center justify-center gap-2 text-blue-500">
+                    <div className="flex items-center justify-center gap-2 text-orange-500">
                         <CheckCircle2 className="w-4 h-4" />
                         <span className="text-sm font-medium">More help coming soon</span>
                     </div>

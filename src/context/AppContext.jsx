@@ -61,6 +61,17 @@ const getLocalDateString = (date) => {
   return `${year}-${month}-${day}`
 }
 
+const normalizeMemberRecord = (member) => {
+  if (!member) return member
+  const name = (
+    typeof member.full_name === 'string' && member.full_name.trim()
+  ) ? member.full_name
+    : (typeof member['Full Name'] === 'string' && member['Full Name'].trim()
+      ? member['Full Name']
+      : '')
+  return { ...member, full_name: name, 'Full Name': name }
+}
+
 // Get the latest available table from localStorage, falling back to DEFAULT_TABLE
 const getLatestTable = () => {
   if (typeof window !== 'undefined') {
@@ -865,13 +876,8 @@ export const AppProvider = ({ children }) => {
         console.warn('Fetch members failed; preserving current member list.')
       } else {
         // Filter out records with null name, then normalize both name keys
-        const validMembers = (data || []).filter(member => member['full_name'] || member['Full Name'])
-        const normalizedMembers = validMembers.map(member => {
-          const name = (
-            typeof member['full_name'] === 'string' && member['full_name'].trim()
-          ) ? member['full_name'] : (typeof member['Full Name'] === 'string' ? member['Full Name'] : '')
-          return { ...member, full_name: name, 'Full Name': name }
-        })
+        const validMembers = (data || []).filter(member => member?.['full_name'] || member?.['Full Name'])
+        const normalizedMembers = validMembers.map(normalizeMemberRecord)
         setMembers(normalizedMembers)
         membersCacheRef.current.set(cacheKey, { data: normalizedMembers, ts: now })
         appContextLog(`Successfully loaded ${normalizedMembers.length} members from ${tableName}`)
@@ -3508,7 +3514,7 @@ export const AppProvider = ({ children }) => {
     if (!isSupabaseConfigured()) return;
 
     const channel = supabase
-      .channel('public:members')
+      .channel(`public:members:${currentTable}`)
       .on(
         'postgres_changes',
         {
@@ -3520,20 +3526,30 @@ export const AppProvider = ({ children }) => {
           console.log('Change received!', payload);
 
           if (payload.eventType === 'INSERT') {
-            // Add the new member to the local state
-            setMembers((prevMembers) => [...prevMembers, payload.new]);
+            const incoming = normalizeMemberRecord(payload.new)
+            setMembers((prevMembers) => {
+              const exists = prevMembers.some(member => member.id === incoming.id)
+              const nextMembers = exists
+                ? prevMembers.map(member => member.id === incoming.id ? { ...member, ...incoming } : member)
+                : [...prevMembers, incoming]
+              membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+              return nextMembers
+            });
           } else if (payload.eventType === 'UPDATE') {
-            // Update the existing member in the local state
-            setMembers((prevMembers) =>
-              prevMembers.map((member) =>
-                member.id === payload.new.id ? payload.new : member
+            const incoming = normalizeMemberRecord(payload.new)
+            setMembers((prevMembers) => {
+              const nextMembers = prevMembers.map((member) =>
+                member.id === incoming.id ? { ...member, ...incoming } : member
               )
-            );
+              membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+              return nextMembers
+            });
           } else if (payload.eventType === 'DELETE') {
-            // Remove the deleted member from the local state
-            setMembers((prevMembers) =>
-              prevMembers.filter((member) => member.id !== payload.old.id)
-            );
+            setMembers((prevMembers) => {
+              const nextMembers = prevMembers.filter((member) => member.id !== payload.old.id)
+              membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+              return nextMembers
+            });
           }
         }
       )

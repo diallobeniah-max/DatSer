@@ -105,8 +105,8 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
   // Initialize form data only once per modal open/member id
   useEffect(() => {
     if (!isOpen || !member?.id) return
-    if (hydratedMemberIdRef.current !== null || isDirtyRef.current) return
-    stableMemberRef.current = member
+    if (isDirtyRef.current) return
+    stableMemberRef.current = latestMember || member
     const sourceMember = stableMemberRef.current
     if (sourceMember) {
       // Normalize gender to lowercase to match radio button values
@@ -142,10 +142,10 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
       } else {
         setShowParentSection(false)
       }
-      hydratedMemberIdRef.current = member.id
+      hydratedMemberIdRef.current = sourceMember.id
       isDirtyRef.current = false
     }
-  }, [isOpen, member?.id])
+  }, [isOpen, member?.id, latestMember])
 
   useEffect(() => {
     if (!isOpen) {
@@ -242,8 +242,8 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
       // Ensure ministry data is clean before saving
       const cleanMinistries = normalizeMinistry(formData.ministry)
 
-      await updateMember(latestMember.id, {
-        // Pass normalized fields; AppContext will map to the correct table column
+      const currentSnapshot = members.find(m => m.id === latestMember.id) || latestMember || member
+      const nextMemberPayload = {
         full_name: formData.full_name,
         Gender: formData.gender,
         'Phone Number': formData.phone_number || null,
@@ -262,13 +262,61 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         Member: selectedTags.includes('member') ? 'Yes' : null,
         Regular: selectedTags.includes('regular') ? 'Yes' : null,
         Newcomer: selectedTags.includes('newcomer') ? 'Yes' : null
+      }
+
+      const getExistingValue = (key) => {
+        if (!currentSnapshot) return undefined
+        if (key === 'full_name') return currentSnapshot.full_name ?? currentSnapshot['Full Name']
+        if (key === 'Gender') return currentSnapshot.Gender ?? currentSnapshot.gender
+        if (key === 'Phone Number') return currentSnapshot['Phone Number'] ?? currentSnapshot.phone_number
+        if (key === 'Age') return currentSnapshot.Age ?? currentSnapshot.age
+        if (key === 'Current Level') return currentSnapshot['Current Level'] ?? currentSnapshot.current_level
+        if (key === 'Member') return currentSnapshot.Member ?? currentSnapshot.member
+        if (key === 'Regular') return currentSnapshot.Regular ?? currentSnapshot.regular
+        if (key === 'Newcomer') return currentSnapshot.Newcomer ?? currentSnapshot.newcomer
+        if (key === 'parent_name_1') return currentSnapshot.parent_name_1 ?? currentSnapshot['Parent Name 1']
+        if (key === 'parent_phone_1') return currentSnapshot.parent_phone_1 ?? currentSnapshot['Parent Phone 1']
+        if (key === 'parent_name_2') return currentSnapshot.parent_name_2 ?? currentSnapshot['Parent Name 2']
+        if (key === 'parent_phone_2') return currentSnapshot.parent_phone_2 ?? currentSnapshot['Parent Phone 2']
+        if (key === 'ministry') return currentSnapshot.ministry ?? currentSnapshot.Ministry
+        return currentSnapshot[key]
+      }
+
+      const normalizeComparable = (key, value) => {
+        if (key === 'is_visitor') return Boolean(value)
+        if (key === 'ministry') {
+          return normalizeMinistry(value)
+            .map(item => String(item || '').trim().toLowerCase())
+            .filter(Boolean)
+            .sort()
+            .join('|')
+        }
+        if (value === null || value === undefined) return ''
+        return String(value).trim()
+      }
+
+      const changedEntries = Object.entries(nextMemberPayload).filter(([key, value]) => {
+        const currentValue = getExistingValue(key)
+        return normalizeComparable(key, value) !== normalizeComparable(key, currentValue)
+      })
+      const changedPayload = Object.fromEntries(changedEntries)
+
+      if (Object.keys(changedPayload).length > 0) {
+        await updateMember(latestMember.id, changedPayload)
+      }
+
+      const attendanceUpdates = Object.entries(sundayAttendance).filter(([date, attendance]) => {
+        if (attendance === null || attendance === undefined) return false
+        const currentAttendance = attendanceData[date]?.[latestMember.id]
+        return currentAttendance !== attendance
       })
 
-      // Mark attendance for selected Sunday dates
-      for (const [date, attendance] of Object.entries(sundayAttendance)) {
-        if (attendance !== null) {
-          await markAttendance(latestMember.id, new Date(date), attendance)
-        }
+      if (attendanceUpdates.length > 0) {
+        await Promise.all(
+          attendanceUpdates.map(([date, attendance]) =>
+            markAttendance(latestMember.id, new Date(date), attendance)
+          )
+        )
       }
 
       success()

@@ -186,7 +186,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
             </div>
 
             {/* User Profile Section */}
-            <div className="px-4 py-6 md:py-4 bg-gradient-to-r from-primary-50 to-blue-50 dark:from-gray-800 dark:to-gray-750 border-b border-gray-200 dark:border-gray-700">
+            <div className="px-4 py-6 md:py-4 bg-gradient-to-r from-primary-50 to-orange-50 dark:from-gray-800 dark:to-gray-750 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-3">
                 {userPhoto ? (
                   <img
@@ -231,7 +231,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                 >
                   <CheckSquare className="w-5 h-5 md:w-4 md:h-4" />
                   <span>Marked</span>
-                  {editedCount > 0 && <span className="ml-auto px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">{editedCount}</span>}
+                  {editedCount > 0 && <span className="ml-auto px-2 py-0.5 text-xs bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 rounded-full">{editedCount}</span>}
                 </button>
                 <button
                   onClick={() => { selection(); setShowDropdown(false); setCurrentView?.('dashboard'); setDashboardTab?.('duplicates') }}

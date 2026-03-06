@@ -78,14 +78,14 @@ const DateSelector = ({ variant = 'icon' }) => {
             <span>{selectedAttendanceDate ? formatDate(selectedAttendanceDate) : 'Select Attendance Date'}</span>
           </span>
           {selectedAttendanceDate && (
-            <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">Selected</span>
+            <span className="px-2 py-0.5 text-xs rounded-full bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300">Selected</span>
           )}
         </button>
       ) : (
         <button
           onClick={() => setIsOpen(!isOpen)}
           className={`flex items-center justify-center w-10 h-10 text-white rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 ${
-            isOpen ? 'bg-blue-700 ring-2 ring-blue-300' : 'bg-blue-600 hover:bg-blue-700'
+            isOpen ? 'bg-orange-700 ring-2 ring-orange-300' : 'bg-orange-600 hover:bg-orange-700'
           }`}
           title={selectedAttendanceDate ? `Selected: ${formatDate(selectedAttendanceDate)}` : 'Select Attendance Date'}
         >
@@ -102,7 +102,7 @@ const DateSelector = ({ variant = 'icon' }) => {
             className={`${isDarkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-hidden`}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className={`bg-gradient-to-r ${isDarkMode ? 'from-blue-700 to-blue-800' : 'from-blue-600 to-blue-700'} text-white px-6 py-4 relative`}>
+            <div className={`bg-gradient-to-r ${isDarkMode ? 'from-orange-700 to-orange-800' : 'from-orange-600 to-orange-700'} text-white px-6 py-4 relative`}>
               <button
                 onClick={() => setIsOpen(false)}
                 className={`absolute top-4 right-4 p-1 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white hover:bg-opacity-10' : 'hover:bg-white hover:bg-opacity-20'}`}
@@ -110,7 +110,7 @@ const DateSelector = ({ variant = 'icon' }) => {
                 <X className="w-5 h-5" />
               </button>
               <h3 className="text-lg font-semibold pr-8">Select Attendance Date</h3>
-              <p className={`text-sm mt-1 ${isDarkMode ? 'text-blue-200' : 'text-blue-100'}`}>Choose a Sunday for marking attendance</p>
+              <p className={`text-sm mt-1 ${isDarkMode ? 'text-orange-200' : 'text-orange-100'}`}>Choose a Sunday for marking attendance</p>
             </div>
             
             <div className="max-h-96 overflow-y-auto">
@@ -131,8 +131,8 @@ const DateSelector = ({ variant = 'icon' }) => {
                         className={`w-full text-left px-6 py-4 transition-all duration-200 border-l-4 hover:shadow-sm ${
                           isSelected
                               ? isDarkMode 
-                                ? 'bg-blue-900 bg-opacity-30 border-l-blue-400 text-blue-300 shadow-sm'
-                                : 'bg-blue-50 border-l-blue-500 text-blue-700 shadow-sm'
+                                ? 'bg-orange-900 bg-opacity-30 border-l-orange-400 text-orange-300 shadow-sm'
+                                : 'bg-orange-50 border-l-orange-500 text-orange-700 shadow-sm'
                               : isDarkMode
                                 ? 'border-l-transparent hover:bg-gray-700 hover:border-l-gray-500 text-gray-200'
                                 : 'border-l-transparent hover:bg-gray-50 hover:border-l-gray-300 text-gray-700'
@@ -148,7 +148,7 @@ const DateSelector = ({ variant = 'icon' }) => {
                             </div>
                           </div>
                           {isSelected && (
-                            <div className={`w-3 h-3 rounded-full ${isDarkMode ? 'bg-blue-400' : 'bg-blue-500'}`}></div>
+                            <div className={`w-3 h-3 rounded-full ${isDarkMode ? 'bg-orange-400' : 'bg-orange-500'}`}></div>
                           )}
                         </div>
                       </button>

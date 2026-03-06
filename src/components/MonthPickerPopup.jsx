@@ -128,7 +128,7 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef, onCreateMonth }) => {
                 {/* Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200/50 dark:border-gray-700/50 bg-gray-50/80 dark:bg-gray-900/50">
                     <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-blue-500" />
+                        <Calendar className="w-4 h-4 text-orange-500" />
                         <span className="text-sm font-semibold text-gray-900 dark:text-white">
                             Select Month
                         </span>
@@ -159,7 +159,7 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef, onCreateMonth }) => {
                                             key={table}
                                             onClick={() => handleSelectMonth(table)}
                                             className={`relative flex flex-col items-center justify-center p-3 rounded-xl text-sm font-medium btn-press transition-all duration-200 ${isSelected
-                                                ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30 scale-105'
+                                                ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30 scale-105'
                                                 : 'bg-gray-100 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                                                 }`}
                                         >
@@ -206,8 +206,8 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef, onCreateMonth }) => {
                                         key={dateStr}
                                         onClick={() => handleSelectSunday(dateStr)}
                                         className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${isSelected
-                                            ? 'bg-blue-600 text-white'
-                                            : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-600 border border-gray-200 dark:border-gray-600'
+                                            ? 'bg-orange-600 text-white'
+                                            : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-orange-50 dark:hover:bg-gray-600 border border-gray-200 dark:border-gray-600'
                                             }`}
                                     >
                                         {label}
@@ -227,7 +227,7 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef, onCreateMonth }) => {
                                 onClose()
                                 if (onCreateMonth) onCreateMonth()
                             }}
-                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors text-sm shadow-sm btn-press"
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-medium transition-colors text-sm shadow-sm btn-press"
                         >
                             <Plus className="w-4 h-4" />
                             Create New Month

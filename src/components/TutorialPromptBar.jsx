@@ -6,7 +6,7 @@ const TutorialPromptBar = ({ isOpen, onAccept, onDismiss }) => {
 
     return (
         <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 z-[100] animate-slide-up">
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl shadow-lg p-4 flex items-center gap-4">
+            <div className="bg-gradient-to-r from-orange-600 to-purple-600 text-white rounded-xl shadow-lg p-4 flex items-center gap-4">
                 <div className="p-2 bg-white/20 rounded-lg flex-shrink-0">
                     <HelpCircle className="w-5 h-5" />
                 </div>

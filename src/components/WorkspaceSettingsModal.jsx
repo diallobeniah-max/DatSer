@@ -52,7 +52,7 @@ const WorkspaceSettingsModal = ({ isOpen, onClose }) => {
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
                     <div className="flex items-center gap-2">
-                        <Building2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                        <Building2 className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                         <h2 className="text-lg font-bold">Workspace Settings</h2>
                     </div>
                     <button
@@ -66,14 +66,14 @@ const WorkspaceSettingsModal = ({ isOpen, onClose }) => {
                 {/* Content */}
                 <div className="p-6 space-y-4">
                     {/* Info Box */}
-                    <div className={`p-4 rounded-lg flex items-start gap-3 ${isDarkMode ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'
+                    <div className={`p-4 rounded-lg flex items-start gap-3 ${isDarkMode ? 'bg-orange-900/20 border border-orange-800' : 'bg-orange-50 border border-orange-200'
                         }`}>
-                        <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                        <Info className="w-5 h-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
                         <div className="text-sm">
-                            <p className="font-medium text-blue-900 dark:text-blue-100 mb-1">
+                            <p className="font-medium text-orange-900 dark:text-orange-100 mb-1">
                                 What is a Workspace Name?
                             </p>
-                            <p className="text-blue-800 dark:text-blue-200">
+                            <p className="text-orange-800 dark:text-orange-200">
                                 This name helps identify your data in the backend. It makes it easier to filter
                                 and manage multiple organizations in Supabase.
                             </p>
@@ -92,9 +92,9 @@ const WorkspaceSettingsModal = ({ isOpen, onClose }) => {
                             placeholder="e.g., Grace Church Youth, Teen Center NYC"
                             maxLength={50}
                             className={`w-full px-3 py-2 rounded-lg border transition-colors ${isDarkMode
-                                ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-blue-500'
-                                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500 focus:border-blue-500'
-                                } focus:outline-none focus:ring-2 focus:ring-blue-500/20`}
+                                ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-orange-500'
+                                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500 focus:border-orange-500'
+                                } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
                         />
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                             {workspaceName.length}/50 characters
@@ -127,7 +127,7 @@ const WorkspaceSettingsModal = ({ isOpen, onClose }) => {
                         disabled={isLoading || !workspaceName.trim()}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${isLoading || !workspaceName.trim()
                             ? 'bg-gray-400 cursor-not-allowed text-white'
-                            : 'bg-blue-600 hover:bg-blue-700 text-white'
+                            : 'bg-orange-600 hover:bg-orange-700 text-white'
                             }`}
                     >
                         <Save className="w-4 h-4" />

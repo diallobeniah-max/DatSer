@@ -220,7 +220,7 @@ const MissingDataModal = ({ member, missingFields, missingDates, pendingAttendan
                     : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
                     }`}>
                     <div className="flex items-center gap-2">
-                        <AlertCircle className={`w-5 h-5 ${isOverrideMode ? 'text-orange-500' : 'text-blue-500'}`} />
+                        <AlertCircle className={`w-5 h-5 ${isOverrideMode ? 'text-orange-500' : 'text-orange-500'}`} />
                         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
                             Complete Missing Information
                         </h2>

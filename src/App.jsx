@@ -179,7 +179,7 @@ function AppContent({ isMobile }) {
   }
 
   return (
-    <div className={`min-app-vh bg-gray-50 dark:bg-gray-900 transition-colors duration-200 ios-overscroll-none ${isMobile ? 'mobile-toast-top' : ''}`}>
+    <div className={`min-app-vh transition-colors duration-200 ios-overscroll-none ${isMobile ? 'mobile-toast-top' : ''}`}>
       <Header
         currentView={currentView}
         setCurrentView={setCurrentView}
@@ -192,7 +192,7 @@ function AppContent({ isMobile }) {
       {isCollaborator && adminSyncNotice && (
         <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-900 rounded-3xl w-full max-w-md shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div className="px-6 pt-6 pb-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+            <div className="px-6 pt-6 pb-4 bg-gradient-to-r from-orange-600 to-orange-800 text-white">
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-full bg-white/15 flex items-center justify-center text-xl font-semibold">!</div>
                 <div>
@@ -207,13 +207,13 @@ function AppContent({ isMobile }) {
               </div>
               {adminTargetLabel && (
                 <div className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">
-                  New period: <span className="text-blue-700 dark:text-blue-300">{adminTargetLabel}</span>
+                  New period: <span className="text-orange-700 dark:text-orange-300">{adminTargetLabel}</span>
                 </div>
               )}
               <div className="mt-5">
                 <button
                   onClick={acknowledgeAdminSync}
-                  className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold transition-colors"
+                  className="w-full px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-semibold transition-colors"
                 >
                   Refresh
                 </button>

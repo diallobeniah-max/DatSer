@@ -183,7 +183,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 <CheckSquare className="w-4 h-4" />
                 <span>Marked</span>
                 {editedCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
+                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 rounded-full">
                     {editedCount}
                   </span>
                 )}
@@ -209,7 +209,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
               {/* Help/Settings Button */}
               <button
                 onClick={() => { selection(); setCurrentView('settings') }}
-                className="relative p-2 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className="relative p-2 rounded-lg text-gray-400 hover:text-orange-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 title="Settings"
               >
                 <HelpCircle className="w-4 h-4" />
@@ -264,7 +264,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 <CheckSquare className="w-4 h-4" />
                 <span>Marked</span>
                 {editedCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
+                  <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 rounded-full">
                     {editedCount}
                   </span>
                 )}
@@ -308,7 +308,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
               <button
                 ref={monthButtonRef}
                 onClick={() => { selection(); setShowMonthPicker(true) }}
-                className="flex items-center gap-0.5 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium transition-colors"
+                className="flex items-center gap-0.5 text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 font-medium transition-colors"
                 title={isCollaborator ? "Click to switch month" : "Select Month"}
               >
                 {currentTable ? currentTable.replace('_', ' ') : 'Select Month'}

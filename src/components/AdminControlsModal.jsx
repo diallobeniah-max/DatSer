@@ -259,9 +259,9 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
 
                 <div className="p-6 space-y-6">
                     {/* Sticky Month Section */}
-                    <section className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl p-4 border border-blue-200 dark:border-blue-800">
+                    <section className="bg-gradient-to-br from-orange-50 to-indigo-50 dark:from-orange-900/20 dark:to-indigo-900/20 rounded-xl p-4 border border-orange-200 dark:border-orange-800">
                         <div className="flex items-center gap-2 mb-3">
-                            <Calendar className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                            <Calendar className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                             <h3 className="font-semibold text-gray-900 dark:text-white">Sticky Month</h3>
                         </div>
                         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
@@ -275,7 +275,7 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
                                     <select
                                         value={stickyMonth}
                                         onChange={(e) => setStickyMonth(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-orange-500"
                                     >
                                         <option value="">Select month...</option>
                                         {MONTHS.map(m => (
@@ -288,7 +288,7 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
                                     <select
                                         value={selectedYear}
                                         onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-orange-500"
                                     >
                                         {years.map(y => (
                                             <option key={y} value={y}>{y}</option>
@@ -300,7 +300,7 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
                             <button
                                 onClick={handleSetStickyMonth}
                                 disabled={!stickyMonth || loading}
-                                className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                className="w-full px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 <Lock className="w-4 h-4" />
                                 {loading ? 'Setting...' : 'Set Sticky Month for All Collaborators'}

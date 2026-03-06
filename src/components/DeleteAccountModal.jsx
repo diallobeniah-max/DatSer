@@ -226,14 +226,14 @@ const DeleteAccountModal = ({ isOpen, onClose }) => {
                     </div>
 
                     {/* Export option */}
-                    <div className={`p-4 rounded-xl ${isDarkMode ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'
+                    <div className={`p-4 rounded-xl ${isDarkMode ? 'bg-orange-900/20 border border-orange-800' : 'bg-orange-50 border border-orange-200'
                         }`}>
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className={`font-medium text-sm ${isDarkMode ? 'text-blue-300' : 'text-blue-700'}`}>
+                                <p className={`font-medium text-sm ${isDarkMode ? 'text-orange-300' : 'text-orange-700'}`}>
                                     Want to save your data first?
                                 </p>
-                                <p className={`text-xs mt-1 ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+                                <p className={`text-xs mt-1 ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
                                     Export all your members as a CSV file
                                 </p>
                             </div>
@@ -241,8 +241,8 @@ const DeleteAccountModal = ({ isOpen, onClose }) => {
                                 onClick={handleExportCSV}
                                 disabled={isExporting}
                                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${isDarkMode
-                                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                    ? 'bg-orange-600 hover:bg-orange-700 text-white'
+                                    : 'bg-orange-600 hover:bg-orange-700 text-white'
                                     } disabled:opacity-50`}
                             >
                                 {isExporting ? (

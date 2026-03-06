@@ -1185,7 +1185,7 @@ const Dashboard = ({ isAdmin = false }) => {
       title: "Assign Badge",
       message: `Assign "${badgeName}" to ${memberCount} member${memberCount !== 1 ? 's' : ''}?`,
       confirmText: "Assign",
-      confirmButtonClass: "bg-blue-600 hover:bg-blue-700 text-white",
+      confirmButtonClass: "bg-orange-600 hover:bg-orange-700 text-white",
       onConfirm: async () => {
         setIsUpdatingBadges(true)
         try {
@@ -1197,7 +1197,7 @@ const Dashboard = ({ isAdmin = false }) => {
           }
           await updateMemberBadges()
           toast.success(`Successfully assigned "${badgeName}" to ${memberCount} member${memberCount !== 1 ? 's' : ''}!`, {
-            style: { background: '#3b82f6', color: '#ffffff' }
+            style: { background: '#f97316', color: '#ffffff' }
           })
         } catch (error) {
           console.error('Error assigning badges:', error)
@@ -1240,7 +1240,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       // Badge colors matching the icon colors
       const badgeColors = {
-        'member': '#3b82f6',   // Blue
+        'member': '#f97316',
         'regular': '#10b981',  // Green
         'newcomer': '#f59e0b'  // Amber/Gold
       }
@@ -1295,7 +1295,7 @@ const Dashboard = ({ isAdmin = false }) => {
               <button
                 onClick={() => setSortNewestFirst(!sortNewestFirst)}
                 className={`text-[11px] sm:text-xs px-2 py-1 rounded-full flex items-center gap-1 transition-colors ${sortNewestFirst
-                  ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-300 dark:border-blue-700'
+                  ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 border border-orange-300 dark:border-orange-700'
                   : 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 border border-orange-300 dark:border-orange-700'
                   }`}
                 title={sortNewestFirst ? 'Newest to Oldest' : 'Oldest to Newest'}
@@ -1307,7 +1307,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 <>
                   <button
                     onClick={openTransferModal}
-                    className="text-[11px] sm:text-xs px-2 py-1 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 border border-blue-300 dark:border-blue-700"
+                    className="text-[11px] sm:text-xs px-2 py-1 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50 border border-orange-300 dark:border-orange-700"
                     title="Transfer attendance to another date"
                   >
                     Transfer
@@ -1351,7 +1351,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     }
                   }}
                   className={`flex-shrink-0 flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors duration-150 border ${isSelected
-                    ? 'bg-[#D9E8FF] dark:bg-[#1E3A8B] text-blue-900 dark:text-white border-blue-300 dark:border-blue-700 shadow-lg scale-[1.02]'
+                    ? 'bg-[#FFE5D9] dark:bg-[#8B4513] text-orange-900 dark:text-white border-orange-300 dark:border-orange-700 shadow-lg scale-[1.02]'
                     : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm'
                     }`}
                   title={`${label}: ${presentCount} present, ${absentCount} absent`}
@@ -1538,7 +1538,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
                     onClick={selectedDuplicateIds.size === 0 ? selectAllDuplicates : deselectAllDuplicates}
-                    className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium transition-colors ${selectedDuplicateIds.size === 0 ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-400 dark:bg-gray-600 text-white hover:bg-gray-500 dark:hover:bg-gray-500'}`}
+                    className={`px-3 py-1.5 rounded text-xs sm:text-sm font-medium transition-colors ${selectedDuplicateIds.size === 0 ? 'bg-orange-600 text-white hover:bg-orange-700' : 'bg-gray-400 dark:bg-gray-600 text-white hover:bg-gray-500 dark:hover:bg-gray-500'}`}
                   >
                     {selectedDuplicateIds.size === 0 ? 'Select All' : 'Deselect All'}
                   </button>
@@ -1833,10 +1833,10 @@ const Dashboard = ({ isAdmin = false }) => {
                                     onClick={() => handleAttendance(member.id, true)}
                                     disabled={attendanceLoading[member.id]}
                                     className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
-                                      ? 'bg-green-600 dark:bg-green-700 text-white shadow ring-1 ring-green-300 dark:ring-green-500'
+                                      ? 'bg-orange-600 dark:bg-orange-700 text-white shadow ring-1 ring-orange-300 dark:ring-orange-500'
                                       : attendanceLoading[member.id]
                                         ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
-                                        : 'bg-green-600 dark:bg-green-700 text-white shadow-sm'
+                                        : 'bg-orange-600 dark:bg-orange-700 text-white shadow-sm'
                                       }`}
                                     title={isPresentSelected ? "Click to clear" : "Mark present"}
                                   >
@@ -1925,7 +1925,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                     const diffMins = Math.floor(diffMs / (1000 * 60))
 
                                     let relativeTime = ''
-                                    let badgeColor = 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                                    let badgeColor = 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
 
                                     if (diffDays === 0) {
                                       if (diffHours === 0) {
@@ -1949,7 +1949,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                     }
 
                                     return (
-                                      <div className="mt-3 p-3 rounded-lg bg-gradient-to-r from-primary-50 to-blue-50 dark:from-primary-900/20 dark:to-blue-900/20 border border-primary-200 dark:border-primary-800/50">
+                                      <div className="mt-3 p-3 rounded-lg bg-gradient-to-r from-primary-50 to-orange-50 dark:from-primary-900/20 dark:to-orange-900/20 border border-primary-200 dark:border-primary-800/50">
                                         <div className="flex items-center justify-between gap-2 mb-2">
                                           <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide flex-shrink-0">Registered</p>
                                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium truncate max-w-[100px] ${badgeColor}`} title={relativeTime}>
@@ -2432,21 +2432,21 @@ const Dashboard = ({ isAdmin = false }) => {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="px-5 py-4 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 flex items-center justify-between flex-shrink-0">
+            <div className="px-5 py-4 bg-orange-50 dark:bg-orange-900/20 border-b border-orange-200 dark:border-orange-800 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
-                  <Calendar className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900 flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-blue-800 dark:text-blue-300">Transfer Attendance</h3>
-                  <p className="text-xs text-blue-600 dark:text-blue-400">Select members to transfer</p>
+                  <h3 className="text-lg font-semibold text-orange-800 dark:text-orange-300">Transfer Attendance</h3>
+                  <p className="text-xs text-orange-600 dark:text-orange-400">Select members to transfer</p>
                 </div>
               </div>
               <button
                 onClick={() => { selection(); setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
-                className="p-2 hover:bg-blue-100 dark:hover:bg-blue-800 rounded-lg transition-colors"
+                className="p-2 hover:bg-orange-100 dark:hover:bg-orange-800 rounded-lg transition-colors"
               >
-                <X className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <X className="w-5 h-5 text-orange-600 dark:text-orange-400" />
               </button>
             </div>
 
@@ -2499,7 +2499,7 @@ const Dashboard = ({ isAdmin = false }) => {
                         const allIds = Object.keys(sourceMap).filter(id => sourceMap[id] === true || sourceMap[id] === false)
                         setSelectedTransferIds(selectedTransferIds.size === allIds.length ? new Set() : new Set(allIds))
                       }}
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                      className="text-xs text-orange-600 dark:text-orange-400 hover:underline"
                     >
                       {selectedTransferIds.size === Object.keys(attendanceData[selectedSundayDate] || {}).filter(id => (attendanceData[selectedSundayDate] || {})[id] === true || (attendanceData[selectedSundayDate] || {})[id] === false).length ? 'Deselect All' : 'Select All'}
                     </button>
@@ -2543,10 +2543,10 @@ const Dashboard = ({ isAdmin = false }) => {
                         <button
                           key={id}
                           onClick={() => toggleTransferMember(id)}
-                          className={`w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-100 dark:hover:bg-gray-600/50 transition-colors text-left ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-100 dark:hover:bg-gray-600/50 transition-colors text-left ${isSelected ? 'bg-orange-50 dark:bg-orange-900/20' : ''}`}
                         >
                           <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected
-                            ? 'bg-blue-600 border-blue-600'
+                            ? 'bg-orange-600 border-orange-600'
                             : 'border-gray-300 dark:border-gray-500'
                             }`}>
                             {isSelected && <Check className="w-3 h-3 text-white" />}
@@ -2586,7 +2586,7 @@ const Dashboard = ({ isAdmin = false }) => {
               <button
                 onClick={handleBulkTransfer}
                 disabled={!transferTargetDate || isTransferring || selectedTransferIds.size === 0}
-                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                className="flex-1 px-4 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
               >
                 {isTransferring ? (
                   <>
@@ -2830,7 +2830,7 @@ const Dashboard = ({ isAdmin = false }) => {
             {/* Add Member Button */}
             <button
               onClick={() => { selection(); setShowMemberModal(true) }}
-              className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm"
+              className="flex items-center gap-2 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
               title="Add New Member"
             >
               <UserPlus className="w-5 h-5" />

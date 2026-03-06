@@ -263,7 +263,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
             padding: 8px 12px; border-radius: 8px; border: 1px solid #475569; 
             font-size: 13px; background: #1e293b; color: white; cursor: pointer;
           }
-          .toolbar select:focus { outline: none; border-color: #3b82f6; }
+          .toolbar select:focus { outline: none; border-color: #f97316; }
           .toolbar button {
             padding: 10px 20px; border-radius: 8px; border: none;
             font-weight: 600; cursor: pointer; transition: all 0.2s;
@@ -283,8 +283,8 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
             border: 2px dashed transparent; padding: 5px 10px; border-radius: 4px;
             transition: border-color 0.2s; cursor: text;
           }
-          .editable-title:hover { border-color: #667eea; }
-          .editable-title:focus { outline: none; border-color: #667eea; background: #f0f4ff; }
+          .editable-title:hover { border-color: #f97316; }
+          .editable-title:focus { outline: none; border-color: #f97316; background: #fff7ed; }
           
           table { width: 100%; border-collapse: collapse; margin-top: 20px; }
           th, td { border: 1px solid #d1d5db; padding: 8px; text-align: center; }
@@ -813,8 +813,8 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4 animate-fade-in-up transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] grid-animate">
           <div className="bg-white dark:bg-gray-800 rounded-xl sm:rounded-2xl p-3 sm:p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
             <div className="flex items-center gap-2 sm:gap-3">
-              <div className="p-1.5 sm:p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg sm:rounded-xl">
-                <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 dark:text-blue-400" />
+              <div className="p-1.5 sm:p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg sm:rounded-xl">
+                <Users className="w-4 h-4 sm:w-5 sm:h-5 text-orange-600 dark:text-orange-400" />
               </div>
               <div>
                 <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">{stats.totalMembers}</p>
@@ -881,7 +881,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
           {showAdvancedFeatures && (
             <div className="p-4 pt-0 border-t border-gray-200 dark:border-gray-700">
               {/* Badge Processing Content */}
-              <div className="bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl p-5 text-white mt-4">
+              <div className="bg-gradient-to-br from-orange-500 to-purple-600 rounded-xl p-5 text-white mt-4">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2 mb-2">
@@ -892,7 +892,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                       Auto-assign badges based on attendance
                     </p>
                     <div className="space-y-1 text-xs text-white/70">
-                      <p>• <span className="text-blue-200 font-medium">Member</span> = 2+ Sundays</p>
+                      <p>• <span className="text-orange-200 font-medium">Member</span> = 2+ Sundays</p>
                       <p>• <span className="text-green-200 font-medium">Regular</span> = 3+ consecutive</p>
                     </div>
                   </div>
@@ -907,7 +907,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                   disabled={isProcessingBadges || stats.sundaysCompleted < stats.totalSundays}
                   className={`w-full mt-4 py-2.5 rounded-lg font-semibold flex items-center justify-center gap-2 transition-all text-sm ${stats.sundaysCompleted < stats.totalSundays
                     ? 'bg-white/20 text-white/50 cursor-not-allowed'
-                    : 'bg-white text-blue-600 hover:bg-blue-50 shadow-lg btn-press'
+                    : 'bg-white text-orange-600 hover:bg-orange-50 shadow-lg btn-press'
                     }`}
                 >
                   {isProcessingBadges ? (
@@ -971,7 +971,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                       <span className="text-sm text-gray-900 dark:text-white">{member.name}</span>
                       <span className={`text-xs px-2 py-1 rounded-full font-medium ${member.newBadge === 'regular'
                         ? 'bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-300'
-                        : 'bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
+                        : 'bg-orange-100 dark:bg-orange-800 text-orange-700 dark:text-orange-300'
                         }`}>
                         {member.newBadge === 'regular' ? '⭐ Regular' : '👤 Member'}
                       </span>
@@ -987,7 +987,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
         <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-fade-in-up" style={{ animationDelay: '200ms' }}>
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
             <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-blue-500" />
+              <Calendar className="w-5 h-5 text-orange-500" />
               This Month's Sundays
             </h3>
           </div>
@@ -1116,7 +1116,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white ${index === 0 ? 'bg-yellow-500' :
                         index === 1 ? 'bg-gray-400' :
                           index === 2 ? 'bg-amber-600' :
-                            'bg-blue-500'
+                            'bg-orange-500'
                         }`}>
                         {index + 1}
                       </div>
@@ -1126,7 +1126,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                       </div>
                     </div>
                     <div className={`text-lg font-bold ${attendee.rate >= 90 ? 'text-green-500' :
-                      attendee.rate >= 75 ? 'text-blue-500' :
+                      attendee.rate >= 75 ? 'text-orange-500' :
                         'text-yellow-500'
                       }`}>
                       {attendee.rate}%

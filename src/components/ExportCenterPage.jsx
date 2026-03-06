@@ -353,7 +353,7 @@ const ExportCenterPage = ({ onBack }) => {
                     <ChevronLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                 </button>
                 <div className="flex items-center gap-2">
-                    <FileSpreadsheet className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                    <FileSpreadsheet className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                     <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Export Center</h1>
                 </div>
             </div>
@@ -363,11 +363,11 @@ const ExportCenterPage = ({ onBack }) => {
                 <section className="bg-white dark:bg-gray-800 rounded-xl shadow p-4 lg:p-6">
                     <div className="flex items-center justify-between mb-3">
                         <h2 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                            <Calendar className="w-4 h-4 text-blue-500" /> Select Months
+                            <Calendar className="w-4 h-4 text-orange-500" /> Select Months
                         </h2>
                         <button
                             onClick={handleSelectAll}
-                            className="text-xs px-2 py-1 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800/40 transition-colors"
+                            className="text-xs px-2 py-1 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-800/40 transition-colors"
                         >
                             {selectAll ? 'Deselect All' : 'Select All'}
                         </button>
@@ -384,8 +384,8 @@ const ExportCenterPage = ({ onBack }) => {
                                                 key={table}
                                                 onClick={() => toggleMonth(table)}
                                                 className={`px-3 py-1 rounded-full text-sm font-medium border transition-colors ${selected
-                                                    ? 'bg-blue-600 text-white border-blue-600'
-                                                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-600 hover:border-blue-400'
+                                                    ? 'bg-orange-600 text-white border-orange-600'
+                                                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-600 hover:border-orange-400'
                                                     }`}
                                             >
                                                 {table.replace('_', ' ')}
@@ -456,14 +456,14 @@ const ExportCenterPage = ({ onBack }) => {
                         </div>
 
                         {/* Summary Stats */}
-                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl p-4 lg:p-6 mb-6 border border-blue-200 dark:border-blue-800">
+                        <div className="bg-gradient-to-br from-orange-50 to-indigo-50 dark:from-orange-900/20 dark:to-indigo-900/20 rounded-xl p-4 lg:p-6 mb-6 border border-orange-200 dark:border-orange-800">
                             <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
-                                <FileSpreadsheet className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                <FileSpreadsheet className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                                 Export Summary
                             </h3>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                <div className="bg-white dark:bg-gray-800 rounded-xl p-3 lg:p-4 shadow-sm border border-blue-100 dark:border-blue-800">
-                                    <div className="text-2xl lg:text-3xl font-bold text-blue-600 dark:text-blue-400">{summary.monthsCount}</div>
+                                <div className="bg-white dark:bg-gray-800 rounded-xl p-3 lg:p-4 shadow-sm border border-orange-100 dark:border-orange-800">
+                                    <div className="text-2xl lg:text-3xl font-bold text-orange-600 dark:text-orange-400">{summary.monthsCount}</div>
                                     <div className="text-xs lg:text-sm text-gray-600 dark:text-gray-300 font-medium">Month{summary.monthsCount !== 1 ? 's' : ''} Selected</div>
                                 </div>
                                 <div className="bg-white dark:bg-gray-800 rounded-xl p-3 lg:p-4 shadow-sm border border-green-100 dark:border-green-800">
@@ -479,7 +479,7 @@ const ExportCenterPage = ({ onBack }) => {
                                     <div className="text-xs lg:text-sm text-gray-600 dark:text-gray-300 font-medium">Female Members</div>
                                 </div>
                             </div>
-                            <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-800">
+                            <div className="mt-4 pt-4 border-t border-orange-200 dark:border-orange-800">
                                 <p className="text-xs lg:text-sm text-gray-600 dark:text-gray-400">
                                     <strong>Ready to export:</strong> {summary.total} member{summary.total !== 1 ? 's' : ''} from {summary.monthsCount} month{summary.monthsCount !== 1 ? 's' : ''} 
                                     ({summary.boys} male, {summary.girls} female). All phone numbers will be formatted with leading zero. Gender values normalized to "Male"/"Female".
@@ -492,7 +492,7 @@ const ExportCenterPage = ({ onBack }) => {
                             <button
                                 onClick={() => setPreviewMode('standard')}
                                 className={`flex-1 py-2 px-3 rounded-lg font-medium text-sm transition-all ${previewMode === 'standard'
-                                    ? 'bg-blue-600 text-white shadow-md'
+                                    ? 'bg-orange-600 text-white shadow-md'
                                     : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600'
                                     }`}
                             >
@@ -607,7 +607,7 @@ const ExportCenterPage = ({ onBack }) => {
                     <button
                         onClick={() => setExportMode('standard')}
                         className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${exportMode === 'standard'
-                            ? 'bg-blue-600 text-white shadow-md'
+                            ? 'bg-orange-600 text-white shadow-md'
                             : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600'
                             }`}
                     >
@@ -657,8 +657,8 @@ const ExportCenterPage = ({ onBack }) => {
                         ? 'The exported CSV includes a summary header and can be imported directly into Google Sheets.'
                         : 'Exports only Present/Absent records with member name, date, and status. Perfect for attendance reports.'}
                 </p>
-                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mt-3">
-                    <p className="text-xs text-blue-600 dark:text-blue-400 text-center">
+                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-3 mt-3">
+                    <p className="text-xs text-orange-600 dark:text-orange-400 text-center">
                         This export keeps your data in the database. To free up storage space, use <strong>Archive Month</strong> in Settings → Data Management.
                     </p>
                 </div>

@@ -31,7 +31,7 @@ const ActivityLogViewer = () => {
     const getActionIcon = (action) => {
         if (action.includes('DELETE')) return <Shield className="w-4 h-4 text-red-500" />
         if (action.includes('ADD')) return <User className="w-4 h-4 text-green-500" />
-        if (action.includes('UPDATE')) return <RefreshCw className="w-4 h-4 text-blue-500" />
+        if (action.includes('UPDATE')) return <RefreshCw className="w-4 h-4 text-orange-500" />
         if (action.includes('ASSIGN') || action.includes('REMOVE')) return <Shield className="w-4 h-4 text-purple-500" />
         return <Clock className="w-4 h-4 text-gray-400" />
     }

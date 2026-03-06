@@ -81,7 +81,7 @@ const SetPasswordModal = ({ isOpen, onClose, onSuccess }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
                 {/* Header */}
-                <div className="relative bg-gradient-to-r from-blue-600 to-purple-600 p-6 text-white">
+                <div className="relative bg-gradient-to-r from-orange-600 to-purple-600 p-6 text-white">
                     <button
                         onClick={handleSkip}
                         className="absolute top-4 right-4 p-1 rounded-full hover:bg-white/20 transition-colors"
@@ -121,7 +121,7 @@ const SetPasswordModal = ({ isOpen, onClose, onSuccess }) => {
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 placeholder="Enter a password (min 6 characters)"
-                                className="w-full pl-10 pr-10 py-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                                className="w-full pl-10 pr-10 py-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none transition-all"
                                 minLength={6}
                             />
                             <button
@@ -177,7 +177,7 @@ const SetPasswordModal = ({ isOpen, onClose, onSuccess }) => {
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
                                 placeholder="Confirm your password"
-                                className={`w-full pl-10 pr-10 py-2.5 bg-gray-50 dark:bg-gray-700 border rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all ${
+                                className={`w-full pl-10 pr-10 py-2.5 bg-gray-50 dark:bg-gray-700 border rounded-lg text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none transition-all ${
                                     confirmPassword && !passwordsMatch
                                         ? 'border-red-300 dark:border-red-500'
                                         : passwordsMatch
@@ -215,7 +215,7 @@ const SetPasswordModal = ({ isOpen, onClose, onSuccess }) => {
                         <button
                             type="submit"
                             disabled={!canSubmit}
-                            className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                            className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
                         >
                             {isLoading ? (
                                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

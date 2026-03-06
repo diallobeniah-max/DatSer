@@ -197,7 +197,7 @@ const AIChatAssistant = ({ isOpen, onClose, onNavigate }) => {
   const InnerContent = (
     <>
       {/* Header */}
-      <div className={`chat-header bg-gradient-to-r from-blue-500 to-purple-600 p-4 flex items-center justify-between ${!isMobile ? 'cursor-move select-none' : ''}`}>
+      <div className={`chat-header bg-gradient-to-r from-orange-500 to-purple-600 p-4 flex items-center justify-between ${!isMobile ? 'cursor-move select-none' : ''}`}>
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
             <Bot className="w-5 h-5 text-white" />
@@ -225,14 +225,14 @@ const AIChatAssistant = ({ isOpen, onClose, onNavigate }) => {
           <div key={message.id} className={`flex flex-col ${message.type === 'user' ? 'items-end' : 'items-start'}`}>
             <div className={`flex gap-2 max-w-[90%] ${message.type === 'user' ? 'flex-row-reverse' : ''}`}>
               <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 shadow-sm ${message.type === 'user'
-                ? 'bg-blue-500 text-white'
+                ? 'bg-orange-500 text-white'
                 : 'bg-white/80 dark:bg-gray-800/80 text-purple-600 dark:text-purple-400 border border-purple-100 dark:border-purple-900'
                 }`}>
                 {message.type === 'user' ? <User className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
               </div>
 
               <div className={`px-4 py-3 rounded-2xl text-sm shadow-sm backdrop-blur-sm ${message.type === 'user'
-                ? 'bg-blue-500 text-white rounded-tr-none'
+                ? 'bg-orange-500 text-white rounded-tr-none'
                 : 'bg-white/80 dark:bg-gray-800/80 text-gray-800 dark:text-gray-200 rounded-tl-none border border-gray-100 dark:border-gray-700'
                 }`}>
                 <p className="whitespace-pre-wrap leading-relaxed">{message.text}</p>

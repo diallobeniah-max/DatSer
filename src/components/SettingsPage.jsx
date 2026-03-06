@@ -497,7 +497,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                     className="w-16 h-16 min-w-[64px] min-h-[64px] rounded-full object-cover border-2 border-white dark:border-gray-600 shadow-md"
                                 />
                             ) : (
-                                <div className="w-16 h-16 min-w-[64px] min-h-[64px] rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold shadow-md">
+                                <div className="w-16 h-16 min-w-[64px] min-h-[64px] rounded-full bg-gradient-to-br from-orange-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold shadow-md">
                                     {user?.email?.[0]?.toUpperCase() || 'U'}
                                 </div>
                             )
@@ -505,7 +505,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                         {/* Edit photo button - available for all users */}
                         <button
                             onClick={() => setIsPhotoEditorOpen(true)}
-                            className="absolute -bottom-1 -right-1 p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg transition-colors btn-press"
+                            className="absolute -bottom-1 -right-1 p-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-full shadow-lg transition-colors btn-press"
                             title="Change photo"
                         >
                             <Pencil className="w-3 h-3" />
@@ -569,7 +569,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                             }}
                             className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                 window.__needsPasswordSetup
-                                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                    ? 'bg-orange-600 text-white hover:bg-orange-700'
                                     : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                             }`}
                         >
@@ -590,7 +590,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                         toast.info('Password setup is not available right now')
                                     }
                                 }}
-                                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                className="px-3 py-1.5 text-sm bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
                             >
                                 Create
                             </button>
@@ -621,7 +621,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
             </div>
 
             {/* Current Workspace */}
-            <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl p-4 text-white">
+            <div className="bg-gradient-to-r from-orange-500 to-purple-600 rounded-xl p-4 text-white">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-white/20 rounded-lg">
                         <Building2 className="w-6 h-6" />
@@ -699,8 +699,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                         className="w-full p-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                     >
                         <div className="flex items-center gap-3">
-                            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-                                <Building2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                            <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
+                                <Building2 className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                             </div>
                             <div className="text-left">
                                 <p className="font-medium text-gray-900 dark:text-white">Edit Workspace</p>
@@ -736,10 +736,10 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                 <button
                                     type="button"
                                     onClick={() => setShowMonthDropdown(prev => !prev)}
-                                    className="w-full flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-white to-gray-50 dark:from-gray-900 dark:to-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-500/30 transition-all"
+                                    className="w-full flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-white to-gray-50 dark:from-gray-900 dark:to-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg focus:outline-none focus:ring-4 focus:ring-orange-500/30 transition-all"
                                 >
                                     <div className="flex items-center gap-3 flex-1">
-                                        <div className="p-2 rounded-xl bg-blue-500/15 text-blue-600 dark:text-blue-300">
+                                        <div className="p-2 rounded-xl bg-orange-500/15 text-orange-600 dark:text-orange-300">
                                             <Calendar className="w-4 h-4" />
                                         </div>
                                         <div className="text-left">
@@ -767,14 +767,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                                             setShowMonthDropdown(false)
                                                         }}
                                                         className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${isActive
-                                                                ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200'
+                                                                ? 'bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-200'
                                                                 : 'text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700'
                                                             }`}
                                                     >
                                                         <span>{table.replace('_', ' ')}</span>
                                                         <div className="flex items-center gap-2">
                                                             {isActive && (
-                                                                <span className="text-xs font-semibold text-blue-600 dark:text-blue-200">Current</span>
+                                                                <span className="text-xs font-semibold text-orange-600 dark:text-orange-200">Current</span>
                                                             )}
                                                             <button
                                                                 type="button"
@@ -803,7 +803,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                         selection()
                                         if (onCreateMonth) onCreateMonth()
                                     }}
-                                    className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-xl font-medium transition-colors"
+                                    className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800 rounded-xl font-medium transition-colors"
                                 >
                                     <Plus className="w-4 h-4" />
                                     Create New Month
@@ -818,7 +818,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                             key={year}
                                             onClick={() => setSelectedYear(year)}
                                             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${selectedYear === year
-                                                    ? 'bg-blue-600 text-white'
+                                                    ? 'bg-orange-600 text-white'
                                                     : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                                                 }`}
                                         >
@@ -845,7 +845,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                                     }
                                                 }}
                                                 className={`relative p-4 rounded-2xl border transition-all cursor-pointer shadow-sm backdrop-blur-sm ${isCurrent
-                                                        ? 'border-blue-400 bg-gradient-to-br from-blue-500/10 to-blue-600/10 dark:from-blue-500/20 dark:to-blue-700/20'
+                                                        ? 'border-orange-400 bg-gradient-to-br from-orange-500/10 to-orange-600/10 dark:from-orange-500/20 dark:to-orange-700/20'
                                                         : exists
                                                             ? 'border-green-200/70 bg-gradient-to-br from-green-50 to-emerald-100 dark:from-green-900/20 dark:to-emerald-800/20 hover:border-green-400'
                                                             : 'border-dashed border-gray-300 dark:border-gray-600 bg-gray-50/60 dark:bg-gray-800/40 hover:border-gray-400 dark:hover:border-gray-500'
@@ -855,7 +855,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                                     <div>
                                                         <p className="text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Month</p>
                                                         <p className={`text-lg font-semibold ${isCurrent
-                                                                ? 'text-blue-700 dark:text-blue-200'
+                                                                ? 'text-orange-700 dark:text-orange-200'
                                                                 : exists
                                                                     ? 'text-emerald-800 dark:text-emerald-200'
                                                                     : 'text-gray-600 dark:text-gray-300'
@@ -866,7 +866,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                                     {exists ? (
                                                         <div className="flex items-center gap-2">
                                                             <span className={`text-[11px] font-semibold px-2 py-1 rounded-full ${isCurrent
-                                                                    ? 'bg-blue-500/20 text-blue-700 dark:text-blue-200'
+                                                                    ? 'bg-orange-500/20 text-orange-700 dark:text-orange-200'
                                                                     : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-200'
                                                                 }`}>
                                                                 {isCurrent ? 'Active' : 'Saved'}
@@ -892,7 +892,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                                                 e.stopPropagation()
                                                                 handleQuickCreateMonth(month, selectedYear)
                                                             }}
-                                                            className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1"
+                                                            className="px-2 py-1 text-xs font-semibold rounded-full bg-orange-600 text-white hover:bg-orange-700 transition-colors flex items-center gap-1"
                                                             title={`Create ${month} ${selectedYear}`}
                                                         >
                                                             <Plus className="w-3 h-3" />
@@ -922,10 +922,10 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                                                 }}
                                                                 className={`rounded-xl px-2 py-2 flex flex-col items-center text-center shadow-inner transition-all ${
                                                                     isLocked
-                                                                        ? 'bg-blue-600 text-white border-2 border-blue-400 ring-2 ring-blue-300/50 shadow-md cursor-pointer'
+                                                                        ? 'bg-orange-600 text-white border-2 border-orange-400 ring-2 ring-orange-300/50 shadow-md cursor-pointer'
                                                                         : exists
                                                                             ? isCurrent
-                                                                                ? `bg-white/80 dark:bg-white/10 text-blue-700 dark:text-blue-200 border border-blue-200/60 dark:border-blue-400/30 ${!isCollaborator ? 'cursor-pointer hover:border-blue-400 hover:shadow-md' : ''}`
+                                                                                ? `bg-white/80 dark:bg-white/10 text-orange-700 dark:text-orange-200 border border-orange-200/60 dark:border-orange-400/30 ${!isCollaborator ? 'cursor-pointer hover:border-orange-400 hover:shadow-md' : ''}`
                                                                                 : `bg-white/80 dark:bg-white/5 text-emerald-700 dark:text-emerald-200 border border-emerald-200/60 dark:border-emerald-400/30 ${!isCollaborator ? 'cursor-pointer hover:border-emerald-400 hover:shadow-md' : ''}`
                                                                             : 'bg-gray-100 dark:bg-gray-800 text-gray-400 border border-dashed border-gray-300 dark:border-gray-600'
                                                                 }`}
@@ -958,7 +958,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
             {/* Stats */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] grid-animate">
                 <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 text-center">
-                    <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{members?.length || 0}</p>
+                    <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">{members?.length || 0}</p>
                     <p className="text-sm text-gray-500 dark:text-gray-400">Total Members</p>
                 </div>
                 <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 text-center">
@@ -1002,8 +1002,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
             {/* Share Access Card */}
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
                 <div className="flex items-center gap-4 mb-4">
-                    <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
-                        <UserPlus className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                    <div className="p-3 bg-orange-100 dark:bg-orange-900/30 rounded-xl">
+                        <UserPlus className="w-6 h-6 text-orange-600 dark:text-orange-400" />
                     </div>
                     <div className="flex-1">
                         <h4 className="font-semibold text-gray-900 dark:text-white">Invite Team Members</h4>
@@ -1012,7 +1012,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                 </div>
                 <button
                     onClick={() => setIsShareModalOpen(true)}
-                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                    className="w-full py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
                     <UserPlus className="w-4 h-4" />
                     Share Access
@@ -1027,7 +1027,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                 </h4>
                 {fetchingCollaborators ? (
                     <div className="flex items-center justify-center py-4">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-orange-600"></div>
                     </div>
                 ) : collaborators.length === 0 ? (
                     <div className="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -1042,8 +1042,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                 key={collaborator.id}
                                 className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg w-full"
                             >
-                                <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center flex-shrink-0">
-                                    <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
+                                <div className="w-8 h-8 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center flex-shrink-0">
+                                    <span className="text-sm font-medium text-orange-600 dark:text-orange-400">
                                         {collaborator.email.charAt(0).toUpperCase()}
                                     </span>
                                 </div>
@@ -1085,7 +1085,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                         <span className="text-gray-600 dark:text-gray-400"><strong>Owner:</strong> Full access, can delete workspace</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-blue-500" />
+                        <CheckCircle className="w-4 h-4 text-orange-500" />
                         <span className="text-gray-600 dark:text-gray-400"><strong>Editor:</strong> Can view and edit data</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1127,8 +1127,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                     className="w-full p-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                 >
                     <div className="flex items-center gap-3">
-                        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-                            <Upload className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                        <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
+                            <Upload className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                         </div>
                         <div className="text-left">
                             <p className="font-medium text-gray-900 dark:text-white">Import Data</p>
@@ -1176,7 +1176,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                             {table.replace('_', ' ')}
                                         </span>
                                         {isCurrent && (
-                                            <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full font-medium">
+                                            <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 rounded-full font-medium">
                                                 Current
                                             </span>
                                         )}
@@ -1202,7 +1202,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                 </div>
                 <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
                     <div
-                        className="bg-blue-600 h-2 rounded-full transition-all"
+                        className="bg-orange-600 h-2 rounded-full transition-all"
                         style={{ width: `${Math.min((members?.length || 0) / 1000 * 100, 100)}%` }}
                     />
                 </div>
@@ -1229,7 +1229,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                     <button
                         onClick={() => setThemeMode('system')}
                         className={`group p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-3 ${themeMode === 'system'
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                            ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
                             : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800'
                             }`}
                     >
@@ -1239,31 +1239,31 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                 background: 'linear-gradient(135deg, #ffffff 50%, #111827 50%)'
                             }}
                         />
-                        <span className={`text-sm font-medium ${themeMode === 'system' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400'}`}>System mode</span>
+                        <span className={`text-sm font-medium ${themeMode === 'system' ? 'text-orange-600 dark:text-orange-400' : 'text-gray-600 dark:text-gray-400'}`}>System mode</span>
                     </button>
 
                     {/* Dark Mode (Black) */}
                     <button
                         onClick={() => setThemeMode('dark')}
                         className={`group p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-3 ${themeMode === 'dark'
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                            ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
                             : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800'
                             }`}
                     >
                         <div className="w-16 h-16 rounded-2xl bg-gray-900 border border-gray-700 shadow-sm" />
-                        <span className={`text-sm font-medium ${themeMode === 'dark' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400'}`}>Dark mode</span>
+                        <span className={`text-sm font-medium ${themeMode === 'dark' ? 'text-orange-600 dark:text-orange-400' : 'text-gray-600 dark:text-gray-400'}`}>Dark mode</span>
                     </button>
 
                     {/* Light Mode (White) */}
                     <button
                         onClick={() => setThemeMode('light')}
                         className={`group p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-3 ${themeMode === 'light'
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                            ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
                             : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800'
                             }`}
                     >
                         <div className="w-16 h-16 rounded-2xl bg-white border border-gray-200 shadow-sm" />
-                        <span className={`text-sm font-medium ${themeMode === 'light' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400'}`}>Light mode</span>
+                        <span className={`text-sm font-medium ${themeMode === 'light' ? 'text-orange-600 dark:text-orange-400' : 'text-gray-600 dark:text-gray-400'}`}>Light mode</span>
                     </button>
 
                 </div>
@@ -1303,9 +1303,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                     </div>
 
                     {commandKEnabled && (
-                        <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                            <p className="text-sm text-blue-700 dark:text-blue-300 font-medium mb-1">💡 Pro Tip</p>
-                            <p className="text-xs text-blue-600 dark:text-blue-400">
+                        <div className="mt-3 p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
+                            <p className="text-sm text-orange-700 dark:text-orange-300 font-medium mb-1">💡 Pro Tip</p>
+                            <p className="text-xs text-orange-600 dark:text-orange-400">
                                 Use Command Menu to quickly navigate to any page, search members, or access settings without clicking through menus.
                             </p>
                         </div>
@@ -1671,7 +1671,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
 
     const getIconBgColor = (color) => {
         const colors = {
-            blue: 'bg-blue-100 dark:bg-blue-900/30',
+            blue: 'bg-orange-100 dark:bg-orange-900/30',
             purple: 'bg-purple-100 dark:bg-purple-900/30',
             green: 'bg-green-100 dark:bg-green-900/30',
             orange: 'bg-orange-100 dark:bg-orange-900/30',
@@ -1684,7 +1684,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
 
     const getIconColor = (color) => {
         const colors = {
-            blue: 'text-blue-600 dark:text-blue-400',
+            blue: 'text-orange-600 dark:text-orange-400',
             purple: 'text-purple-600 dark:text-purple-400',
             green: 'text-green-600 dark:text-green-400',
             orange: 'text-orange-600 dark:text-orange-400',
@@ -1736,7 +1736,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                             placeholder="Search settings... (e.g., 'change profile picture', 'make text bigger')"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                            className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
                         />
                         {searchQuery && (
                             <button
@@ -1750,17 +1750,17 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                 </div>
 
                 {/* Usage / Free plan awareness */}
-                <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-blue-200/70 dark:border-blue-900/50 shadow-sm overflow-hidden">
+                <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-orange-200/70 dark:border-orange-900/50 shadow-sm overflow-hidden">
                     <button
                         onClick={() => setShowStorageLimits(prev => !prev)}
                         className="w-full flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                     >
                         <div className="flex items-center gap-2">
-                            <Database className="w-4 h-4 text-blue-500" />
+                            <Database className="w-4 h-4 text-orange-500" />
                             <p className="text-sm font-semibold text-gray-900 dark:text-white">Storage & Limits</p>
                         </div>
                         <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">Free Plan</span>
+                            <span className="text-xs font-medium px-2 py-1 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300">Free Plan</span>
                             <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${showStorageLimits ? 'rotate-180' : ''}`} />
                         </div>
                     </button>
@@ -1796,7 +1796,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                         <span className="text-emerald-600 dark:text-emerald-400 font-medium">
                                             {(DB_LIMIT_MB - dbUsage.db_size_mb).toFixed(1)} MB free
                                         </span>
-                                        <button onClick={fetchDbUsage} className="text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 transition-colors">
+                                        <button onClick={fetchDbUsage} className="text-orange-500 hover:text-orange-600 dark:hover:text-orange-400 flex items-center gap-1 transition-colors">
                                             <RefreshCw className={`w-3 h-3 ${dbLoading ? 'animate-spin' : ''}`} /> Refresh
                                         </button>
                                     </div>
@@ -1884,7 +1884,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                 {/* Learn More dropdown */}
                                 <button
                                     onClick={() => setShowUsageDetails(prev => !prev)}
-                                    className="flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
+                                    className="flex items-center gap-1.5 text-xs font-medium text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 transition-colors"
                                 >
                                     <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showUsageDetails ? 'rotate-180' : ''}`} />
                                     {showUsageDetails ? 'Show less' : 'Learn more about how this works'}
@@ -1908,7 +1908,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                         {/* Database Storage explained */}
                                         <div>
                                             <p className="font-semibold text-gray-800 dark:text-gray-200 mb-1 flex items-center gap-1.5">
-                                                <Database className="w-3.5 h-3.5 text-blue-500" />
+                                                <Database className="w-3.5 h-3.5 text-orange-500" />
                                                 Database Storage (500 MB limit)
                                             </p>
                                             <p>
@@ -1966,8 +1966,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                         </div>
 
                                         {/* Free plan summary */}
-                                        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-lg p-2.5">
-                                            <p className="font-semibold text-blue-800 dark:text-blue-300 mb-1 text-[11px]">Free Plan Summary</p>
+                                        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-lg p-2.5">
+                                            <p className="font-semibold text-orange-800 dark:text-orange-300 mb-1 text-[11px]">Free Plan Summary</p>
                                             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                                                 <span className="text-gray-600 dark:text-gray-400">Database</span>
                                                 <span className="font-medium text-gray-800 dark:text-gray-200">500 MB</span>
@@ -2002,14 +2002,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                         className="w-14 h-14 rounded-full object-cover border-2 border-white dark:border-gray-600 shadow-md"
                                     />
                                 ) : (
-                                    <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xl font-bold shadow-md">
+                                    <div className="w-14 h-14 rounded-full bg-gradient-to-br from-orange-500 to-purple-600 flex items-center justify-center text-white text-xl font-bold shadow-md">
                                         {user?.email?.[0]?.toUpperCase() || 'U'}
                                     </div>
                                 )
                             })()}
                             <button
                                 onClick={() => setIsPhotoEditorOpen(true)}
-                                className="absolute -bottom-1 -right-1 p-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg transition-colors"
+                                className="absolute -bottom-1 -right-1 p-1 bg-orange-600 hover:bg-orange-700 text-white rounded-full shadow-lg transition-colors"
                             >
                                 <Pencil className="w-2.5 h-2.5" />
                             </button>
@@ -2032,7 +2032,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                 {/* Tutorial / Onboarding */}
                 <button
                     onClick={() => window.openOnboarding?.()}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all"
+                    className="w-full flex items-center gap-3 px-4 py-3.5 bg-gradient-to-r from-orange-500 to-purple-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all"
                 >
                     <div className="p-2 bg-white/20 rounded-lg">
                         <HelpCircle className="w-5 h-5 text-white" />
@@ -2078,7 +2078,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                                 {item.description}
                                             </p>
                                         </div>
-                                        <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
+                                        <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-orange-500 transition-colors" />
                                     </button>
                                 )
                             })
@@ -2127,11 +2127,11 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                             </span>
                                         )}
                                         {section.highlight && (
-                                            <span className="text-xs bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
+                                            <span className="text-xs bg-orange-100 dark:bg-orange-900/50 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded-full">
                                                 New
                                             </span>
                                         )}
-                                        <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
+                                        <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-orange-500 transition-colors" />
                                     </div>
                                 </button>
                             )

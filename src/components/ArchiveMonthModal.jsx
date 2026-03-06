@@ -363,7 +363,7 @@ const ArchiveMonthModal = ({ isOpen, onClose, tableName, onArchiveComplete }) =>
                     {/* Loading */}
                     {loading && (
                         <div className="flex flex-col items-center justify-center py-12 gap-3">
-                            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                            <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
                             <p className="text-sm text-gray-500 dark:text-gray-400">Loading month data...</p>
                         </div>
                     )}
@@ -372,12 +372,12 @@ const ArchiveMonthModal = ({ isOpen, onClose, tableName, onArchiveComplete }) =>
                     {!loading && step === 'summary' && (
                         <>
                             {/* Info Banner */}
-                            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 sm:p-4">
+                            <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-3 sm:p-4">
                                 <div className="flex gap-3">
-                                    <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                                    <Info className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
                                     <div>
-                                        <p className="text-sm font-medium text-blue-800 dark:text-blue-300">What does archiving do?</p>
-                                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                                        <p className="text-sm font-medium text-orange-800 dark:text-orange-300">What does archiving do?</p>
+                                        <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
                                             Archiving exports your data as a CSV file and removes it from the database to free up storage space.
                                             You can import the CSV into Google Sheets to keep it accessible.
                                         </p>
@@ -386,14 +386,14 @@ const ArchiveMonthModal = ({ isOpen, onClose, tableName, onArchiveComplete }) =>
                             </div>
 
                             {/* Summary Stats */}
-                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl p-4 sm:p-6 border border-blue-200 dark:border-blue-800">
+                            <div className="bg-gradient-to-br from-orange-50 to-indigo-50 dark:from-orange-900/20 dark:to-indigo-900/20 rounded-xl p-4 sm:p-6 border border-orange-200 dark:border-orange-800">
                                 <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
-                                    <FileSpreadsheet className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                    <FileSpreadsheet className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                                     Archive Summary
                                 </h3>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                    <div className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm border border-blue-100 dark:border-blue-800">
-                                        <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.total}</div>
+                                    <div className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm border border-orange-100 dark:border-orange-800">
+                                        <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{stats.total}</div>
                                         <div className="text-xs text-gray-600 dark:text-gray-300 font-medium">Total People</div>
                                     </div>
                                     <div className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm border border-indigo-100 dark:border-indigo-800">
@@ -486,7 +486,7 @@ const ArchiveMonthModal = ({ isOpen, onClose, tableName, onArchiveComplete }) =>
                                 {columns.length < DEFAULT_COLUMNS.length && (
                                     <button
                                         onClick={() => { setColumns(DEFAULT_COLUMNS); setCsvBlob(null) }}
-                                        className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                        className="mt-2 text-xs text-orange-600 dark:text-orange-400 hover:underline"
                                     >
                                         Reset columns
                                     </button>

@@ -380,7 +380,7 @@ const AttendanceAnalytics = () => {
             <div className="text-center">
               <div className={`text-2xl font-bold ${
                 badgeType === 'regular' ? 'text-green-500' :
-                badgeType === 'member' ? 'text-blue-500' :
+                badgeType === 'member' ? 'text-orange-500' :
                 badgeType === 'newcomer' ? 'text-yellow-500' :
                 'text-gray-500'
               }`}>
@@ -401,7 +401,7 @@ const AttendanceAnalytics = () => {
             <div className="flex items-center gap-2">
               <div className={`w-3 h-3 rounded-full ${
                 badgeType === 'regular' ? 'bg-green-500' :
-                badgeType === 'member' ? 'bg-blue-500' :
+                badgeType === 'member' ? 'bg-orange-500' :
                 badgeType === 'newcomer' ? 'bg-yellow-500' :
                 'bg-gray-500'
               }`}></div>
@@ -420,7 +420,7 @@ const AttendanceAnalytics = () => {
                     <div className="flex items-center gap-3">
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-semibold ${
                         badgeType === 'regular' ? 'bg-green-500' :
-                        badgeType === 'member' ? 'bg-blue-500' :
+                        badgeType === 'member' ? 'bg-orange-500' :
                         badgeType === 'newcomer' ? 'bg-yellow-500' :
                         'bg-gray-500'
                       }`}>
@@ -458,7 +458,7 @@ const AttendanceAnalytics = () => {
                       <div className="text-right">
                         <div className={`text-sm font-medium ${
                           member.attendanceRate >= 90 ? 'text-green-500' :
-                          member.attendanceRate >= 75 ? 'text-blue-500' :
+                          member.attendanceRate >= 75 ? 'text-orange-500' :
                           member.attendanceRate >= 50 ? 'text-yellow-500' :
                           'text-red-500'
                         }`}>
@@ -518,7 +518,7 @@ const AttendanceAnalytics = () => {
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-white ${
                   index === 0 ? 'bg-yellow-500' : 
                   index === 1 ? 'bg-gray-400' : 
-                  index === 2 ? 'bg-amber-600' : 'bg-blue-500'
+                  index === 2 ? 'bg-amber-600' : 'bg-orange-500'
                 }`}>
                   {index < 3 ? (index + 1) : <UserCheck className="w-5 h-5" />}
                 </div>
@@ -534,7 +534,7 @@ const AttendanceAnalytics = () => {
               <div className="text-right">
                 <div className={`text-2xl font-bold ${
                   member.attendance_rate >= 95 ? 'text-green-500' :
-                  member.attendance_rate >= 85 ? 'text-blue-500' :
+                  member.attendance_rate >= 85 ? 'text-orange-500' :
                   'text-yellow-500'
                 }`}>
                   {member.attendance_rate}%
@@ -577,7 +577,7 @@ const AttendanceAnalytics = () => {
             
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
-                <div className="text-lg font-semibold text-blue-500">
+                <div className="text-lg font-semibold text-orange-500">
                   {trend.average_attendance}
                 </div>
                 <div className={`text-xs transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -771,7 +771,7 @@ const AttendanceAnalytics = () => {
                 className={`flex-1 px-4 py-2 rounded-md text-white transition-colors ${
                   isAssigning 
                     ? 'bg-gray-400 cursor-not-allowed' 
-                    : 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-orange-600 hover:bg-orange-700'
                 }`}
               >
                 {isAssigning ? 'Assigning...' : 'Assign Badge'}
@@ -867,11 +867,11 @@ const AttendanceAnalytics = () => {
               {/* Summary Bar - Always Visible */}
               <button
                 onClick={() => setIsBadgeResultsOpen(!isBadgeResultsOpen)}
-                className="w-full px-4 py-3 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-900/20 dark:to-green-900/20 rounded-lg border border-blue-200 dark:border-blue-800 hover:border-blue-300 dark:hover:border-blue-700 transition-colors flex items-center justify-between"
+                className="w-full px-4 py-3 bg-gradient-to-r from-orange-50 to-green-50 dark:from-orange-900/20 dark:to-green-900/20 rounded-lg border border-orange-200 dark:border-orange-800 hover:border-orange-300 dark:hover:border-orange-700 transition-colors flex items-center justify-between"
               >
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    <Users className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                     <span className="text-sm font-medium text-gray-900 dark:text-white">
                       {badgeResults.totalProcessed} Processed
                     </span>
@@ -962,7 +962,7 @@ const AttendanceAnalytics = () => {
                               <p className="font-semibold text-gray-900 dark:text-white">{member.name}</p>
                               <a
                                 href={`tel:${member.phone}`}
-                                className="flex items-center text-sm text-blue-600 dark:text-blue-400 hover:underline mt-1"
+                                className="flex items-center text-sm text-orange-600 dark:text-orange-400 hover:underline mt-1"
                               >
                                 <Phone className="w-3 h-3 mr-1" />
                                 {member.phone}
@@ -1139,10 +1139,10 @@ const AttendanceAnalytics = () => {
 
               {/* Newcomers Needing Follow-up */}
               {outreachData.newcomersNeedingFollowup.length > 0 && (
-                <div className={`rounded-lg p-3 transition-colors ${isDarkMode ? 'bg-blue-900/20 border border-blue-500/30' : 'bg-blue-50 border border-blue-200'}`}>
+                <div className={`rounded-lg p-3 transition-colors ${isDarkMode ? 'bg-orange-900/20 border border-orange-500/30' : 'bg-orange-50 border border-orange-200'}`}>
                   <div className="flex items-center gap-2 mb-2">
-                    <UserCheck className={`w-4 h-4 ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`} />
-                    <h4 className={`font-medium text-sm ${isDarkMode ? 'text-blue-400' : 'text-blue-800'}`}>
+                    <UserCheck className={`w-4 h-4 ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`} />
+                    <h4 className={`font-medium text-sm ${isDarkMode ? 'text-orange-400' : 'text-orange-800'}`}>
                       New Members ({outreachData.newcomersNeedingFollowup.length})
                     </h4>
                   </div>
@@ -1158,7 +1158,7 @@ const AttendanceAnalytics = () => {
                             {member.phone}
                           </span>
                         </div>
-                        <div className={`text-xs mt-1 ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+                        <div className={`text-xs mt-1 ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
                           {member.daysSinceJoin} days, {member.attendanceRate}% attendance
                         </div>
                       </div>
@@ -1242,7 +1242,7 @@ const AttendanceAnalytics = () => {
                   className={`px-3 py-1 rounded-full text-sm font-medium transition-colors border ${
                     badgeFilter.includes(badge)
                       ? badge === 'member' 
-                        ? 'bg-blue-500 text-white border-blue-500'
+                        ? 'bg-orange-500 text-white border-orange-500'
                         : badge === 'regular'
                         ? 'bg-green-500 text-white border-green-500'
                         : 'bg-yellow-500 text-white border-yellow-500'
@@ -1302,7 +1302,7 @@ const AttendanceAnalytics = () => {
         {/* Content */}
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
           </div>
         ) : (
           <div>
