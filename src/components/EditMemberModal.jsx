@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { X, User, Phone, Calendar, BookOpen, ChevronDown, ChevronUp, Users, StickyNote } from 'lucide-react'
@@ -24,6 +24,8 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
     return tableName.replace('_', ' ')
   }
   const [loading, setLoading] = useState(false)
+  const hydratedMemberIdRef = useRef(null)
+  const isDirtyRef = useRef(false)
   const [formData, setFormData] = useState({
     full_name: '',
     gender: '',
@@ -99,9 +101,10 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
     'COMPLETED', 'UNIVERSITY'
   ]
 
-  // Initialize form data only when modal opens or target member changes
+  // Initialize form data only once per modal open/member id
   useEffect(() => {
     if (!isOpen || !member?.id) return
+    if (hydratedMemberIdRef.current === member.id || isDirtyRef.current) return
     const sourceMember = member
     if (sourceMember) {
       // Normalize gender to lowercase to match radio button values
@@ -137,8 +140,17 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
       } else {
         setShowParentSection(false)
       }
+      hydratedMemberIdRef.current = member.id
+      isDirtyRef.current = false
     }
   }, [isOpen, member?.id, member])
+
+  useEffect(() => {
+    if (!isOpen) {
+      hydratedMemberIdRef.current = null
+      isDirtyRef.current = false
+    }
+  }, [isOpen])
 
   // Initialize attendance snapshot when modal opens (stable deps, no loop)
   useEffect(() => {
@@ -276,6 +288,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
   }
 
   const handleInputChange = (e) => {
+    isDirtyRef.current = true
     const { name, value } = e.target
     setFormData(prev => ({
       ...prev,
@@ -640,7 +653,10 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
                       <input
                         type="text"
                         value={parentInfo.parent_name_1}
-                        onChange={(e) => setParentInfo(prev => ({ ...prev, parent_name_1: e.target.value }))}
+                        onChange={(e) => {
+                          isDirtyRef.current = true
+                          setParentInfo(prev => ({ ...prev, parent_name_1: e.target.value }))
+                        }}
                         placeholder="Name"
                         className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary-500 text-sm"
                       />
@@ -650,14 +666,20 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
                       <input
                         type="tel"
                         value={parentInfo.parent_phone_1}
-                        onChange={(e) => setParentInfo(prev => ({ ...prev, parent_phone_1: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                        onChange={(e) => {
+                          isDirtyRef.current = true
+                          setParentInfo(prev => ({ ...prev, parent_phone_1: e.target.value.replace(/\D/g, '').slice(0, 10) }))
+                        }}
                         placeholder="Phone Number"
                         className="w-full pl-10 pr-20 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary-500 text-sm"
                       />
                       <div className="absolute inset-y-0 right-0 flex items-center pr-2">
                         <button
                           type="button"
-                          onClick={() => setParentInfo(prev => ({ ...prev, parent_phone_1: '0000000000' }))}
+                          onClick={() => {
+                            isDirtyRef.current = true
+                            setParentInfo(prev => ({ ...prev, parent_phone_1: '0000000000' }))
+                          }}
                           className="px-2 py-1 rounded text-xs bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-500 border border-gray-300 dark:border-gray-600"
                           title="Set no phone number"
                         >
@@ -679,7 +701,10 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
                       <input
                         type="text"
                         value={parentInfo.parent_name_2}
-                        onChange={(e) => setParentInfo(prev => ({ ...prev, parent_name_2: e.target.value }))}
+                        onChange={(e) => {
+                          isDirtyRef.current = true
+                          setParentInfo(prev => ({ ...prev, parent_name_2: e.target.value }))
+                        }}
                         placeholder="Name"
                         className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary-500 text-sm"
                       />
@@ -689,14 +714,20 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
                       <input
                         type="tel"
                         value={parentInfo.parent_phone_2}
-                        onChange={(e) => setParentInfo(prev => ({ ...prev, parent_phone_2: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                        onChange={(e) => {
+                          isDirtyRef.current = true
+                          setParentInfo(prev => ({ ...prev, parent_phone_2: e.target.value.replace(/\D/g, '').slice(0, 10) }))
+                        }}
                         placeholder="Phone Number"
                         className="w-full pl-10 pr-20 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary-500 text-sm"
                       />
                       <div className="absolute inset-y-0 right-0 flex items-center pr-2">
                         <button
                           type="button"
-                          onClick={() => setParentInfo(prev => ({ ...prev, parent_phone_2: '0000000000' }))}
+                          onClick={() => {
+                            isDirtyRef.current = true
+                            setParentInfo(prev => ({ ...prev, parent_phone_2: '0000000000' }))
+                          }}
                           className="px-2 py-1 rounded text-xs bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-500 border border-gray-300 dark:border-gray-600"
                           title="Set no phone number"
                         >
@@ -751,6 +782,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
                   key={ministry}
                   type="button"
                   onClick={() => {
+                    isDirtyRef.current = true
                     setFormData(prev => ({
                       ...prev,
                       ministry: prev.ministry.includes(ministry)
@@ -775,7 +807,10 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Mark as Visitor</span>
             <button
               type="button"
-              onClick={() => setFormData(prev => ({ ...prev, is_visitor: !prev.is_visitor }))}
+              onClick={() => {
+                isDirtyRef.current = true
+                setFormData(prev => ({ ...prev, is_visitor: !prev.is_visitor }))
+              }}
               className={`relative w-11 h-6 rounded-full transition-colors ${
                 formData.is_visitor ? 'bg-amber-500' : 'bg-gray-300 dark:bg-gray-600'
               }`}
