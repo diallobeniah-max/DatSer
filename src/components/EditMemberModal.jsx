@@ -7,7 +7,7 @@ import useHapticFeedback from '../hooks/useHapticFeedback'
 import { normalizeMinistry } from '../utils/dataUtils'
 
 const EditMemberModal = ({ isOpen, onClose, member }) => {
-  const { updateMember, markAttendance, refreshSearch, currentTable, attendanceData, members, toggleMemberBadge, updateMemberBadges, memberHasBadge } = useApp()
+  const { updateMember, markAttendance, refreshSearch, currentTable, attendanceData, members, memberHasBadge } = useApp()
   const { selection, success } = useHapticFeedback()
 
   // Get the latest member data from the members array to ensure we have up-to-date info
@@ -201,18 +201,11 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
 
     // Validate required fields
     const isFullNameValid = formData.full_name && formData.full_name.trim().length > 0
-    const isGenderValid = !!formData.gender
-    const isLevelValid = !!formData.current_level
-    // Ensure phone_number is converted to string for validation (it may be a number from DB)
     const phoneStr = String(formData.phone_number || '')
     const phoneDigits = phoneStr.replace(/\D/g, '')
-    const isPhoneValid = phoneDigits.length === 10
+    const isPhoneValid = phoneDigits.length === 0 || phoneDigits.length === 10
     const ageNum = parseInt(formData.age)
-    const isAgeValid = formData.age && !isNaN(ageNum) && ageNum >= 1 && ageNum <= 120
-
-    // Check if at least one parent info is provided (either Parent 1 OR Parent 2)
-    const hasParentInfo = (parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) ||
-      (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim())
+    const isAgeValid = !formData.age || (!isNaN(ageNum) && ageNum >= 1 && ageNum <= 120)
 
     // In override mode, only require name
     if (overrideMode) {
@@ -221,14 +214,8 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         return
       }
     } else {
-      if (!isFullNameValid || !isGenderValid || !isLevelValid || !isPhoneValid || !isAgeValid) {
+      if (!isFullNameValid || !isPhoneValid || !isAgeValid) {
         toast.error('Please fill in all required fields correctly')
-        return
-      }
-      if (!hasParentInfo) {
-        setHasAttemptedSave(true)
-        setShowParentSection(true)
-        toast.error('Please provide at least one parent/guardian contact')
         return
       }
     }
@@ -255,30 +242,11 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         notes: formData.notes || null,
         // Ministry and visitor status
         ministry: cleanMinistries,
-        is_visitor: formData.is_visitor || false
-      })
-
-      const existingTags = badgeTags.filter(tag => {
-        if (typeof memberHasBadge === 'function') {
-          return memberHasBadge(latestMember, tag)
-        }
-        if (tag === 'member') return latestMember['Member'] === 'Yes'
-        if (tag === 'regular') return latestMember['Regular'] === 'Yes'
-        if (tag === 'newcomer') return latestMember['Newcomer'] === 'Yes'
-        return false
-      })
-
-      const tagsChanged = badgeTags.some(tag => existingTags.includes(tag) !== selectedTags.includes(tag))
-      if (tagsChanged) {
-        for (const tag of badgeTags) {
-          const shouldHaveTag = selectedTags.includes(tag)
-          const hasTag = existingTags.includes(tag)
-          if (shouldHaveTag !== hasTag) {
-            await toggleMemberBadge(latestMember.id, tag, { suppressToast: true })
-          }
-        }
-        await updateMemberBadges()
-      }
+        is_visitor: formData.is_visitor || false,
+        Member: selectedTags.includes('member') ? 'Yes' : null,
+        Regular: selectedTags.includes('regular') ? 'Yes' : null,
+        Newcomer: selectedTags.includes('newcomer') ? 'Yes' : null
+      }, { allowLocalFallback: true })
 
       // Mark attendance for selected Sunday dates
       for (const [date, attendance] of Object.entries(sundayAttendance)) {

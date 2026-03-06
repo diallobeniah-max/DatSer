@@ -1855,9 +1855,9 @@ export const AppProvider = ({ children }) => {
   }, [attendanceData, findAttendanceColumnForDateInTable, isSupabaseConfigured])
 
   // Update member
-  // Options: { silent: boolean } - if true, suppresses toast notifications (for batch operations)
+  // Options: { silent: boolean, allowLocalFallback: boolean }
   const updateMember = async (id, updates, options = {}) => {
-    const { silent = false } = options
+    const { silent = false, allowLocalFallback = false } = options
     try {
       if (!isSupabaseConfigured()) {
         // Demo mode - update local state
@@ -1961,6 +1961,18 @@ export const AppProvider = ({ children }) => {
           normalized['full_name'] = normalized['Full Name']
           delete normalized['Full Name']
         }
+        if (normalized['Member'] !== undefined) {
+          normalized['member'] = normalized['Member']
+          delete normalized['Member']
+        }
+        if (normalized['Regular'] !== undefined) {
+          normalized['regular'] = normalized['Regular']
+          delete normalized['Regular']
+        }
+        if (normalized['Newcomer'] !== undefined) {
+          normalized['newcomer'] = normalized['Newcomer']
+          delete normalized['Newcomer']
+        }
       }
 
       // Filter normalized object to only include valid columns if we know them
@@ -2024,6 +2036,18 @@ export const AppProvider = ({ children }) => {
             } else if (key === 'is_visitor' && validColumns.has('is_visitor')) {
               filteredNormalized['is_visitor'] = normalized[key]
               console.log('[updateMember] Including is_visitor field')
+            } else if (key === 'Member' && validColumns.has('member')) {
+              filteredNormalized['member'] = normalized[key]
+            } else if (key === 'member' && validColumns.has('Member')) {
+              filteredNormalized['Member'] = normalized[key]
+            } else if (key === 'Regular' && validColumns.has('regular')) {
+              filteredNormalized['regular'] = normalized[key]
+            } else if (key === 'regular' && validColumns.has('Regular')) {
+              filteredNormalized['Regular'] = normalized[key]
+            } else if (key === 'Newcomer' && validColumns.has('newcomer')) {
+              filteredNormalized['newcomer'] = normalized[key]
+            } else if (key === 'newcomer' && validColumns.has('Newcomer')) {
+              filteredNormalized['Newcomer'] = normalized[key]
             } else {
               console.warn(`Skipping field "${key}" - column does not exist in table ${currentTable}`)
             }
@@ -2082,6 +2106,23 @@ export const AppProvider = ({ children }) => {
       return data[0]
     } catch (error) {
       console.error('Error updating member:', error)
+      if (allowLocalFallback) {
+        const fallbackName = (
+          typeof updates.full_name === 'string' && updates.full_name.trim()
+        ) ? updates.full_name : (typeof updates['Full Name'] === 'string' ? updates['Full Name'] : undefined)
+        setMembers(prev => prev.map(m => {
+          if (m.id !== id) return m
+          const merged = { ...m, ...updates }
+          if (fallbackName !== undefined) {
+            merged['full_name'] = fallbackName
+            merged['Full Name'] = fallbackName
+          }
+          return merged
+        }))
+        refreshSearch()
+        if (!silent) toast.info('Saved locally on this device')
+        return members.find(m => m.id === id)
+      }
       toast.error('Failed to update member')
       throw error
     }
