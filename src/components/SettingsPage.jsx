@@ -53,6 +53,7 @@ import ExportCenterPage from './ExportCenterPage'
 import ConfirmModal from './ConfirmModal'
 import AdminControlsModal from './AdminControlsModal'
 import ArchiveMonthModal from './ArchiveMonthModal'
+import MonthPickerPopup from './MonthPickerPopup'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
@@ -128,6 +129,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
         label: ''
     })
     const [isOverrideSaving, setIsOverrideSaving] = useState(false)
+    const [showOverridePicker, setShowOverridePicker] = useState(false)
+    const overrideButtonRef = useRef(null)
 
     useEffect(() => {
         const timer = setInterval(() => setLiveClock(new Date()), 30000)
@@ -543,6 +546,12 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
         }
     }
 
+    const handleOverrideSundaySelect = useCallback(async ({ table, date }) => {
+        if (!table || !date) return
+        setShowOverridePicker(false)
+        await handleEnableOverride(table, date)
+    }, [handleEnableOverride])
+
     const handleDisableOverride = async () => {
         if (isCollaborator) return
         setIsOverrideSaving(true)
@@ -857,7 +866,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <button
-                                            onClick={() => handleEnableOverride(currentTable, selectedAttendanceDate)}
+                                            onClick={() => setShowOverridePicker(true)}
+                                            ref={overrideButtonRef}
                                             disabled={isOverrideSaving}
                                             className={`px-3 py-2 rounded-xl text-xs font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${isOverrideActive
                                                 ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-sm ring-2 ring-orange-300/60'
@@ -2552,6 +2562,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth }) => {
                     setArchiveMonth(null)
                     toast.success(`${archivedTable.replace('_', ' ')} archived successfully!`)
                 }}
+            />
+
+            <MonthPickerPopup
+                isOpen={showOverridePicker}
+                onClose={() => setShowOverridePicker(false)}
+                anchorRef={overrideButtonRef}
+                onCreateMonth={onCreateMonth}
+                onSelectSunday={handleOverrideSundaySelect}
             />
         </div>
     )

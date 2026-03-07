@@ -47,7 +47,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
 
   const sendInvite = async (collaboratorEmail) => {
     const { data: { session } } = await supabase.auth.getSession()
-    const appUrl = 'https://datser.vercel.app/'
+    const appUrl = `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
     const inviterName = preferences?.workspace_name || user?.user_metadata?.full_name || user?.email
 
     const response = await fetch(

@@ -283,6 +283,12 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
+  const getRedirectUrl = useCallback(() => {
+    const explicit = import.meta.env?.VITE_SUPABASE_REDIRECT_URL
+    if (explicit) return explicit
+    return `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
+  }, [])
+
   // Sign in with Google
   const signInWithGoogle = async () => {
     try {
@@ -291,7 +297,7 @@ export const AuthProvider = ({ children }) => {
         throw new Error('Supabase is not configured')
       }
 
-      const redirectUrl = `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
+      const redirectUrl = getRedirectUrl()
       console.log('Redirect URL:', redirectUrl)
 
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -320,7 +326,7 @@ export const AuthProvider = ({ children }) => {
   const signUpWithEmail = async (email, password, fullName, captchaToken) => {
     try {
       if (supabase) {
-        const redirectUrl = `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
+        const redirectUrl = getRedirectUrl()
 
         const signUpOptions = {
           email,
@@ -408,7 +414,7 @@ export const AuthProvider = ({ children }) => {
   const signInWithMagicLink = async (email, captchaToken) => {
     try {
       if (supabase) {
-        const redirectUrl = `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
+        const redirectUrl = getRedirectUrl()
         const otpOptions = {
           email,
           options: {
@@ -441,7 +447,7 @@ export const AuthProvider = ({ children }) => {
   const resetPassword = async (email, captchaToken) => {
     try {
       if (supabase) {
-        const redirectUrl = `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
+        const redirectUrl = getRedirectUrl()
 
         const resetOptions = { redirectTo: redirectUrl }
         // Only add captchaToken if it exists
@@ -510,7 +516,7 @@ export const AuthProvider = ({ children }) => {
             password: 'GodMode123!',
             options: {
               data: { full_name: 'God Mode User' },
-              emailRedirectTo: window.location.origin
+              emailRedirectTo: getRedirectUrl()
             }
           })
 

@@ -4,7 +4,7 @@ import { Check, Calendar, X, Plus } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 
-const MonthPickerPopup = ({ isOpen, onClose, anchorRef, onCreateMonth }) => {
+const MonthPickerPopup = ({ isOpen, onClose, anchorRef, onCreateMonth, onSelectSunday }) => {
     const { monthlyTables, currentTable, setCurrentTable, isCollaborator, selectedAttendanceDate, setAndSaveAttendanceDate, getSundaysInMonth, ownerStickySundays } = useApp()
     const { selection } = useHapticFeedback()
     const popupRef = useRef(null)
@@ -88,10 +88,20 @@ const MonthPickerPopup = ({ isOpen, onClose, anchorRef, onCreateMonth }) => {
         const [y, m, d] = dateStr.split('-').map(Number)
         if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return
         selection()
+        const selectedDate = new Date(y, m - 1, d)
+        if (onSelectSunday) {
+            onSelectSunday({
+                table: previewTable || currentTable,
+                date: selectedDate,
+                dateStr
+            })
+            onClose()
+            return
+        }
         if (previewTable && previewTable !== currentTable) {
             setCurrentTable(previewTable)
         }
-        setAndSaveAttendanceDate(new Date(y, m - 1, d))
+        setAndSaveAttendanceDate(selectedDate)
         onClose()
     }
 
