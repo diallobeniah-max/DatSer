@@ -383,7 +383,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                        <p className={`text-sm font-medium truncate ${collaborator.is_admin ? 'text-purple-700 dark:text-purple-200' : 'text-gray-900 dark:text-white'}`}>
                           {collaborator.email}
                         </p>
                         <div className="flex items-center space-x-2 mt-0.5">
