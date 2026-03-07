@@ -351,26 +351,52 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
     return () => clearTimeout(timeoutId)
   }, [ministries, workspaceOwnerId, isSupabaseConfigured, user?.id])
 
-  const addMinistry = () => {
-    console.log('[MINISTRY] addMinistry called', { newMinistry, canAddMinistry, normalizedNewMinistry })
-    if (!canAddMinistry) {
-      console.log('[MINISTRY] Cannot add - button is disabled, canAddMinistry:', canAddMinistry)
+  const addMinistry = async () => {
+    const trimmedMinistry = newMinistry.trim().replace(/\s+/g, ' ')
+    
+    console.log('[MINISTRY] addMinistry called with input:', { input: newMinistry, trimmed: trimmedMinistry })
+    
+    if (!trimmedMinistry || trimmedMinistry.length === 0) {
+      console.log('[MINISTRY] Input is empty')
+      toast.warning('Please enter a ministry name')
       return
     }
-    const alreadyExists = ministries.some(m => m.toLowerCase() === normalizedNewMinistry.toLowerCase())
+
+    // Check for duplicates
+    const alreadyExists = ministries.some(m => m.toLowerCase() === trimmedMinistry.toLowerCase())
     if (alreadyExists) {
-      console.log('[MINISTRY] Ministry already exists:', normalizedNewMinistry)
-      toast.info(`"${normalizedNewMinistry}" already exists`)
+      console.log('[MINISTRY] Ministry already exists:', trimmedMinistry)
+      toast.info(`"${trimmedMinistry}" already exists`)
       return
     }
-    console.log('[MINISTRY] Adding ministry:', normalizedNewMinistry)
-    setMinistries(prev => {
-      const updated = [...prev, normalizedNewMinistry]
-      console.log('[MINISTRY] Updated ministries state:', updated)
-      return updated
-    })
-    setNewMinistry('')
-    toast.success(`Added "${normalizedNewMinistry}" ministry`)
+
+    try {
+      // Add to local state immediately
+      const updatedMinistries = [...ministries, trimmedMinistry]
+      console.log('[MINISTRY] Updated ministries list:', updatedMinistries)
+      setMinistries(updatedMinistries)
+      setNewMinistry('')
+
+      // Save to Supabase via RPC (respects RLS policies)
+      console.log('[MINISTRY] Saving to Supabase via RPC:', { updatedMinistries, workspaceOwnerId })
+      const { error } = await supabase.rpc('update_ministry_groups', {
+        p_ministry_groups: updatedMinistries,
+        p_owner_id: workspaceOwnerId
+      })
+
+      if (error) {
+        console.log('[MINISTRY] RPC error, attempting fallback direct upsert:', error)
+        throw error
+      }
+
+      console.log('[MINISTRY] Successfully added and saved:', trimmedMinistry)
+      toast.success(`Added "${trimmedMinistry}" ministry`)
+    } catch (error) {
+      console.error('[MINISTRY] Error adding ministry:', error)
+      // Revert local state on error
+      setMinistries(prev => prev.filter(m => m !== trimmedMinistry))
+      toast.error('Failed to add ministry: ' + (error?.message || 'Unknown error'))
+    }
   }
 
   const deleteMinistry = (ministry) => {
@@ -1233,8 +1259,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
               <button
                 type="button"
                 onClick={() => addMinistry()}
-                disabled={!canAddMinistry}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white rounded-lg transition-colors font-medium text-sm"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors font-medium text-sm"
               >
                 <Plus className="w-4 h-4" />
                 <span className="hidden sm:inline">Add</span>
@@ -1257,20 +1282,20 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                   ) : (
                     <span className="text-sm text-gray-700 dark:text-gray-300">{ministry}</span>
                   )}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={() => startEditMinistry(ministry)}
-                      className="p-1 text-gray-400 hover:text-primary-500 transition-colors"
+                      className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded transition-all duration-200"
                       title="Edit"
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <Edit3 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => deleteMinistry(ministry)}
-                      className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                      className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-all duration-200"
                       title="Delete"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
