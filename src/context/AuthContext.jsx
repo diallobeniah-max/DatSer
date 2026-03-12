@@ -284,9 +284,19 @@ export const AuthProvider = ({ children }) => {
   }
 
   const getRedirectUrl = useCallback(() => {
+    const basePath = import.meta.env?.BASE_URL || '/'
+    const currentUrl = `${window.location.origin}${basePath}`
+    const hostname = window.location.hostname || ''
+    const isLocalhost =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0'
+
+    if (isLocalhost) return currentUrl
+
     const explicit = import.meta.env?.VITE_SUPABASE_REDIRECT_URL
     if (explicit) return explicit
-    return `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
+    return currentUrl
   }, [])
 
   // Sign in with Google

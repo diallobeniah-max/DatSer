@@ -1036,6 +1036,8 @@ export const AppProvider = ({ children }) => {
         : genRaw
       const ageRaw = memberData.age || memberData['Age']
       const ageStr = (ageRaw === undefined || ageRaw === null || ageRaw === '') ? null : String(ageRaw).trim()
+      const dobRaw = memberData.date_of_birth || memberData['date_of_birth']
+      const dobStr = (dobRaw === undefined || dobRaw === null || dobRaw === '') ? null : String(dobRaw).trim()
       const phoneRaw = memberData.phone_number ?? memberData.phoneNumber ?? memberData['Phone Number']
       const phoneStr = (phoneRaw === undefined || phoneRaw === null) ? null : String(phoneRaw).trim() || null
 
@@ -1047,6 +1049,7 @@ export const AppProvider = ({ children }) => {
         'Gender': gen,
         'Phone Number': phoneStr,
         'Age': ageStr,
+        'date_of_birth': dobStr,
         'Current Level': memberData.current_level || memberData.currentLevel || memberData['Current Level'],
         // Auto-fill workspace from user preferences
         workspace: workspaceName,
@@ -2017,6 +2020,13 @@ export const AppProvider = ({ children }) => {
         delete normalized.age
       }
 
+      // Normalize date_of_birth (keep as string since column is TEXT)
+      const incomingDob = normalized.date_of_birth ?? normalized['date_of_birth']
+      if (incomingDob !== undefined) {
+        const dobStr = String(incomingDob || '').trim()
+        normalized = { ...normalized, date_of_birth: dobStr || null }
+      }
+
       // Normalize Current Level field
       const incomingLevel = normalized.current_level ?? normalized['Current Level']
       if (incomingLevel !== undefined) {
@@ -2188,7 +2198,26 @@ export const AppProvider = ({ children }) => {
         .update(normalized)
         .eq('id', id)
 
-      if (error) throw error
+      if (error) {
+        const isRlsError =
+          error.code === '42501' ||
+          error.message?.toLowerCase().includes('row-level security') ||
+          error.message?.toLowerCase().includes('permission denied')
+
+        if (isRlsError) {
+          const ownerId = dataOwnerId || user?.id
+          if (!ownerId) throw error
+          const { error: rpcError } = await supabase.rpc('update_member_record', {
+            p_table_name: currentTable,
+            p_member_id: id,
+            p_updates: normalized,
+            p_owner_id: ownerId
+          })
+          if (rpcError) throw rpcError
+        } else {
+          throw error
+        }
+      }
 
       // Update members state with optimistic patch
       setMembers(prev => {

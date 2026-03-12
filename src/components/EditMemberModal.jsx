@@ -7,6 +7,7 @@ import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { normalizeMinistry } from '../utils/dataUtils'
 import { supabase } from '../lib/supabase'
+import DatePicker from './DatePicker'
 
 const normalizeMinistryList = (items) => {
   const normalized = normalizeMinistry(items).map(item => item.replace(/\s+/g, ' ').trim()).filter(Boolean)
@@ -47,6 +48,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
     full_name: '',
     gender: '',
     phone_number: '',
+    date_of_birth: '',
     age: '',
     current_level: '',
     notes: '',
@@ -213,6 +215,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         full_name: (sourceMember['full_name'] || sourceMember['Full Name'] || ''),
         gender: normalizedGender || (typeof sourceMember.gender === 'string' ? sourceMember.gender.toLowerCase() : ''),
         phone_number: sourceMember['Phone Number'] || sourceMember.phone_number || '',
+        date_of_birth: sourceMember['date_of_birth'] || sourceMember.date_of_birth || '',
         age: sourceMember['Age'] || sourceMember.age || '',
         current_level: sourceMember['Current Level'] || sourceMember.current_level || '',
         notes: sourceMember['notes'] || '',
@@ -345,6 +348,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         Gender: formData.gender,
         'Phone Number': formData.phone_number || null,
         Age: formData.age ? String(formData.age).trim() : null,
+        date_of_birth: formData.date_of_birth ? String(formData.date_of_birth).trim() : null,
         'Current Level': formData.current_level,
         // Parent info
         parent_name_1: parentInfo.parent_name_1 || null,
@@ -367,6 +371,7 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
         if (key === 'Gender') return currentSnapshot.Gender ?? currentSnapshot.gender
         if (key === 'Phone Number') return currentSnapshot['Phone Number'] ?? currentSnapshot.phone_number
         if (key === 'Age') return currentSnapshot.Age ?? currentSnapshot.age
+        if (key === 'date_of_birth') return currentSnapshot['date_of_birth'] ?? currentSnapshot.date_of_birth
         if (key === 'Current Level') return currentSnapshot['Current Level'] ?? currentSnapshot.current_level
         if (key === 'Member') return currentSnapshot.Member ?? currentSnapshot.member
         if (key === 'Regular') return currentSnapshot.Regular ?? currentSnapshot.regular
@@ -438,10 +443,34 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
   const handleInputChange = (e) => {
     isDirtyRef.current = true
     const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }))
+    
+    if (name === 'date_of_birth') {
+      // Calculate age automatically
+      if (value) {
+        const dob = new Date(value)
+        const today = new Date()
+        let age = today.getFullYear() - dob.getFullYear()
+        const m = today.getMonth() - dob.getMonth()
+        if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+          age--
+        }
+        setFormData(prev => ({
+          ...prev,
+          [name]: value,
+          age: age >= 0 ? age.toString() : ''
+        }))
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          [name]: value
+        }))
+      }
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }))
+    }
   }
 
   // ESC key to close modal
@@ -614,34 +643,48 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
             )}
           </div>
 
-          {/* Age */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Age
-            </label>
-            <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
-              <input
-                type="number"
-                name="age"
-                value={formData.age}
+          {/* Date of Birth and Age */}
+          <div className="grid grid-cols-2 gap-3">
+            {/* Date of Birth */}
+            <div>
+              <DatePicker
+                name="date_of_birth"
+                label="Date of Birth"
+                value={formData.date_of_birth}
                 onChange={handleInputChange}
-                min="1"
-                max="120"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                step="1"
-                className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${hasAttemptedSave && (!formData.age || isNaN(parseInt(formData.age)))
-                  ? 'border-red-500 focus:ring-red-500 bg-red-50 dark:bg-red-900/10'
-                  : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400'
-                  }`}
-                placeholder="Enter age"
+                placeholder="Select date"
+                error={hasAttemptedSave && !formData.date_of_birth && !formData.age}
               />
             </div>
-            {hasAttemptedSave && (!formData.age || isNaN(parseInt(formData.age))) && (
-              <p className="mt-1 text-xs text-red-600 dark:text-red-400">Please enter age</p>
-            )}
+
+            {/* Age */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Age
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  name="age"
+                  value={formData.age}
+                  onChange={handleInputChange}
+                  min="1"
+                  max="120"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  step="1"
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${hasAttemptedSave && (!formData.age || isNaN(parseInt(formData.age)))
+                    ? 'border-red-500 focus:ring-red-500 bg-red-50 dark:bg-red-900/10'
+                    : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400'
+                    }`}
+                  placeholder="Age"
+                />
+              </div>
+            </div>
           </div>
+          {hasAttemptedSave && (!formData.age || isNaN(parseInt(formData.age))) && (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">Please enter date of birth or age</p>
+          )}
 
           {/* Current Level */}
           <div className="relative">
@@ -919,10 +962,10 @@ const EditMemberModal = ({ isOpen, onClose, member }) => {
             </div>
           </div>
 
-          {/* Ministry/Groups Section */}
+          {/* Ministry/Groups Tags Section */}
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Ministry/Groups (Optional)
+              Ministry/Groups Tags (Optional)
             </label>
             <div className="flex flex-wrap gap-2">
               {ministries.map(ministry => (
