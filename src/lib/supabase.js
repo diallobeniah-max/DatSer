@@ -4,7 +4,8 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-export const isSupabaseConfigured = Boolean(
+// Expose a function so callers can use either `isSupabaseConfigured()` or treat it as a boolean
+export const isSupabaseConfigured = () => Boolean(
   supabaseUrl &&
   supabaseAnonKey &&
   supabaseUrl !== 'your_supabase_url_here' &&
@@ -14,7 +15,7 @@ export const isSupabaseConfigured = Boolean(
 )
 
 // Only create the client when config exists; otherwise export null
-export const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = isSupabaseConfigured() ? createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
