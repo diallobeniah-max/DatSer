@@ -132,13 +132,17 @@ const normalizeDateToSundayForTable = (date, tableName) => {
 
 const normalizeMemberRecord = (member) => {
   if (!member) return member
+  // Preserve the original name if it exists, don't overwrite with empty string
+  const existingName = member.full_name ?? member['Full Name']
   const name = (
-    typeof member.full_name === 'string' && member.full_name.trim()
-  ) ? member.full_name
-    : (typeof member['Full Name'] === 'string' && member['Full Name'].trim()
-      ? member['Full Name']
-      : '')
-  return { ...member, full_name: name, 'Full Name': name }
+    typeof existingName === 'string' && existingName.trim()
+  ) ? existingName.trim()
+    : (typeof member.name === 'string' && member.name.trim()
+      ? member.name.trim()
+      : (typeof member.Name === 'string' && member.Name.trim()
+        ? member.Name.trim()
+        : existingName)) // Keep original value (could be null/undefined) rather than defaulting to empty string
+  return { ...member, full_name: name, 'Full Name': name, name: name, Name: name }
 }
 
 // Get the latest available table from localStorage, falling back to DEFAULT_TABLE
@@ -984,9 +988,9 @@ export const AppProvider = ({ children }) => {
         }
         console.warn('Fetch members failed; preserving current member list.')
       } else {
-        // Filter out records with null name, then normalize both name keys
-        const validMembers = (data || []).filter(member => member?.['full_name'] || member?.['Full Name'])
-        const normalizedMembers = validMembers.map(normalizeMemberRecord)
+        // Keep members even without names - don't filter them out as that could cause members to disappear
+        // The normalizeMemberRecord function will handle setting a default name if needed
+        const normalizedMembers = (data || []).map(normalizeMemberRecord)
         setMembers(normalizedMembers)
         membersCacheRef.current.set(cacheKey, { data: normalizedMembers, ts: now })
         appContextLog(`Successfully loaded ${normalizedMembers.length} members from ${tableName}`)
@@ -2202,23 +2206,37 @@ export const AppProvider = ({ children }) => {
         }
       }
 
-      // Update members state with optimistic patch
+      // Update members state with optimistic patch - preserve existing name if not being updated
       setMembers(prev => {
-        const updatedRow = {}
-        const updatedName = (
-          typeof updatedRow['full_name'] === 'string' && updatedRow['full_name'].trim()
-        ) ? updatedRow['full_name']
-          : (typeof updatedRow['Full Name'] === 'string' ? updatedRow['Full Name']
-            : (typeof updates.full_name === 'string' && updates.full_name.trim() ? updates.full_name
-              : (typeof updates['Full Name'] === 'string' ? updates['Full Name'] : undefined)))
-        console.log('Updating member in state:', id, 'with name:', updatedName)
-        console.log('Updated row data:', updatedRow)
+        // Get the existing member to preserve their name
+        const existingMember = prev.find(m => m.id === id)
+        const existingName = existingMember?.full_name ?? existingMember?.['Full Name'] ?? existingMember?.name ?? existingMember?.Name
+        
+        // Only use the new name from updates if it's explicitly provided and valid
+        let updatedName = undefined
+        if (typeof updates.full_name === 'string' && updates.full_name.trim()) {
+          updatedName = updates.full_name.trim()
+        } else if (typeof updates['Full Name'] === 'string' && updates['Full Name'].trim()) {
+          updatedName = updates['Full Name'].trim()
+        } else if (typeof updates.name === 'string' && updates.name.trim()) {
+          updatedName = updates.name.trim()
+        } else if (typeof updates.Name === 'string' && updates.Name.trim()) {
+          updatedName = updates.Name.trim()
+        }
+        
+        // If no new name provided, keep the existing name
+        const finalName = updatedName !== undefined ? updatedName : existingName
+        
+        console.log('Updating member in state:', id, 'with name:', finalName)
         const updatedMembers = prev.map(m => {
           if (m.id !== id) return m
-          const merged = { ...m, ...optimisticPatch, ...updatedRow }
-          if (updatedName !== undefined) {
-            merged['full_name'] = updatedName
-            merged['Full Name'] = updatedName
+          const merged = { ...m, ...optimisticPatch }
+          // Ensure name is preserved
+          if (finalName !== undefined) {
+            merged.full_name = finalName
+            merged['Full Name'] = finalName
+            merged.name = finalName
+            merged.Name = finalName
           }
           const resolvedPhone = updates['Phone Number'] ?? updates.phone_number
           if (resolvedPhone !== undefined) {
