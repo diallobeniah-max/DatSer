@@ -11,6 +11,7 @@ import { useLongPressSelection } from '../hooks/useLongPressSelection'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { toast } from 'react-toastify'
+import MemberCard from './MemberCard'
 
 
 // Lazy load heavy modals for better initial load performance
@@ -1909,540 +1910,46 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {/* Members List */}
       <div className={`${longPressSelectedIds.size > 0 ? '' : 'mt-4 sm:mt-10'} grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${searchTerm ? '' : 'transition-colors duration-200'} grid-animate`}>
-        {/* Calculate displayed members based on search and pagination */}
         {(() => {
-          // Get tab-filtered members first
-          // getTabFilteredMembers() already handles edited-tab date filtering,
-          // so do NOT re-filter here to avoid double-filtering that hides members
-          let tabFilteredMembers = getTabFilteredMembers()
-
-          const membersToShow = searchTerm
-            ? tabFilteredMembers
-            : tabFilteredMembers.slice(0, displayLimit)
-
+          const tabFilteredMembers = getTabFilteredMembers()
+          const membersToShow = searchTerm ? tabFilteredMembers : tabFilteredMembers.slice(0, displayLimit)
           const hasMoreMembers = !searchTerm && tabFilteredMembers.length > displayLimit
 
           return (
             <>
-              {/* Badge filter removed - badges now work automatically in background */}
-              {/* Date Filter Indicator removed; use Sundays header Edit Date dropdown */}
-
-              {membersToShow.map((member) => {
-                const isExpanded = expandedMembers[member.id]
-                const isSelected = longPressSelectedIds.has(member.id)
-
+              {membersToShow.map((member, index) => {
+                const isExpanded = !!expandedMembers[member.id]
+                const isSelected = longPressSelectedIds.has(member.id) || selectedMemberIds.has(member.id)
                 return (
-                  <div key={member.id} className={`relative ${searchTerm ? '' : 'transition-colors duration-200'}`}>
-                    {/* Selection checkmark */}
-                    {isSelected && (
-                      <div className="selection-checkmark">
-                        <Check className="w-3 h-3 text-white" />
-                      </div>
-                    )}
-                    <div
-                      className={`relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-primary-300 dark:hover:border-primary-600 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden w-[96%] sm:w-full mx-auto ${isSelected ? 'selection-highlight' : ''
-                        }`}
-                      style={{ touchAction: 'pan-y', userSelect: 'none' }}
-                      onTouchStart={(e) => {
-                        if (!selectionMode) {
-                          handleLongPressStart(member.id, e)
-                        }
-                      }}
-                      onTouchMove={(e) => {
-                        handleLongPressMove(e)
-                      }}
-                      onTouchEnd={() => {
-                        handleLongPressEnd()
-                      }}
-                      onMouseDown={(e) => {
-                        if (!selectionMode) {
-                          handleMouseDown(member.id, e)
-                        }
-                      }}
-                      onMouseMove={(e) => {
-                        handleLongPressMove(e)
-                      }}
-                      onMouseUp={() => {
-                        handleMouseUp()
-                      }}
-                      onMouseLeave={() => {
-                        handleMouseUp()
-                      }}
-                      onContextMenu={(e) => {
-                        // Prevent context menu on long press
-                        e.preventDefault()
-                      }}
-                      onClick={() => {
-                        if (selectionMode) {
-                          toggleSelection(member.id)
-                        }
-                      }}
-                    >
-                      {/* Swipe-to-delete removed on mobile */}
-
-                      {/* Mobile-friendly stacked layout */}
-                      <div className="px-0 py-3 sm:px-4 sm:py-3.5">
-                        {/* Row 1: Expand toggle row (chevron + name + hint) */}
-                        <div className="w-full px-3 sm:px-0">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              if (selectionMode) {
-                                e.stopPropagation()
-                                toggleSelection(member.id)
-                              } else {
-                                toggleMemberExpansion(member.id)
-                              }
-                            }}
-                            className="w-full flex items-center gap-2 mb-2 text-left hover:bg-primary-50 dark:hover:bg-primary-900/40 rounded px-1 py-1 transition-colors duration-150"
-                          >
-                            <div className="p-1 text-gray-500 dark:text-gray-400 rounded flex-shrink-0 flex items-center justify-center">
-                              {isExpanded ? (
-                                <ChevronDown className="w-5 h-5" />
-                              ) : (
-                                <ChevronRight className="w-5 h-5" />
-                              )}
-                            </div>
-                            {dashboardTab === 'edited' && isSelected && (
-                              <div className="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center flex-shrink-0">
-                                <Check className="w-3 h-3 text-white" />
-                              </div>
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
-                                {member['full_name'] || member['Full Name']}
-                              </h3>
-                              {(member.inserted_at || member.created_at) && (() => {
-                                const regDate = new Date(member.inserted_at || member.created_at)
-                                const now = new Date()
-                                const diffDays = Math.floor((now - regDate) / (1000 * 60 * 60 * 24))
-                                let label = ''
-                                if (diffDays === 0) label = 'Today'
-                                else if (diffDays === 1) label = 'Yesterday'
-                                else if (diffDays < 7) label = `${diffDays}d ago`
-                                else label = regDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-
-                                return (
-                                  <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
-                                    Joined {label}
-                                  </p>
-                                )
-                              })()}
-                            </div>
-                            <span className="hidden xs:inline text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0 ml-1">
-                              {isExpanded ? 'Hide details' : 'Details'}
-                            </span>
-                          </button>
-                        </div>
-
-                        {/* Row 2: Present/Absent (and desktop Delete) buttons */}
-                        <div className="flex items-stretch gap-2 ml-0 w-full px-3 sm:px-0">
-                          {/* Present/Absent buttons */}
-                          <div className="flex flex-row items-stretch gap-2 w-full">
-                            {/* Present/Absent buttons - compact on mobile, full on desktop */}
-                            {(() => {
-                              const targetDate = getDateString(selectedAttendanceDate)
-                              let rowStatus = targetDate && attendanceData[targetDate] ? attendanceData[targetDate][member.id] : undefined
-                              // Fallback: check member record columns if attendanceData map hasn't loaded yet
-                              if (rowStatus === undefined && targetDate) {
-                                for (const key in member) {
-                                  const keyLower = key.toLowerCase()
-                                  const m = keyLower.match(/^attendance_(\d{4})_(\d{2})_(\d{2})$/)
-                                  if (m && `${m[1]}-${m[2]}-${m[3]}` === targetDate) {
-                                    if (member[key] === 'Present') rowStatus = true
-                                    else if (member[key] === 'Absent') rowStatus = false
-                                    break
-                                  }
-                                }
-                              }
-                              const isPresentSelected = rowStatus === true
-                              const isAbsentSelected = rowStatus === false
-                              return (
-                                <>
-                                  <button
-                                    onClick={() => handleAttendance(member.id, true)}
-                                    disabled={attendanceLoading[member.id]}
-                                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
-                                      ? 'bg-orange-600 dark:bg-orange-700 text-white shadow ring-1 ring-orange-300 dark:ring-orange-500'
-                                      : attendanceLoading[member.id]
-                                        ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
-                                        : 'bg-orange-600 dark:bg-orange-700 text-white shadow-sm'
-                                      }`}
-                                    title={isPresentSelected ? "Click to clear" : "Mark present"}
-                                  >
-                                    {attendanceLoading[member.id] ? '...' : 'Present'}
-                                  </button>
-                                  <button
-                                    onClick={() => handleAttendance(member.id, false)}
-                                    disabled={attendanceLoading[member.id]}
-                                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
-                                      ? 'bg-red-600 dark:bg-red-700 text-white shadow ring-1 ring-red-300 dark:ring-red-500'
-                                      : attendanceLoading[member.id]
-                                        ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
-                                        : 'bg-red-600 dark:bg-red-700 text-white shadow-sm'
-                                      }`}
-                                    title={isAbsentSelected ? "Click to clear" : "Mark absent"}
-                                  >
-                                    {attendanceLoading[member.id] ? '...' : 'Absent'}
-                                  </button>
-                                </>
-                              )
-                            })()}
-
-                          </div>
-
-                          {/* Desktop Delete button - third equal-width button */}
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); openDeleteConfirm(e, member) }}
-                            disabled={attendanceLoading[member.id]}
-                            className="hidden md:inline-flex flex-1 items-center justify-center px-3 py-2 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 hover:border-red-200 dark:hover:border-red-800 text-sm font-medium whitespace-nowrap transition-colors duration-150"
-                            title="Delete member"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Expandable Content */}
-                      {isExpanded && (
-                        <div className="px-2 sm:px-3 pb-2 sm:pb-3 border-t border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700">
-                          <div className="pt-2 sm:pt-2.5">
-                            {/* Member Details */}
-                            {/* Member Details */}
-                            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4 p-3 sm:p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 transition-colors duration-300`}>
-                              <div className="space-y-3">
-                                <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Member Info</h4>
-                                <div className="space-y-2 text-xs sm:text-sm">
-                                  <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-                                    <span className="text-gray-500 dark:text-gray-400">Gender</span>
-                                    <span className="font-medium capitalize text-gray-900 dark:text-white truncate ml-2">
-                                      {member['Gender']?.toLowerCase() === 'm' || member['Gender']?.toLowerCase() === 'male' ? 'Male' :
-                                        member['Gender']?.toLowerCase() === 'f' || member['Gender']?.toLowerCase() === 'female' ? 'Female' :
-                                          member['Gender'] || 'N/A'}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-                                    <span className="text-gray-500 dark:text-gray-400">Phone</span>
-                                    <span className="font-medium text-gray-900 dark:text-white truncate ml-2 font-mono tracking-tight phone-display">{member['Phone Number'] || 'N/A'}</span>
-                                  </div>
-                                  <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-                                    <span className="text-gray-500 dark:text-gray-400">Age</span>
-                                    <span className="font-medium text-gray-900 dark:text-white truncate ml-2">{member['Age'] || 'N/A'}</span>
-                                  </div>
-                                  <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-                                    <span className="text-gray-500 dark:text-gray-400">Level</span>
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 capitalize ml-2">
-                                      {member['Current Level']?.toLowerCase() || 'N/A'}
-                                    </span>
-                                  </div>
-                                  {/* Visitor Badge */}
-                                  {member.is_visitor && (
-                                    <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50">
-                                      <span className="text-gray-500 dark:text-gray-400">Status</span>
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
-                                        Visitor
-                                      </span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Registration Date/Time Card */}
-                                  {(member.inserted_at || member.created_at) && (() => {
-                                    const regDate = new Date(member.inserted_at || member.created_at)
-                                    const now = new Date()
-                                    const diffMs = now - regDate
-                                    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-                                    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-                                    const diffMins = Math.floor(diffMs / (1000 * 60))
-
-                                    let relativeTime = ''
-                                    let badgeColor = 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
-
-                                    if (diffDays === 0) {
-                                      if (diffHours === 0) {
-                                        relativeTime = diffMins <= 1 ? 'Just now' : `${diffMins} mins ago`
-                                      } else {
-                                        relativeTime = diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`
-                                      }
-                                      badgeColor = 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-                                    } else if (diffDays === 1) {
-                                      relativeTime = 'Yesterday'
-                                      badgeColor = 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
-                                    } else if (diffDays < 7) {
-                                      relativeTime = `${diffDays} days ago`
-                                      badgeColor = 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300'
-                                    } else if (diffDays < 30) {
-                                      const weeks = Math.floor(diffDays / 7)
-                                      relativeTime = weeks === 1 ? '1 week ago' : `${weeks} weeks ago`
-                                    } else {
-                                      const years = Math.floor(diffDays / 365)
-                                      relativeTime = years === 1 ? '1 year ago' : `${years} years ago`
-                                    }
-
-                                    return (
-                                      <div className="mt-3 p-3 rounded-lg bg-gradient-to-r from-primary-50 to-orange-50 dark:from-primary-900/20 dark:to-orange-900/20 border border-primary-200 dark:border-primary-800/50">
-                                        <div className="flex items-center justify-between gap-2 mb-2">
-                                          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide flex-shrink-0">Registered</p>
-                                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium truncate max-w-[100px] ${badgeColor}`} title={relativeTime}>
-                                            {relativeTime}
-                                          </span>
-                                        </div>
-                                        <div className="flex items-start gap-3">
-                                          <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-800/50 flex items-center justify-center flex-shrink-0">
-                                            <Calendar className="w-5 h-5 text-primary-600 dark:text-primary-400" />
-                                          </div>
-                                          <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                                              {regDate.toLocaleDateString('en-US', {
-                                                weekday: 'short',
-                                                month: 'short',
-                                                day: 'numeric',
-                                                year: 'numeric'
-                                              })}
-                                            </p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                                              {regDate.toLocaleTimeString('en-US', {
-                                                hour: '2-digit',
-                                                minute: '2-digit'
-                                              })}
-                                            </p>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )
-                                  })()}
-                                </div>
-
-                                {/* Parent Information moved to Actions column for better layout */}
-                              </div>
-
-                              {/* Actions + DOB/Guardians (moved) */}
-                              <div className="space-y-3 border-t md:border-t-0 md:border-l border-gray-200 dark:border-gray-700 pt-3 md:pt-0 md:pl-4">
-                                {/* Date of Birth - Enhanced preview similar to Edit Member display */}
-                                <div className="pt-1">
-                                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Date of Birth</h4>
-                                  <div className="relative">
-                                    <div 
-                                      className={`w-full px-3 py-2 border rounded-md text-sm font-medium cursor-default select-none
-                                        ${member['date_of_birth'] 
-                                          ? 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white' 
-                                          : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-400 dark:text-gray-500'}
-                                      `}
-                                      style={{ minHeight: '40px' }}
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <Calendar className="w-4 h-4 flex-shrink-0 text-gray-400 dark:text-gray-500" />
-                                        <span className="flex-1">
-                                          {member['date_of_birth'] ? (() => {
-                                            try {
-                                              const d = new Date(member['date_of_birth'])
-                                              return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                                            } catch (e) {
-                                              return member['date_of_birth']
-                                            }
-                                          })() : 'Not set'}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                  {/* Tags (moved next to Date of Birth for better desktop layout) */}
-                                  {(memberTags[member.id] && memberTags[member.id].length > 0) && (
-                                    <div className="mt-3">
-                                      <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Tags</h4>
-                                      <div className="flex flex-wrap gap-2">
-                                        {memberTags[member.id].map(tag => (
-                                          <span
-                                            key={tag.id}
-                                            title={tag.name}
-                                            className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-xs font-medium shadow-sm w-32 justify-center"
-                                            style={{
-                                              backgroundColor: tag.color + '14',
-                                              color: tag.color,
-                                              border: `1px solid ${tag.color}33`
-                                            }}
-                                          >
-                                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: tag.color }}></span>
-                                            <span className="truncate max-w-[90px]">{tag.name}</span>
-                                          </span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Guardians (moved from left column) */}
-                                {(member['parent_name_1'] || member['parent_name_2']) && (
-                                  <div className="pt-0">
-                                    <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Guardians</h4>
-                                    <div className="space-y-2 text-xs sm:text-sm">
-                                      {member['parent_name_1'] && (
-                                        <div className="flex justify-between items-start py-1">
-                                          <span className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">Primary</span>
-                                          <div className="text-right">
-                                            <span className="block font-medium text-gray-900 dark:text-white">{member['parent_name_1']}</span>
-                                            {member['parent_phone_1'] && (
-                                              <span className="block text-xs text-gray-500 dark:text-gray-400 font-mono tracking-tight phone-display">{member['parent_phone_1']}</span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-                                      {member['parent_name_2'] && (
-                                        <div className="flex justify-between items-start py-1">
-                                          <span className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">Secondary</span>
-                                          <div className="text-right">
-                                            <span className="block font-medium text-gray-900 dark:text-white">{member['parent_name_2']}</span>
-                                            {member['parent_phone_2'] && (
-                                              <span className="block text-xs text-gray-500 dark:text-gray-400 font-mono tracking-tight phone-display">{member['parent_phone_2']}</span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Actions</h4>
-                                <div className="flex flex-col gap-2">
-                                  <button
-                                    onClick={() => setEditingMember(member)}
-                                    className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:border-primary-300 dark:hover:border-primary-600 rounded-lg transition-colors duration-150 shadow-sm hover:shadow-md"
-                                  >
-                                    <Edit3 className="w-4 h-4" />
-                                    <span>Edit Details</span>
-                                  </button>
-                                {/* Mobile Delete button (replaces swipe-to-delete) */}
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); openDeleteConfirm(e, member) }}
-                                  className="md:hidden w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 hover:border-red-400 dark:hover:border-red-800 rounded-lg transition-colors duration-150 shadow-sm hover:shadow-md"
-                                  title="Delete member"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                  <span>Delete Member</span>
-                                </button>
-                                </div>
-
-                                {/* Notes Section */}
-                                {member.notes && (
-                                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                                    <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1">
-                                      <StickyNote className="w-3 h-3" />
-                                      Note
-                                    </h4>
-                                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg p-2 italic">
-                                      {member.notes}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Sunday Attendance */}
-                            <div className="border-t border-gray-200 dark:border-gray-600 pt-4 transition-colors">
-                              <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 transition-colors">{getMonthDisplayName(currentTable)} Sunday Attendance</h4>
-                              <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 ${searchTerm ? '' : 'transition-colors duration-300'} grid-animate`}>
-                                {sundayDates.map(date => {
-                                  const dateKey = date
-                                  const dateAttendance = attendanceData[dateKey] || {}
-                                  let memberStatus = dateAttendance[member.id]
-                                  // Fallback: check member record columns if attendanceData map hasn't loaded
-                                  if (memberStatus === undefined) {
-                                    for (const k in member) {
-                                      const kl = k.toLowerCase()
-                                      const km = kl.match(/^attendance_(\d{4})_(\d{2})_(\d{2})$/)
-                                      if (km && `${km[1]}-${km[2]}-${km[3]}` === dateKey) {
-                                        if (member[k] === 'Present') memberStatus = true
-                                        else if (member[k] === 'Absent') memberStatus = false
-                                        break
-                                      }
-                                    }
-                                  }
-                                  const isPresent = memberStatus === true
-                                  const isAbsent = memberStatus === false
-                                  const isLoading = attendanceLoading[`${member.id}_${dateKey}`]
-
-                                  return (
-                                    <div
-                                      key={date}
-                                      className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 transition-colors"
-                                    >
-                                      <div className="text-center mb-2">
-                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors">
-                                          {new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                        </span>
-                                      </div>
-                                      <div className="flex space-x-1">
-                                        <button
-                                          onClick={() => handleAttendanceForDate(member.id, true, date)}
-                                          disabled={isLoading}
-                                          className={`flex-1 px-2 py-1 rounded text-xs font-bold transition-colors duration-150 ${isPresent
-                                            ? 'bg-green-800 dark:bg-green-700 text-white shadow-lg ring-2 ring-green-300 dark:ring-green-400 border border-green-900 dark:border-green-300 font-extrabold'
-                                            : isLoading
-                                              ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                                              : 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800'
-                                            }`}
-                                        >
-                                          {isLoading ? '...' : 'P'}
-                                        </button>
-                                        <button
-                                          onClick={() => handleAttendanceForDate(member.id, false, date)}
-                                          disabled={isLoading}
-                                          className={`flex-1 px-2 py-1 rounded text-xs font-bold transition-colors duration-150 ${isAbsent
-                                            ? 'bg-red-800 dark:bg-red-700 text-white shadow-lg ring-2 ring-red-300 dark:ring-red-400 border border-red-900 dark:border-red-300 font-extrabold'
-                                            : isLoading
-                                              ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                                              : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800'
-                                            }`}
-                                        >
-                                          {isLoading ? '...' : 'A'}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            </div>
-
-                            {/* Attendance Summary */}
-                            <div className="border-t border-gray-200 dark:border-gray-600 pt-4 mt-4">
-                              <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1">
-                                <History className="w-3 h-3" />
-                                Attendance Summary
-                              </h4>
-                              <div className="grid grid-cols-3 gap-3 transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]">
-                                {(() => {
-                                  // Calculate attendance stats for this member
-                                  let present = 0, absent = 0, total = 0
-                                  sundayDates.forEach(date => {
-                                    const status = attendanceData[date]?.[member.id]
-                                    if (status === true) { present++; total++ }
-                                    else if (status === false) { absent++; total++ }
-                                  })
-                                  const rate = total > 0 ? Math.round((present / total) * 100) : 0
-                                  return (
-                                    <>
-                                      <div className="text-center p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                                        <div className="text-lg font-bold text-green-600 dark:text-green-400">{present}</div>
-                                        <div className="text-xs text-gray-500 dark:text-gray-400">Present</div>
-                                      </div>
-                                      <div className="text-center p-2 bg-red-50 dark:bg-red-900/20 rounded-lg">
-                                        <div className="text-lg font-bold text-red-600 dark:text-red-400">{absent}</div>
-                                        <div className="text-xs text-gray-500 dark:text-gray-400">Absent</div>
-                                      </div>
-                                      <div className="text-center p-2 bg-primary-50 dark:bg-primary-900/20 rounded-lg">
-                                        <div className="text-lg font-bold text-primary-600 dark:text-primary-400">{rate}%</div>
-                                        <div className="text-xs text-gray-500 dark:text-gray-400">Rate</div>
-                                      </div>
-                                    </>
-                                  )
-                                })()}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <MemberCard
+                    key={member.id}
+                    member={member}
+                    isExpanded={isExpanded}
+                    isSelected={isSelected}
+                    selectionMode={selectionMode}
+                    onToggleExpansion={toggleMemberExpansion}
+                    onToggleSelection={toggleSelection}
+                    onLongPressStart={handleLongPressStart}
+                    onLongPressMove={handleLongPressMove}
+                    onLongPressEnd={handleLongPressEnd}
+                    onMouseDown={handleMouseDown}
+                    onMouseUp={handleMouseUp}
+                    onAttendance={handleAttendance}
+                    onAttendanceForDate={handleAttendanceForDate}
+                    onEdit={setEditingMember}
+                    onDelete={openDeleteConfirm}
+                    attendanceStatus={(() => {
+                      const targetDate = getDateString(selectedAttendanceDate)
+                      if (!targetDate) return undefined
+                      return attendanceData[targetDate]?.[member.id]
+                    })()}
+                    attendanceLoading={attendanceLoading[member.id]}
+                    monthSundays={sundayDates}
+                    attendanceData={attendanceData}
+                    memberTags={memberTags[member.id]}
+                    currentTable={currentTable}
+                    getMonthDisplayName={getMonthDisplayName}
+                  />
                 )
               })}
 
@@ -2484,7 +1991,6 @@ const Dashboard = ({ isAdmin = false }) => {
                   )}
                 </div>
               )}
-
             </>
           )
         })()}

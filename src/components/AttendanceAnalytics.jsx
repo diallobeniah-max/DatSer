@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { toast } from 'react-toastify'
-import { 
-  Users, 
-  TrendingUp, 
-  Calendar, 
-  Award, 
-  UserCheck, 
-  Clock, 
+import {
+  Users,
+  TrendingUp,
+  Calendar,
+  Award,
+  UserCheck,
+  Clock,
   BarChart3,
   Filter,
   Star,
@@ -22,13 +22,13 @@ import {
 } from 'lucide-react'
 
 const AttendanceAnalytics = () => {
-  const { 
-    supabase, 
+  const {
+    supabase,
     isSupabaseConfigured,
-    members, 
-    currentTable, 
-    attendanceData, 
-    calculateAttendanceRate, 
+    members,
+    currentTable,
+    attendanceData,
+    calculateAttendanceRate,
     calculateMemberBadge,
     updateMemberBadges,
     toggleMemberBadge,
@@ -41,7 +41,7 @@ const AttendanceAnalytics = () => {
   // Helper function to get latest attendance status for a member
   const getLatestAttendanceStatus = (member) => {
     const attendanceDates = Object.keys(attendanceData).sort().reverse()
-    
+
     for (const date of attendanceDates) {
       const memberAttendance = attendanceData[date]?.[member.id]
       if (memberAttendance !== undefined) {
@@ -60,7 +60,7 @@ const AttendanceAnalytics = () => {
     }
     return badgeNames[badgeType] || badgeType
   }
-  
+
   const [analytics, setAnalytics] = useState({
     regularAttendees: [],
     attendanceStats: [],
@@ -70,16 +70,16 @@ const AttendanceAnalytics = () => {
     attendanceByLevel: {},
     newMemberTrends: []
   })
-  
+
   const [filters, setFilters] = useState({
     monthsBack: 6,
     minAttendanceRate: 75,
     newcomerMonths: 3
   })
-  
+
   // Add badge filter state
   const [badgeFilter, setBadgeFilter] = useState([])
-  
+
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('badges') // badges, regulars, trends, newcomers, stats
   const [selectedMember, setSelectedMember] = useState(null)
@@ -97,174 +97,167 @@ const AttendanceAnalytics = () => {
   const [isBadgeResultsOpen, setIsBadgeResultsOpen] = useState(false)
 
   // Calculate analytics from local member data
-  const calculateAnalytics = () => {
-    setLoading(true)
-    
-    try {
-      // Update member badges first
-      updateMemberBadges()
-      
-      // Calculate members by badge type
-      const membersByBadge = {}
-      const attendanceByLevel = {}
-      const regularAttendees = []
-      const newcomers = []
-      
-      members.forEach(member => {
-        const badgeType = calculateMemberBadge(member)
-        const attendanceRate = calculateAttendanceRate(member)
-        const level = member['Current Level'] || 'Unknown'
-        const joinDate = new Date(member['Join Date'] || member.inserted_at)
-        const daysSinceJoin = Math.floor((Date.now() - joinDate) / (1000 * 60 * 60 * 24))
-        
-        // Group by badge type
-        if (!membersByBadge[badgeType]) {
-          membersByBadge[badgeType] = []
-        }
-        membersByBadge[badgeType].push({
-          ...member,
-          attendanceRate,
-          badgeType,
-          daysSinceJoin
-        })
-        
-        // Group by education level
-        if (!attendanceByLevel[level]) {
-          attendanceByLevel[level] = { total: 0, totalAttendance: 0, members: [] }
-        }
-        attendanceByLevel[level].total++
-        attendanceByLevel[level].totalAttendance += attendanceRate
-        attendanceByLevel[level].members.push(member)
-        
-        // Regular attendees (75%+ attendance)
-        if (attendanceRate >= filters.minAttendanceRate) {
-          regularAttendees.push({
-            member_id: member.id,
-            member_name: member['full_name'] || member['Full Name'],
-            attendance_rate: attendanceRate,
-            total_attended: Math.round((attendanceRate / 100) * 4), // Assuming 4 Sundays per month
-            total_possible: 4,
-            last_attendance: new Date().toISOString(),
-            badge_type: badgeType
-          })
-        }
-        
-        // Newcomers (joined within specified months)
-        if (daysSinceJoin <= filters.newcomerMonths * 30) {
-          newcomers.push({
-            member_id: member.id,
-            member_name: member['full_name'] || member['Full Name'],
-            join_date: joinDate.toISOString(),
-            attendance_rate: attendanceRate,
-            days_since_join: daysSinceJoin,
-            badge_type: badgeType
-          })
-        }
-      })
-      
-      // Calculate average attendance by level
-      Object.keys(attendanceByLevel).forEach(level => {
-        attendanceByLevel[level].averageAttendance = 
-          attendanceByLevel[level].total > 0 
-            ? Math.round(attendanceByLevel[level].totalAttendance / attendanceByLevel[level].total)
-            : 0
-      })
-      
-      // Sort regular attendees by attendance rate
-      regularAttendees.sort((a, b) => b.attendance_rate - a.attendance_rate)
-      
-      // Sort newcomers by join date (newest first)
-      newcomers.sort((a, b) => new Date(b.join_date) - new Date(a.join_date))
-      
-      // Calculate outreach data
-      const lowAttendance = []
-      const longAbsent = []
-      const newcomersNeedingFollowup = []
-      
-      members.forEach(member => {
-        const attendanceRate = calculateAttendanceRate(member)
-        const joinDate = new Date(member['Join Date'] || member.inserted_at)
-        const daysSinceJoin = Math.floor((Date.now() - joinDate) / (1000 * 60 * 60 * 24))
-        const phone = member['Phone Number'] || member.phone || 'No phone number'
-        
-        // Low attendance (below 50%)
-        if (attendanceRate < 50 && attendanceRate > 0) {
-          lowAttendance.push({
-            id: member.id,
-            name: member['full_name'] || member['Full Name'],
-            phone: phone,
-            attendanceRate: attendanceRate,
-            lastAttendance: 'Recent', // This would need actual last attendance data
-            reason: 'Low attendance rate'
-          })
-        }
-        
-        // Long absent (0% attendance and been member for more than 30 days)
-        if (attendanceRate === 0 && daysSinceJoin > 30) {
-          longAbsent.push({
-            id: member.id,
-            name: member['full_name'] || member['Full Name'],
-            phone: phone,
-            daysSinceJoin: daysSinceJoin,
-            reason: 'No recent attendance'
-          })
-        }
-        
-        // Newcomers needing follow-up (joined within 60 days, low attendance)
-        if (daysSinceJoin <= 60 && attendanceRate < 75) {
-          newcomersNeedingFollowup.push({
-            id: member.id,
-            name: member['full_name'] || member['Full Name'],
-            phone: phone,
-            attendanceRate: attendanceRate,
-            daysSinceJoin: daysSinceJoin,
-            reason: 'New member with low attendance'
-          })
-        }
-      })
-      
-      setOutreachData({
-        lowAttendance,
-        longAbsent,
-        newcomersNeedingFollowup
-      })
-      
-      setAnalytics({
-        regularAttendees,
-        attendanceStats: Object.entries(attendanceByLevel).map(([level, data]) => ({
-          level,
-          total_members: data.total,
-          average_attendance: data.averageAttendance
-        })),
-        monthlyTrends: [], // Will be calculated from historical data if available
-        newcomers,
-        membersByBadge,
-        attendanceByLevel,
-        newMemberTrends: [] // Will be calculated from historical data if available
-      })
-      
-    } catch (error) {
-      console.error('Error calculating analytics:', error)
-    } finally {
-      setLoading(false)
+  const calculatedAnalytics = useMemo(() => {
+    if (members.length === 0) return {
+      regularAttendees: [],
+      attendanceStats: [],
+      monthlyTrends: [],
+      newcomers: [],
+      membersByBadge: {},
+      attendanceByLevel: {},
+      newMemberTrends: []
     }
-  }
+
+    // Calculate members by badge type
+    const membersByBadge = {}
+    const attendanceByLevel = {}
+    const regularAttendees = []
+    const newcomers = []
+
+    members.forEach(member => {
+      const badgeType = calculateMemberBadge(member)
+      const attendanceRate = calculateAttendanceRate(member)
+      const level = member['Current Level'] || 'Unknown'
+      const joinDate = new Date(member['Join Date'] || member.inserted_at)
+      const daysSinceJoin = Math.floor((Date.now() - joinDate) / (1000 * 60 * 60 * 24))
+
+      // Group by badge type
+      if (!membersByBadge[badgeType]) {
+        membersByBadge[badgeType] = []
+      }
+      membersByBadge[badgeType].push({
+        ...member,
+        attendanceRate,
+        badgeType,
+        daysSinceJoin
+      })
+
+      // Group by education level
+      if (!attendanceByLevel[level]) {
+        attendanceByLevel[level] = { total: 0, totalAttendance: 0, members: [] }
+      }
+      attendanceByLevel[level].total++
+      attendanceByLevel[level].totalAttendance += attendanceRate
+      attendanceByLevel[level].members.push(member)
+
+      // Regular attendees (75%+ attendance)
+      if (attendanceRate >= filters.minAttendanceRate) {
+        regularAttendees.push({
+          member_id: member.id,
+          member_name: member['full_name'] || member['Full Name'],
+          attendance_rate: attendanceRate,
+          total_attended: Math.round((attendanceRate / 100) * 4), // Assuming 4 Sundays per month
+          total_possible: 4,
+          last_attendance: new Date().toISOString(),
+          badge_type: badgeType
+        })
+      }
+
+      // Newcomers (joined within specified months)
+      if (daysSinceJoin <= filters.newcomerMonths * 30) {
+        newcomers.push({
+          member_id: member.id,
+          member_name: member['full_name'] || member['Full Name'],
+          join_date: joinDate.toISOString(),
+          attendance_rate: attendanceRate,
+          days_since_join: daysSinceJoin,
+          badge_type: badgeType
+        })
+      }
+    })
+
+    // Calculate average attendance by level
+    Object.keys(attendanceByLevel).forEach(level => {
+      attendanceByLevel[level].averageAttendance =
+        attendanceByLevel[level].total > 0
+          ? Math.round(attendanceByLevel[level].totalAttendance / attendanceByLevel[level].total)
+          : 0
+    })
+
+    // Sort regular attendees by attendance rate
+    regularAttendees.sort((a, b) => b.attendance_rate - a.attendance_rate)
+
+    // Sort newcomers by join date (newest first)
+    newcomers.sort((a, b) => new Date(b.join_date) - new Date(a.join_date))
+
+    return {
+      regularAttendees,
+      attendanceStats: Object.entries(attendanceByLevel).map(([level, data]) => ({
+        level,
+        total_members: data.total,
+        average_attendance: data.averageAttendance
+      })),
+      monthlyTrends: [],
+      newcomers,
+      membersByBadge,
+      attendanceByLevel,
+      newMemberTrends: []
+    }
+  }, [members, filters.minAttendanceRate, filters.newcomerMonths, calculateMemberBadge, calculateAttendanceRate])
+
+  const calculatedOutreachData = useMemo(() => {
+    const lowAttendance = []
+    const longAbsent = []
+    const newcomersNeedingFollowup = []
+
+    members.forEach(member => {
+      const attendanceRate = calculateAttendanceRate(member)
+      const joinDate = new Date(member['Join Date'] || member.inserted_at)
+      const daysSinceJoin = Math.floor((Date.now() - joinDate) / (1000 * 60 * 60 * 24))
+      const phone = member['Phone Number'] || member.phone || 'No phone number'
+
+      if (attendanceRate < 50 && attendanceRate > 0) {
+        lowAttendance.push({
+          id: member.id,
+          name: member['full_name'] || member['Full Name'],
+          phone: phone,
+          attendanceRate: attendanceRate,
+          lastAttendance: 'Recent',
+          reason: 'Low attendance rate'
+        })
+      }
+
+      if (attendanceRate === 0 && daysSinceJoin > 30) {
+        longAbsent.push({
+          id: member.id,
+          name: member['full_name'] || member['Full Name'],
+          phone: phone,
+          daysSinceJoin: daysSinceJoin,
+          reason: 'No recent attendance'
+        })
+      }
+
+      if (daysSinceJoin <= 60 && attendanceRate < 75) {
+        newcomersNeedingFollowup.push({
+          id: member.id,
+          name: member['full_name'] || member['Full Name'],
+          phone: phone,
+          attendanceRate: attendanceRate,
+          daysSinceJoin: daysSinceJoin,
+          reason: 'New member with low attendance'
+        })
+      }
+    })
+
+    return { lowAttendance, longAbsent, newcomersNeedingFollowup }
+  }, [members, calculateAttendanceRate])
+
 
   // Process badges manually and show results
   const processBadgesManually = async () => {
     setIsProcessingBadges(true)
     setBadgeResults(null)
-    
+
     try {
       console.log('Starting badge processing...')
       console.log('Available Sunday dates:', availableSundayDates)
       console.log('Attendance data:', attendanceData)
       console.log('Members count:', members.length)
-      
+
       // Check if month is complete
       const monthComplete = isMonthAttendanceComplete()
       console.log('Is month complete?', monthComplete)
-      
+
       if (!monthComplete) {
         toast.error('Month is not complete yet. All Sundays must have attendance data.')
         setIsProcessingBadges(false)
@@ -280,16 +273,16 @@ const AttendanceAnalytics = () => {
       // Check each member for 3 consecutive Sundays
       for (const member of members) {
         results.totalProcessed++
-        
+
         // Check for 3 consecutive Present attendances
         const sortedSundays = [...availableSundayDates].sort((a, b) => a - b)
         let consecutiveCount = 0
         let hasThreeConsecutive = false
-        
+
         for (const sunday of sortedSundays) {
           const dateKey = sunday.toISOString().split('T')[0]
           const memberStatus = attendanceData[dateKey]?.[member.id]
-          
+
           if (memberStatus === true) {
             consecutiveCount++
             if (consecutiveCount >= 3) {
@@ -359,21 +352,21 @@ const AttendanceAnalytics = () => {
   }, [members, filters])
 
   // Member Badges Tab
-  const MemberBadgesTab = () => (
+  const MemberBadgesTab = React.memo(({ membersByBadge, isDarkMode, onEditBadge, getLatestStatus }) => (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className={`text-xl font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
           Member Badges & Categories
         </h3>
         <div className="text-sm text-gray-500 dark:text-gray-400">
-          {members.length} total members
+          {Object.values(membersByBadge).reduce((acc, curr) => acc + curr.length, 0)} total categorized
         </div>
       </div>
 
       {/* Badge Statistics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {Object.entries(analytics.membersByBadge).map(([badgeType, badgeMembers]) => (
-          <div 
+        {Object.entries(membersByBadge).map(([badgeType, badgeMembers]) => (
+          <div
             key={badgeType}
             className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
           >
@@ -396,7 +389,7 @@ const AttendanceAnalytics = () => {
 
       {/* Members by Badge Type */}
       <div className="space-y-6">
-        {Object.entries(analytics.membersByBadge).map(([badgeType, badgeMembers]) => (
+        {Object.entries(membersByBadge).map(([badgeType, badgeMembers]) => (
           <div key={badgeType} className="space-y-3">
             <div className="flex items-center gap-2">
               <div className={`w-3 h-3 rounded-full ${
@@ -409,12 +402,12 @@ const AttendanceAnalytics = () => {
                 {getBadgeDisplayName(badgeType)} ({badgeMembers.length})
               </h4>
             </div>
-            
+
             <div className="grid gap-3">
               {badgeMembers.map((member) => (
-                <div 
+                <div
                   key={member.id}
-                  className={`rounded-lg border p-3 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+                  className={`rounded-lg border p-3 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} contain-content`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -432,7 +425,7 @@ const AttendanceAnalytics = () => {
                             {member['full_name'] || member['Full Name']}
                           </h5>
                           {(() => {
-                            const attendanceStatus = getLatestAttendanceStatus(member)
+                            const attendanceStatus = getLatestStatus(member)
                             if (attendanceStatus === true) {
                               return (
                                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-green-800 dark:bg-green-700 text-white ring-2 ring-green-300 dark:ring-green-400">
@@ -469,13 +462,10 @@ const AttendanceAnalytics = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => {
-                          setSelectedMember(member)
-                          setShowBadgeModal(true)
-                        }}
+                        onClick={() => onEditBadge(member)}
                         className={`px-2 py-1 text-xs rounded transition-colors ${
-                          isDarkMode 
-                            ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' 
+                          isDarkMode
+                            ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                             : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                         }`}
                       >
@@ -490,14 +480,15 @@ const AttendanceAnalytics = () => {
         ))}
       </div>
     </div>
-  )
+  ))
+  MemberBadgesTab.displayName = 'MemberBadgesTab'
 
   // Regular Attendees Tab
-  const RegularAttendeesTab = () => (
+  const RegularAttendeesTab = React.memo(({ regularAttendees, isDarkMode }) => (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className={`text-xl font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-          Regular Attendees ({analytics.regularAttendees.length})
+          Regular Attendees ({regularAttendees.length})
         </h3>
         <div className="flex items-center gap-2">
           <Star className="w-5 h-5 text-yellow-500" />
@@ -508,16 +499,16 @@ const AttendanceAnalytics = () => {
       </div>
 
       <div className="grid gap-4">
-        {analytics.regularAttendees.map((member, index) => (
-          <div 
-            key={member.member_id} 
-            className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+        {regularAttendees.map((member, index) => (
+          <div
+            key={member.member_id}
+            className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} contain-content`}
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-white ${
-                  index === 0 ? 'bg-yellow-500' : 
-                  index === 1 ? 'bg-gray-400' : 
+                  index === 0 ? 'bg-yellow-500' :
+                  index === 1 ? 'bg-gray-400' :
                   index === 2 ? 'bg-amber-600' : 'bg-orange-500'
                 }`}>
                   {index < 3 ? (index + 1) : <UserCheck className="w-5 h-5" />}
@@ -548,33 +539,36 @@ const AttendanceAnalytics = () => {
         ))}
       </div>
     </div>
-  )
+  ))
+  RegularAttendeesTab.displayName = 'RegularAttendeesTab'
 
   // Monthly Trends Tab
-  const MonthlyTrendsTab = () => (
+  const MonthlyTrendsTab = React.memo(({ monthlyTrends, isDarkMode }) => (
     <div className="space-y-6">
       <h3 className={`text-xl font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
         Monthly Attendance Trends
       </h3>
 
       <div className="grid gap-4">
-        {analytics.monthlyTrends.map((trend) => (
-          <div 
+        {monthlyTrends.length === 0 ? (
+          <div className="text-center py-10 text-gray-500">No historical trend data available</div>
+        ) : monthlyTrends.map((trend) => (
+          <div
             key={trend.month_year}
             className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
           >
             <div className="flex items-center justify-between mb-3">
               <h4 className={`font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                {new Date(trend.month_year + '-01').toLocaleDateString('en-US', { 
-                  year: 'numeric', 
-                  month: 'long' 
+                {new Date(trend.month_year + '-01').toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long'
                 })}
               </h4>
               <div className={`text-sm transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                 {trend.total_members} members
               </div>
             </div>
-            
+
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
                 <div className="text-lg font-semibold text-orange-500">
@@ -605,28 +599,29 @@ const AttendanceAnalytics = () => {
         ))}
       </div>
     </div>
-  )
+  ))
+  MonthlyTrendsTab.displayName = 'MonthlyTrendsTab'
 
   // Newcomers Tab
-  const NewcomersTab = () => (
+  const NewcomersTab = React.memo(({ newcomers, newcomerMonths, isDarkMode }) => (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className={`text-xl font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-          Recent Newcomers ({analytics.newcomers.length})
+          Recent Newcomers ({newcomers.length})
         </h3>
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-green-500" />
           <span className={`text-sm transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            Last {filters.newcomerMonths} months
+            Last {newcomerMonths} months
           </span>
         </div>
       </div>
 
       <div className="grid gap-4">
-        {analytics.newcomers.map((newcomer) => (
-          <div 
+        {newcomers.map((newcomer) => (
+          <div
             key={newcomer.member_id}
-            className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+            className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} contain-content`}
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -638,16 +633,16 @@ const AttendanceAnalytics = () => {
                     {newcomer.member_name}
                   </h4>
                   <p className={`text-sm transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    First visit: {new Date(newcomer.first_attendance_date).toLocaleDateString()}
+                    First visit: {new Date(newcomer.join_date).toLocaleDateString()}
                   </p>
                 </div>
               </div>
               <div className="text-right">
                 <div className="text-lg font-semibold text-green-500">
-                  {newcomer.total_attendances} visits
+                  {newcomer.attendance_rate}% attendance
                 </div>
                 <p className={`text-xs transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  {newcomer.weeks_since_first_visit} weeks ago
+                  Joined {newcomer.days_since_join} days ago
                 </p>
               </div>
             </div>
@@ -655,13 +650,61 @@ const AttendanceAnalytics = () => {
         ))}
       </div>
     </div>
-  )
+  ))
+  NewcomersTab.displayName = 'NewcomersTab'
+
+  // All Stats Tab
+  const AllStatsTab = React.memo(({ attendanceStats, isDarkMode }) => (
+    <div className="space-y-6">
+      <h3 className={`text-xl font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+        All Member Statistics
+      </h3>
+
+      <div className="grid gap-4">
+        {attendanceStats.map((stat) => (
+          <div
+            key={stat.level}
+            className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} contain-content`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white bg-orange-500`}>
+                  <BarChart3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className={`font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                    Level: {stat.level}
+                  </h4>
+                  <p className={`text-sm transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {stat.total_members} members in this category
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className={`text-xl font-bold ${
+                  stat.average_attendance >= 75 ? 'text-green-500' :
+                  stat.average_attendance >= 50 ? 'text-yellow-500' :
+                  'text-red-500'
+                }`}>
+                  {stat.average_attendance}%
+                </div>
+                <p className={`text-xs transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Average Attendance
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  ))
+  AllStatsTab.displayName = 'AllStatsTab'
 
   // Badge Management Modal
   const BadgeManagementModal = () => {
     const [selectedBadge, setSelectedBadge] = useState('')
     const [isAssigning, setIsAssigning] = useState(false)
-    
+
     const badgeOptions = [
       { value: '', label: 'Remove Manual Badge' },
       { value: 'VIP Member', label: '👑 VIP Member' },
@@ -670,64 +713,56 @@ const AttendanceAnalytics = () => {
       { value: 'Mentor', label: '👨‍🏫 Mentor' },
       { value: 'Special Recognition', label: '🏆 Special Recognition' }
     ]
-    
+
     const handleAssignBadge = async () => {
       if (!selectedMember) return
-      
+
       setIsAssigning(true)
       try {
-        // For special badges in analytics, we'll use the old single-badge approach
-        // by clearing existing manual badges and setting the new one
         if (selectedBadge) {
-          // Clear existing manual badges first, then add the new one
           const member = members.find(m => m.id === selectedMember.id)
           if (member && member['Manual Badges']) {
-            // Remove all existing manual badges
-            const existingBadges = Array.isArray(member['Manual Badges']) 
-              ? member['Manual Badges'] 
+            const existingBadges = Array.isArray(member['Manual Badges'])
+              ? member['Manual Badges']
               : JSON.parse(member['Manual Badges'] || '[]')
-            
+
             for (const badge of existingBadges) {
               await toggleMemberBadge(selectedMember.id, badge)
             }
           }
-          // Add the new badge
           await toggleMemberBadge(selectedMember.id, selectedBadge)
         } else {
-          // Remove all manual badges if selectedBadge is empty
           const member = members.find(m => m.id === selectedMember.id)
           if (member && member['Manual Badges']) {
-            const existingBadges = Array.isArray(member['Manual Badges']) 
-              ? member['Manual Badges'] 
+            const existingBadges = Array.isArray(member['Manual Badges'])
+              ? member['Manual Badges']
               : JSON.parse(member['Manual Badges'] || '[]')
-            
+
             for (const badge of existingBadges) {
               await toggleMemberBadge(selectedMember.id, badge)
             }
           }
         }
-        
+
         setShowBadgeModal(false)
         setSelectedMember(null)
         setSelectedBadge('')
-        // Recalculate analytics
-        calculateAnalytics()
       } catch (error) {
         console.error('Error assigning badge:', error)
       } finally {
         setIsAssigning(false)
       }
     }
-    
+
     if (!showBadgeModal || !selectedMember) return null
-    
+
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div className={`rounded-lg p-6 w-full max-w-md mx-4 ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
           <h3 className={`text-lg font-semibold mb-4 transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
             Manage Badge for {selectedMember['full_name'] || selectedMember['Full Name']}
           </h3>
-          
+
           <div className="space-y-4">
             <div>
               <label className={`block text-sm font-medium mb-2 transition-colors ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
@@ -737,8 +772,8 @@ const AttendanceAnalytics = () => {
                 value={selectedBadge}
                 onChange={(e) => setSelectedBadge(e.target.value)}
                 className={`w-full p-2 border rounded-md transition-colors ${
-                  isDarkMode 
-                    ? 'bg-gray-700 border-gray-600 text-white' 
+                  isDarkMode
+                    ? 'bg-gray-700 border-gray-600 text-white'
                     : 'bg-white border-gray-300 text-gray-900'
                 }`}
               >
@@ -749,7 +784,7 @@ const AttendanceAnalytics = () => {
                 ))}
               </select>
             </div>
-            
+
             <div className="flex gap-3">
               <button
                 onClick={() => {
@@ -758,8 +793,8 @@ const AttendanceAnalytics = () => {
                   setSelectedBadge('')
                 }}
                 className={`flex-1 px-4 py-2 rounded-md transition-colors ${
-                  isDarkMode 
-                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' 
+                  isDarkMode
+                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
@@ -769,8 +804,8 @@ const AttendanceAnalytics = () => {
                 onClick={handleAssignBadge}
                 disabled={isAssigning}
                 className={`flex-1 px-4 py-2 rounded-md text-white transition-colors ${
-                  isAssigning 
-                    ? 'bg-gray-400 cursor-not-allowed' 
+                  isAssigning
+                    ? 'bg-gray-400 cursor-not-allowed'
                     : 'bg-orange-600 hover:bg-orange-700'
                 }`}
               >
@@ -782,55 +817,6 @@ const AttendanceAnalytics = () => {
       </div>
     )
   }
-
-  // All Stats Tab
-  const AllStatsTab = () => (
-    <div className="space-y-6">
-      <h3 className={`text-xl font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-        All Member Statistics
-      </h3>
-
-      <div className="grid gap-4">
-        {analytics.attendanceStats.map((stat) => (
-          <div 
-            key={stat.member_id}
-            className={`rounded-lg border p-4 transition-colors ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${
-                  stat.is_regular ? 'bg-green-500' : 'bg-gray-500'
-                }`}>
-                  {stat.is_regular ? <Award className="w-5 h-5" /> : <Users className="w-5 h-5" />}
-                </div>
-                <div>
-                  <h4 className={`font-semibold transition-colors ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                    {stat.member_name}
-                  </h4>
-                  <p className={`text-sm transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {stat.attended_sundays} of {stat.total_sundays} Sundays
-                    {stat.is_regular && <span className="ml-2 text-green-500 font-medium">• Regular</span>}
-                  </p>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className={`text-xl font-bold ${
-                  stat.attendance_rate >= 75 ? 'text-green-500' :
-                  stat.attendance_rate >= 50 ? 'text-yellow-500' :
-                  'text-red-500'
-                }`}>
-                  {stat.attendance_rate}%
-                </div>
-                <p className={`text-xs transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Last: {stat.last_attendance_date ? new Date(stat.last_attendance_date).toLocaleDateString() : 'N/A'}
-                </p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
 
   return (
     <div className={`min-h-screen transition-colors ${isDarkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
@@ -913,7 +899,7 @@ const AttendanceAnalytics = () => {
                         const presentCount = Object.values(attendanceForDate).filter(status => status === true).length
                         const absentCount = Object.values(attendanceForDate).filter(status => status === false).length
                         const totalMarked = presentCount + absentCount
-                        
+
                         return (
                           <div
                             key={idx}
@@ -1049,7 +1035,7 @@ const AttendanceAnalytics = () => {
         </div>
 
         {/* Notification Panel */}
-        {showNotifications && (outreachData.lowAttendance.length > 0 || outreachData.longAbsent.length > 0 || outreachData.newcomersNeedingFollowup.length > 0) && (
+        {showNotifications && (calculatedOutreachData.lowAttendance.length > 0 || calculatedOutreachData.longAbsent.length > 0 || calculatedOutreachData.newcomersNeedingFollowup.length > 0) && (
           <div className={`rounded-lg border p-4 mb-6 transition-colors ${isDarkMode ? 'bg-orange-900/20 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`}>
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -1068,16 +1054,16 @@ const AttendanceAnalytics = () => {
 
             <div className="grid gap-4 md:grid-cols-3">
               {/* Low Attendance */}
-              {outreachData.lowAttendance.length > 0 && (
+              {calculatedOutreachData.lowAttendance.length > 0 && (
                 <div className={`rounded-lg p-3 transition-colors ${isDarkMode ? 'bg-red-900/20 border border-red-500/30' : 'bg-red-50 border border-red-200'}`}>
                   <div className="flex items-center gap-2 mb-2">
                     <AlertTriangle className={`w-4 h-4 ${isDarkMode ? 'text-red-400' : 'text-red-600'}`} />
                     <h4 className={`font-medium text-sm ${isDarkMode ? 'text-red-400' : 'text-red-800'}`}>
-                      Low Attendance ({outreachData.lowAttendance.length})
+                      Low Attendance ({calculatedOutreachData.lowAttendance.length})
                     </h4>
                   </div>
                   <div className="space-y-2 max-h-32 overflow-y-auto">
-                    {outreachData.lowAttendance.slice(0, 3).map((member) => (
+                    {calculatedOutreachData.lowAttendance.slice(0, 3).map((member) => (
                       <div key={member.id} className={`text-xs p-2 rounded transition-colors ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
                         <div className={`font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                           {member.name}
@@ -1093,9 +1079,9 @@ const AttendanceAnalytics = () => {
                         </div>
                       </div>
                     ))}
-                    {outreachData.lowAttendance.length > 3 && (
+                    {calculatedOutreachData.lowAttendance.length > 3 && (
                       <div className={`text-xs text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        +{outreachData.lowAttendance.length - 3} more
+                        +{calculatedOutreachData.lowAttendance.length - 3} more
                       </div>
                     )}
                   </div>
@@ -1103,16 +1089,16 @@ const AttendanceAnalytics = () => {
               )}
 
               {/* Long Absent */}
-              {outreachData.longAbsent.length > 0 && (
+              {calculatedOutreachData.longAbsent.length > 0 && (
                 <div className={`rounded-lg p-3 transition-colors ${isDarkMode ? 'bg-yellow-900/20 border border-yellow-500/30' : 'bg-yellow-50 border border-yellow-200'}`}>
                   <div className="flex items-center gap-2 mb-2">
                     <Clock className={`w-4 h-4 ${isDarkMode ? 'text-yellow-400' : 'text-yellow-600'}`} />
                     <h4 className={`font-medium text-sm ${isDarkMode ? 'text-yellow-400' : 'text-yellow-800'}`}>
-                      Long Absent ({outreachData.longAbsent.length})
+                      Long Absent ({calculatedOutreachData.longAbsent.length})
                     </h4>
                   </div>
                   <div className="space-y-2 max-h-32 overflow-y-auto">
-                    {outreachData.longAbsent.slice(0, 3).map((member) => (
+                    {calculatedOutreachData.longAbsent.slice(0, 3).map((member) => (
                       <div key={member.id} className={`text-xs p-2 rounded transition-colors ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
                         <div className={`font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                           {member.name}
@@ -1128,9 +1114,9 @@ const AttendanceAnalytics = () => {
                         </div>
                       </div>
                     ))}
-                    {outreachData.longAbsent.length > 3 && (
+                    {calculatedOutreachData.longAbsent.length > 3 && (
                       <div className={`text-xs text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        +{outreachData.longAbsent.length - 3} more
+                        +{calculatedOutreachData.longAbsent.length - 3} more
                       </div>
                     )}
                   </div>
@@ -1138,16 +1124,16 @@ const AttendanceAnalytics = () => {
               )}
 
               {/* Newcomers Needing Follow-up */}
-              {outreachData.newcomersNeedingFollowup.length > 0 && (
+              {calculatedOutreachData.newcomersNeedingFollowup.length > 0 && (
                 <div className={`rounded-lg p-3 transition-colors ${isDarkMode ? 'bg-orange-900/20 border border-orange-500/30' : 'bg-orange-50 border border-orange-200'}`}>
                   <div className="flex items-center gap-2 mb-2">
                     <UserCheck className={`w-4 h-4 ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`} />
                     <h4 className={`font-medium text-sm ${isDarkMode ? 'text-orange-400' : 'text-orange-800'}`}>
-                      New Members ({outreachData.newcomersNeedingFollowup.length})
+                      New Members ({calculatedOutreachData.newcomersNeedingFollowup.length})
                     </h4>
                   </div>
                   <div className="space-y-2 max-h-32 overflow-y-auto">
-                    {outreachData.newcomersNeedingFollowup.slice(0, 3).map((member) => (
+                    {calculatedOutreachData.newcomersNeedingFollowup.slice(0, 3).map((member) => (
                       <div key={member.id} className={`text-xs p-2 rounded transition-colors ${isDarkMode ? 'bg-gray-800' : 'bg-white'}`}>
                         <div className={`font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                           {member.name}
@@ -1163,9 +1149,9 @@ const AttendanceAnalytics = () => {
                         </div>
                       </div>
                     ))}
-                    {outreachData.newcomersNeedingFollowup.length > 3 && (
+                    {calculatedOutreachData.newcomersNeedingFollowup.length > 3 && (
                       <div className={`text-xs text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        +{outreachData.newcomersNeedingFollowup.length - 3} more
+                        +{calculatedOutreachData.newcomersNeedingFollowup.length - 3} more
                       </div>
                     )}
                   </div>
@@ -1193,7 +1179,7 @@ const AttendanceAnalytics = () => {
                 <label className={`text-sm transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                   Months back:
                 </label>
-                <select 
+                <select
                   value={filters.monthsBack}
                   onChange={(e) => setFilters(prev => ({ ...prev, monthsBack: parseInt(e.target.value) }))}
                   className={`px-2 py-1 rounded border text-sm transition-colors ${
@@ -1209,7 +1195,7 @@ const AttendanceAnalytics = () => {
                 <label className={`text-sm transition-colors ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                   Min attendance:
                 </label>
-                <select 
+                <select
                   value={filters.minAttendanceRate}
                   onChange={(e) => setFilters(prev => ({ ...prev, minAttendanceRate: parseInt(e.target.value) }))}
                   className={`px-2 py-1 rounded border text-sm transition-colors ${
@@ -1223,7 +1209,7 @@ const AttendanceAnalytics = () => {
                 </select>
               </div>
             </div>
-            
+
             {/* Badge Filters */}
             <div className="flex items-center gap-4 flex-wrap">
               <span className={`text-sm font-medium transition-colors ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
@@ -1233,15 +1219,15 @@ const AttendanceAnalytics = () => {
                 <button
                   key={badge}
                   onClick={() => {
-                    setBadgeFilter(prev => 
-                      prev.includes(badge) 
+                    setBadgeFilter(prev =>
+                      prev.includes(badge)
                         ? prev.filter(b => b !== badge)
                         : [...prev, badge]
                     )
                   }}
                   className={`px-3 py-1 rounded-full text-sm font-medium transition-colors border ${
                     badgeFilter.includes(badge)
-                      ? badge === 'member' 
+                      ? badge === 'member'
                         ? 'bg-orange-500 text-white border-orange-500'
                         : badge === 'regular'
                         ? 'bg-green-500 text-white border-green-500'
@@ -1258,8 +1244,8 @@ const AttendanceAnalytics = () => {
                 <button
                   onClick={() => setBadgeFilter([])}
                   className={`px-2 py-1 text-xs rounded transition-colors ${
-                    isDarkMode 
-                      ? 'text-gray-400 hover:text-white' 
+                    isDarkMode
+                      ? 'text-gray-400 hover:text-white'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
@@ -1306,15 +1292,43 @@ const AttendanceAnalytics = () => {
           </div>
         ) : (
           <div>
-            {activeTab === 'badges' && <MemberBadgesTab />}
-            {activeTab === 'regulars' && <RegularAttendeesTab />}
-            {activeTab === 'trends' && <MonthlyTrendsTab />}
-            {activeTab === 'newcomers' && <NewcomersTab />}
-            {activeTab === 'stats' && <AllStatsTab />}
+            {activeTab === 'badges' && (
+              <MemberBadgesTab
+                membersByBadge={calculatedAnalytics.membersByBadge}
+                isDarkMode={isDarkMode}
+                onEditBadge={(m) => { setSelectedMember(m); setShowBadgeModal(true); }}
+                getLatestStatus={getLatestAttendanceStatus}
+              />
+            )}
+            {activeTab === 'regulars' && (
+              <RegularAttendeesTab
+                regularAttendees={calculatedAnalytics.regularAttendees}
+                isDarkMode={isDarkMode}
+              />
+            )}
+            {activeTab === 'trends' && (
+              <MonthlyTrendsTab
+                monthlyTrends={calculatedAnalytics.monthlyTrends}
+                isDarkMode={isDarkMode}
+              />
+            )}
+            {activeTab === 'newcomers' && (
+              <NewcomersTab
+                newcomers={calculatedAnalytics.newcomers}
+                newcomerMonths={filters.newcomerMonths}
+                isDarkMode={isDarkMode}
+              />
+            )}
+            {activeTab === 'stats' && (
+              <AllStatsTab
+                attendanceStats={calculatedAnalytics.attendanceStats}
+                isDarkMode={isDarkMode}
+              />
+            )}
           </div>
         )}
       </div>
-      
+
       {/* Badge Management Modal */}
       <BadgeManagementModal />
     </div>

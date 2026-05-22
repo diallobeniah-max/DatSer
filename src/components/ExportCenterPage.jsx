@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState, useEffect, useRef, lazy, Suspense } from 'react'
 import {
     ChevronLeft,
     Download,
@@ -27,7 +27,8 @@ import {
 import { useApp } from '../context/AppContext'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
-import ExportContactsModal from './ExportContactsModal'
+
+const ExportContactsModal = lazy(() => import('./ExportContactsModal'))
 
 const MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -217,6 +218,277 @@ const escapeVCardValue = (value) => String(value ?? '')
     .replace(/,/g, '\\,')
     .replace(/;/g, '\\;')
 
+// --- Memoized Sub-components ---
+
+const ServiceDatesSection = React.memo(({
+    years,
+    monthsByYear,
+    selectedMonths,
+    selectedDateKeys,
+    allMonthSundays,
+    toggleMonth,
+    setMonthSundaySelection,
+    toggleSunday,
+    allMonthsSelected,
+    handleSelectAllMonths,
+    formatTableName
+}) => {
+    return (
+        <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/30">
+                <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-lg bg-orange-100 dark:bg-orange-900/40 flex items-center justify-center">
+                        <Calendar className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                    </div>
+                    <h2 className="font-bold text-gray-900 dark:text-white">Service Dates</h2>
+                </div>
+                <button
+                    onClick={handleSelectAllMonths}
+                    className="text-xs font-bold px-3 py-1.5 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-orange-500 transition-all active:scale-95"
+                >
+                    {allMonthsSelected ? 'Clear All' : 'Select All'}
+                </button>
+            </div>
+
+            <div className="p-5 space-y-6 max-h-[480px] overflow-y-auto custom-scrollbar">
+                {years.map(year => (
+                    <div key={year} className="space-y-4">
+                        <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 dark:text-gray-500">{year}</span>
+                            <div className="h-px flex-1 bg-gray-100 dark:bg-gray-800" />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {(monthsByYear[year] || []).map(table => {
+                                const selected = selectedMonths.includes(table)
+                                const sundays = allMonthSundays[table] || []
+                                const selectedCount = sundays.filter(sunday => selectedDateKeys.includes(sunday.dateKey)).length
+                                const allSundaysSelected = selectedCount === sundays.length && sundays.length > 0
+
+                                return (
+                                    <div
+                                        key={table}
+                                        className={`rounded-xl border p-4 transition-all duration-300 ${selected
+                                            ? 'border-orange-200 bg-orange-50/30 dark:border-orange-900/30 dark:bg-orange-950/10'
+                                            : 'border-gray-100 bg-white dark:border-gray-800 dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
+                                            }`}
+                                    >
+                                        <div className="flex items-center justify-between mb-4">
+                                            <button
+                                                onClick={() => toggleMonth(table)}
+                                                className="flex items-center gap-3 group"
+                                            >
+                                                <div className={`h-5 w-5 rounded border flex items-center justify-center transition-all ${selected ? 'bg-orange-600 border-orange-600 text-white scale-110' : 'border-gray-300 dark:border-gray-600 group-hover:border-orange-400'}`}>
+                                                    {selected && <Check className="w-3 h-3" />}
+                                                </div>
+                                                <span className={`font-bold text-sm ${selected ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>{formatTableName(table)}</span>
+                                            </button>
+                                            <button
+                                                onClick={() => setMonthSundaySelection(table, !allSundaysSelected)}
+                                                className={`text-[10px] font-bold px-2 py-1 rounded-md transition-all ${allSundaysSelected ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40' : 'text-gray-400 hover:text-orange-500'}`}
+                                            >
+                                                {allSundaysSelected ? 'All Selected' : 'Select All'}
+                                            </button>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {sundays.map(sunday => {
+                                                const isSelected = selectedDateKeys.includes(sunday.dateKey)
+                                                return (
+                                                    <button
+                                                        key={sunday.dateKey}
+                                                        onClick={() => toggleSunday(table, sunday.dateKey)}
+                                                        className={`px-3 py-2 rounded-xl text-left border transition-all active:scale-95 ${isSelected
+                                                            ? 'bg-orange-600 border-orange-600 text-white shadow-lg shadow-orange-600/20'
+                                                            : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-orange-300'
+                                                            }`}
+                                                    >
+                                                        <span className="block text-[9px] font-black uppercase opacity-60 leading-none mb-1">{sunday.weekdayLabel}</span>
+                                                        <span className="block text-xs font-bold leading-none">{sunday.label}</span>
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    )
+})
+ServiceDatesSection.displayName = 'ServiceDatesSection'
+
+const PreviewRow = React.memo(({ row, columns, selectedSundays, attendanceData, isSelected, toggleRowSelection, previewMode, normalizeExportCell, getRowValue, formatTableName, getAttendanceMark, resolveAttendanceForDate }) => {
+    const rowKey = `${row.id}-${row._month}`
+    return (
+        <tr
+            onClick={() => toggleRowSelection(rowKey)}
+            className={`group cursor-pointer transition-all ${isSelected ? 'bg-orange-50/20 dark:bg-orange-950/5' : 'hover:bg-gray-50/50 dark:hover:bg-gray-800/30'}`}
+        >
+            <td className="px-4 py-3 sticky left-0 z-10 bg-inherit text-center">
+                <div className={`h-4 w-4 rounded border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-orange-600 border-orange-600 text-white scale-110' : 'border-gray-200 dark:border-gray-700 group-hover:border-orange-300'}`}>
+                    {isSelected && <CheckSquare className="w-2.5 h-2.5" />}
+                </div>
+            </td>
+            {previewMode === 'standard' ? (
+                <>
+                    {columns.map(col => (
+                        <td key={col} className={`px-4 py-3 whitespace-nowrap font-medium ${isSelected ? 'text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+                            {normalizeExportCell(col, getRowValue(row, col)) || '-'}
+                        </td>
+                    ))}
+                    <td className="px-4 py-3 text-gray-400 font-bold whitespace-nowrap">{formatTableName(row._month)}</td>
+                    {selectedSundays.map(sunday => {
+                        const mark = getAttendanceMark(resolveAttendanceForDate(row, sunday, attendanceData))
+                        return (
+                            <td key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 whitespace-nowrap">
+                                <div className={`h-5 w-8 flex items-center justify-center rounded-md text-[9px] font-black ${mark === 'P'
+                                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                                    : mark === 'A'
+                                        ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                                        : 'bg-gray-50 text-gray-300 dark:bg-gray-800 dark:text-gray-600'
+                                    }`}>
+                                    {mark}
+                                </div>
+                            </td>
+                        )
+                    })}
+                </>
+            ) : (
+                <>
+                    <td className={`px-4 py-3 whitespace-nowrap font-bold ${isSelected ? 'text-gray-900 dark:text-white' : 'text-gray-500'}`}>{getRowValue(row, 'Full Name') || 'Unknown'}</td>
+                    <td className="px-4 py-3 text-gray-400 font-bold whitespace-nowrap">{formatTableName(row._month)}</td>
+                    {selectedSundays.map(sunday => {
+                        const mark = getAttendanceMark(resolveAttendanceForDate(row, sunday, attendanceData))
+                        return (
+                            <td key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 whitespace-nowrap">
+                                <div className={`h-5 w-8 flex items-center justify-center rounded-md text-[9px] font-black ${mark === 'P'
+                                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                                    : mark === 'A'
+                                        ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                                        : 'bg-gray-50 text-gray-300 dark:bg-gray-800 dark:text-gray-600'
+                                    }`}>
+                                    {mark}
+                                </div>
+                            </td>
+                        )
+                    })}
+                </>
+            )}
+        </tr>
+    )
+})
+PreviewRow.displayName = 'PreviewRow'
+
+const PreviewTable = React.memo(({
+    displayedPreviewData,
+    selectedRows,
+    columns,
+    selectedSundays,
+    attendanceData,
+    previewMode,
+    toggleRowSelection,
+    handleSelectAllRows,
+    handleClearRowSelection,
+    selectedPreviewDataCount,
+    normalizeExportCell,
+    getRowValue,
+    formatTableName,
+    getAttendanceMark,
+    resolveAttendanceForDate,
+    setPreviewMode
+}) => {
+    return (
+        <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                    <div className="h-7 w-7 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
+                        <Layout className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <h2 className="font-bold text-sm text-gray-900 dark:text-white">Detailed Preview</h2>
+                </div>
+                <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+                    <button
+                        onClick={() => setPreviewMode('standard')}
+                        className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${previewMode === 'standard' ? 'bg-white dark:bg-gray-900 text-gray-950 dark:text-white shadow-sm' : 'text-gray-500'}`}
+                    >
+                        Standard
+                    </button>
+                    <button
+                        onClick={() => setPreviewMode('attendance')}
+                        className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${previewMode === 'attendance' ? 'bg-white dark:bg-gray-900 text-gray-950 dark:text-white shadow-sm' : 'text-gray-500'}`}
+                    >
+                        Attendance
+                    </button>
+                </div>
+            </div>
+
+            <div className="bg-gray-50/50 dark:bg-gray-800/20 px-4 py-2.5 flex items-center justify-between border-b border-gray-100 dark:border-gray-800">
+                <div className="flex gap-3">
+                    <button onClick={handleSelectAllRows} className="text-[9px] font-black uppercase text-orange-600 hover:text-orange-700 transition-all">Select All</button>
+                    <button onClick={handleClearRowSelection} className="text-[9px] font-black uppercase text-gray-400 hover:text-gray-600 transition-all">Deselect</button>
+                </div>
+                <p className="text-[9px] font-bold text-gray-500 uppercase">{selectedPreviewDataCount} rows selected</p>
+            </div>
+
+            <div className="overflow-x-auto max-h-[500px] custom-scrollbar">
+                <table className="min-w-full text-[11px]">
+                    <thead className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800">
+                        <tr>
+                            <th className="px-4 py-3 w-10 sticky left-0 z-20 bg-white dark:bg-gray-900" />
+                            {previewMode === 'standard' ? (
+                                <>
+                                    {columns.map(col => (
+                                        <th key={col} className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">{col}</th>
+                                    ))}
+                                    <th className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">Month</th>
+                                    {selectedSundays.map(sunday => (
+                                        <th key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400 whitespace-nowrap">
+                                            {sunday.label}
+                                        </th>
+                                    ))}
+                                </>
+                            ) : (
+                                <>
+                                    <th className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">Full Name</th>
+                                    <th className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">Month</th>
+                                    {selectedSundays.map(sunday => (
+                                        <th key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400 whitespace-nowrap">
+                                            {sunday.label}
+                                        </th>
+                                    ))}
+                                </>
+                            )}
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                        {displayedPreviewData.slice(0, 100).map((row, index) => (
+                            <PreviewRow
+                                key={`${row.id || index}-${row._month || ''}`}
+                                row={row}
+                                columns={columns}
+                                selectedSundays={selectedSundays}
+                                attendanceData={attendanceData}
+                                isSelected={selectedRows.has(`${row.id}-${row._month}`)}
+                                toggleRowSelection={toggleRowSelection}
+                                previewMode={previewMode}
+                                normalizeExportCell={normalizeExportCell}
+                                getRowValue={getRowValue}
+                                formatTableName={formatTableName}
+                                getAttendanceMark={getAttendanceMark}
+                                resolveAttendanceForDate={resolveAttendanceForDate}
+                            />
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    )
+})
+PreviewTable.displayName = 'PreviewTable'
+
 const ExportCenterPage = ({ onBack }) => {
     const { monthlyTables, members, attendanceData, currentTable, isSupabaseConfigured } = useApp()
 
@@ -250,6 +522,37 @@ const ExportCenterPage = ({ onBack }) => {
     const [selectedRows, setSelectedRows] = useState(new Set())
     const [isExportContactsModalOpen, setIsExportContactsModalOpen] = useState(false)
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+    const workerRef = useRef(null)
+
+    useEffect(() => {
+        // Initialize worker
+        try {
+            workerRef.current = new Worker(new URL('../exportWorker.js', import.meta.url), { type: 'module' })
+            workerRef.current.onmessage = (e) => {
+                const { success, url, filename, error } = e.data
+                if (success) {
+                    const link = document.createElement('a')
+                    link.href = url
+                    link.download = filename
+                    document.body.appendChild(link)
+                    link.click()
+                    document.body.removeChild(link)
+                    // We don't revoke immediately to ensure download starts
+                    setTimeout(() => URL.revokeObjectURL(url), 10000)
+                    toast.success('Export completed successfully')
+                } else {
+                    toast.error(`Export failed: ${error}`)
+                }
+                setIsExporting(false)
+            }
+        } catch (err) {
+            console.error('Failed to initialize export worker:', err)
+        }
+
+        return () => {
+            if (workerRef.current) workerRef.current.terminate()
+        }
+    }, [])
 
     const allMonthSundays = useMemo(() => {
         const map = {}
@@ -618,7 +921,7 @@ const ExportCenterPage = ({ onBack }) => {
         const url = URL.createObjectURL(blob)
 
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-        
+
         if (isMobile) {
             // On mobile, navigating directly to the blob URL often triggers the system's contact handler
             window.location.href = url
@@ -679,61 +982,77 @@ const ExportCenterPage = ({ onBack }) => {
             toast.info('Select at least one Sunday to export')
             return
         }
-        if (rowsToExport.length === 0) {
-            toast.info('No members have Present or Absent marks for the selected Sundays.')
-            return
-        }
 
         setIsExporting(true)
-        try {
-            const attendanceHeaders = selectedSundays.map(sunday => `${formatTableName(sunday.table)} ${sunday.label}`)
-            const header = [...columns, 'Month', ...attendanceHeaders]
-            const monthsList = selectedMonths.map(formatTableName).join(', ')
-            const lines = [
-                header.map(csvCell).join(','),
-                ...rowsToExport.map(row => {
-                    const memberCells = columns.map(column => {
-                        const value = normalizeExportCell(column, getRowValue(row, column), true)
-                        return csvCell(value)
+
+        const filename = `${exportMode === 'marked-members' ? 'marked_members' : 'export'}_${selectedMonths.length > 1 ? 'multiple_months' : selectedMonths[0] || 'data'}.csv`
+
+        if (workerRef.current) {
+            workerRef.current.postMessage({
+                type: 'fullExport',
+                payload: {
+                    rows: rowsToExport,
+                    columns,
+                    selectedMonths,
+                    selectedSundays,
+                    attendanceData,
+                    reportHeaderLines,
+                    summary,
+                    exportMode,
+                    filename
+                }
+            })
+        } else {
+            // Fallback to main thread if worker fails
+            try {
+                const attendanceHeaders = selectedSundays.map(sunday => `${formatTableName(sunday.table)} ${sunday.label}`)
+                const header = [...columns, 'Month', ...attendanceHeaders]
+                const monthsList = selectedMonths.map(formatTableName).join(', ')
+                const lines = [
+                    header.map(csvCell).join(','),
+                    ...rowsToExport.map(row => {
+                        const memberCells = columns.map(column => {
+                            const value = normalizeExportCell(column, getRowValue(row, column), true)
+                            return csvCell(value)
+                        })
+                        const attendanceCells = selectedSundays.map(sunday => (
+                            csvCell(getAttendanceMark(resolveAttendanceForDate(row, sunday, attendanceData)))
+                        ))
+                        return [...memberCells, csvCell(formatTableName(row._month)), ...attendanceCells].join(',')
                     })
-                    const attendanceCells = selectedSundays.map(sunday => (
-                        csvCell(getAttendanceMark(resolveAttendanceForDate(row, sunday, attendanceData)))
-                    ))
-                    return [...memberCells, csvCell(formatTableName(row._month)), ...attendanceCells].join(',')
-                })
-            ]
+                ]
 
-            lines.unshift('')
-            lines.unshift(reportHeaderLines.map(csvCell).join(','))
-            lines.unshift('')
-            lines.unshift([
-                csvCell(`Members: ${rowsToExport.length}`),
-                csvCell(`Marked members: ${summary.markedMembers}`),
-                csvCell(`Attendance marks: ${summary.markedAttendance}`),
-                csvCell(`Sundays: ${summary.sundayCount}`),
-                csvCell(`Generated: ${new Date().toLocaleDateString()}`)
-            ].join(','))
-            lines.unshift([csvCell(`${exportMode === 'marked-members' ? 'MARKED MEMBERS EXPORT' : 'EXPORT'}: ${monthsList}`)].join(','))
+                lines.unshift('')
+                lines.unshift(reportHeaderLines.map(csvCell).join(','))
+                lines.unshift('')
+                lines.unshift([
+                    csvCell(`Members: ${rowsToExport.length}`),
+                    csvCell(`Marked members: ${summary.markedMembers}`),
+                    csvCell(`Attendance marks: ${summary.markedAttendance}`),
+                    csvCell(`Sundays: ${summary.sundayCount}`),
+                    csvCell(`Generated: ${new Date().toLocaleDateString()}`)
+                ].join(','))
+                lines.unshift([csvCell(`${exportMode === 'marked-members' ? 'MARKED MEMBERS EXPORT' : 'EXPORT'}: ${monthsList}`)].join(','))
 
-            const csvContent = lines.join('\n')
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-            const url = URL.createObjectURL(blob)
-            const link = document.createElement('a')
-            link.href = url
-            link.download = `${exportMode === 'marked-members' ? 'marked_members' : 'export'}_${selectedMonths.length > 1 ? 'multiple_months' : selectedMonths[0] || 'data'}.csv`
-            document.body.appendChild(link)
-            link.click()
-            document.body.removeChild(link)
-            URL.revokeObjectURL(url)
-
-            toast.success(`Exported ${rowsToExport.length} member records`)
-        } catch (err) {
-            console.error('Export error:', err)
-            toast.error('Export failed')
-        } finally {
-            setIsExporting(false)
+                const csvContent = lines.join('\n')
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+                const url = URL.createObjectURL(blob)
+                const link = document.createElement('a')
+                link.href = url
+                link.download = filename
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+                URL.revokeObjectURL(url)
+                toast.success(`Exported ${rowsToExport.length} member records`)
+                setIsExporting(false)
+            } catch (err) {
+                console.error('Export error:', err)
+                toast.error('Export failed')
+                setIsExporting(false)
+            }
         }
-    }, [attendanceData, columns, exportMode, markedPreviewData, previewData, reportHeaderLines, selectedMonths, selectedSundays, summary])
+    }, [attendanceData, columns, exportMode, selectedMonths, selectedSundays, summary, selectedPreviewData, reportHeaderLines])
 
     const handleExportAttendanceOnly = useCallback(() => {
         if (selectedPreviewData.length === 0) {
@@ -746,59 +1065,75 @@ const ExportCenterPage = ({ onBack }) => {
         }
 
         setIsExporting(true)
-        try {
-            const attendanceRecords = []
-            selectedPreviewData.forEach(row => {
-                const memberName = getRowValue(row, 'Full Name') || 'Unknown'
-                selectedSundays.forEach(sunday => {
-                    const value = resolveAttendanceForDate(row, sunday, attendanceData)
-                    if (value === true || value === false) {
-                        attendanceRecords.push({
-                            name: memberName,
-                            month: formatTableName(row._month || sunday.table),
-                            date: sunday.dateKey,
-                            status: value ? 'Present' : 'Absent'
-                        })
-                    }
+        const filename = `attendance_only_${selectedMonths.length > 1 ? 'multiple_months' : selectedMonths[0] || 'data'}.csv`
+
+        if (workerRef.current) {
+            workerRef.current.postMessage({
+                type: 'attendanceOnly',
+                payload: {
+                    rows: selectedPreviewData,
+                    selectedSundays,
+                    attendanceData,
+                    reportHeaderLines,
+                    selectedMonths,
+                    filename
+                }
+            })
+        } else {
+            try {
+                const attendanceRecords = []
+                selectedPreviewData.forEach(row => {
+                    const memberName = getRowValue(row, 'Full Name') || 'Unknown'
+                    selectedSundays.forEach(sunday => {
+                        const value = resolveAttendanceForDate(row, sunday, attendanceData)
+                        if (value === true || value === false) {
+                            attendanceRecords.push({
+                                name: memberName,
+                                month: formatTableName(row._month || sunday.table),
+                                date: sunday.dateKey,
+                                status: value ? 'Present' : 'Absent'
+                            })
+                        }
+                    })
                 })
-            })
 
-            attendanceRecords.sort((a, b) => {
-                if (a.date !== b.date) return a.date.localeCompare(b.date)
-                return a.name.localeCompare(b.name)
-            })
+                attendanceRecords.sort((a, b) => {
+                    if (a.date !== b.date) return a.date.localeCompare(b.date)
+                    return a.name.localeCompare(b.name)
+                })
 
-            const monthsList = selectedMonths.map(formatTableName).join(', ')
-            const lines = [
-                [csvCell(`ATTENDANCE EXPORT: ${monthsList}`), '', '', csvCell(`Generated: ${new Date().toLocaleDateString()}`)].join(','),
-                [csvCell(`Total Records`), csvCell(attendanceRecords.length)].join(','),
-                reportHeaderLines.map(csvCell).join(','),
-                '',
-                ['Member Name', 'Month', 'Date', 'Status'].map(csvCell).join(','),
-                ...attendanceRecords.map(record => (
-                    [record.name, record.month, record.date, record.status].map(csvCell).join(',')
-                ))
-            ]
+                const monthsList = selectedMonths.map(formatTableName).join(', ')
+                const lines = [
+                    [csvCell(`ATTENDANCE EXPORT: ${monthsList}`), '', '', csvCell(`Generated: ${new Date().toLocaleDateString()}`)].join(','),
+                    [csvCell(`Total Records`), csvCell(attendanceRecords.length)].join(','),
+                    reportHeaderLines.map(csvCell).join(','),
+                    '',
+                    ['Member Name', 'Month', 'Date', 'Status'].map(csvCell).join(','),
+                    ...attendanceRecords.map(record => (
+                        [record.name, record.month, record.date, record.status].map(csvCell).join(',')
+                    ))
+                ]
 
-            const csvContent = lines.join('\n')
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-            const url = URL.createObjectURL(blob)
-            const link = document.createElement('a')
-            link.href = url
-            link.download = `attendance_only_${selectedMonths.length > 1 ? 'multiple_months' : selectedMonths[0] || 'data'}.csv`
-            document.body.appendChild(link)
-            link.click()
-            document.body.removeChild(link)
-            URL.revokeObjectURL(url)
+                const csvContent = lines.join('\n')
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+                const url = URL.createObjectURL(blob)
+                const link = document.createElement('a')
+                link.href = url
+                link.download = filename
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+                URL.revokeObjectURL(url)
 
-            toast.success(`Exported ${attendanceRecords.length} attendance records`)
-        } catch (err) {
-            console.error('Attendance export error:', err)
-            toast.error('Export failed')
-        } finally {
-            setIsExporting(false)
+                toast.success(`Exported ${attendanceRecords.length} attendance records`)
+                setIsExporting(false)
+            } catch (err) {
+                console.error('Attendance export error:', err)
+                toast.error('Export failed')
+                setIsExporting(false)
+            }
         }
-    }, [attendanceData, previewData, reportHeaderLines, selectedMonths, selectedSundays])
+    }, [attendanceData, selectedPreviewData, reportHeaderLines, selectedMonths, selectedSundays])
 
     const allMonthsSelected = selectedMonths.length === (monthlyTables || []).length && (monthlyTables || []).length > 0
 
@@ -844,88 +1179,19 @@ const ExportCenterPage = ({ onBack }) => {
                     {/* STEP 1: SERVICE DATES */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                     <div className="lg:col-span-8 space-y-6">
-                        <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
-                            <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/30">
-                                <div className="flex items-center gap-3">
-                                    <div className="h-8 w-8 rounded-lg bg-orange-100 dark:bg-orange-900/40 flex items-center justify-center">
-                                        <Calendar className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-                                    </div>
-                                    <h2 className="font-bold text-gray-900 dark:text-white">Service Dates</h2>
-                                </div>
-                                <button
-                                    onClick={handleSelectAllMonths}
-                                    className="text-xs font-bold px-3 py-1.5 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-orange-500 transition-all active:scale-95"
-                                >
-                                    {allMonthsSelected ? 'Clear All' : 'Select All'}
-                                </button>
-                            </div>
-
-                            <div className="p-5 space-y-6 max-h-[480px] overflow-y-auto custom-scrollbar">
-                                {years.map(year => (
-                                    <div key={year} className="space-y-4">
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 dark:text-gray-500">{year}</span>
-                                            <div className="h-px flex-1 bg-gray-100 dark:bg-gray-800" />
-                                        </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            {(monthsByYear[year] || []).map(table => {
-                                                const selected = selectedMonths.includes(table)
-                                                const sundays = allMonthSundays[table] || []
-                                                const selectedCount = sundays.filter(sunday => selectedDateKeys.includes(sunday.dateKey)).length
-                                                const allSundaysSelected = selectedCount === sundays.length && sundays.length > 0
-
-                                                return (
-                                                    <div
-                                                        key={table}
-                                                        className={`rounded-xl border p-4 transition-all duration-300 ${selected
-                                                            ? 'border-orange-200 bg-orange-50/30 dark:border-orange-900/30 dark:bg-orange-950/10'
-                                                            : 'border-gray-100 bg-white dark:border-gray-800 dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
-                                                            }`}
-                                                    >
-                                                        <div className="flex items-center justify-between mb-4">
-                                                            <button
-                                                                onClick={() => toggleMonth(table)}
-                                                                className="flex items-center gap-3 group"
-                                                            >
-                                                                <div className={`h-5 w-5 rounded border flex items-center justify-center transition-all ${selected ? 'bg-orange-600 border-orange-600 text-white scale-110' : 'border-gray-300 dark:border-gray-600 group-hover:border-orange-400'}`}>
-                                                                    {selected && <Check className="w-3 h-3" />}
-                                                                </div>
-                                                                <span className={`font-bold text-sm ${selected ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>{formatTableName(table)}</span>
-                                                            </button>
-                                                            <button
-                                                                onClick={() => setMonthSundaySelection(table, !allSundaysSelected)}
-                                                                className={`text-[10px] font-bold px-2 py-1 rounded-md transition-all ${allSundaysSelected ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40' : 'text-gray-400 hover:text-orange-500'}`}
-                                                            >
-                                                                {allSundaysSelected ? 'All Selected' : 'Select All'}
-                                                            </button>
-                                                        </div>
-
-                                                        <div className="grid grid-cols-2 gap-2">
-                                                            {sundays.map(sunday => {
-                                                                const isSelected = selectedDateKeys.includes(sunday.dateKey)
-                                                                return (
-                                                                    <button
-                                                                        key={sunday.dateKey}
-                                                                        onClick={() => toggleSunday(table, sunday.dateKey)}
-                                                                        className={`px-3 py-2 rounded-xl text-left border transition-all active:scale-95 ${isSelected
-                                                                            ? 'bg-orange-600 border-orange-600 text-white shadow-lg shadow-orange-600/20'
-                                                                            : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-orange-300'
-                                                                            }`}
-                                                                    >
-                                                                        <span className="block text-[9px] font-black uppercase opacity-60 leading-none mb-1">{sunday.weekdayLabel}</span>
-                                                                        <span className="block text-xs font-bold leading-none">{sunday.label}</span>
-                                                                    </button>
-                                                                )
-                                                            })}
-                                                        </div>
-                                                    </div>
-                                                )
-                                            })}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </section>
+                        <ServiceDatesSection
+                            years={years}
+                            monthsByYear={monthsByYear}
+                            selectedMonths={selectedMonths}
+                            selectedDateKeys={selectedDateKeys}
+                            allMonthSundays={allMonthSundays}
+                            toggleMonth={toggleMonth}
+                            setMonthSundaySelection={setMonthSundaySelection}
+                            toggleSunday={toggleSunday}
+                            allMonthsSelected={allMonthsSelected}
+                            handleSelectAllMonths={handleSelectAllMonths}
+                            formatTableName={formatTableName}
+                        />
                     </div>
 
                     <div className="lg:col-span-4 space-y-5">
@@ -951,8 +1217,8 @@ const ExportCenterPage = ({ onBack }) => {
                                 <button
                                     key={mode.id}
                                     onClick={() => setExportMode(mode.id)}
-                                    className={`flex items-center gap-3 p-2.5 rounded-xl transition-all ${exportMode === mode.id 
-                                        ? 'bg-gray-950 text-white dark:bg-white dark:text-gray-950 shadow-lg' 
+                                    className={`flex items-center gap-3 p-2.5 rounded-xl transition-all ${exportMode === mode.id
+                                        ? 'bg-gray-950 text-white dark:bg-white dark:text-gray-950 shadow-lg'
                                         : 'hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-500'}`}
                                 >
                                     <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${exportMode === mode.id ? 'bg-orange-500 text-white' : 'bg-gray-100 dark:bg-gray-800'}`}>
@@ -1039,7 +1305,7 @@ const ExportCenterPage = ({ onBack }) => {
                                     </button>
                                 </div>
                             </div>
-                            
+
                             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div className="space-y-4">
                                     <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl space-y-3">
@@ -1065,7 +1331,7 @@ const ExportCenterPage = ({ onBack }) => {
                                             <span className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-tight">Include message</span>
                                         </label>
                                     </div>
-                                    
+
                                     <div className="flex gap-3">
                                         <button
                                             onClick={() => copyToClipboard(buildWhatsAppPhoneList(), 'Phones copied')}
@@ -1081,7 +1347,7 @@ const ExportCenterPage = ({ onBack }) => {
                                         </button>
                                     </div>
                                 </div>
-                                
+
                                 <div className="relative">
                                     <p className="text-[10px] font-black uppercase text-gray-400 mb-2">Message Preview</p>
                                     <textarea
@@ -1094,135 +1360,24 @@ const ExportCenterPage = ({ onBack }) => {
                         </section>
 
                         {/* STEP 3: PREVIEW TABLE */}
-                        <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
-                            <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                                <div className="flex items-center gap-2.5">
-                                    <div className="h-7 w-7 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
-                                        <Layout className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                                    </div>
-                                    <h2 className="font-bold text-sm text-gray-900 dark:text-white">Detailed Preview</h2>
-                                </div>
-                                <div className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
-                                    <button
-                                        onClick={() => setPreviewMode('standard')}
-                                        className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${previewMode === 'standard' ? 'bg-white dark:bg-gray-900 text-gray-950 dark:text-white shadow-sm' : 'text-gray-500'}`}
-                                    >
-                                        Standard
-                                    </button>
-                                    <button
-                                        onClick={() => setPreviewMode('attendance')}
-                                        className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${previewMode === 'attendance' ? 'bg-white dark:bg-gray-900 text-gray-950 dark:text-white shadow-sm' : 'text-gray-500'}`}
-                                    >
-                                        Attendance
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="bg-gray-50/50 dark:bg-gray-800/20 px-4 py-2.5 flex items-center justify-between border-b border-gray-100 dark:border-gray-800">
-                                <div className="flex gap-3">
-                                    <button onClick={handleSelectAllRows} className="text-[9px] font-black uppercase text-orange-600 hover:text-orange-700 transition-all">Select All</button>
-                                    <button onClick={handleClearRowSelection} className="text-[9px] font-black uppercase text-gray-400 hover:text-gray-600 transition-all">Deselect</button>
-                                </div>
-                                <p className="text-[9px] font-bold text-gray-500 uppercase">{selectedPreviewData.length} rows selected</p>
-                            </div>
-
-                            <div className="overflow-x-auto max-h-[500px] custom-scrollbar">
-                                <table className="min-w-full text-[11px]">
-                                    <thead className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800">
-                                        <tr>
-                                            <th className="px-4 py-3 w-10 sticky left-0 z-20 bg-white dark:bg-gray-900" />
-                                            {previewMode === 'standard' ? (
-                                                <>
-                                                    {columns.map(col => (
-                                                        <th key={col} className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">{col}</th>
-                                                    ))}
-                                                    <th className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">Month</th>
-                                                    {selectedSundays.map(sunday => (
-                                                        <th key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400 whitespace-nowrap">
-                                                            {sunday.label}
-                                                        </th>
-                                                    ))}
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <th className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">Full Name</th>
-                                                    <th className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400">Month</th>
-                                                    {selectedSundays.map(sunday => (
-                                                        <th key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest text-gray-400 whitespace-nowrap">
-                                                            {sunday.label}
-                                                        </th>
-                                                    ))}
-                                                </>
-                                            )}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
-                                        {displayedPreviewData.slice(0, 100).map((row, index) => {
-                                            const rowKey = `${row.id}-${row._month}`
-                                            const isSelected = selectedRows.has(rowKey)
-                                            return (
-                                                <tr
-                                                    key={`${row.id || index}-${row._month || ''}`}
-                                                    onClick={() => toggleRowSelection(rowKey)}
-                                                    className={`group cursor-pointer transition-all ${isSelected ? 'bg-orange-50/20 dark:bg-orange-950/5' : 'hover:bg-gray-50/50 dark:hover:bg-gray-800/30'}`}
-                                                >
-                                                    <td className="px-4 py-3 sticky left-0 z-10 bg-inherit text-center">
-                                                        <div className={`h-4 w-4 rounded border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-orange-600 border-orange-600 text-white scale-110' : 'border-gray-200 dark:border-gray-700 group-hover:border-orange-300'}`}>
-                                                            {isSelected && <CheckSquare className="w-2.5 h-2.5" />}
-                                                        </div>
-                                                    </td>
-                                                    {previewMode === 'standard' ? (
-                                                        <>
-                                                            {columns.map(col => (
-                                                                <td key={col} className={`px-4 py-3 whitespace-nowrap font-medium ${isSelected ? 'text-gray-900 dark:text-white' : 'text-gray-500'}`}>
-                                                                    {normalizeExportCell(col, getRowValue(row, col)) || '-'}
-                                                                </td>
-                                                            ))}
-                                                            <td className="px-4 py-3 text-gray-400 font-bold whitespace-nowrap">{formatTableName(row._month)}</td>
-                                                            {selectedSundays.map(sunday => {
-                                                                const mark = getAttendanceMark(resolveAttendanceForDate(row, sunday, attendanceData))
-                                                                return (
-                                                                    <td key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 whitespace-nowrap">
-                                                                        <div className={`h-5 w-8 flex items-center justify-center rounded-md text-[9px] font-black ${mark === 'P'
-                                                                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                                                                            : mark === 'A'
-                                                                                ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                                                                                : 'bg-gray-50 text-gray-300 dark:bg-gray-800 dark:text-gray-600'
-                                                                            }`}>
-                                                                            {mark}
-                                                                        </div>
-                                                                    </td>
-                                                                )
-                                                            })}
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <td className={`px-4 py-3 whitespace-nowrap font-bold ${isSelected ? 'text-gray-900 dark:text-white' : 'text-gray-500'}`}>{getRowValue(row, 'Full Name') || 'Unknown'}</td>
-                                                            <td className="px-4 py-3 text-gray-400 font-bold whitespace-nowrap">{formatTableName(row._month)}</td>
-                                                            {selectedSundays.map(sunday => {
-                                                                const mark = getAttendanceMark(resolveAttendanceForDate(row, sunday, attendanceData))
-                                                                return (
-                                                                    <td key={`${sunday.table}-${sunday.dateKey}`} className="px-4 py-3 whitespace-nowrap">
-                                                                        <div className={`h-5 w-8 flex items-center justify-center rounded-md text-[9px] font-black ${mark === 'P'
-                                                                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                                                                            : mark === 'A'
-                                                                                ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                                                                                : 'bg-gray-50 text-gray-300 dark:bg-gray-800 dark:text-gray-600'
-                                                                            }`}>
-                                                                            {mark}
-                                                                        </div>
-                                                                    </td>
-                                                                )
-                                                            })}
-                                                        </>
-                                                    )}
-                                                </tr>
-                                            )
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </section>
+                        <PreviewTable
+                            displayedPreviewData={displayedPreviewData}
+                            selectedRows={selectedRows}
+                            columns={columns}
+                            selectedSundays={selectedSundays}
+                            attendanceData={attendanceData}
+                            previewMode={previewMode}
+                            toggleRowSelection={toggleRowSelection}
+                            handleSelectAllRows={handleSelectAllRows}
+                            handleClearRowSelection={handleClearRowSelection}
+                            selectedPreviewDataCount={selectedPreviewData.length}
+                            normalizeExportCell={normalizeExportCell}
+                            getRowValue={getRowValue}
+                            formatTableName={formatTableName}
+                            getAttendanceMark={getAttendanceMark}
+                            resolveAttendanceForDate={resolveAttendanceForDate}
+                            setPreviewMode={setPreviewMode}
+                        />
 
                         {/* FINAL ACTION BAR */}
                         <div className="bg-white dark:bg-gray-900 p-5 rounded-xl shadow-xl flex flex-col md:flex-row items-center justify-between gap-5">
@@ -1230,7 +1385,7 @@ const ExportCenterPage = ({ onBack }) => {
                                 <h3 className="text-base font-black text-gray-900 dark:text-white leading-none mb-1">Final Export</h3>
                                 <p className="text-[10px] text-gray-500 font-medium">Ready to download the {exportMode.replace('-', ' ')} file.</p>
                             </div>
-                            
+
                             <div className="flex flex-col sm:flex-row gap-3.5 w-full md:w-auto">
                                 <div className="text-center sm:text-right flex flex-col justify-center px-3">
                                     <span className="text-[9px] font-black uppercase text-orange-600">{selectedPreviewData.length} Rows</span>
@@ -1253,18 +1408,20 @@ const ExportCenterPage = ({ onBack }) => {
                 )}
             </div>
 
-            <ExportContactsModal
-                isOpen={isExportContactsModalOpen}
-                onClose={() => setIsExportContactsModalOpen(false)}
-                onExportCSV={downloadCSVContacts}
-                onExportVCard={downloadVCardContacts}
-                contactCount={
-                    selectedPreviewData.filter(row => {
-                        const phone = normalizePhone(getRowValue(row, 'Phone Number'))
-                        return phone && phone !== 'No phone'
-                    }).length
-                }
-            />
+            <Suspense fallback={null}>
+                <ExportContactsModal
+                    isOpen={isExportContactsModalOpen}
+                    onClose={() => setIsExportContactsModalOpen(false)}
+                    onExportCSV={downloadCSVContacts}
+                    onExportVCard={downloadVCardContacts}
+                    contactCount={
+                        selectedPreviewData.filter(row => {
+                            const phone = normalizePhone(getRowValue(row, 'Phone Number'))
+                            return phone && phone !== 'No phone'
+                        }).length
+                    }
+                />
+            </Suspense>
             </div>
         </div>
     )
