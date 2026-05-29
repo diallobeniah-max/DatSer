@@ -575,7 +575,11 @@ export const AppProvider = ({ children }) => {
       'guided-next-pulse-disabled',
       guidedFormSettingsState?.pulseNextButton === false
     )
-  }, [guidedFormSettingsState?.pulseNextButton])
+    document.documentElement.classList.toggle(
+      'guided-next-cue-disabled',
+      guidedFormSettingsState?.showNextButton !== true
+    )
+  }, [guidedFormSettingsState?.pulseNextButton, guidedFormSettingsState?.showNextButton])
 
   // Admin-locked default date forces collaborators to a specific date
   const [lockedDefaultDate, setLockedDefaultDate] = useState(null)

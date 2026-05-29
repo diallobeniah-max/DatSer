@@ -123,6 +123,7 @@ const AccountSettingsSection = ({
                                         value={dob}
                                         onChange={(event) => setDob(event.target.value)}
                                         placeholder="Select date of birth"
+                                        birthDateMode={preferences?.date_of_birth_picker_mode || 'combined'}
                                     />
                                 </div>
                                 <button

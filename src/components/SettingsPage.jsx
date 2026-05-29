@@ -120,7 +120,7 @@ const GuidedOrderPreview = ({ settings }) => {
         const isSkipped = (id === 'tags' && !settings?.highlightTags) || (id === 'notes' && !settings?.highlightNotes)
         const wrapperClass = `guided-preview-section guided-form-field ${active ? 'guided-form-field-active' : ''} ${isSkipped ? 'guided-preview-section-muted' : ''}`
 
-        const cue = active && (
+        const cue = active && settings?.showNextButton === true && (
             <div className={`guided-form-cue ${settings?.pulseNextButton === false ? '' : 'guided-form-cue-pulse'}`} aria-hidden="true">
                 <span>→</span>
                 <span>Next</span>
@@ -274,7 +274,7 @@ const LazyPanelFallback = () => (
 )
 
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMember }) => {
-    const { user, signOut, preferences, resetPassword, isDeveloperBypass } = useAuth()
+    const { user, signOut, preferences, resetPassword, saveUserPreferences, isDeveloperBypass } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
     const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil, setPersonalCalendarMode, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
     const { selection } = useHapticFeedback()
@@ -438,6 +438,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const [liveClock, setLiveClock] = useState(() => new Date())
     const [showMonthDropdown, setShowMonthDropdown] = useState(false)
     const monthDropdownRef = useRef(null)
+    const [isDevMemberDropdownOpen, setIsDevMemberDropdownOpen] = useState(false)
+    const devMemberDropdownRef = useRef(null)
     const [deletingTable, setDeletingTable] = useState(null)
     const [deletePrompt, setDeletePrompt] = useState({
         isOpen: false,
@@ -490,6 +492,10 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         controls: true,
         months: false
     })
+    const updatePreferences = useCallback((nextPreferences) => {
+        if (!nextPreferences || typeof nextPreferences !== 'object') return
+        saveUserPreferences?.(nextPreferences)
+    }, [saveUserPreferences])
 
     const toggleWorkspacePanel = useCallback((panelKey) => {
         selection()
@@ -1154,6 +1160,22 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 return (
                     <div className="space-y-6">
                         <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                            <div className="p-4 flex items-center justify-between gap-4">
+                                <div>
+                                    <h4 className="font-semibold text-gray-900 dark:text-white">Tap Next Button</h4>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">Show the floating Next shortcut while filling member forms.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => toggleGuidedFormSetting('showNextButton', 'Tap Next button')}
+                                    aria-pressed={guidedFormSettings?.showNextButton === true}
+                                    className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors ${guidedFormSettings?.showNextButton === true ? 'bg-orange-600' : 'bg-gray-300 dark:bg-gray-700'}`}
+                                >
+                                    <span className={`inline-block h-6 w-6 rounded-full bg-white shadow transition-transform ${guidedFormSettings?.showNextButton === true ? 'translate-x-7' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                             <div className="p-4 border-b border-gray-200 dark:border-gray-700">
                                 <h4 className="font-semibold text-gray-900 dark:text-white">Guided Form Order</h4>
                                 <p className="text-xs text-gray-500 dark:text-gray-400">Drag items to change the step order in the member forms</p>
@@ -1408,6 +1430,12 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             red: 'text-red-600 dark:text-red-400'
         }
         return colors[color] || colors.blue
+    }
+
+    const getSectionPreview = (sectionId) => {
+        const section = sections.find(candidate => candidate.id === sectionId)
+        if (!section?.content) return 'Open settings'
+        return section.content.split('.')[0] || section.content
     }
 
     const getSettingTargetClass = (settingId) =>

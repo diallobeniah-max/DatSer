@@ -1497,6 +1497,91 @@ details[open] summary~* {
   animation: guidedCuePulse 1.45s ease-in-out infinite;
 }
 
+.guided-next-cue-disabled .guided-form-cue {
+  display: none;
+}
+
+.guided-next-cue-disabled .guided-form-field-active {
+  outline: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+
+.guided-next-cue-disabled .guided-form-field-active > label:first-child,
+.guided-next-cue-disabled .guided-form-field-active > h3:first-child,
+.guided-next-cue-disabled .guided-form-field-active > h4:first-child,
+.guided-next-cue-disabled .guided-form-field-active > p:first-child,
+.guided-next-cue-disabled .guided-form-field-active > .font-semibold:first-child,
+.guided-next-cue-disabled .guided-form-field-active > .guided-form-cue:first-child + label,
+.guided-next-cue-disabled .guided-form-field-active > .guided-form-cue:first-child + h3,
+.guided-next-cue-disabled .guided-form-field-active > .guided-form-cue:first-child + h4,
+.guided-next-cue-disabled .guided-form-field-active > .guided-form-cue:first-child + p,
+.guided-next-cue-disabled .guided-form-field-active > .guided-form-cue:first-child + .font-semibold {
+  padding-right: 0;
+}
+
+.date-picker-birth {
+  color: #f8fafc !important;
+  border-color: rgba(249, 115, 22, 0.35) !important;
+  box-shadow: 0 30px 76px rgba(0, 0, 0, 0.62), 0 12px 28px rgba(0, 0, 0, 0.42) !important;
+}
+
+.dark .date-picker-birth,
+.date-picker-birth .dark\:bg-\[\#1c1c1e\],
+.date-picker-birth .dark\:bg-\[\#151515\],
+.date-picker-birth .dark\:bg-\[\#1a1a1c\] {
+  background-color: #2F3030 !important;
+}
+
+.date-picker-birth .dark\:bg-gray-900\/80,
+.date-picker-birth .dark\:bg-gray-800,
+.date-picker-birth .dark\:bg-gray-800\/50 {
+  background-color: #252626 !important;
+}
+
+.date-picker-birth .dark\:border-gray-800\/60,
+.date-picker-birth .dark\:border-gray-800,
+.date-picker-birth .dark\:border-gray-700\/60 {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.date-picker-birth .dark\:text-gray-100,
+.date-picker-birth .dark\:text-gray-300 {
+  color: #f4f6f6 !important;
+}
+
+.date-picker-birth .dark\:text-gray-400,
+.date-picker-birth .dark\:text-gray-500 {
+  color: #c5cbcb !important;
+}
+
+.date-picker-birth .text-primary-600,
+.date-picker-birth .dark\:text-primary-500,
+.date-picker-birth .text-primary-700,
+.date-picker-birth .dark\:text-primary-400 {
+  color: #f97316 !important;
+}
+
+.date-picker-birth .bg-primary-600,
+.date-picker-birth .dark\:bg-primary-500 {
+  background-color: #f97316 !important;
+}
+
+.date-picker-birth .hover\:bg-primary-700:hover {
+  background-color: #ea580c !important;
+}
+
+.date-picker-birth .bg-primary-50,
+.date-picker-birth .hover\:bg-primary-50\/70:hover,
+.date-picker-birth .dark\:bg-primary-500\/10 {
+  background-color: rgba(249, 115, 22, 0.16) !important;
+}
+
+.date-picker-birth .hover\:border-primary-300:hover {
+  border-color: #fdba74 !important;
+}
+
 .guided-next-pulse-disabled .guided-form-cue-pulse,
 .guided-form-cue:not(.guided-form-cue-pulse) {
   animation: none;

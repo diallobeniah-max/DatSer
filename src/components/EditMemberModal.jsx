@@ -15,7 +15,7 @@ import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, refreshSearch, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings } = useApp()
-  const { user, isDeveloperBypass } = useAuth()
+  const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
 
@@ -881,6 +881,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
                 value={formData.date_of_birth}
                 onChange={handleInputChange}
                 placeholder="Select date"
+                birthDateMode={preferences?.date_of_birth_picker_mode || 'combined'}
                 error={hasAttemptedSave && !formData.date_of_birth && !formData.age}
               />
             </GuidedField>

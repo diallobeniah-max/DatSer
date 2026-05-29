@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
+import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
@@ -16,6 +17,8 @@ const CombinedDatePicker = ({
   label,
   error,
   disabled = false,
+  birthDateMode = 'combined',
+  dropdownPlacement = 'auto',
   className = ''
 }) => {
   const [isOpen, setIsOpen] = useState(false)
@@ -25,11 +28,20 @@ const CombinedDatePicker = ({
   const dropdownRef = useRef(null)
 
   const pickerId = String(name || label || placeholder || 'date').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const pickerSearchText = String([name, label, placeholder].filter(Boolean).join(' ')).toLowerCase()
+  const isBirthDatePicker = pickerSearchText.includes('date_of_birth') || pickerSearchText.includes('birth') || pickerSearchText.includes('dob')
+  const isCombinedBirthDateMode = isBirthDatePicker && birthDateMode === 'combined'
 
   const [selectedDate, setSelectedDate] = useState(null)
   const [viewDate, setViewDate] = useState(new Date())
   const [viewMode, setViewMode] = useState('grid')
   const [monthYearStartDate, setMonthYearStartDate] = useState(null)
+  const [monthYearTouched, setMonthYearTouched] = useState({ month: false, year: false })
+  const [combinedTouched, setCombinedTouched] = useState({ day: false, month: false, year: false })
+  const { dragHandleProps, sheetStyle } = useBottomSheetDrag({
+    enabled: isOpen && isMobile,
+    onDismiss: () => setIsOpen(false)
+  })
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 640)
@@ -57,13 +69,17 @@ const CombinedDatePicker = ({
     if (disabled) return
     if (!isOpen) {
       const mobile = window.innerWidth < 640
+      const nextViewDate = selectedDate || (isBirthDatePicker
+        ? new Date(new Date().getFullYear() - 18, new Date().getMonth(), 1)
+        : new Date())
+      const shouldStartWithMonthYear = isBirthDatePicker && !selectedDate && !value
       
       if (!mobile && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect()
         const spaceBelow = window.innerHeight - rect.bottom
         const spaceAbove = rect.top
         const dropdownHeight = 430
-        const openUpwards = spaceBelow < dropdownHeight && spaceAbove > spaceBelow
+        const openUpwards = dropdownPlacement !== 'below' && spaceBelow < dropdownHeight && spaceAbove > spaceBelow
         const insideModal = Boolean(containerRef.current.closest('[data-testid="add-member-modal"], [data-testid="edit-member-modal"], [data-testid="missing-data-modal"]'))
         
         const dropdownWidth = 340 // Wider for desktop
@@ -74,7 +90,9 @@ const CombinedDatePicker = ({
         calcLeft = Math.max(16, calcLeft)
 
         const unclampedTop = rect.bottom + 8
-        const clampedTop = Math.max(16, Math.min(unclampedTop, window.innerHeight - dropdownHeight - 16))
+        const clampedTop = dropdownPlacement === 'below'
+          ? unclampedTop
+          : Math.max(16, Math.min(unclampedTop, window.innerHeight - dropdownHeight - 16))
 
         setDropdownStyle({
           position: 'fixed',
@@ -86,8 +104,11 @@ const CombinedDatePicker = ({
         })
       }
       
-      setViewMode('grid')
-      setMonthYearStartDate(null)
+      setViewDate(nextViewDate)
+      setViewMode(isCombinedBirthDateMode ? 'combined' : (shouldStartWithMonthYear ? 'wheels' : 'grid'))
+      setMonthYearStartDate(shouldStartWithMonthYear ? nextViewDate : null)
+      setMonthYearTouched(selectedDate ? { month: true, year: true } : { month: false, year: false })
+      setCombinedTouched(selectedDate ? { day: true, month: true, year: true } : { day: false, month: false, year: false })
       setIsOpen(true)
     } else {
       setIsOpen(false)
@@ -138,6 +159,7 @@ const CombinedDatePicker = ({
 
   const openMonthYearSelector = () => {
     setMonthYearStartDate(viewDate)
+    setMonthYearTouched(selectedDate ? { month: true, year: true } : { month: false, year: false })
     setViewMode('wheels')
   }
 
@@ -150,8 +172,34 @@ const CombinedDatePicker = ({
   }
 
   const handleMonthYearApply = () => {
+    if (!monthYearTouched.month || !monthYearTouched.year) return
     setMonthYearStartDate(null)
     setViewMode('grid')
+  }
+
+  const handleCombinedMonthChange = (month) => {
+    const currentDay = selectedDate?.getDate() || viewDate.getDate()
+    const maxDay = getDaysInMonth(currentYear, month)
+    const nextDate = new Date(currentYear, month, Math.min(currentDay, maxDay))
+    setViewDate(nextDate)
+    setCombinedTouched((current) => ({ ...current, month: true }))
+    if (selectedDate) setSelectedDate(nextDate)
+  }
+
+  const handleCombinedYearChange = (year) => {
+    const currentDay = selectedDate?.getDate() || viewDate.getDate()
+    const maxDay = getDaysInMonth(year, currentMonth)
+    const nextDate = new Date(year, currentMonth, Math.min(currentDay, maxDay))
+    setViewDate(nextDate)
+    setCombinedTouched((current) => ({ ...current, year: true }))
+    if (selectedDate) setSelectedDate(nextDate)
+  }
+
+  const handleCombinedDayChange = (day) => {
+    const nextDate = new Date(currentYear, currentMonth, day)
+    setViewDate(nextDate)
+    setCombinedTouched((current) => ({ ...current, day: true }))
+    setSelectedDate(nextDate)
   }
 
   const handleClear = (e) => {
@@ -195,6 +243,12 @@ const CombinedDatePicker = ({
     return `${MONTHS[selectedDate.getMonth()]} ${selectedDate.getDate()}, ${selectedDate.getFullYear()}`
   }
   const displayText = getDisplayText()
+  const canApplyMonthYear = monthYearTouched.month && monthYearTouched.year
+  const canSaveDate = viewMode === 'wheels'
+    ? canApplyMonthYear
+    : viewMode === 'combined'
+      ? Boolean(selectedDate && combinedTouched.day && combinedTouched.month && combinedTouched.year)
+      : Boolean(selectedDate)
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
@@ -252,16 +306,22 @@ const CombinedDatePicker = ({
             ref={dropdownRef}
             data-testid={`combined-date-picker-${pickerId}-dropdown`}
             className={`
-              bg-white dark:bg-[#1c1c1e] shadow-2xl overflow-hidden font-sans z-[999999] flex flex-col
+              bg-white dark:bg-[#2F3030] shadow-2xl overflow-hidden font-sans z-[999999] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
               ${isMobile 
                 ? 'fixed bottom-0 left-0 right-0 w-full rounded-t-2xl animate-slide-up-sheet pb-safe' 
                 : 'border border-gray-200 dark:border-gray-700/60 rounded-xl animate-scale-in'
               }
             `}
-            style={isMobile ? { paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))' } : { ...dropdownStyle, transformOrigin: dropdownStyle.bottom !== 'auto' ? 'bottom' : 'top' }}
+            style={isMobile ? { paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', ...sheetStyle } : { ...dropdownStyle, transformOrigin: dropdownStyle.bottom !== 'auto' ? 'bottom' : 'top' }}
           >
             {isMobile && (
-              <div className="flex justify-center pt-3 pb-1 flex-shrink-0 bg-white dark:bg-[#1c1c1e]">
+              <div
+                className="mobile-sheet-drag-zone flex justify-center pt-3 pb-1 flex-shrink-0 bg-white dark:bg-[#2F3030]"
+                role="button"
+                tabIndex={0}
+                aria-label="Drag down to close date picker"
+                {...dragHandleProps}
+              >
                 <div className="w-10 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600" />
               </div>
             )}
@@ -308,7 +368,7 @@ const CombinedDatePicker = ({
                           onClick={() => onDayClick(day)}
                           className={`w-10 h-10 rounded-full flex items-center justify-center text-[17px] transition-all
                             ${isSelected(day) 
-                              ? 'bg-primary-600 dark:bg-primary-500 text-white font-semibold shadow-md' 
+                              ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10 shadow-sm' 
                               : isToday(day)
                                 ? 'text-primary-600 dark:text-primary-400 font-semibold hover:bg-gray-100 dark:hover:bg-gray-800'
                                 : 'text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800'
@@ -322,6 +382,56 @@ const CombinedDatePicker = ({
                   ))}
                 </div>
               </>
+            ) : viewMode === 'combined' ? (
+              <div className="flex flex-col h-[420px]">
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800/60">
+                  <span className="font-semibold text-gray-900 dark:text-gray-100 text-[16px]">Select Date of Birth</span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Pick day, month, and year together</p>
+                </div>
+                <div className="grid grid-cols-3 border-b border-gray-100 bg-gray-50 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:border-gray-800/60 dark:bg-[#252626] dark:text-gray-300">
+                  <div className="px-2 py-2 text-center border-r border-gray-100 dark:border-gray-800/60">Date</div>
+                  <div className="px-2 py-2 text-center border-r border-gray-100 dark:border-gray-800/60">Month</div>
+                  <div className="px-2 py-2 text-center">Year</div>
+                </div>
+                <div className="flex-1 grid grid-cols-3 overflow-hidden bg-white dark:bg-[#151515]">
+                  <div className="overflow-y-auto border-r border-gray-100 dark:border-gray-800/60 p-2 space-y-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                    {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => handleCombinedDayChange(day)}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${selectedDate && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                      >
+                        {day}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="overflow-y-auto border-r border-gray-100 dark:border-gray-800/60 p-2 space-y-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                    {MONTHS.map((m, i) => (
+                      <button 
+                        key={m} 
+                        type="button"
+                        onClick={() => handleCombinedMonthChange(i)}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${combinedTouched.month && currentMonth === i ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="overflow-y-auto p-2 space-y-1" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                    {years.map(y => (
+                      <button 
+                        key={y} 
+                        type="button"
+                        onClick={() => handleCombinedYearChange(y)}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${combinedTouched.year && currentYear === y ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                      >
+                        {y}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="flex flex-col h-[380px]">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800/60">
@@ -329,7 +439,12 @@ const CombinedDatePicker = ({
                      <ChevronLeft className="w-5 h-5 -ml-1" /> Cancel
                    </button>
                    <span className="font-semibold text-gray-900 dark:text-gray-100 text-[16px]">Select Month & Year</span>
-                   <button type="button" onClick={handleMonthYearApply} className="text-primary-600 dark:text-primary-500 font-semibold text-[16px] hover:opacity-70 transition-opacity">
+                   <button
+                     type="button"
+                     onClick={handleMonthYearApply}
+                     disabled={!canApplyMonthYear}
+                     className={`font-semibold text-[16px] transition-opacity ${canApplyMonthYear ? 'text-primary-600 dark:text-primary-500 hover:opacity-70' : 'text-gray-400 dark:text-gray-500 cursor-not-allowed'}`}
+                   >
                      Done
                    </button>
                 </div>
@@ -339,8 +454,8 @@ const CombinedDatePicker = ({
                     {MONTHS.map((m, i) => (
                       <button 
                         key={m} 
-                        onClick={() => { setViewDate(new Date(currentYear, i, 1)); }}
-                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${currentMonth === i ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                        onClick={() => { setViewDate(new Date(currentYear, i, 1)); setMonthYearTouched((current) => ({ ...current, month: true })) }}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${monthYearTouched.month && currentMonth === i ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
                       >
                         {m}
                       </button>
@@ -351,8 +466,8 @@ const CombinedDatePicker = ({
                     {years.map(y => (
                       <button 
                         key={y} 
-                        onClick={() => { setViewDate(new Date(y, currentMonth, 1)); }}
-                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${currentYear === y ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                        onClick={() => { setViewDate(new Date(y, currentMonth, 1)); setMonthYearTouched((current) => ({ ...current, year: true })) }}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${monthYearTouched.year && currentYear === y ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
                       >
                         {y}
                       </button>
@@ -372,8 +487,8 @@ const CombinedDatePicker = ({
               </button>
               <button 
                 onClick={viewMode === 'wheels' ? handleMonthYearApply : handleSave}
-                disabled={viewMode === 'grid' && !selectedDate}
-                className="text-[17px] text-white bg-primary-600 hover:bg-primary-700 transition-colors font-semibold px-8 py-2 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                disabled={!canSaveDate}
+                className={`text-[17px] text-white transition-colors font-semibold px-8 py-2 rounded-xl shadow-sm ${canSaveDate ? 'bg-primary-600 hover:bg-primary-700 shadow-primary-500/20' : 'bg-gray-500/40 dark:bg-gray-700/70 cursor-not-allowed opacity-70'}`}
               >
                 {viewMode === 'wheels' ? 'Apply' : 'Save'}
               </button>

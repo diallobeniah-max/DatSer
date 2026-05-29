@@ -715,6 +715,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                     value={formData.date_of_birth}
                     onChange={handleInputChange}
                     placeholder="Select date"
+                    birthDateMode={preferences?.date_of_birth_picker_mode || 'combined'}
                     error={showErrors && !formData.date_of_birth && !formData.age}
                   />
                 </GuidedField>

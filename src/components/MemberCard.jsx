@@ -34,7 +34,7 @@ const MemberCard = memo(({
     currentTable,
     getMonthDisplayName
 }) => {
-    const name = member['full_name'] || member['Full Name']
+    const name = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || 'Unnamed member'
     const regDateRaw = member.inserted_at || member.created_at
     
     const getRelativeRegTime = () => {

@@ -32,6 +32,7 @@ export const DEFAULT_GUIDED_FORM_SETTINGS = {
   highlightTags: false,
   autoFocusNextField: false,
   autoScrollToActiveField: true,
+  showNextButton: false,
   pulseNextButton: true,
   manualNextAfterTyping: false,
   showInAddMember: true,

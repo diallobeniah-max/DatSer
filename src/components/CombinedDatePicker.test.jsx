@@ -28,7 +28,10 @@ describe('CombinedDatePicker', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /select date/i }))
     const dropdown = screen.getByTestId('combined-date-picker-date-of-birth-dropdown')
+    expect(within(dropdown).getByText('Select Date of Birth')).toBeTruthy()
     fireEvent.click(within(dropdown).getByRole('button', { name: '12' }))
+    fireEvent.click(within(dropdown).getByRole('button', { name: 'May' }))
+    fireEvent.click(within(dropdown).getByRole('button', { name: '2026' }))
     fireEvent.click(within(dropdown).getByRole('button', { name: 'Save' }))
 
     expect(handleChange).toHaveBeenCalledWith({
@@ -46,12 +49,12 @@ describe('CombinedDatePicker', () => {
       <CombinedDatePicker
         value=""
         onChange={handleChange}
-        label="Date of Birth"
+        label="Visit Date"
       />
     )
 
     fireEvent.click(screen.getByRole('button', { name: /select date/i }))
-    const dropdown = screen.getByTestId('combined-date-picker-date-of-birth-dropdown')
+    const dropdown = screen.getByTestId('combined-date-picker-visit-date-dropdown')
     fireEvent.click(within(dropdown).getByRole('button', { name: '5' }))
     fireEvent.click(within(dropdown).getByRole('button', { name: 'Save' }))
 
@@ -66,13 +69,13 @@ describe('CombinedDatePicker', () => {
         value=""
         onChange={handleChange}
         label="Date of Birth"
+        birthDateMode="month-year-first"
       />
     )
 
     fireEvent.click(screen.getByRole('button', { name: /select date/i }))
     const dropdown = screen.getByTestId('combined-date-picker-date-of-birth-dropdown')
 
-    fireEvent.click(within(dropdown).getByRole('button', { name: /tap to change month and year/i }))
     expect(within(dropdown).getByText('Select Month & Year')).toBeTruthy()
 
     fireEvent.click(within(dropdown).getByRole('button', { name: 'February' }))
@@ -84,5 +87,35 @@ describe('CombinedDatePicker', () => {
     fireEvent.click(within(dropdown).getByRole('button', { name: 'Apply' }))
 
     expect(within(dropdown).getByRole('button', { name: /tap to change month and year/i }).textContent).toContain('February 2020')
+  })
+
+  it('can pick day, month, and year together for date of birth', () => {
+    const handleChange = vi.fn()
+
+    render(
+      <CombinedDatePicker
+        name="date_of_birth"
+        value=""
+        onChange={handleChange}
+        label="Date of Birth"
+        birthDateMode="combined"
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /select date/i }))
+    const dropdown = screen.getByTestId('combined-date-picker-date-of-birth-dropdown')
+
+    expect(within(dropdown).getByText('Select Date of Birth')).toBeTruthy()
+    fireEvent.click(within(dropdown).getByRole('button', { name: '14' }))
+    fireEvent.click(within(dropdown).getByRole('button', { name: 'February' }))
+    fireEvent.click(within(dropdown).getByRole('button', { name: '2020' }))
+    fireEvent.click(within(dropdown).getByRole('button', { name: 'Save' }))
+
+    expect(handleChange).toHaveBeenCalledWith({
+      target: {
+        name: 'date_of_birth',
+        value: '2020-02-14'
+      }
+    })
   })
 })
