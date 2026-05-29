@@ -1,13 +1,13 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
-const useLocalBundle = process.env.CAPACITOR_LOCAL_BUNDLE === 'true'
+const useRemoteBundle = process.env.CAPACITOR_REMOTE_BUNDLE === 'true' || Boolean(process.env.CAPACITOR_SERVER_URL)
 const liveUrl = process.env.CAPACITOR_SERVER_URL || 'https://datser.vercel.app'
-const serverConfig = useLocalBundle
-  ? undefined
-  : {
+const serverConfig = useRemoteBundle
+  ? {
       url: liveUrl,
       cleartext: liveUrl.startsWith('http://')
     }
+  : undefined
 
 const config: CapacitorConfig = {
   appId: 'com.datser.app',

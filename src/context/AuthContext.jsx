@@ -1,7 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { supabase, hasStoredSession, isSupabaseConfigured } from '../lib/supabase'
 import { toast } from 'react-toastify'
-import { executeSupabaseWrite } from '../utils/supabaseWrite'
+import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabaseWrite'
+import {
+  clearAllOfflineData,
+  clearOfflineAuthProfile,
+  getOfflineAuthProfile,
+  getOfflinePreferences,
+  queueOfflineChange,
+  saveOfflineAuthProfile,
+  saveOfflinePreferences
+} from '../utils/offlineStore'
 
 const AuthContext = createContext(null)
 const DEV_BYPASS_STORAGE_KEY = 'datser_dev_bypass'
@@ -17,6 +26,13 @@ const DEV_BYPASS_PREFERENCES = {
   role: 'owner'
 }
 
+const isBrowserOffline = () => (
+  typeof navigator !== 'undefined' &&
+  navigator.onLine === false
+)
+
+const makePreferenceChangeId = (userId) => `preferences_update_${userId || 'local'}`
+
 export const useAuth = () => {
   const context = useContext(AuthContext)
   if (!context) {
@@ -31,7 +47,60 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true)
   const [preferences, setPreferences] = useState(null)
   const welcomeToastShownRef = useRef(false) // Prevent duplicate welcome toasts
+  const offlineLoginToastShownRef = useRef(false)
   const isDeveloperBypassEnabled = import.meta.env.DEV && localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
+
+  const applyOfflineAuthProfile = useCallback(async () => {
+    try {
+      const cachedAuth = await getOfflineAuthProfile().catch(() => null)
+      if (!cachedAuth?.user?.id) return false
+
+      const cachedPreferences = await getOfflinePreferences(cachedAuth.user.id).catch(() => null)
+      setUser(cachedAuth.user)
+      if (cachedPreferences?.preferences) {
+        setPreferences(cachedPreferences.preferences)
+      }
+      setLoading(false)
+      welcomeToastShownRef.current = true
+
+      if (!offlineLoginToastShownRef.current) {
+        offlineLoginToastShownRef.current = true
+        toast.info('Offline Mode Active - using saved login.')
+      }
+      return true
+    } catch (error) {
+      console.warn('Could not restore offline login:', error)
+      return false
+    }
+  }, [])
+
+  const rememberOnlineSession = useCallback(async (session) => {
+    if (!session?.user?.id) return
+    try {
+      await saveOfflineAuthProfile({ user: session.user, session })
+    } catch (error) {
+      console.warn('Could not save offline auth profile:', error)
+    }
+  }, [])
+
+  const queuePreferenceSync = useCallback(async (userId, nextPreferences) => {
+    if (!userId || !nextPreferences) return
+    try {
+      await queueOfflineChange({
+        local_change_id: makePreferenceChangeId(userId),
+        action_type: 'preferences_update',
+        user_id: userId,
+        preferences: {
+          ...nextPreferences,
+          user_id: nextPreferences.user_id || userId
+        },
+        created_at: new Date().toISOString(),
+        sync_status: 'pending'
+      })
+    } catch (error) {
+      console.warn('Could not queue preference sync:', error)
+    }
+  }, [])
 
   // Load preferences in background (non-blocking)
   const loadUserPreferencesBackground = useCallback((userId) => {
@@ -75,7 +144,13 @@ export const AuthProvider = ({ children }) => {
     // Check if Supabase is configured
     if (!isSupabaseConfigured()) {
       console.error('Supabase is not configured')
-      setLoading(false)
+      if (!isBrowserOffline()) {
+        setLoading(false)
+      } else {
+        applyOfflineAuthProfile().then((restored) => {
+          if (!restored && mounted) setLoading(false)
+        })
+      }
       return
     }
 
@@ -123,6 +198,9 @@ export const AuthProvider = ({ children }) => {
             if (error) {
               console.error('[AUTH] Error processing auth callback:', error)
             }
+            if (data?.session) {
+              rememberOnlineSession(data.session)
+            }
             // Clear the hash from URL
             window.history.replaceState(null, '', window.location.pathname)
           }
@@ -141,12 +219,18 @@ export const AuthProvider = ({ children }) => {
             setLoading(false)
             // Load preferences in background - don't block UI
             if (session?.user) {
+              rememberOnlineSession(session)
               loadUserPreferencesBackground(session.user.id)
+            } else if (isBrowserOffline()) {
+              await applyOfflineAuthProfile()
             }
           }
         }
       } catch (error) {
         console.error('Error getting session:', error)
+        if (isBrowserOffline() && await applyOfflineAuthProfile()) {
+          return
+        }
         if (mounted) {
           setLoading(false)
         }
@@ -165,6 +249,7 @@ export const AuthProvider = ({ children }) => {
         setLoading(false)
 
         if (event === 'SIGNED_IN' && session?.user) {
+          rememberOnlineSession(session)
           // Load preferences in background
           loadUserPreferencesBackground(session.user.id)
           // Auto-accept collaborator invite if user was invited
@@ -205,6 +290,14 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
+      if (isBrowserOffline()) {
+        const cached = await getOfflinePreferences(userId).catch(() => null)
+        if (cached?.preferences) {
+          setPreferences(cached.preferences)
+          return cached.preferences
+        }
+      }
+
       if (supabase) {
         const { data, error } = await supabase
           .from('user_preferences')
@@ -214,12 +307,15 @@ export const AuthProvider = ({ children }) => {
 
         if (error && error.code !== 'PGRST116') {
           // PGRST116 = no rows returned (new user)
-          console.error('Error loading preferences:', error)
+          console.warn('Using local preferences because remote load failed:', error)
           return
         }
 
         if (data) {
           setPreferences(data)
+          saveOfflinePreferences(userId, data).catch((error) => {
+            console.warn('Could not cache preferences for offline use:', error)
+          })
           // Only apply database preferences if localStorage doesn't have values
           // This preserves user's most recent selections even after logout
           if (data.selected_month_table && !localStorage.getItem('selectedMonthTable')) {
@@ -228,10 +324,16 @@ export const AuthProvider = ({ children }) => {
           if (data.badge_filter && !localStorage.getItem('badgeFilter')) {
             localStorage.setItem('badgeFilter', JSON.stringify(data.badge_filter))
           }
+          return data
         }
       }
     } catch (error) {
-      console.error('Error loading preferences:', error)
+      console.warn('Using cached preferences after load failed:', error)
+      const cached = await getOfflinePreferences(userId).catch(() => null)
+      if (cached?.preferences) {
+        setPreferences(cached.preferences)
+        return cached.preferences
+      }
     }
   }
 
@@ -239,26 +341,32 @@ export const AuthProvider = ({ children }) => {
   const saveUserPreferences = async (newPreferences) => {
     if (!user) return
 
+    const nextPreferences = {
+      ...(preferences || {}),
+      user_id: preferences?.user_id || user.id,
+      ...newPreferences
+    }
+
     try {
       if (isDeveloperBypassEnabled) {
-        const nextPreferences = {
+        const devPreferences = {
           ...(preferences || DEV_BYPASS_PREFERENCES),
           user_id: user.id,
           ...newPreferences
         }
-        setPreferences(nextPreferences)
-        return nextPreferences
+        setPreferences(devPreferences)
+        await saveOfflinePreferences(user.id, devPreferences).catch(() => {})
+        return devPreferences
       }
 
-      // If Supabase isn't configured/available (or user is offline), do not spam errors.
-      // Still update local state so the UI keeps working.
-      if (!isSupabaseConfigured() || !supabase || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
-        setPreferences(prev => ({
-          ...(prev || {}),
-          user_id: prev?.user_id || user.id,
-          ...newPreferences
-        }))
-        return
+      setPreferences(nextPreferences)
+      await saveOfflinePreferences(user.id, nextPreferences).catch((error) => {
+        console.warn('Could not cache preferences for offline use:', error)
+      })
+
+      if (!isSupabaseConfigured() || !supabase || isBrowserOffline()) {
+        await queuePreferenceSync(user.id, nextPreferences)
+        return nextPreferences
       }
 
       if (supabase) {
@@ -267,7 +375,7 @@ export const AuthProvider = ({ children }) => {
             .from('user_preferences')
             .upsert({
               user_id: user.id,
-              ...newPreferences,
+              ...nextPreferences,
               updated_at: new Date().toISOString()
             }, {
               onConflict: 'user_id'
@@ -277,19 +385,25 @@ export const AuthProvider = ({ children }) => {
           { action: 'Save user preferences' }
         )
 
-        setPreferences(data)
-        return data
+        const savedPreferences = data || nextPreferences
+        setPreferences(savedPreferences)
+        await saveOfflinePreferences(user.id, savedPreferences).catch(() => {})
+        return savedPreferences
       }
     } catch (error) {
       // Network / fetch errors are expected when Supabase is unreachable.
       // Keep the UI responsive and avoid throwing (which can cascade into repeated calls).
-      console.error('Error saving preferences:', error)
-      setPreferences(prev => ({
-        ...(prev || {}),
-        user_id: prev?.user_id || user.id,
-        ...newPreferences
-      }))
-      return
+      if (isTransientSupabaseError(error) || isBrowserOffline()) {
+        console.warn('Preference save queued for offline sync:', error)
+      } else {
+        console.error('Error saving preferences:', error)
+      }
+      setPreferences(nextPreferences)
+      await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
+      if (isTransientSupabaseError(error) || isBrowserOffline()) {
+        await queuePreferenceSync(user.id, nextPreferences)
+      }
+      return nextPreferences
     }
   }
 
@@ -301,22 +415,23 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      // Always update local state immediately so UI reflects change.
-      setPreferences(prev => ({
-        ...(prev || {}),
-        user_id: prev?.user_id || user.id,
+      const nextPreferences = {
+        ...(preferences || {}),
+        user_id: preferences?.user_id || user.id,
         [key]: value
-      }))
+      }
+
+      // Always update local state immediately so UI reflects change.
+      setPreferences(nextPreferences)
+      await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
 
       // If Supabase isn't ready/online, skip remote write.
-      if (!isSupabaseConfigured() || !supabase || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      if (!isSupabaseConfigured() || !supabase || isBrowserOffline()) {
+        await queuePreferenceSync(user.id, nextPreferences)
         return
       }
 
-      await saveUserPreferences({
-        ...preferences,
-        [key]: value
-      })
+      await saveUserPreferences(nextPreferences)
     } catch (error) {
       console.error('Error updating preference:', error)
     }
@@ -537,6 +652,11 @@ export const AuthProvider = ({ children }) => {
       if (import.meta.env.DEV) {
         localStorage.removeItem(DEV_BYPASS_STORAGE_KEY)
       }
+
+      await Promise.all([
+        clearOfflineAuthProfile().catch(() => {}),
+        clearAllOfflineData().catch(() => {})
+      ])
 
       if (supabase) {
         const { error } = await supabase.auth.signOut()

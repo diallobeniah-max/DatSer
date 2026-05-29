@@ -1,8 +1,12 @@
 const DB_NAME = 'datser-offline'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const SNAPSHOT_STORE = 'snapshots'
 const PENDING_STORE = 'pendingChanges'
+const AUTH_STORE = 'auth'
+const LOCAL_STATE_STORE = 'localState'
 const SNAPSHOT_KEY = 'latest'
+const AUTH_PROFILE_KEY = 'latest'
+const PREFERENCES_KEY = 'preferences'
 
 const canUseIndexedDb = () => (
   typeof window !== 'undefined' &&
@@ -26,6 +30,12 @@ const openOfflineDb = () => new Promise((resolve, reject) => {
       const store = db.createObjectStore(PENDING_STORE, { keyPath: 'local_change_id' })
       store.createIndex('sync_status', 'sync_status', { unique: false })
       store.createIndex('created_at', 'created_at', { unique: false })
+    }
+    if (!db.objectStoreNames.contains(AUTH_STORE)) {
+      db.createObjectStore(AUTH_STORE, { keyPath: 'key' })
+    }
+    if (!db.objectStoreNames.contains(LOCAL_STATE_STORE)) {
+      db.createObjectStore(LOCAL_STATE_STORE, { keyPath: 'key' })
     }
   }
 
@@ -71,6 +81,71 @@ export const clearOfflineSnapshot = async () => (
   runStore(SNAPSHOT_STORE, 'readwrite', (store) => store.delete(SNAPSHOT_KEY))
 )
 
+export const saveOfflineAuthProfile = async ({ user, session } = {}) => {
+  if (!user?.id) return null
+
+  const savedAt = new Date().toISOString()
+  const profile = {
+    key: AUTH_PROFILE_KEY,
+    saved_at: savedAt,
+    user: {
+      id: user.id,
+      email: user.email || null,
+      app_metadata: user.app_metadata || {},
+      user_metadata: user.user_metadata || {},
+      created_at: user.created_at || null,
+      updated_at: user.updated_at || null,
+      aud: user.aud || null,
+      role: user.role || null
+    },
+    session: session ? {
+      expires_at: session.expires_at || null,
+      expires_in: session.expires_in || null,
+      token_type: session.token_type || null,
+      provider_token_present: Boolean(session.provider_token)
+    } : null
+  }
+
+  await runStore(AUTH_STORE, 'readwrite', (store) => store.put(profile))
+  return profile
+}
+
+export const getOfflineAuthProfile = async () => (
+  runStore(AUTH_STORE, 'readonly', (store) => store.get(AUTH_PROFILE_KEY))
+)
+
+export const clearOfflineAuthProfile = async () => (
+  runStore(AUTH_STORE, 'readwrite', (store) => store.delete(AUTH_PROFILE_KEY))
+)
+
+export const saveOfflinePreferences = async (userId, preferences = {}) => {
+  if (!userId) return null
+
+  const record = {
+    key: PREFERENCES_KEY,
+    user_id: userId,
+    preferences: {
+      ...(preferences || {}),
+      user_id: preferences?.user_id || userId
+    },
+    saved_at: new Date().toISOString()
+  }
+
+  await runStore(LOCAL_STATE_STORE, 'readwrite', (store) => store.put(record))
+  return record
+}
+
+export const getOfflinePreferences = async (userId = null) => {
+  const record = await runStore(LOCAL_STATE_STORE, 'readonly', (store) => store.get(PREFERENCES_KEY))
+  if (!record) return null
+  if (userId && record.user_id && record.user_id !== userId) return null
+  return record
+}
+
+export const clearOfflinePreferences = async () => (
+  runStore(LOCAL_STATE_STORE, 'readwrite', (store) => store.delete(PREFERENCES_KEY))
+)
+
 export const queueOfflineChange = async (change) => {
   const createdAt = change.created_at || new Date().toISOString()
   const queuedChange = {
@@ -108,4 +183,5 @@ export const clearPendingOfflineChanges = async () => (
 export const clearAllOfflineData = async () => {
   await clearOfflineSnapshot()
   await clearPendingOfflineChanges()
+  await clearOfflinePreferences()
 }

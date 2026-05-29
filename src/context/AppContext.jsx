@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
-import { executeSupabaseWrite } from '../utils/supabaseWrite'
+import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabaseWrite'
 import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
@@ -88,6 +88,17 @@ const makeOfflineChangeId = () => {
     return crypto.randomUUID()
   }
   return `offline-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+const makeLocalUuid = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16)
+    const resolved = char === 'x' ? value : (value & 0x3) | 0x8
+    return resolved.toString(16)
+  })
 }
 
 const isBrowserOnline = () => {
@@ -209,6 +220,45 @@ const normalizeMemberRecord = (member) => {
         ? member.Name.trim()
         : existingName)) // Keep original value (could be null/undefined) rather than defaulting to empty string
   return { ...member, full_name: name, 'Full Name': name, name: name, Name: name }
+}
+
+const buildMemberTableRow = (memberData = {}, { id = null, workspaceName = null, userId = null } = {}) => {
+  const genRaw = memberData.gender || memberData['Gender']
+  const gen = typeof genRaw === 'string'
+    ? (genRaw.trim().toLowerCase() === 'male' ? 'Male' : genRaw.trim().toLowerCase() === 'female' ? 'Female' : genRaw)
+    : genRaw
+  const ageRaw = memberData.age || memberData['Age']
+  const ageStr = (ageRaw === undefined || ageRaw === null || ageRaw === '') ? null : String(ageRaw).trim()
+  const dobRaw = memberData.date_of_birth || memberData['date_of_birth']
+  const dobStr = (dobRaw === undefined || dobRaw === null || dobRaw === '') ? null : String(dobRaw).trim()
+  const phoneRaw = memberData.phone_number ?? memberData.phoneNumber ?? memberData['Phone Number']
+  const phoneStr = (phoneRaw === undefined || phoneRaw === null) ? null : String(phoneRaw).trim() || null
+
+  return {
+    ...(id ? { id } : {}),
+    'Full Name': memberData.full_name || memberData.fullName || memberData['Full Name'],
+    'Gender': gen,
+    'Phone Number': phoneStr,
+    'Age': ageStr,
+    'date_of_birth': dobStr,
+    'Current Level': memberData.current_level || memberData.currentLevel || memberData['Current Level'],
+    workspace: workspaceName,
+    parent_name_1: memberData.parent_name_1 || null,
+    parent_phone_1: memberData.parent_phone_1 || null,
+    parent_name_2: memberData.parent_name_2 || null,
+    parent_phone_2: memberData.parent_phone_2 || null,
+    notes: memberData.notes || null,
+    is_visitor: memberData.is_visitor || false,
+    user_id: userId
+  }
+}
+
+const sanitizeQueuedMemberInsert = (memberData = {}) => {
+  const blockedKeys = new Set(['__offline_status', 'full_name', 'name', 'Name', 'created_at', 'updated_at', 'inserted_at'])
+  return Object.fromEntries(
+    Object.entries(memberData)
+      .filter(([key, value]) => !blockedKeys.has(key) && value !== undefined)
+  )
 }
 
 // Get the latest available table from localStorage, falling back to DEFAULT_TABLE
@@ -350,6 +400,9 @@ export const AppProvider = ({ children }) => {
   const [isPreparingOffline, setIsPreparingOffline] = useState(false)
   const [isSyncingOffline, setIsSyncingOffline] = useState(false)
   const [offlineMode, setOfflineModeState] = useState(getStoredOfflineMode)
+  const autoSyncTimerRef = useRef(null)
+  const autoSnapshotTimerRef = useRef(null)
+  const syncOfflineChangesRef = useRef(null)
 
   const setOfflineMode = useCallback((mode) => {
     const nextMode = OFFLINE_MODES.includes(mode) ? mode : 'auto'
@@ -580,6 +633,68 @@ export const AppProvider = ({ children }) => {
       guidedFormSettingsState?.showNextButton !== true
     )
   }, [guidedFormSettingsState?.pulseNextButton, guidedFormSettingsState?.showNextButton])
+
+  useEffect(() => {
+    if (!user?.id || !hasAccess || loading) return undefined
+
+    const hasSnapshotData =
+      members.length > 0 ||
+      monthlyTables.length > 0 ||
+      Object.keys(attendanceData || {}).length > 0
+
+    if (!hasSnapshotData) return undefined
+
+    if (autoSnapshotTimerRef.current) {
+      clearTimeout(autoSnapshotTimerRef.current)
+    }
+
+    autoSnapshotTimerRef.current = setTimeout(() => {
+      saveOfflineSnapshot({
+        members,
+        monthlyTables,
+        currentTable,
+        attendanceData,
+        selectedAttendanceDate: selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null,
+        preferences: preferences || null,
+        guidedFormSettings,
+        workspace: preferences?.workspace_name || null,
+        authenticated_user_id: user.id,
+        data_owner_id: dataOwnerId || user.id,
+        is_collaborator: isCollaborator,
+        is_admin_collaborator: isAdminCollaborator,
+        owner_email: ownerEmail || null,
+        saved_at: new Date().toISOString(),
+        auto_cached: true
+      })
+        .then(() => refreshOfflineStatus())
+        .catch((error) => {
+          console.warn('Automatic offline cache save failed:', error)
+        })
+    }, 1000)
+
+    return () => {
+      if (autoSnapshotTimerRef.current) {
+        clearTimeout(autoSnapshotTimerRef.current)
+        autoSnapshotTimerRef.current = null
+      }
+    }
+  }, [
+    user?.id,
+    hasAccess,
+    loading,
+    members,
+    monthlyTables,
+    currentTable,
+    attendanceData,
+    selectedAttendanceDate,
+    preferences,
+    guidedFormSettings,
+    dataOwnerId,
+    isCollaborator,
+    isAdminCollaborator,
+    ownerEmail,
+    refreshOfflineStatus
+  ])
 
   // Admin-locked default date forces collaborators to a specific date
   const [lockedDefaultDate, setLockedDefaultDate] = useState(null)
@@ -1348,6 +1463,14 @@ export const AppProvider = ({ children }) => {
           return
         }
 
+        if (isTransientSupabaseError(error) || !isBrowserOnline()) {
+          const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+          if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
+            setOfflineStatusMessage('Offline Mode - using saved local data.')
+            return snapshotRecord?.snapshot?.members || []
+          }
+        }
+
         if (!background) {
           toast.error(`Database error: ${error.message}`, { autoClose: 10000 })
         }
@@ -1366,6 +1489,13 @@ export const AppProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Unexpected error in fetchMembers:', error)
+      if (isTransientSupabaseError(error) || !isBrowserOnline()) {
+        const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
+          setOfflineStatusMessage('Offline Mode - using saved local data.')
+          return snapshotRecord?.snapshot?.members || []
+        }
+      }
       appContextLog('Preserving current members after unexpected fetch error')
       if (!background) {
         toast.error(`Unable to refresh saved data: ${error.message || 'unknown error'}`, { autoClose: 10000 })
@@ -1410,42 +1540,44 @@ export const AppProvider = ({ children }) => {
 
       // Transform data to match monthly table structure
       console.log('[addMember] Received memberData:', JSON.stringify(memberData))
-      const genRaw = memberData.gender || memberData['Gender']
-      const gen = typeof genRaw === 'string'
-        ? (genRaw.trim().toLowerCase() === 'male' ? 'Male' : genRaw.trim().toLowerCase() === 'female' ? 'Female' : genRaw)
-        : genRaw
-      const ageRaw = memberData.age || memberData['Age']
-      const ageStr = (ageRaw === undefined || ageRaw === null || ageRaw === '') ? null : String(ageRaw).trim()
-      const dobRaw = memberData.date_of_birth || memberData['date_of_birth']
-      const dobStr = (dobRaw === undefined || dobRaw === null || dobRaw === '') ? null : String(dobRaw).trim()
-      const phoneRaw = memberData.phone_number ?? memberData.phoneNumber ?? memberData['Phone Number']
-      const phoneStr = (phoneRaw === undefined || phoneRaw === null) ? null : String(phoneRaw).trim() || null
-
-      // Get workspace name from auth preferences
       const workspaceName = authContext?.preferences?.workspace_name || null
-
-      const transformedData = {
-        'Full Name': memberData.full_name || memberData.fullName || memberData['Full Name'],
-        'Gender': gen,
-        'Phone Number': phoneStr,
-        'Age': ageStr,
-        'date_of_birth': dobStr,
-        'Current Level': memberData.current_level || memberData.currentLevel || memberData['Current Level'],
-        // Auto-fill workspace from user preferences
-        workspace: workspaceName,
-        // Optional parent info fields
-        parent_name_1: memberData.parent_name_1 || null,
-        parent_phone_1: memberData.parent_phone_1 || null,
-        parent_name_2: memberData.parent_name_2 || null,
-        parent_phone_2: memberData.parent_phone_2 || null,
-        // Notes and visitor status
-        notes: memberData.notes || null,
-        is_visitor: memberData.is_visitor || false,
-        // Link to current user
-        user_id: user?.id
-      }
+      const localId = makeLocalUuid()
+      const transformedData = buildMemberTableRow(memberData, {
+        id: localId,
+        workspaceName,
+        userId: user?.id
+      })
 
       console.log('[addMember] Transformed data:', JSON.stringify(transformedData))
+
+      if (shouldUseOfflineData || !isBrowserOnline()) {
+        const createdAt = new Date().toISOString()
+        const createdMember = normalizeMemberRecord({
+          ...transformedData,
+          inserted_at: createdAt,
+          created_at: createdAt,
+          updated_at: createdAt,
+          __offline_status: 'pending_add'
+        })
+
+        setMembers(prev => [createdMember, ...prev.filter(existing => existing.id !== createdMember.id)])
+        invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+        await queueOfflineChange({
+          local_change_id: `member_add_${createdMember.id}`,
+          action_type: 'member_add',
+          table_name: currentTable,
+          member_id: createdMember.id,
+          member_data: createdMember,
+          created_at: createdAt,
+          sync_status: 'pending'
+        })
+        await refreshOfflineStatus()
+        setOfflineStatusMessage('Member saved offline and will sync automatically.')
+        notify.sync('Member saved offline and will sync automatically.', {
+          title: 'Saved to pending sync'
+        })
+        return createdMember
+      }
 
       const { data } = await executeSupabaseWrite(
         () => supabase
@@ -1784,6 +1916,36 @@ export const AppProvider = ({ children }) => {
 
       console.log('Update data:', updateData)
       console.log('Updating member ID:', memberId)
+
+      if (shouldUseOfflineData || !isBrowserOnline()) {
+        setMembers(prev => prev.map(member => {
+          if (member.id !== memberId) return member
+          return {
+            ...member,
+            ...updateData,
+            __offline_status: 'pending_update',
+            updated_at: new Date().toISOString()
+          }
+        }))
+        invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+        await queueOfflineChange({
+          local_change_id: `member_update_${currentTable}_${memberId}`,
+          action_type: 'member_update',
+          table_name: currentTable,
+          member_id: memberId,
+          updates: updateData,
+          base_updated_at: targetMember?.updated_at || targetMember?.UpdatedAt || targetMember?.inserted_at || null,
+          created_at: new Date().toISOString(),
+          sync_status: 'pending'
+        })
+        await refreshOfflineStatus()
+        if (!suppressToast) {
+          notify.sync('Badge change saved offline and will sync automatically.', {
+            title: 'Saved to pending sync'
+          })
+        }
+        return { success: true, offline: true }
+      }
 
       const { data } = await executeSupabaseWrite(
         () => supabase
@@ -2476,6 +2638,38 @@ export const AppProvider = ({ children }) => {
         return updatedMember
       }
 
+      if (shouldUseOfflineData || !isBrowserOnline()) {
+        const createdAt = new Date().toISOString()
+        const existingMember = members.find(m => m.id === id) || {}
+        const optimisticMember = normalizeMemberRecord({
+          ...existingMember,
+          ...updates,
+          updated_at: createdAt,
+          __offline_status: 'pending_update'
+        })
+
+        setMembers(prev => prev.map(m => (m.id === id ? optimisticMember : m)))
+        refreshSearch()
+        invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+        await queueOfflineChange({
+          local_change_id: `member_update_${currentTable}_${id}`,
+          action_type: 'member_update',
+          table_name: currentTable,
+          member_id: id,
+          updates,
+          base_updated_at: existingMember.updated_at || existingMember.UpdatedAt || existingMember.inserted_at || null,
+          created_at: createdAt,
+          sync_status: 'pending'
+        })
+        await refreshOfflineStatus()
+        if (!silent) {
+          notify.sync('Member update saved offline and will sync automatically.', {
+            title: 'Saved to pending sync'
+          })
+        }
+        return optimisticMember
+      }
+
       // Defensive copy so we can safely normalize values
       let normalized = { ...updates }
 
@@ -2834,6 +3028,37 @@ export const AppProvider = ({ children }) => {
       return { success: true }
     }
 
+    if (shouldUseOfflineData || !isBrowserOnline()) {
+      const existingMember = members.find(member => member.id === memberId) || null
+      const createdAt = new Date().toISOString()
+      setMembers(prevMembers => prevMembers.filter(member => member.id !== memberId))
+      setAttendanceData(prev => {
+        const next = {}
+        Object.entries(prev).forEach(([dateKey, map]) => {
+          const { [memberId]: _removed, ...rest } = map || {}
+          next[dateKey] = rest
+        })
+        return next
+      })
+      refreshSearch()
+      invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+      await queueOfflineChange({
+        local_change_id: `member_delete_${currentTable}_${memberId}`,
+        action_type: 'member_delete',
+        table_name: currentTable,
+        member_id: memberId,
+        base_updated_at: existingMember?.updated_at || existingMember?.UpdatedAt || existingMember?.inserted_at || null,
+        member_snapshot: existingMember,
+        created_at: createdAt,
+        sync_status: 'pending'
+      })
+      await refreshOfflineStatus()
+      notify.sync('Member deletion saved offline and will sync automatically.', {
+        title: 'Saved to pending sync'
+      })
+      return { success: true, offline: true }
+    }
+
     setLoading(true)
     try {
       console.log(`[DELETE] Attempting Supabase delete from table: ${currentTable}, member ID: ${memberId}`)
@@ -3010,6 +3235,23 @@ export const AppProvider = ({ children }) => {
         return
       }
 
+      if (shouldUseOfflineData) {
+        const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        const snapshot = snapshotRecord?.snapshot
+        if (
+          snapshot?.authenticated_user_id === user?.id &&
+          Array.isArray(snapshot.monthlyTables) &&
+          snapshot.monthlyTables.length > 0
+        ) {
+          setMonthlyTables(sortMonthTables(snapshot.monthlyTables))
+          if (snapshot.currentTable && !currentTable) {
+            changeCurrentTable(snapshot.currentTable)
+          }
+          setOfflineStatusMessage('Offline Mode - using saved local data.')
+          return
+        }
+      }
+
       appContextLog(`Fetching monthly tables for owner: ${ownerId} (Am I collaborator? ${isCollaborator})`)
 
       // 3. Fetch tables using RPC to bypass RLS for collaborators
@@ -3088,6 +3330,7 @@ export const AppProvider = ({ children }) => {
     user?.id,
     isCollaborator,
     ownerStickyMonth,
+    shouldUseOfflineData,
     changeCurrentTable,
     authContext?.preferences?.current_month_table,
     currentTable
@@ -4565,6 +4808,8 @@ export const AppProvider = ({ children }) => {
         currentTable,
         attendanceData: snapshotAttendanceData,
         selectedAttendanceDate: selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null,
+        preferences: preferences || null,
+        guidedFormSettings,
         workspace: preferences?.workspace_name || null,
         authenticated_user_id: user?.id || null,
         data_owner_id: dataOwnerId || user?.id || null,
@@ -4627,6 +4872,79 @@ export const AppProvider = ({ children }) => {
       for (const change of pendingChanges) {
         if (!change || change.sync_status === 'conflict') {
           conflicts += 1
+          continue
+        }
+
+        if (change.action_type === 'preferences_update') {
+          try {
+            const preferenceUserId = change.user_id || user?.id
+            if (!preferenceUserId) throw new Error('Missing user for preference sync.')
+            await executeSupabaseWrite(
+              () => supabase
+                .from('user_preferences')
+                .upsert({
+                  ...(change.preferences || {}),
+                  user_id: preferenceUserId,
+                  updated_at: new Date().toISOString()
+                }, {
+                  onConflict: 'user_id'
+                }),
+              { action: 'Sync offline preferences' }
+            )
+            await removeOfflineChange(change.local_change_id)
+            synced += 1
+          } catch (error) {
+            await updateOfflineChangeStatus(change.local_change_id, {
+              sync_status: isTransientSupabaseError(error) ? 'pending' : 'failed',
+              error: error?.message || 'Preference sync failed.'
+            })
+            failed += 1
+          }
+          continue
+        }
+
+        if (['member_add', 'member_update', 'member_delete'].includes(change.action_type)) {
+          if (change.table_name && change.table_name !== currentTable) {
+            await updateOfflineChangeStatus(change.local_change_id, {
+              sync_status: 'waiting_for_month',
+              error: `Switch to ${change.table_name.replace('_', ' ')} to sync this change.`
+            })
+            waitingForMonth += 1
+            continue
+          }
+
+          try {
+            if (change.action_type === 'member_add') {
+              const queuedMember = sanitizeQueuedMemberInsert(change.member_data || {})
+              await executeSupabaseWrite(
+                () => supabase
+                  .from(currentTable)
+                  .upsert([queuedMember], { onConflict: 'id' }),
+                { action: `Sync offline member add in ${currentTable}` }
+              )
+              setMembers(prev => prev.map(member => (
+                member.id === change.member_id
+                  ? normalizeMemberRecord({ ...member, __offline_status: null })
+                  : member
+              )))
+            } else if (change.action_type === 'member_update') {
+              await updateMember(change.member_id, change.updates || {}, { silent: true })
+            } else if (change.action_type === 'member_delete') {
+              const result = await deleteMember(change.member_id)
+              if (!result?.success) {
+                throw result?.error || new Error('Member delete sync failed.')
+              }
+            }
+
+            await removeOfflineChange(change.local_change_id)
+            synced += 1
+          } catch (error) {
+            await updateOfflineChangeStatus(change.local_change_id, {
+              sync_status: isTransientSupabaseError(error) ? 'pending' : 'failed',
+              error: error?.message || 'Member sync failed.'
+            })
+            failed += 1
+          }
           continue
         }
 
@@ -4719,6 +5037,29 @@ export const AppProvider = ({ children }) => {
       setIsSyncingOffline(false)
     }
   }
+  syncOfflineChangesRef.current = syncOfflineChanges
+
+  useEffect(() => {
+    if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline) return undefined
+
+    if (autoSyncTimerRef.current) {
+      clearTimeout(autoSyncTimerRef.current)
+    }
+
+    autoSyncTimerRef.current = setTimeout(() => {
+      setOfflineStatusMessage('Syncing Changes...')
+      syncOfflineChangesRef.current?.().catch((error) => {
+        console.warn('Automatic offline sync failed:', error)
+      })
+    }, 1200)
+
+    return () => {
+      if (autoSyncTimerRef.current) {
+        clearTimeout(autoSyncTimerRef.current)
+        autoSyncTimerRef.current = null
+      }
+    }
+  }, [isOnline, offlineMode, pendingSyncCount, isSyncingOffline])
 
   // Load attendance and badge data when table changes
   useEffect(() => {
