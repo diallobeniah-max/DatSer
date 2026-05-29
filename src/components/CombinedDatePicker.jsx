@@ -23,7 +23,7 @@ const CombinedDatePicker = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState({})
-  const [isMobile, setIsMobile] = useState(false)
+  const [isSheetViewport, setIsSheetViewport] = useState(false)
   const containerRef = useRef(null)
   const dropdownRef = useRef(null)
 
@@ -39,15 +39,15 @@ const CombinedDatePicker = ({
   const [monthYearTouched, setMonthYearTouched] = useState({ month: false, year: false })
   const [combinedTouched, setCombinedTouched] = useState({ day: false, month: false, year: false })
   const { dragHandleProps, sheetStyle } = useBottomSheetDrag({
-    enabled: isOpen && isMobile,
+    enabled: isOpen && isSheetViewport,
     onDismiss: () => setIsOpen(false)
   })
 
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 640)
-    checkMobile()
-    window.addEventListener('resize', checkMobile)
-    return () => window.removeEventListener('resize', checkMobile)
+    const checkSheetViewport = () => setIsSheetViewport(window.innerWidth <= 1024)
+    checkSheetViewport()
+    window.addEventListener('resize', checkSheetViewport)
+    return () => window.removeEventListener('resize', checkSheetViewport)
   }, [])
 
   useEffect(() => {
@@ -68,13 +68,13 @@ const CombinedDatePicker = ({
   const toggleDropdown = () => {
     if (disabled) return
     if (!isOpen) {
-      const mobile = window.innerWidth < 640
+      const sheetViewport = window.innerWidth <= 1024
       const nextViewDate = selectedDate || (isBirthDatePicker
         ? new Date(new Date().getFullYear() - 18, new Date().getMonth(), 1)
         : new Date())
       const shouldStartWithMonthYear = isBirthDatePicker && !selectedDate && !value
       
-      if (!mobile && containerRef.current) {
+      if (!sheetViewport && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect()
         const spaceBelow = window.innerHeight - rect.bottom
         const spaceAbove = rect.top
@@ -117,16 +117,16 @@ const CombinedDatePicker = ({
 
   useEffect(() => {
     const handleClickOutside = (e) => {
-      if (isMobile) return // Handled by overlay click on mobile
+      if (isSheetViewport) return // Handled by overlay click on sheet viewports
       if (containerRef.current && containerRef.current.contains(e.target)) return
       if (dropdownRef.current && dropdownRef.current.contains(e.target)) return
       setIsOpen(false)
     }
-    if (isOpen && !isMobile) {
+    if (isOpen && !isSheetViewport) {
       document.addEventListener('mousedown', handleClickOutside)
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [isOpen, isMobile])
+  }, [isOpen, isSheetViewport])
 
   const handleSave = () => {
     if (selectedDate) {
@@ -293,10 +293,10 @@ const CombinedDatePicker = ({
 
       {isOpen && typeof document !== 'undefined' && createPortal(
         <>
-          {/* Mobile Overlay */}
-          {isMobile && (
+          {/* Sheet Overlay */}
+          {isSheetViewport && (
             <div 
-              className="fixed inset-0 bg-black/60 z-[999998] backdrop-animate"
+              className="fixed inset-0 bg-black/70 z-[999998] backdrop-blur-md backdrop-animate"
               onClick={() => setIsOpen(false)}
             />
           )}
@@ -307,14 +307,14 @@ const CombinedDatePicker = ({
             data-testid={`combined-date-picker-${pickerId}-dropdown`}
             className={`
               bg-white dark:bg-[#2F3030] shadow-2xl overflow-hidden font-sans z-[999999] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
-              ${isMobile 
+              ${isSheetViewport 
                 ? 'fixed bottom-0 left-0 right-0 w-full rounded-t-2xl animate-slide-up-sheet pb-safe' 
                 : 'border border-gray-200 dark:border-gray-700/60 rounded-xl animate-scale-in'
               }
             `}
-            style={isMobile ? { paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', ...sheetStyle } : { ...dropdownStyle, transformOrigin: dropdownStyle.bottom !== 'auto' ? 'bottom' : 'top' }}
+            style={isSheetViewport ? { paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', ...sheetStyle } : { ...dropdownStyle, transformOrigin: dropdownStyle.bottom !== 'auto' ? 'bottom' : 'top' }}
           >
-            {isMobile && (
+            {isSheetViewport && (
               <div
                 className="mobile-sheet-drag-zone flex justify-center pt-3 pb-1 flex-shrink-0 bg-white dark:bg-[#2F3030]"
                 role="button"
