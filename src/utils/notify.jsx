@@ -14,15 +14,19 @@ const toastByType = {
 }
 
 const defaultAutoCloseByType = {
-  success: 3200,
-  info: 3200,
-  online: 3200,
-  sync: 3400,
-  warning: 4400,
-  offline: 4600,
-  update: 4600,
-  error: 5000
+  success: 1200,
+  info: 1800,
+  online: 1800,
+  sync: 1800,
+  warning: 2400,
+  offline: 2600,
+  update: 2600,
+  error: 2600
 }
+
+const makeToastId = (type, title, message) => (
+  `${type}:${title || ''}:${message || ''}`.toLowerCase().replace(/\s+/g, '-').slice(0, 140)
+)
 
 const notifyCard = (type, options = {}) => {
   const {
@@ -33,9 +37,11 @@ const notifyCard = (type, options = {}) => {
     autoClose,
     persistent = false,
     toastId,
+    dedupe = true,
     defaultExpanded = false
   } = options
   const toastFn = toastByType[type] || toast.info
+  const resolvedToastId = toastId || (dedupe ? makeToastId(type, title, message) : undefined)
 
   return toastFn(
     <NotificationToast
@@ -47,7 +53,7 @@ const notifyCard = (type, options = {}) => {
       defaultExpanded={defaultExpanded}
     />,
     {
-      toastId,
+      toastId: resolvedToastId,
       autoClose: persistent ? false : (autoClose ?? defaultAutoCloseByType[type] ?? 3400),
       closeButton: false,
       className: 'datser-notification-shell',

@@ -10,10 +10,17 @@ import {
     Loader2,
     ChevronDown,
     X,
-    Search
+    Search,
+    BellRing,
+    RefreshCw,
+    WifiOff,
+    Info,
+    Smartphone,
+    Tablet
 } from 'lucide-react'
 import { toast } from 'react-toastify'
 import { supabase } from '../lib/supabase'
+import { notify } from '../utils/notify'
 
 const createDeveloperQaQueue = () => ([
     { id: 'open-add', label: 'Open Add Member', status: 'pending' },
@@ -57,6 +64,27 @@ const createBadgeTagQaQueue = () => ([
     { id: 'verify-badge-tag-restore', label: 'Verify badge, tag, and attendance restored', status: 'pending' }
 ])
 
+const notificationQaTypes = {
+    sync: {
+        title: 'Syncing...',
+        message: 'Your changes are being saved.',
+        tone: 'sync',
+        Icon: RefreshCw
+    },
+    offline: {
+        title: "You're offline",
+        message: 'You are working in offline mode. Data is safe on this device.',
+        tone: 'offline',
+        Icon: WifiOff
+    },
+    general: {
+        title: 'General notification',
+        message: 'This is how a normal DatSer notification will appear.',
+        tone: 'general',
+        Icon: Info
+    }
+}
+
 const DeveloperToolsPanel = ({
     user,
     isDeveloperBypass,
@@ -87,6 +115,11 @@ const DeveloperToolsPanel = ({
     const [devQaBatchCount, setDevQaBatchCount] = useState(3)
     const [devQaSelectedMemberId, setDevQaSelectedMemberId] = useState('')
     const [isDevMemberDropdownOpen, setIsDevMemberDropdownOpen] = useState(false)
+    const [notificationQaCount, setNotificationQaCount] = useState(3)
+    const [notificationQaPlayback, setNotificationQaPlayback] = useState('individual')
+    const [notificationQaDevice, setNotificationQaDevice] = useState('phone')
+    const [isNotificationQaOpen, setIsNotificationQaOpen] = useState(false)
+    const [notificationQaItems, setNotificationQaItems] = useState([])
 
     const membersRef = useRef(members)
     const devQaQueueScrollRef = useRef(null)
@@ -94,6 +127,7 @@ const DeveloperToolsPanel = ({
     const devQaResumeRef = useRef(null)
     const devQaDeepModeRef = useRef(false)
     const devMemberDropdownRef = useRef(null)
+    const notificationQaTimersRef = useRef([])
 
     useEffect(() => {
         membersRef.current = members
@@ -133,6 +167,10 @@ const DeveloperToolsPanel = ({
         setDevQaPausedSql('')
         setDevQaPausedLabel('')
     }, [devQaCountdown])
+
+    useEffect(() => () => {
+        notificationQaTimersRef.current.forEach((timerId) => clearTimeout(timerId))
+    }, [])
 
     const handleDevQaResume = useCallback(() => {
         selection()
@@ -600,6 +638,73 @@ const DeveloperToolsPanel = ({
         toast.info('Badge + Tag QA started')
     }, [selection, devQaStatus])
 
+    const clearNotificationQaTimers = useCallback(() => {
+        notificationQaTimersRef.current.forEach((timerId) => clearTimeout(timerId))
+        notificationQaTimersRef.current = []
+    }, [])
+
+    const createNotificationQaItem = useCallback((type, index = 0) => ({
+        id: `${type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`,
+        type,
+        index: index + 1,
+        ...notificationQaTypes[type]
+    }), [])
+
+    const runNotificationQaPreview = useCallback((type = 'general') => {
+        selection()
+        clearNotificationQaTimers()
+        setIsNotificationQaOpen(true)
+        setNotificationQaItems([])
+
+        const safeCount = Math.max(1, Math.min(30, Number(notificationQaCount) || 1))
+        const types = type === 'all' ? ['sync', 'offline', 'general'] : [type]
+        const items = Array.from({ length: safeCount }, (_, index) => (
+            createNotificationQaItem(types[index % types.length], index)
+        ))
+
+        if (notificationQaPlayback === 'together') {
+            setNotificationQaItems(items)
+            return
+        }
+
+        items.forEach((item, index) => {
+            const timerId = setTimeout(() => {
+                setNotificationQaItems((current) => [item, ...current].slice(0, 6))
+                const removeTimerId = setTimeout(() => {
+                    setNotificationQaItems((current) => current.filter((candidate) => candidate.id !== item.id))
+                }, 1800)
+                notificationQaTimersRef.current.push(removeTimerId)
+            }, index * 650)
+            notificationQaTimersRef.current.push(timerId)
+        })
+    }, [clearNotificationQaTimers, createNotificationQaItem, notificationQaCount, notificationQaPlayback, selection])
+
+    const runLiveNotificationQa = useCallback((type = 'general') => {
+        selection()
+        const safeCount = Math.max(1, Math.min(30, Number(notificationQaCount) || 1))
+        const fireOne = (resolvedType, index) => {
+            const meta = notificationQaTypes[resolvedType] || notificationQaTypes.general
+            notify.show(resolvedType === 'offline' ? 'offline' : resolvedType === 'sync' ? 'sync' : 'info', {
+                title: meta.title,
+                message: `${meta.message} (${index + 1}/${safeCount})`,
+                toastId: `dev-notification-${resolvedType}-${index}-${Date.now()}`,
+                dedupe: false,
+                autoClose: 1800
+            })
+        }
+        const types = type === 'all' ? ['sync', 'offline', 'general'] : [type]
+        Array.from({ length: safeCount }, (_, index) => {
+            const resolvedType = types[index % types.length]
+            if (notificationQaPlayback === 'together') {
+                fireOne(resolvedType, index)
+                return null
+            }
+            return setTimeout(() => fireOne(resolvedType, index), index * 500)
+        }).forEach((timerId) => {
+            if (timerId) notificationQaTimersRef.current.push(timerId)
+        })
+    }, [notificationQaCount, notificationQaPlayback, selection])
+
     return (
         <div className="space-y-6">
             <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -755,6 +860,94 @@ const DeveloperToolsPanel = ({
                         </div>
                     </div>
 
+                    <div className="mt-4 rounded-xl border border-orange-200 dark:border-orange-900/50 bg-orange-50/60 dark:bg-orange-950/10 p-4">
+                        <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+                            <div className="flex-1">
+                                <h5 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                                    <BellRing className="w-4 h-4 text-orange-500" />
+                                    Notification QA Lab
+                                </h5>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Simulate sync, offline, and general notifications inside a fake DatSer screen before checking the real toast layer.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => { selection(); setIsNotificationQaOpen(true) }}
+                                className="min-h-10 rounded-xl border border-orange-200 bg-white px-4 text-sm font-semibold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 dark:border-orange-800 dark:bg-gray-900 dark:text-orange-300 dark:hover:bg-orange-950/30"
+                            >
+                                Open Preview
+                            </button>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-1 lg:grid-cols-[0.8fr_1fr_1fr] gap-3">
+                            <label className="block">
+                                <span className="block text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400 mb-2">Times</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="30"
+                                    value={notificationQaCount}
+                                    onChange={(event) => setNotificationQaCount(Math.max(1, Math.min(30, Number(event.target.value) || 1)))}
+                                    className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                                />
+                            </label>
+
+                            <div>
+                                <span className="block text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400 mb-2">Playback</span>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {[
+                                        ['individual', 'Individual'],
+                                        ['together', 'Together']
+                                    ].map(([value, label]) => (
+                                        <button
+                                            key={value}
+                                            type="button"
+                                            onClick={() => setNotificationQaPlayback(value)}
+                                            className={`h-10 rounded-xl border px-3 text-sm font-semibold transition-colors ${notificationQaPlayback === value ? 'border-orange-500 bg-orange-100 text-orange-800 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200' : 'border-gray-200 bg-white text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300'}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div>
+                                <span className="block text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400 mb-2">Preview size</span>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        ['phone', 'Phone', Smartphone],
+                                        ['tablet', 'Tablet', Tablet],
+                                        ['desktop', 'Desktop', Monitor]
+                                    ].map(([value, label, Icon]) => (
+                                        <button
+                                            key={value}
+                                            type="button"
+                                            onClick={() => setNotificationQaDevice(value)}
+                                            className={`h-10 rounded-xl border px-2 text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1.5 ${notificationQaDevice === value ? 'border-orange-500 bg-orange-100 text-orange-800 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200' : 'border-gray-200 bg-white text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300'}`}
+                                        >
+                                            <Icon className="h-3.5 w-3.5" />
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                            <button type="button" onClick={() => runNotificationQaPreview('sync')} className="min-h-10 rounded-xl bg-blue-600 px-3 text-sm font-bold text-white hover:bg-blue-700">Preview Syncing</button>
+                            <button type="button" onClick={() => runNotificationQaPreview('offline')} className="min-h-10 rounded-xl bg-orange-600 px-3 text-sm font-bold text-white hover:bg-orange-700">Preview Offline</button>
+                            <button type="button" onClick={() => runNotificationQaPreview('general')} className="min-h-10 rounded-xl bg-gray-800 px-3 text-sm font-bold text-white hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600">Preview General</button>
+                            <button type="button" onClick={() => runNotificationQaPreview('all')} className="min-h-10 rounded-xl bg-fuchsia-600 px-3 text-sm font-bold text-white hover:bg-fuchsia-700">Preview All</button>
+                        </div>
+                        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                            <button type="button" onClick={() => runLiveNotificationQa('sync')} className="min-h-10 rounded-xl border border-blue-200 bg-white px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-900 dark:bg-gray-900 dark:text-blue-300">Live Sync Toast</button>
+                            <button type="button" onClick={() => runLiveNotificationQa('offline')} className="min-h-10 rounded-xl border border-orange-200 bg-white px-3 text-sm font-semibold text-orange-700 hover:bg-orange-50 dark:border-orange-900 dark:bg-gray-900 dark:text-orange-300">Live Offline Toast</button>
+                            <button type="button" onClick={() => runLiveNotificationQa('general')} className="min-h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">Live General Toast</button>
+                            <button type="button" onClick={() => runLiveNotificationQa('all')} className="min-h-10 rounded-xl border border-fuchsia-200 bg-white px-3 text-sm font-semibold text-fuchsia-700 hover:bg-fuchsia-50 dark:border-fuchsia-900 dark:bg-gray-900 dark:text-fuchsia-300">Live All Toasts</button>
+                        </div>
+                    </div>
+
                     <div className="mt-4 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-4">
                         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-3">QA Queue</p>
                         <div ref={devQaQueueScrollRef} className="space-y-2 mb-4 max-h-[14rem] overflow-y-auto pr-1">
@@ -806,6 +999,133 @@ const DeveloperToolsPanel = ({
                                 <button type="button" onClick={handleDevQaResume} className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2">Continue</button>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {isNotificationQaOpen && (
+                <div className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-sm p-3 sm:p-6 flex items-center justify-center">
+                    <div className="w-full max-w-6xl max-h-[calc(100vh-1.5rem)] rounded-3xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 shadow-2xl overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                            <div>
+                                <h4 className="text-sm font-bold text-gray-900 dark:text-white">Notification QA Preview</h4>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">Device: {notificationQaDevice} • Playback: {notificationQaPlayback} • Runs: {notificationQaCount}</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => { selection(); setIsNotificationQaOpen(false); clearNotificationQaTimers(); setNotificationQaItems([]) }}
+                                className="grid h-10 w-10 place-items-center rounded-full text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                aria-label="Close notification QA preview"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+
+                        <div className="min-h-0 flex-1 overflow-auto bg-gray-100 dark:bg-black p-3 sm:p-5">
+                            <div className="mb-4 flex flex-wrap items-center justify-center gap-2">
+                                {[
+                                    ['phone', 'Phone'],
+                                    ['tablet', 'Tablet'],
+                                    ['desktop', 'Desktop']
+                                ].map(([value, label]) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        onClick={() => setNotificationQaDevice(value)}
+                                        className={`rounded-full px-3 py-1.5 text-xs font-bold ${notificationQaDevice === value ? 'bg-orange-600 text-white' : 'bg-white text-gray-600 dark:bg-gray-900 dark:text-gray-300'}`}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                                <button type="button" onClick={() => runNotificationQaPreview('sync')} className="rounded-full bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">Syncing</button>
+                                <button type="button" onClick={() => runNotificationQaPreview('offline')} className="rounded-full bg-orange-600 px-3 py-1.5 text-xs font-bold text-white">Offline</button>
+                                <button type="button" onClick={() => runNotificationQaPreview('general')} className="rounded-full bg-gray-800 px-3 py-1.5 text-xs font-bold text-white">General</button>
+                                <button type="button" onClick={() => runNotificationQaPreview('all')} className="rounded-full bg-fuchsia-600 px-3 py-1.5 text-xs font-bold text-white">All</button>
+                            </div>
+
+                            <div
+                                className={`relative mx-auto overflow-hidden rounded-[2rem] border border-gray-300 dark:border-gray-800 bg-[#1f2020] shadow-2xl ${
+                                    notificationQaDevice === 'phone'
+                                        ? 'w-[min(390px,100%)] h-[690px]'
+                                        : notificationQaDevice === 'tablet'
+                                            ? 'w-[min(760px,100%)] h-[720px]'
+                                            : 'w-[min(1040px,100%)] h-[680px]'
+                                }`}
+                            >
+                                <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between bg-[#202020]/95 px-5 py-3 text-white">
+                                    <div className="flex items-center gap-3">
+                                        <span className="rounded-full bg-orange-600 px-3 py-1 text-sm font-bold">Datser</span>
+                                        <span className="hidden sm:inline-flex rounded-full bg-orange-500/20 px-3 py-1 text-sm font-semibold text-orange-200">Members</span>
+                                        <span className="hidden sm:inline-flex rounded-full bg-white/10 px-3 py-1 text-sm font-semibold text-white/80">Marked</span>
+                                    </div>
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-green-500/40 bg-green-500/15 px-3 py-1 text-sm font-bold text-green-300">
+                                        <span className="h-2 w-2 rounded-full bg-green-400" />
+                                        Live
+                                    </span>
+                                </div>
+
+                                <div className="absolute inset-x-3 top-16 z-30 space-y-2">
+                                    {notificationQaItems.map((item) => {
+                                        const Icon = item.Icon
+                                        return (
+                                            <div
+                                                key={item.id}
+                                                className={`mx-auto flex w-[min(520px,100%)] items-center gap-3 rounded-3xl border px-4 py-3 text-white shadow-2xl backdrop-blur-xl ${
+                                                    item.tone === 'sync'
+                                                        ? 'border-blue-500/40 bg-blue-950/85'
+                                                        : item.tone === 'offline'
+                                                            ? 'border-orange-500/40 bg-orange-950/85'
+                                                            : 'border-white/15 bg-gray-950/88'
+                                                }`}
+                                            >
+                                                <span className={`grid h-11 w-11 flex-shrink-0 place-items-center rounded-full ${
+                                                    item.tone === 'sync'
+                                                        ? 'bg-blue-500/25 text-blue-200'
+                                                        : item.tone === 'offline'
+                                                            ? 'bg-orange-500/25 text-orange-200'
+                                                            : 'bg-white/12 text-white'
+                                                }`}>
+                                                    <Icon className={`h-5 w-5 ${item.tone === 'sync' ? 'animate-spin' : ''}`} />
+                                                </span>
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block text-base font-extrabold leading-tight">{item.title}</span>
+                                                    <span className="block text-sm text-white/82">{item.message} #{item.index}</span>
+                                                </span>
+                                                <X className="h-5 w-5 flex-shrink-0 text-white/70" />
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+
+                                <div className="h-full overflow-y-auto px-3 pb-24 pt-24">
+                                    <div className="mx-auto mb-4 flex w-fit items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white/85">
+                                        <span>May 24</span>
+                                        <span className="text-white/35">•</span>
+                                        <span className="text-orange-400">May 2026</span>
+                                        <span className="rounded-full bg-green-500/15 px-2 py-0.5 text-green-300">Live</span>
+                                    </div>
+
+                                    {['Abaukua faustina', 'Friday Owusuuaa', 'Obed obeng', 'Emmanuel kwaku', 'Agnes Abena Agyei'].map((name) => (
+                                        <div key={name} className="mb-4 rounded-2xl border border-white/8 bg-[#242424] p-4 text-white shadow-xl">
+                                            <h5 className="text-lg font-extrabold">{name}</h5>
+                                            <p className="mt-1 text-sm text-white/45">Joined Jan 10</p>
+                                            <div className="mt-4 grid grid-cols-2 gap-3">
+                                                <button className="min-h-11 rounded-xl bg-orange-600 text-sm font-bold text-white">Present</button>
+                                                <button className="min-h-11 rounded-xl bg-red-600 text-sm font-bold text-white">Absent</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="absolute inset-x-0 bottom-0 bg-[#202020]/95 p-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex-1 rounded-xl border border-white/10 bg-white/8 px-4 py-3 text-white/45">Search members...</div>
+                                        <button className="grid h-12 w-12 place-items-center rounded-xl bg-white/8 text-white/70"><Search className="h-5 w-5" /></button>
+                                        <button className="grid h-12 w-12 place-items-center rounded-xl bg-orange-600 text-white"><BellRing className="h-5 w-5" /></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}

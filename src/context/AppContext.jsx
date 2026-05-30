@@ -107,12 +107,21 @@ const isBrowserOnline = () => {
 }
 
 const OFFLINE_MODE_STORAGE_KEY = 'datser_offline_mode'
+const OFFLINE_SAVE_NOTICE_THRESHOLD_KEY = 'datser_offline_save_notice_threshold'
 const OFFLINE_MODES = ['auto', 'online', 'offline']
+const DEFAULT_OFFLINE_SAVE_NOTICE_THRESHOLD = 10
 
 const getStoredOfflineMode = () => {
   if (typeof window === 'undefined') return 'auto'
   const saved = localStorage.getItem(OFFLINE_MODE_STORAGE_KEY)
   return OFFLINE_MODES.includes(saved) ? saved : 'auto'
+}
+
+const getStoredOfflineSaveNoticeThreshold = () => {
+  if (typeof window === 'undefined') return DEFAULT_OFFLINE_SAVE_NOTICE_THRESHOLD
+  const saved = Number(localStorage.getItem(OFFLINE_SAVE_NOTICE_THRESHOLD_KEY))
+  if (!Number.isFinite(saved)) return DEFAULT_OFFLINE_SAVE_NOTICE_THRESHOLD
+  return Math.min(99, Math.max(1, Math.round(saved)))
 }
 
 const toLocalStartOfDay = (date) => {
@@ -400,7 +409,9 @@ export const AppProvider = ({ children }) => {
   const [isPreparingOffline, setIsPreparingOffline] = useState(false)
   const [isSyncingOffline, setIsSyncingOffline] = useState(false)
   const [offlineMode, setOfflineModeState] = useState(getStoredOfflineMode)
+  const [offlineSaveNoticeThreshold, setOfflineSaveNoticeThresholdState] = useState(getStoredOfflineSaveNoticeThreshold)
   const autoSyncTimerRef = useRef(null)
+  const autoSyncSignatureRef = useRef({ signature: '', at: 0 })
   const autoSnapshotTimerRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
 
@@ -413,14 +424,20 @@ export const AppProvider = ({ children }) => {
     if (nextMode === 'online' && !isBrowserOnline()) {
       toast.warn('Online mode selected, but internet is unavailable.')
     } else if (nextMode === 'offline') {
-      setOfflineStatusMessage('Offline Mode - using saved local data.')
-      notify.offline('Offline Mode - using saved local data.', {
-        title: 'Offline Mode',
-        toastId: 'offline-mode-active',
-        persistent: true
-      })
+      setOfflineStatusMessage(isBrowserOnline() ? '' : 'Offline Mode - using saved local data.')
     } else {
       toast.info('Offline mode set to Auto.')
+    }
+  }, [])
+
+  const setOfflineSaveNoticeThreshold = useCallback((value) => {
+    const numericValue = Number(value)
+    const nextValue = Number.isFinite(numericValue)
+      ? Math.min(99, Math.max(1, Math.round(numericValue)))
+      : DEFAULT_OFFLINE_SAVE_NOTICE_THRESHOLD
+    setOfflineSaveNoticeThresholdState(nextValue)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(OFFLINE_SAVE_NOTICE_THRESHOLD_KEY, String(nextValue))
     }
   }, [])
 
@@ -433,6 +450,10 @@ export const AppProvider = ({ children }) => {
       : isOnline
         ? 'online'
         : 'online-unavailable'
+  const shouldShowOfflineSaveNotice = useCallback((count = pendingSyncCount) => {
+    const isOfflineOnly = offlineMode === 'offline' || !isOnline
+    return isOfflineOnly && Number(count || 0) >= offlineSaveNoticeThreshold
+  }, [isOnline, offlineMode, offlineSaveNoticeThreshold, pendingSyncCount])
 
   const refreshOfflineStatus = useCallback(async () => {
     try {
@@ -516,20 +537,11 @@ export const AppProvider = ({ children }) => {
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
       if (offlineMode === 'auto' && snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
         setOfflineStatusMessage('Offline Mode - using saved local data.')
-        notify.offline('Offline Mode - using saved local data.', {
-          title: 'Offline Mode',
-          toastId: 'offline-mode-active',
-          persistent: true
-        })
       } else if (offlineMode === 'online') {
         setOfflineStatusMessage('Online mode is selected, but internet is unavailable.')
         toast.warn('Online mode selected, but internet is unavailable.')
       } else {
         setOfflineStatusMessage('Prepare Offline Mode - download data for offline use.')
-        notify.offline('Download data for offline use.', {
-          title: 'Prepare Offline Mode',
-          toastId: 'prepare-offline-mode'
-        })
       }
       refreshOfflineStatus()
     }
@@ -1366,11 +1378,7 @@ export const AppProvider = ({ children }) => {
         if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
           if (!background) {
             setLoading(false)
-            notify.offline('Offline Mode - using saved local data.', {
-              title: 'Offline Mode',
-              toastId: 'offline-mode-active',
-              persistent: true
-            })
+            setOfflineStatusMessage('Offline Mode - using saved local data.')
           }
           return snapshotRecord?.snapshot?.members || []
         }
@@ -1573,9 +1581,12 @@ export const AppProvider = ({ children }) => {
         })
         await refreshOfflineStatus()
         setOfflineStatusMessage('Member saved offline and will sync automatically.')
-        notify.sync('Member saved offline and will sync automatically.', {
-          title: 'Saved to pending sync'
-        })
+        if (shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
+          notify.sync('Member saved offline and will sync automatically.', {
+            title: 'Saved to pending sync',
+            toastId: 'offline-save-threshold'
+          })
+        }
         return createdMember
       }
 
@@ -1939,9 +1950,10 @@ export const AppProvider = ({ children }) => {
           sync_status: 'pending'
         })
         await refreshOfflineStatus()
-        if (!suppressToast) {
+        if (!suppressToast && shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
           notify.sync('Badge change saved offline and will sync automatically.', {
-            title: 'Saved to pending sync'
+            title: 'Saved to pending sync',
+            toastId: 'offline-save-threshold'
           })
         }
         return { success: true, offline: true }
@@ -2276,13 +2288,16 @@ export const AppProvider = ({ children }) => {
 
     await refreshOfflineStatus()
     setOfflineStatusMessage(`${ids.length} attendance change${ids.length === 1 ? '' : 's'} saved offline.`)
-    notify.sync(`${ids.length} attendance change${ids.length === 1 ? '' : 's'} saved offline.`, {
-      title: 'Saved to pending sync',
-      details: 'Sync when you are back online.'
-    })
+    if (shouldShowOfflineSaveNotice(pendingSyncCount + ids.length)) {
+      notify.sync(`${ids.length} attendance change${ids.length === 1 ? '' : 's'} saved offline.`, {
+        title: 'Saved to pending sync',
+        details: 'Sync when you are back online.',
+        toastId: 'offline-save-threshold'
+      })
+    }
 
     return { success: true, offline: true }
-  }, [applyLocalAttendanceState, currentTable, refreshOfflineStatus])
+  }, [applyLocalAttendanceState, currentTable, pendingSyncCount, refreshOfflineStatus, shouldShowOfflineSaveNotice])
 
   // Mark attendance for a member in monthly table
   const markAttendance = async (memberId, date, present) => {
@@ -2662,9 +2677,10 @@ export const AppProvider = ({ children }) => {
           sync_status: 'pending'
         })
         await refreshOfflineStatus()
-        if (!silent) {
+        if (!silent && shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
           notify.sync('Member update saved offline and will sync automatically.', {
-            title: 'Saved to pending sync'
+            title: 'Saved to pending sync',
+            toastId: 'offline-save-threshold'
           })
         }
         return optimisticMember
@@ -3053,9 +3069,12 @@ export const AppProvider = ({ children }) => {
         sync_status: 'pending'
       })
       await refreshOfflineStatus()
-      notify.sync('Member deletion saved offline and will sync automatically.', {
-        title: 'Saved to pending sync'
-      })
+      if (shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
+        notify.sync('Member deletion saved offline and will sync automatically.', {
+          title: 'Saved to pending sync',
+          toastId: 'offline-save-threshold'
+        })
+      }
       return { success: true, offline: true }
     }
 
@@ -5018,14 +5037,18 @@ export const AppProvider = ({ children }) => {
 
       await refreshOfflineStatus()
 
-      if (conflicts || failed || waitingForMonth) {
+      const showSyncResultNotice = shouldShowOfflineSaveNotice()
+      if ((conflicts || failed || waitingForMonth) && showSyncResultNotice) {
         notify.error('Changes are still saved locally.', {
           title: 'Sync failed',
-          persistent: true
+          toastId: 'offline-sync-failed',
+          autoClose: 2600
         })
-      } else {
+      } else if (showSyncResultNotice) {
         notify.sync(synced ? 'All offline changes synced.' : 'No offline changes to sync.', {
-          title: synced ? 'Sync complete' : 'Sync status'
+          title: synced ? 'Sync complete' : 'Sync status',
+          toastId: 'offline-sync-complete',
+          autoClose: 1600
         })
       }
 
@@ -5042,12 +5065,25 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline) return undefined
 
+    const syncableChanges = offlinePendingChanges.filter((change) => change?.sync_status === 'pending')
+    if (syncableChanges.length === 0) return undefined
+
+    const signature = syncableChanges
+      .map((change) => `${change.local_change_id}:${change.sync_status}:${change.updated_at || change.created_at || ''}`)
+      .sort()
+      .join('|')
+    const now = Date.now()
+    const lastAttempt = autoSyncSignatureRef.current
+    if (lastAttempt.signature === signature && now - lastAttempt.at < 60000) {
+      return undefined
+    }
+
     if (autoSyncTimerRef.current) {
       clearTimeout(autoSyncTimerRef.current)
     }
 
     autoSyncTimerRef.current = setTimeout(() => {
-      setOfflineStatusMessage('Syncing Changes...')
+      autoSyncSignatureRef.current = { signature, at: Date.now() }
       syncOfflineChangesRef.current?.().catch((error) => {
         console.warn('Automatic offline sync failed:', error)
       })
@@ -5059,7 +5095,7 @@ export const AppProvider = ({ children }) => {
         autoSyncTimerRef.current = null
       }
     }
-  }, [isOnline, offlineMode, pendingSyncCount, isSyncingOffline])
+  }, [isOnline, offlineMode, pendingSyncCount, offlinePendingChanges, isSyncingOffline])
 
   // Load attendance and badge data when table changes
   useEffect(() => {
@@ -5282,6 +5318,8 @@ export const AppProvider = ({ children }) => {
     isOnline,
     offlineMode,
     setOfflineMode,
+    offlineSaveNoticeThreshold,
+    setOfflineSaveNoticeThreshold,
     shouldUseOfflineData,
     isOfflineModeActive,
     offlineModeStatus,
@@ -5331,7 +5369,7 @@ export const AppProvider = ({ children }) => {
     initializeAttendanceDates, getSundaysInMonth, toggleBadgeFilter,
     focusDateSelector, validateMemberData, getPastSundays, getMissingAttendance,
     autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, isDeveloperBypass,
-    isOnline, offlineMode, setOfflineMode, shouldUseOfflineData, isOfflineModeActive, offlineModeStatus,
+    isOnline, offlineMode, setOfflineMode, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, shouldUseOfflineData, isOfflineModeActive, offlineModeStatus,
     offlineCacheMeta, pendingSyncCount, offlinePendingChanges, offlineStatusMessage, isPreparingOffline, isSyncingOffline,
     prepareOfflineData, clearOfflineCacheData, syncOfflineChanges, refreshOfflineStatus,
     hasAccess, isCollaborator, isAdminCollaborator, dataOwnerId, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil,

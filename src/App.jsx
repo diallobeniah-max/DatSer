@@ -654,7 +654,7 @@ function AppContent({ isMobile }) {
         draggable={false}
         closeButton={CustomCloseButton}
         pauseOnHover
-        limit={6}
+        limit={1}
       />
     </div>
   )

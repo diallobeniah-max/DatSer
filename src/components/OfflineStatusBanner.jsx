@@ -1,15 +1,8 @@
-import React, { useEffect, useState } from 'react'
-import { CloudOff, Database, Download, RefreshCw, Wifi, X } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { AlertCircle, CheckCircle2, CloudOff, Database, Download, RefreshCw, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
 const PREP_DISMISSED_KEY = 'datser_offline_prepare_prompt_dismissed'
-
-const statusStyles = {
-  online: 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100',
-  offline: 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100',
-  'forced-offline': 'border-slate-300 bg-slate-50 text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
-  error: 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-100'
-}
 
 const getDismissed = () => {
   if (typeof window === 'undefined') return false
@@ -23,6 +16,7 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     offlineModeStatus,
     offlineCacheMeta,
     pendingSyncCount,
+    offlineSaveNoticeThreshold,
     offlineStatusMessage,
     isPreparingOffline,
     isSyncingOffline,
@@ -31,6 +25,7 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     hasAccess
   } = useApp()
   const [isPrepDismissed, setIsPrepDismissed] = useState(getDismissed)
+  const [dismissedStatusKey, setDismissedStatusKey] = useState(null)
 
   useEffect(() => {
     if (offlineCacheMeta && isPrepDismissed) {
@@ -49,21 +44,36 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
   }
 
   const hasCache = Boolean(offlineCacheMeta)
-  const showPrepPrompt = hasAccess && !hasCache && !isPrepDismissed
-  const showSync = isOnline && offlineMode !== 'offline' && pendingSyncCount > 0
-  const showStatus = hasAccess && !showPrepPrompt && (
-    offlineStatusMessage ||
-    pendingSyncCount > 0 ||
-    offlineModeStatus === 'offline' ||
-    offlineModeStatus === 'forced-offline' ||
-    offlineModeStatus === 'online-unavailable'
-  )
+  const isActuallyOffline = !isOnline || offlineModeStatus === 'offline' || offlineModeStatus === 'forced-offline' || offlineModeStatus === 'online-unavailable'
+  const canShowSaveNotice = isActuallyOffline && pendingSyncCount >= (offlineSaveNoticeThreshold || 10)
+  const showPrepPrompt = hasAccess && isActuallyOffline && !hasCache && !isPrepDismissed
+  const isError = offlineStatusMessage?.toLowerCase().includes('failed') || offlineModeStatus === 'online-unavailable'
+  const statusKey = useMemo(() => {
+    if (!hasAccess) return null
+    if (isError && canShowSaveNotice) return `error:${offlineStatusMessage || offlineModeStatus}`
+    if (isSyncingOffline && canShowSaveNotice) return 'syncing'
+    if (canShowSaveNotice && offlineStatusMessage && /synced|ready|saved offline|saved locally/i.test(offlineStatusMessage)) {
+      return `saved:${offlineStatusMessage}`
+    }
+    if (isActuallyOffline) return `offline:${offlineModeStatus}`
+    return null
+  }, [canShowSaveNotice, hasAccess, isActuallyOffline, isError, isSyncingOffline, offlineModeStatus, offlineStatusMessage])
+  const showStatus = Boolean(statusKey) && dismissedStatusKey !== statusKey && !showPrepPrompt
+
+  useEffect(() => {
+    if (!statusKey) return undefined
+    setDismissedStatusKey((current) => (current === statusKey ? null : current))
+    const timeoutId = setTimeout(() => {
+      setDismissedStatusKey(statusKey)
+    }, isActuallyOffline ? 3600 : 1800)
+    return () => clearTimeout(timeoutId)
+  }, [isActuallyOffline, statusKey])
 
   if (!showPrepPrompt && !showStatus) return null
 
   if (showPrepPrompt) {
     return (
-      <div className="datser-offline-notice fixed z-[55] w-[min(420px,calc(100vw-24px))]">
+      <div className="datser-offline-notice fixed z-[65] w-[min(420px,calc(100vw-24px))]">
         <div className="rounded-2xl border border-orange-200 bg-white text-gray-900 shadow-2xl shadow-orange-900/10 dark:border-orange-900/60 dark:bg-gray-900 dark:text-white">
           <div className="h-1 rounded-t-2xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-600" />
           <div className="p-4">
@@ -122,45 +132,58 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     )
   }
 
-  const isError = offlineStatusMessage?.toLowerCase().includes('failed') || offlineModeStatus === 'online-unavailable'
-  const statusClass = isError
-    ? statusStyles.error
-    : statusStyles[offlineModeStatus] || statusStyles.online
-  const title = offlineModeStatus === 'forced-offline'
-    ? 'Forced Offline'
-    : offlineModeStatus === 'offline'
-      ? 'Offline Mode'
-      : isOnline
-        ? 'Online'
-        : 'Offline'
-  const message = offlineStatusMessage || (offlineModeStatus === 'offline'
-    ? 'Offline Mode - using saved local data.'
-    : `Back online - ${pendingSyncCount} change${pendingSyncCount === 1 ? '' : 's'} waiting to sync.`)
+  const title = isError
+    ? 'Sync failed'
+    : isSyncingOffline
+      ? 'Syncing...'
+      : isActuallyOffline
+        ? "You're offline"
+        : 'All changes saved locally'
+  const message = isError
+    ? 'Changes are still saved locally.'
+    : isSyncingOffline
+      ? 'Your changes are being saved.'
+      : isActuallyOffline
+        ? 'You are working in offline mode. Data is safe on this device.'
+        : (offlineStatusMessage || 'We will sync automatically when needed.')
+  const tone = isError ? 'error' : isSyncingOffline ? 'sync' : isActuallyOffline ? 'offline' : 'saved'
+  const StatusIcon = isError ? AlertCircle : isSyncingOffline ? RefreshCw : isActuallyOffline ? CloudOff : CheckCircle2
+  const showSync = isOnline && offlineMode !== 'offline' && pendingSyncCount > 0 && !isSyncingOffline
 
   return (
-    <div className="datser-offline-notice fixed z-[55] w-[min(380px,calc(100vw-24px))]">
-      <div className={`rounded-2xl border p-3 shadow-2xl ${statusClass}`}>
-        <div className="flex items-start gap-2.5">
-          <div className="mt-0.5 rounded-full bg-white/60 p-1.5 dark:bg-white/10">
-            {isOnline && offlineModeStatus !== 'offline' && offlineModeStatus !== 'forced-offline'
-              ? <Wifi className="h-4 w-4" />
-              : <CloudOff className="h-4 w-4" />}
+    <div className="datser-offline-notice fixed z-[65] w-[min(520px,calc(100vw-28px))]">
+      <div className={`datser-offline-card datser-offline-card-${tone}`}>
+        <div className="flex items-center gap-3">
+          <div className="datser-offline-card-icon">
+            <StatusIcon className={isSyncingOffline ? 'animate-spin' : ''} />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold leading-tight">{title}</p>
-            <p className="mt-0.5 text-sm leading-snug opacity-90">{message}</p>
+            <p className="text-sm font-extrabold leading-tight">{title}</p>
+            <p className="mt-0.5 text-sm leading-snug opacity-85">{message}</p>
+            {isSyncingOffline && (
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/15">
+                <div className="h-full w-1/2 rounded-full bg-current opacity-80" />
+              </div>
+            )}
           </div>
           {showSync && (
             <button
               type="button"
               onClick={syncOfflineChanges}
               disabled={isSyncingOffline}
-              className="inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-orange-700 disabled:opacity-60"
+              className="datser-offline-card-pill"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${isSyncingOffline ? 'animate-spin' : ''}`} />
-              {isSyncingOffline ? 'Syncing' : 'Sync Now'}
+              Sync
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setDismissedStatusKey(statusKey)}
+            className="datser-offline-card-close"
+            aria-label="Dismiss status"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
       </div>
     </div>

@@ -1343,6 +1343,241 @@ details[open] summary~* {
   }
 }
 
+/* Compact connection and sync notifications */
+.datser-offline-notice {
+  top: max(14px, env(safe-area-inset-top, 14px));
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.datser-offline-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  padding: 14px 16px;
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.08), transparent 42%),
+    linear-gradient(135deg, rgba(12, 17, 24, 0.94), rgba(15, 23, 42, 0.9));
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.34);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+.datser-offline-card-saved {
+  border-color: rgba(34, 197, 94, 0.35);
+  background:
+    radial-gradient(circle at 10% 20%, rgba(34, 197, 94, 0.18), transparent 42%),
+    linear-gradient(135deg, rgba(6, 38, 23, 0.96), rgba(9, 30, 28, 0.92));
+}
+
+.datser-offline-card-sync {
+  border-color: rgba(59, 130, 246, 0.4);
+  background:
+    radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.18), transparent 42%),
+    linear-gradient(135deg, rgba(8, 28, 56, 0.96), rgba(9, 22, 43, 0.92));
+}
+
+.datser-offline-card-offline {
+  border-color: rgba(249, 115, 22, 0.42);
+  background:
+    radial-gradient(circle at 10% 20%, rgba(249, 115, 22, 0.2), transparent 42%),
+    linear-gradient(135deg, rgba(43, 24, 6, 0.96), rgba(28, 22, 12, 0.92));
+}
+
+.datser-offline-card-error {
+  border-color: rgba(239, 68, 68, 0.4);
+  background:
+    radial-gradient(circle at 10% 20%, rgba(239, 68, 68, 0.18), transparent 42%),
+    linear-gradient(135deg, rgba(58, 12, 18, 0.96), rgba(35, 16, 22, 0.92));
+}
+
+.datser-offline-card-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.datser-offline-card-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.datser-offline-card-pill {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  color: currentColor;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.datser-offline-card-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.76);
+  background: transparent;
+}
+
+.datser-offline-card-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.Toastify__toast-container.datser-toast-stack {
+  width: min(520px, calc(100vw - 28px)) !important;
+  max-width: min(520px, calc(100vw - 28px)) !important;
+  max-height: none !important;
+  overflow: visible !important;
+  pointer-events: none !important;
+}
+
+.datser-toast-stack .datser-toast,
+.datser-toast-stack .Toastify__toast {
+  min-height: 62px !important;
+  padding: 12px 14px !important;
+  border-radius: 22px !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  color: #111827 !important;
+  background:
+    radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.13), transparent 34%),
+    rgba(255, 255, 255, 0.88) !important;
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.16) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(170%) !important;
+  backdrop-filter: blur(20px) saturate(170%) !important;
+}
+
+.dark .datser-toast-stack .datser-toast,
+.dark .datser-toast-stack .Toastify__toast {
+  color: #f8fafc !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background:
+    radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.16), transparent 34%),
+    rgba(18, 18, 20, 0.88) !important;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.38) !important;
+}
+
+.datser-notification-card {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 12px;
+}
+
+.datser-notification-accent {
+  display: none;
+}
+
+.datser-notification-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  color: #fff;
+  background: #f97316;
+}
+
+.datser-notification-success .datser-notification-icon,
+.datser-notification-online .datser-notification-icon {
+  background: #22c55e;
+}
+
+.datser-notification-error .datser-notification-icon,
+.datser-notification-offline .datser-notification-icon {
+  background: #ef4444;
+}
+
+.datser-notification-sync .datser-notification-icon,
+.datser-notification-info .datser-notification-icon {
+  background: #3b82f6;
+}
+
+.datser-notification-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.datser-notification-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.datser-toast-stack .datser-notification-title {
+  font-size: 16px !important;
+  font-weight: 800 !important;
+  line-height: 1.15 !important;
+  letter-spacing: 0 !important;
+}
+
+.datser-toast-stack .datser-notification-message {
+  margin-top: 2px !important;
+  color: inherit !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  line-height: 1.25 !important;
+  opacity: 0.82 !important;
+}
+
+.datser-toast-stack .datser-notification-close,
+.datser-toast-stack .datser-toast-close,
+.datser-toast-stack .Toastify__close-button {
+  width: 32px !important;
+  height: 32px !important;
+  flex-basis: 32px !important;
+  color: rgba(17, 24, 39, 0.62) !important;
+  background: rgba(17, 24, 39, 0.07) !important;
+}
+
+.dark .datser-toast-stack .datser-notification-close,
+.dark .datser-toast-stack .datser-toast-close,
+.dark .datser-toast-stack .Toastify__close-button {
+  color: rgba(255, 255, 255, 0.72) !important;
+  background: rgba(255, 255, 255, 0.11) !important;
+}
+
+.datser-toast-stack .Toastify__progress-bar {
+  height: 2px !important;
+  opacity: 0.34 !important;
+  background: currentColor !important;
+}
+
+@media (max-width: 640px) {
+  .Toastify__toast-container.datser-toast-stack {
+    width: min(calc(100vw - 36px), 360px) !important;
+    max-width: 360px !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .datser-toast-stack .datser-toast,
+  .datser-toast-stack .Toastify__toast {
+    min-height: 58px !important;
+    padding: 10px 12px !important;
+  }
+
+  .datser-toast-stack .datser-notification-title {
+    font-size: 15px !important;
+  }
+
+  .datser-toast-stack .datser-notification-message {
+    font-size: 13px !important;
+  }
+}
+
 /* ============================================================
    Mobile / iPhone UI Fixes
    ============================================================ */

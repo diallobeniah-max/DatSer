@@ -1,13 +1,20 @@
-import React, { useState } from 'react'
-import { Type, MousePointer2, Command, CheckCircle, CalendarDays } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { Type, MousePointer2, Command, CheckCircle, CalendarDays, BellRing } from 'lucide-react'
 import CombinedDatePicker from './CombinedDatePicker'
 
 const AccessibilitySettingsSection = ({
     preferences,
     updatePreferences,
+    offlineSaveNoticeThreshold = 10,
+    setOfflineSaveNoticeThreshold,
     getSettingTargetClass
 }) => {
     const [previewDateOfBirth, setPreviewDateOfBirth] = useState('')
+    const [customSaveThreshold, setCustomSaveThreshold] = useState(String(offlineSaveNoticeThreshold || 10))
+
+    useEffect(() => {
+        setCustomSaveThreshold(String(offlineSaveNoticeThreshold || 10))
+    }, [offlineSaveNoticeThreshold])
 
     const handleToggleCmdMenu = () => {
         updatePreferences({
@@ -121,6 +128,55 @@ const AccessibilitySettingsSection = ({
                             birthDateMode={dateOfBirthMode}
                         />
                     </div>
+                </div>
+
+                <div className="p-4">
+                    <div className="flex items-start gap-3 mb-3">
+                        <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
+                            <BellRing className="w-5 h-5 text-orange-600 dark:text-orange-300" />
+                        </div>
+                        <div>
+                            <p className="font-semibold text-gray-900 dark:text-white">Offline Save Notifications</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Only show sync/sync-failed popups while offline after this many saved changes</p>
+                        </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {[5, 10, 20].map((value) => (
+                            <button
+                                key={value}
+                                type="button"
+                                onClick={() => setOfflineSaveNoticeThreshold?.(value)}
+                                className={`min-h-[40px] rounded-xl border px-4 text-sm font-semibold transition-colors ${
+                                    Number(offlineSaveNoticeThreshold) === value
+                                        ? 'border-orange-500 bg-orange-50 text-orange-700 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200'
+                                        : 'border-gray-200 bg-white text-gray-600 hover:border-orange-300 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300'
+                                }`}
+                            >
+                                {value} saves
+                            </button>
+                        ))}
+                    </div>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                        <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={customSaveThreshold}
+                            onChange={(event) => setCustomSaveThreshold(event.target.value)}
+                            className="min-h-[42px] flex-1 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900/40 dark:text-white"
+                            placeholder="Custom number"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setOfflineSaveNoticeThreshold?.(customSaveThreshold)}
+                            className="min-h-[42px] rounded-xl bg-orange-600 px-5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700"
+                        >
+                            Apply
+                        </button>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        Current setting: after {offlineSaveNoticeThreshold || 10} offline save{Number(offlineSaveNoticeThreshold) === 1 ? '' : 's'}.
+                    </p>
                 </div>
             </div>
 

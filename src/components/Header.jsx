@@ -5,7 +5,8 @@ import {
   ChevronDown,
   HelpCircle,
   TrendingUp,
-  Calendar
+  Wifi,
+  WifiOff
 } from 'lucide-react'
 import MonthPickerPopup from './MonthPickerPopup'
 import { useApp } from '../context/AppContext'
@@ -32,7 +33,9 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     focusDateSelector,
     isCollaborator,
     isAdminCollaborator,
-    ownerStickyMonth
+    ownerStickyMonth,
+    isOnline,
+    offlineModeStatus
   } = useApp()
   const { selection } = useHapticFeedback()
   const [showMonthPicker, setShowMonthPicker] = useState(false)
@@ -199,6 +202,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   const liveLabel = isSupabaseConfigured()
     ? (isStickyMonthMismatch ? 'Out of Sync' : (isCalendarLive ? 'Live' : 'Live Off'))
     : 'Demo'
+  const isConnectionLive = isOnline && offlineModeStatus !== 'offline' && offlineModeStatus !== 'forced-offline' && offlineModeStatus !== 'online-unavailable'
 
   // Menu items moved to LoginButton profile dropdown
 
@@ -379,17 +383,16 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
               </button>
 
               <span className={`inline-flex items-center gap-1.5 -ml-0.5 px-2 py-1 text-[11px] sm:text-xs font-semibold whitespace-nowrap rounded-full border ${isSupabaseConfigured()
-                ? showLiveState
+                ? isConnectionLive && showLiveState
                   ? 'text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30'
                   : 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30 animate-pulse'
                 : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
                 }`}>
-                <span className={`w-2 h-2 rounded-full ${isSupabaseConfigured()
-                  ? showLiveState
-                    ? 'bg-green-500 animate-pulse'
-                    : 'bg-red-500 animate-pulse'
-                  : 'bg-yellow-500'
-                  }`} />
+                {isSupabaseConfigured()
+                  ? isConnectionLive && showLiveState
+                    ? <Wifi className="h-3.5 w-3.5 animate-pulse" />
+                    : <WifiOff className="h-3.5 w-3.5 animate-pulse" />
+                  : <WifiOff className="h-3.5 w-3.5 text-yellow-500" />}
                 <span>{liveLabel}</span>
               </span>
             </div>
