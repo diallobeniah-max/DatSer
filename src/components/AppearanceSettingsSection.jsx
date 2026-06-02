@@ -1,11 +1,11 @@
 import React from 'react'
-import { Sun, Moon, Monitor, Layout, Sparkles, CheckCircle } from 'lucide-react'
+import { Sun, Moon, Monitor, Sparkles, CheckCircle, ImageOff, VolumeX, LayoutDashboard, Minimize2, ScanSearch } from 'lucide-react'
 
 const AppearanceSettingsSection = ({
     themeMode,
     setThemeMode,
-    compactMode,
-    toggleCompactMode,
+    preferences,
+    updatePreferences,
     isCollaborator,
     getSettingTargetClass
 }) => {
@@ -14,6 +14,43 @@ const AppearanceSettingsSection = ({
         { id: 'dark', name: 'Dark', icon: Moon, color: 'text-purple-500', bg: 'bg-purple-50' },
         { id: 'system', name: 'System', icon: Monitor, color: 'text-blue-500', bg: 'bg-blue-50' }
     ]
+    const backgroundAnimationEnabled = preferences?.background_animation_enabled !== false
+    const motionAndSoundsEnabled = preferences?.motion_and_sounds_enabled !== false
+    const mobileDashboardStatusEnabled = preferences?.mobile_dashboard_status_enabled !== false
+    const compactUiEnabled = preferences?.compact_ui_enabled === true
+    const smartCompactPromptEnabled = preferences?.smart_compact_prompt_enabled !== false
+
+    const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId }) => (
+        <div
+            data-setting-id={settingId}
+            tabIndex={-1}
+            className={`flex items-center justify-between gap-4 p-4 ${getSettingTargetClass(settingId)}`}
+        >
+            <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300">
+                    <Icon className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                    <p className="font-semibold text-gray-900 dark:text-white">{title}</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{description}</p>
+                </div>
+            </div>
+            <button
+                type="button"
+                onClick={onChange}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+                    checked ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
+                }`}
+                aria-pressed={checked}
+            >
+                <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-300 ease-out ${
+                        checked ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                />
+            </button>
+        </div>
+    )
 
     return (
         <div className="space-y-6">
@@ -58,38 +95,48 @@ const AppearanceSettingsSection = ({
                 </div>
             </div>
 
-            {/* Layout Options */}
-            <div
-                data-setting-id="compact_mode"
-                tabIndex={-1}
-                className={`space-y-3 ${getSettingTargetClass('compact_mode')}`}
-            >
-                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Layout & Density</h4>
-                <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
-                    <div className="p-4 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-                                <Layout className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                            </div>
-                            <div>
-                                <p className="font-semibold text-gray-900 dark:text-white">Compact Mode</p>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Reduce padding and text size to show more content</p>
-                            </div>
-                        </div>
-                        <button
-                            onClick={toggleCompactMode}
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 ${
-                                compactMode ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
-                            }`}
-                        >
-                            <span
-                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                                    compactMode ? 'translate-x-6' : 'translate-x-1'
-                                }`}
-                            />
-                        </button>
-                    </div>
-                </div>
+            {/* Motion and Background */}
+            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:divide-gray-700">
+                <ToggleRow
+                    icon={ImageOff}
+                    title="Background Animation"
+                    description="Use the moving DatSer background. Turn off for a calm solid color."
+                    checked={backgroundAnimationEnabled}
+                    settingId="background_animation"
+                    onChange={() => updatePreferences?.({ background_animation_enabled: !backgroundAnimationEnabled })}
+                />
+                <ToggleRow
+                    icon={VolumeX}
+                    title="Animations & Sounds"
+                    description="Control app motion, transitions, haptics, and click sounds."
+                    checked={motionAndSoundsEnabled}
+                    settingId="motion_and_sounds"
+                    onChange={() => updatePreferences?.({ motion_and_sounds_enabled: !motionAndSoundsEnabled })}
+                />
+                <ToggleRow
+                    icon={LayoutDashboard}
+                    title="Dashboard Status Bar"
+                    description="Show the mobile row for Recent, date, total, month, and online status. Turn off to move the details into Profile."
+                    checked={mobileDashboardStatusEnabled}
+                    settingId="mobile_dashboard_status"
+                    onChange={() => updatePreferences?.({ mobile_dashboard_status_enabled: !mobileDashboardStatusEnabled })}
+                />
+                <ToggleRow
+                    icon={Minimize2}
+                    title="Compact UI"
+                    description="Tighten spacing across DatSer so more information fits on screen."
+                    checked={compactUiEnabled}
+                    settingId="compact_ui"
+                    onChange={() => updatePreferences?.({ compact_ui_enabled: !compactUiEnabled })}
+                />
+                <ToggleRow
+                    icon={ScanSearch}
+                    title="Smart Compact Suggestion"
+                    description="Suggest Compact UI when the screen or text size may make panels feel crowded."
+                    checked={smartCompactPromptEnabled}
+                    settingId="smart_compact_prompt"
+                    onChange={() => updatePreferences?.({ smart_compact_prompt_enabled: !smartCompactPromptEnabled })}
+                />
             </div>
 
             {/* Premium Aesthetics Notice */}

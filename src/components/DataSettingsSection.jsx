@@ -16,7 +16,7 @@ const DataSettingsSection = ({
     monthlyTables,
     currentTable,
     members,
-    setActiveSection,
+    setShowExportCenter,
     setArchiveMonth,
     getSettingTargetClass
 }) => {
@@ -171,7 +171,7 @@ const DataSettingsSection = ({
             {/* Export/Import/Archive */}
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-200 dark:divide-gray-700">
                 <button
-                    onClick={() => setActiveSection('export')}
+                    onClick={() => setShowExportCenter?.(true)}
                     className="w-full p-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                 >
                     <div className="flex items-center gap-3">

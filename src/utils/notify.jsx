@@ -14,14 +14,23 @@ const toastByType = {
 }
 
 const defaultAutoCloseByType = {
-  success: 1200,
-  info: 1800,
-  online: 1800,
-  sync: 1800,
-  warning: 2400,
-  offline: 2600,
-  update: 2600,
-  error: 2600
+  success: 2600,
+  info: 4200,
+  online: 4200,
+  sync: 5200,
+  warning: 5600,
+  offline: 6500,
+  update: 9000,
+  error: 6500
+}
+
+const NOTIFICATION_DURATION_STORAGE_KEY = 'datser_notification_duration_ms'
+
+const getStoredAutoClose = () => {
+  if (typeof window === 'undefined') return null
+  const stored = Number(window.localStorage?.getItem(NOTIFICATION_DURATION_STORAGE_KEY))
+  if (!Number.isFinite(stored)) return null
+  return Math.min(20000, Math.max(1800, Math.round(stored)))
 }
 
 const makeToastId = (type, title, message) => (
@@ -54,7 +63,7 @@ const notifyCard = (type, options = {}) => {
     />,
     {
       toastId: resolvedToastId,
-      autoClose: persistent ? false : (autoClose ?? defaultAutoCloseByType[type] ?? 3400),
+      autoClose: persistent ? false : (autoClose ?? getStoredAutoClose() ?? defaultAutoCloseByType[type] ?? 2600),
       closeButton: false,
       className: 'datser-notification-shell',
       bodyClassName: 'datser-notification-body',

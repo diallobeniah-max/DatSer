@@ -9,6 +9,7 @@ const AccountSettingsSection = ({
     handleSaveDob,
     isDobSaving,
     installedAppInfo,
+    preferences,
     resetPassword,
     handleSignOut,
     setIsPhotoEditorOpen,

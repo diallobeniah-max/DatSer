@@ -37,7 +37,8 @@ import {
     BellRing,
     GripVertical,
     ArrowUp,
-    ArrowDown
+    ArrowDown,
+    Mic
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
@@ -76,6 +77,7 @@ const TeamSettingsSection = React.lazy(() => import('./TeamSettingsSection'))
 const DataSettingsSection = React.lazy(() => import('./DataSettingsSection'))
 const AppearanceSettingsSection = React.lazy(() => import('./AppearanceSettingsSection'))
 const AccessibilitySettingsSection = React.lazy(() => import('./AccessibilitySettingsSection'))
+const UpdatesSettingsSection = React.lazy(() => import('./UpdatesSettingsSection'))
 const DangerSettingsSection = React.lazy(() => import('./DangerSettingsSection'))
 const DeveloperToolsPanel = React.lazy(() => import('./DeveloperToolsPanel'))
 
@@ -276,17 +278,283 @@ const LazyPanelFallback = () => (
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMember }) => {
     const { user, signOut, preferences, resetPassword, saveUserPreferences, isDeveloperBypass } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
-    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil, setPersonalCalendarMode, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
+    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil, setPersonalCalendarMode, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
     const { selection } = useHapticFeedback()
     const isDeveloperToolsEnabled = import.meta.env.DEV
 
     const [activeSection, setActiveSection] = useState(null) // null = show main list
     const [searchQuery, setSearchQuery] = useState('')
+    const [isSettingsSearchFocused, setIsSettingsSearchFocused] = useState(false)
+    const [compactMode] = useState(true)
+    const [settingsSidebarWidth, setSettingsSidebarWidth] = useState(() => {
+        if (typeof window === 'undefined') return 380
+        const saved = Number(window.localStorage.getItem('datser_settings_sidebar_width'))
+        return Number.isFinite(saved) && saved >= 84 ? saved : 380
+    })
+    const [settingsRailTooltip, setSettingsRailTooltip] = useState(null)
+    const [lastSettingsPath, setLastSettingsPath] = useState(null)
+    const [recentSettingsSearches, setRecentSettingsSearches] = useState(() => {
+        if (typeof window === 'undefined') return []
+        try {
+            return JSON.parse(window.localStorage.getItem('datser_recent_settings_searches') || '[]')
+        } catch {
+            return []
+        }
+    })
     const [highlightedSettingId, setHighlightedSettingId] = useState(null)
+    const [quickSettingsSearchItem, setQuickSettingsSearchItem] = useState(null)
     const [guidedOrderDragId, setGuidedOrderDragId] = useState(null)
     const highlightTimerRef = useRef(null)
+    const activeSectionRef = useRef(null)
+    const showHelpCenterRef = useRef(false)
+    const splitContainerRef = useRef(null)
     const [showHelpCenter, setShowHelpCenter] = useState(false)
     const [archiveMonth, setArchiveMonth] = useState(null) // table name to archive
+    const scrollPositionsRef = useRef({ main: 0 })
+
+    useEffect(() => {
+        if (typeof document === 'undefined') return undefined
+        if (typeof window !== 'undefined' && !window.matchMedia('(min-width: 768px)').matches) return undefined
+        const root = document.documentElement
+        const body = document.body
+        const previousRootOverflow = root.style.overflow
+        const previousBodyOverflow = body.style.overflow
+        root.style.overflow = 'hidden'
+        body.style.overflow = 'hidden'
+        return () => {
+            root.style.overflow = previousRootOverflow
+            body.style.overflow = previousBodyOverflow
+        }
+    }, [])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        window.localStorage.setItem('datser_settings_sidebar_width', String(Math.round(settingsSidebarWidth)))
+    }, [settingsSidebarWidth])
+
+    useEffect(() => {
+        if (settingsSidebarWidth > 120 && settingsRailTooltip) {
+            setSettingsRailTooltip(null)
+        }
+    }, [settingsSidebarWidth, settingsRailTooltip])
+
+    const showSettingsRailTooltip = useCallback((label, event) => {
+        if (settingsSidebarWidth > 120 || typeof window === 'undefined') return
+        const rect = event.currentTarget.getBoundingClientRect()
+        const top = Math.min(Math.max(rect.top + rect.height / 2, 28), window.innerHeight - 28)
+        setSettingsRailTooltip({
+            label,
+            left: rect.right + 12,
+            top
+        })
+    }, [settingsSidebarWidth])
+
+    const hideSettingsRailTooltip = useCallback(() => {
+        setSettingsRailTooltip(null)
+    }, [])
+
+    const getSettingsRailTooltipHandlers = useCallback((label) => ({
+        onPointerEnter: (event) => showSettingsRailTooltip(label, event),
+        onPointerMove: (event) => showSettingsRailTooltip(label, event),
+        onMouseEnter: (event) => showSettingsRailTooltip(label, event),
+        onFocus: (event) => showSettingsRailTooltip(label, event),
+        onPointerLeave: hideSettingsRailTooltip,
+        onMouseLeave: hideSettingsRailTooltip,
+        onBlur: hideSettingsRailTooltip
+    }), [hideSettingsRailTooltip, showSettingsRailTooltip])
+
+    const beginSettingsResize = useCallback((event) => {
+        event.preventDefault()
+        hideSettingsRailTooltip()
+        const container = splitContainerRef.current
+        if (!container || typeof window === 'undefined') return
+
+        const updateWidth = (clientX) => {
+            const rect = container.getBoundingClientRect()
+            const rawWidth = clientX - rect.left
+            const maxWidth = Math.min(540, Math.max(300, rect.width * 0.48))
+            const nextWidth = rawWidth <= 140 ? 84 : Math.min(Math.max(rawWidth, 300), maxWidth)
+            setSettingsSidebarWidth(nextWidth)
+        }
+
+        updateWidth(event.clientX)
+
+        const handlePointerMove = (moveEvent) => {
+            updateWidth(moveEvent.clientX)
+        }
+        const handlePointerUp = () => {
+            document.body.style.cursor = ''
+            document.body.style.userSelect = ''
+            window.removeEventListener('pointermove', handlePointerMove)
+            window.removeEventListener('pointerup', handlePointerUp)
+        }
+
+        document.body.style.cursor = 'col-resize'
+        document.body.style.userSelect = 'none'
+        window.addEventListener('pointermove', handlePointerMove)
+        window.addEventListener('pointerup', handlePointerUp, { once: true })
+    }, [hideSettingsRailTooltip])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        window.localStorage.setItem('datser_recent_settings_searches', JSON.stringify(recentSettingsSearches.slice(0, 8)))
+    }, [recentSettingsSearches])
+
+    const rememberSettingsSearch = useCallback((value = searchQuery) => {
+        const trimmed = String(value || '').trim()
+        if (!trimmed) return
+        setRecentSettingsSearches((current) => [
+            trimmed,
+            ...current.filter((item) => item.toLowerCase() !== trimmed.toLowerCase())
+        ].slice(0, 8))
+    }, [searchQuery])
+
+    const getSettingsScrollKey = useCallback(() => (
+        showHelpCenterRef.current ? 'help' : (activeSectionRef.current || 'main')
+    ), [])
+
+    const saveSettingsScroll = useCallback((key = getSettingsScrollKey()) => {
+        if (typeof window === 'undefined') return
+        scrollPositionsRef.current[key || 'main'] = window.scrollY || 0
+    }, [getSettingsScrollKey])
+
+    const restoreSettingsScroll = useCallback((key = getSettingsScrollKey()) => {
+        if (typeof window === 'undefined') return
+        const top = scrollPositionsRef.current[key || 'main'] || 0
+        window.requestAnimationFrame(() => {
+            window.scrollTo({ top, left: 0, behavior: 'auto' })
+        })
+    }, [getSettingsScrollKey])
+
+    useEffect(() => {
+        activeSectionRef.current = activeSection
+    }, [activeSection])
+
+    useEffect(() => {
+        showHelpCenterRef.current = showHelpCenter
+    }, [showHelpCenter])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined
+
+        const currentState = window.history.state || {}
+        window.history.replaceState({
+            ...currentState,
+            datserView: 'settings',
+            datserSettingsRoot: true,
+            datserSettingsPanel: null
+        }, '', window.location.href)
+
+        const handlePopState = (event) => {
+            const state = event.state || {}
+
+            if (state.datserSettingsPanel === 'help') {
+                saveSettingsScroll()
+                setActiveSection(null)
+                setShowHelpCenter(true)
+                restoreSettingsScroll('help')
+                return
+            }
+
+            if (state.datserSettingsPanel) {
+                saveSettingsScroll()
+                setShowHelpCenter(false)
+                setActiveSection(state.datserSettingsPanel)
+                restoreSettingsScroll(state.datserSettingsPanel)
+                return
+            }
+
+            if (state.datserSettingsRoot) {
+                saveSettingsScroll()
+                setShowHelpCenter(false)
+                setActiveSection(null)
+                restoreSettingsScroll('main')
+                return
+            }
+
+            if (showHelpCenterRef.current) {
+                setShowHelpCenter(false)
+                return
+            }
+
+            if (activeSectionRef.current) {
+                saveSettingsScroll()
+                setActiveSection(null)
+                restoreSettingsScroll('main')
+                return
+            }
+
+            onBack?.()
+        }
+
+        window.addEventListener('popstate', handlePopState)
+        return () => window.removeEventListener('popstate', handlePopState)
+    }, [onBack, restoreSettingsScroll, saveSettingsScroll])
+
+    const openSettingsSection = useCallback((section) => {
+        if (!section) return
+        saveSettingsScroll()
+        const wasInSection = Boolean(activeSectionRef.current || showHelpCenterRef.current)
+        setActiveSection(section)
+        setShowHelpCenter(false)
+        restoreSettingsScroll(section)
+        if (typeof window !== 'undefined') {
+            const currentState = window.history.state || {}
+            const nextState = {
+                ...currentState,
+                datserView: 'settings',
+                datserSettingsRoot: false,
+                datserSettingsPanel: section
+            }
+            if (wasInSection) {
+                window.history.replaceState(nextState, '', window.location.href)
+            } else {
+                window.history.pushState(nextState, '', window.location.href)
+            }
+        }
+    }, [restoreSettingsScroll, saveSettingsScroll])
+
+    const closeSettingsPanel = useCallback(() => {
+        saveSettingsScroll()
+        setActiveSection(null)
+        setShowHelpCenter(false)
+        restoreSettingsScroll('main')
+        if (typeof window !== 'undefined') {
+            const currentState = window.history.state || {}
+            window.history.replaceState({
+                ...currentState,
+                datserView: 'settings',
+                datserSettingsRoot: true,
+                datserSettingsPanel: null
+            }, '', window.location.href)
+        }
+    }, [restoreSettingsScroll, saveSettingsScroll])
+
+    const closeSettingsPage = useCallback(() => {
+        onBack?.()
+    }, [onBack])
+
+    const openHelpCenter = useCallback(() => {
+        saveSettingsScroll()
+        const wasInSection = Boolean(activeSectionRef.current || showHelpCenterRef.current)
+        setShowHelpCenter(true)
+        setActiveSection(null)
+        restoreSettingsScroll('help')
+        if (typeof window !== 'undefined') {
+            const currentState = window.history.state || {}
+            const nextState = {
+                ...currentState,
+                datserView: 'settings',
+                datserSettingsRoot: false,
+                datserSettingsPanel: 'help'
+            }
+            if (wasInSection) {
+                window.history.replaceState(nextState, '', window.location.href)
+            } else {
+                window.history.pushState(nextState, '', window.location.href)
+            }
+        }
+    }, [restoreSettingsScroll, saveSettingsScroll])
 
     const focusSettingTarget = useCallback((settingId) => {
         if (!settingId || typeof window === 'undefined') return
@@ -313,14 +581,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         if (!section) return
         setSearchQuery('')
         if (section === 'help') {
-            setShowHelpCenter(true)
+            openHelpCenter()
             return
         }
-        setActiveSection(section)
+        openSettingsSection(section)
         if (settingId) {
             focusSettingTarget(settingId)
         }
-    }, [focusSettingTarget])
+    }, [focusSettingTarget, openHelpCenter, openSettingsSection])
 
     // Handle navigation from command palette
     useEffect(() => {
@@ -338,23 +606,6 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             window.clearTimeout(highlightTimerRef.current)
         }
     }, [])
-
-    useEffect(() => {
-        const scrollToTop = () => {
-            try {
-                window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-            } catch {
-                window.scrollTo(0, 0)
-            }
-        }
-        scrollToTop()
-        const raf1 = requestAnimationFrame(() => {
-            const raf2 = requestAnimationFrame(scrollToTop)
-            return () => cancelAnimationFrame(raf2)
-        })
-        return () => cancelAnimationFrame(raf1)
-    }, [activeSection, showHelpCenter])
-
 
     const toggleAutoAllDates = () => {
         const newValue = !autoAllDatesEnabled
@@ -629,17 +880,6 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const removeCountdownRef = useRef(null)
     const [removeCountdownMs, setRemoveCountdownMs] = useState(0)
     const [showUsageDetails, setShowUsageDetails] = useState(false)
-    const [showStorageLimits, setShowStorageLimits] = useState(false)
-
-    const handleInteractionFeedback = useCallback((event) => {
-        if (event.defaultPrevented) return
-        const target = event.target instanceof Element
-            ? event.target.closest('button, a, [role="button"], summary, input[type="checkbox"], input[type="radio"], input[type="range"]')
-            : null
-        if (!target) return
-        if (target.matches(':disabled')) return
-        selection()
-    }, [selection])
 
     // Fetch collaborators for Team section display
     useEffect(() => {
@@ -1044,8 +1284,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         setAndSaveAttendanceDate(sunday, table)
     }
 
-    const renderContent = () => {
-        switch (activeSection) {
+    const renderContent = (sectionId = activeSection) => {
+        switch (sectionId) {
             case 'account':
                 return (
                     <React.Suspense fallback={<LazyPanelFallback />}>
@@ -1127,6 +1367,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             prepareOfflineData={prepareOfflineData}
                             clearOfflineCacheData={clearOfflineCacheData}
                             syncOfflineChanges={syncOfflineChanges}
+                            monthlyTables={monthlyTables}
+                            currentTable={currentTable}
+                            members={members}
                             setIsExportModalOpen={setIsExportModalOpen}
                             setShowExportCenter={setShowExportCenter}
                             oldestMonthTable={oldestMonthTable}
@@ -1135,15 +1378,145 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         />
                     </React.Suspense>
                 )
+            case 'storage':
+                return (
+                    <div className="space-y-6">
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Storage & Limits</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Database usage, free-plan limits, and cleanup tools.</p>
+                        </div>
+
+                        <div data-setting-id="storage_limits" tabIndex={-1} className={`bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden ${getSettingTargetClass('storage_limits')}`}>
+                            <div className="p-4 flex items-start justify-between gap-4 border-b border-gray-100 dark:border-gray-700">
+                                <div>
+                                    <h4 className="font-semibold text-gray-900 dark:text-white">Database Storage</h4>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">Member data, attendance, badges, tags, and monthly tables.</p>
+                                </div>
+                                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300">Free Plan</span>
+                            </div>
+                            <div className="p-4 space-y-3">
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="font-semibold text-gray-800 dark:text-gray-200">Used</span>
+                                    {dbLoading ? (
+                                        <span className="text-gray-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Loading...</span>
+                                    ) : dbUsage ? (
+                                        <span className={`font-bold ${dbUsage.db_size_mb > DB_LIMIT_MB * 0.8 ? 'text-orange-600 dark:text-orange-400' : 'text-gray-900 dark:text-white'}`}>
+                                            {dbUsage.db_size_mb} / {DB_LIMIT_MB} MB
+                                        </span>
+                                    ) : (
+                                        <span className="text-gray-400">Unavailable</span>
+                                    )}
+                                </div>
+                                <div className="h-4 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden border border-gray-200 dark:border-gray-600">
+                                    <div
+                                        className={`h-full rounded-full transition-all ${dbUsage && dbUsage.db_size_mb > DB_LIMIT_MB * 0.8 ? 'bg-gradient-to-r from-orange-400 to-red-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'}`}
+                                        style={{ width: `${dbUsage ? Math.max(1, Math.min(100, Math.round((dbUsage.db_size_mb / DB_LIMIT_MB) * 100))) : 0}%` }}
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                                        {dbUsage ? `${(DB_LIMIT_MB - dbUsage.db_size_mb).toFixed(1)} MB free` : 'Run refresh to check usage'}
+                                    </span>
+                                    <button onClick={fetchDbUsage} className="text-orange-500 hover:text-orange-600 dark:hover:text-orange-400 flex items-center gap-1 transition-colors font-semibold">
+                                        <RefreshCw className={`w-3 h-3 ${dbLoading ? 'animate-spin' : ''}`} /> Refresh
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                            <div className="p-4 flex items-start justify-between gap-4 border-b border-gray-100 dark:border-gray-700">
+                                <div>
+                                    <h4 className="font-semibold text-gray-900 dark:text-white">Auth Emails</h4>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">Magic links, password resets, invites, and signup confirmations.</p>
+                                </div>
+                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${emailsRemaining === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200' : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-200'}`}>
+                                    {emailSends.length} / {EMAIL_RATE_LIMIT}
+                                </span>
+                            </div>
+                            <div className="p-4 space-y-3">
+                                <div className="h-4 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden border border-gray-200 dark:border-gray-600">
+                                    <div
+                                        className={`h-full rounded-full transition-all ${emailsRemaining === 0 ? 'bg-gradient-to-r from-red-400 to-red-500' : emailPct >= 66 ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-gradient-to-r from-purple-400 to-purple-500'}`}
+                                        style={{ width: `${Math.max(emailPct > 0 ? 4 : 0, Math.min(100, emailPct))}%` }}
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className={`${emailsRemaining === 0 ? 'text-red-600 dark:text-red-400' : 'text-purple-600 dark:text-purple-400'} font-medium`}>
+                                        {emailsRemaining > 0 ? `${emailsRemaining} email${emailsRemaining !== 1 ? 's' : ''} remaining` : 'Rate limit reached'}
+                                    </span>
+                                    {emailCountdown ? (
+                                        <span className="text-orange-600 dark:text-orange-400 font-medium">Resets in {emailCountdown}</span>
+                                    ) : (
+                                        <span className="text-gray-400">Resets hourly</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {oldestMonthTable && (
+                            <div className="bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800/50 rounded-2xl p-4 flex items-start gap-3">
+                                <Archive className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                    <h4 className="font-semibold text-amber-900 dark:text-amber-200">Archive recommendation</h4>
+                                    <p className="mt-1 text-sm text-amber-800 dark:text-amber-300">
+                                        Archive <strong>{oldestMonthTable.table_name.replace('_', ' ')}</strong> ({oldestMonthTable.size_mb} MB) to free up space.
+                                    </p>
+                                    <button
+                                        onClick={() => { openSettingsSection('data'); setArchiveMonth(oldestMonthTable.table_name) }}
+                                        className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700"
+                                    >
+                                        Archive Month
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 overflow-hidden">
+                            <button
+                                type="button"
+                                onClick={() => setShowUsageDetails((current) => !current)}
+                                className="w-full p-4 flex items-center justify-between gap-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                            >
+                                <div>
+                                    <h4 className="font-semibold text-gray-900 dark:text-white">Plan details</h4>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">See what counts toward storage and when to archive old months.</p>
+                                </div>
+                                <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${showUsageDetails ? 'rotate-180' : ''}`} />
+                            </button>
+                            {showUsageDetails && (
+                                <div className="px-4 pb-4 space-y-3 text-sm text-gray-600 dark:text-gray-300">
+                                    <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
+                                        Member records, attendance tables, tags, notes, and badges all count toward database storage.
+                                    </div>
+                                    <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
+                                        Archive older month tables when they are no longer actively edited. Exports stay available while the database gets lighter.
+                                    </div>
+                                    <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
+                                        Supabase auth emails reset on a rolling hourly window, so invites and password emails may pause until the limit refreshes.
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )
             case 'appearance':
                 return (
                     <React.Suspense fallback={<LazyPanelFallback />}>
                         <AppearanceSettingsSection
                             themeMode={themeMode}
                             setThemeMode={setThemeMode}
+                            preferences={preferences}
+                            updatePreferences={updatePreferences}
                             isCollaborator={isCollaborator}
                             getSettingTargetClass={getSettingTargetClass}
                         />
+                    </React.Suspense>
+                )
+            case 'updates':
+                return (
+                    <React.Suspense fallback={<LazyPanelFallback />}>
+                        <UpdatesSettingsSection getSettingTargetClass={getSettingTargetClass} />
                     </React.Suspense>
                 )
             case 'accessibility':
@@ -1154,15 +1527,53 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             updatePreferences={updatePreferences}
                             offlineSaveNoticeThreshold={offlineSaveNoticeThreshold}
                             setOfflineSaveNoticeThreshold={setOfflineSaveNoticeThreshold}
+                            notificationDurationMs={notificationDurationMs}
+                            setNotificationDurationMs={setNotificationDurationMs}
+                            searchSuggestionView={searchSuggestionView}
+                            setSearchSuggestionView={setSearchSuggestionView}
                             getSettingTargetClass={getSettingTargetClass}
                         />
                     </React.Suspense>
                 )
-            case 'guided_form':
+            case 'forms':
                 return (
                     <div className="space-y-6">
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Forms & Workflow</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Member form helpers, attendance completion, and field navigation.</p>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
+                            <div data-setting-id="auto_all_dates" tabIndex={-1} className={`p-4 flex items-center justify-between gap-4 ${getSettingTargetClass('auto_all_dates')}`}>
+                                <div>
+                                    <h4 className="font-semibold text-gray-900 dark:text-white">Auto-All-Dates</h4>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">Automatically mark all Sundays up to today when attendance is saved.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={toggleAutoAllDates}
+                                    aria-pressed={autoAllDatesEnabled === true}
+                                    className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors ${autoAllDatesEnabled === true ? 'bg-orange-600' : 'bg-gray-300 dark:bg-gray-700'}`}
+                                >
+                                    <span className={`inline-block h-6 w-6 rounded-full bg-white shadow transition-transform ${autoAllDatesEnabled === true ? 'translate-x-7' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+                            <div data-setting-id="missing_info_prompt" tabIndex={-1} className={`p-4 flex items-center justify-between gap-4 ${getSettingTargetClass('missing_info_prompt')}`}>
+                                <div>
+                                    <h4 className="font-semibold text-gray-900 dark:text-white">Missing Info Popup</h4>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">Warn before saving attendance when required member details are blank.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={toggleMissingInfoPrompt}
+                                    aria-pressed={missingInfoPromptEnabled === true}
+                                    className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors ${missingInfoPromptEnabled === true ? 'bg-orange-600' : 'bg-gray-300 dark:bg-gray-700'}`}
+                                >
+                                    <span className={`inline-block h-6 w-6 rounded-full bg-white shadow transition-transform ${missingInfoPromptEnabled === true ? 'translate-x-7' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+                        </div>
                         <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                            <div className="p-4 flex items-center justify-between gap-4">
+                            <div data-setting-id="guided_form_assistant" tabIndex={-1} className={`p-4 flex items-center justify-between gap-4 ${getSettingTargetClass('guided_form_assistant')}`}>
                                 <div>
                                     <h4 className="font-semibold text-gray-900 dark:text-white">Tap Next Button</h4>
                                     <p className="text-xs text-gray-500 dark:text-gray-400">Show the floating Next shortcut while filling member forms.</p>
@@ -1175,6 +1586,46 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                 >
                                     <span className={`inline-block h-6 w-6 rounded-full bg-white shadow transition-transform ${guidedFormSettings?.showNextButton === true ? 'translate-x-7' : 'translate-x-1'}`} />
                                 </button>
+                            </div>
+                        </div>
+                        <div data-setting-id="date_of_birth_picker" tabIndex={-1} className={`bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden ${getSettingTargetClass('date_of_birth_picker')}`}>
+                            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                                <h4 className="font-semibold text-gray-900 dark:text-white">Date of Birth Picker</h4>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">Choose how the birthday picker opens inside member forms.</p>
+                            </div>
+                            <div className="p-4 space-y-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {[
+                                        { value: 'combined', label: 'Day + month + year' },
+                                        { value: 'month-year-first', label: 'Month/year first' }
+                                    ].map((option) => (
+                                        <button
+                                            key={option.value}
+                                            type="button"
+                                            onClick={() => updatePreferences({ date_of_birth_picker_mode: option.value })}
+                                            className={`px-3 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${
+                                                (preferences?.date_of_birth_picker_mode || 'combined') === option.value
+                                                    ? 'border-orange-500 bg-orange-50 text-orange-800 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200'
+                                                    : 'border-gray-200 bg-white text-gray-600 hover:border-orange-300 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300'
+                                            }`}
+                                        >
+                                            {option.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="rounded-2xl border border-orange-200/80 bg-orange-50/60 p-3 shadow-lg shadow-orange-500/10 dark:border-orange-500/25 dark:bg-[#2F3030] dark:shadow-black/30">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300 mb-2">Preview</p>
+                                    <React.Suspense fallback={<LazyPanelFallback />}>
+                                        <CombinedDatePicker
+                                            name="date_of_birth_workflow_preview"
+                                            label="Date of Birth"
+                                            value={dob}
+                                            onChange={(event) => setDob(event.target.value)}
+                                            placeholder="Tap to preview"
+                                            birthDateMode={preferences?.date_of_birth_picker_mode || 'combined'}
+                                        />
+                                    </React.Suspense>
+                                </div>
                             </div>
                         </div>
                         <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -1306,7 +1757,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 return
             case 'export_data':
                 navigateToSetting('data', item.id)
-                setIsExportModalOpen(true)
+                setShowExportCenter(true)
                 return
             case 'import_data':
                 navigateToSetting('data', item.id)
@@ -1321,8 +1772,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 if (preferredMonth) setArchiveMonth(preferredMonth)
                 return
             case 'storage_limits':
-                navigateToSetting('data', item.id)
-                setShowStorageLimits(true)
+                navigateToSetting('storage', item.id)
                 setShowUsageDetails(true)
                 return
             case 'theme_light':
@@ -1338,7 +1788,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 navigateToSetting('appearance', item.id)
                 return
             case 'help_center':
-                setShowHelpCenter(true)
+                openHelpCenter()
                 return
             case 'delete_account':
                 navigateToSetting('danger', item.id)
@@ -1352,6 +1802,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         monthlyTables,
         navigateToSetting,
         oldestMonthTable,
+        openHelpCenter,
         setThemeMode
     ])
 
@@ -1366,6 +1817,11 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             description: installedAppInfo
                 ? 'Installed: ' + installedAppInfo.versionName + ' (' + (installedAppInfo.versionCode || 'web') + ') - ' + installedAppInfo.runtimeMode
                 : 'View installed APK version and wrapper mode'
+        },
+        android_apk: {
+            description: installedAppInfo
+                ? 'Installed: ' + installedAppInfo.versionName + ' (' + (installedAppInfo.versionCode || 'web') + ')'
+                : 'Download the latest Android APK'
         },
         current_month: {
             description: 'Active: ' + (currentTable?.replace('_', ' ') || 'None')
@@ -1399,14 +1855,38 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         }
         return {
             ...merged,
-            action: () => handleSettingsItemAction(merged)
+            action: () => {
+                rememberSettingsSearch()
+                setLastSettingsPath(merged)
+                handleSettingsItemAction(merged)
+            }
         }
-    }), [dynamicItemDetails, handleSettingsItemAction, sections, visibleRegistryItems])
+    }), [dynamicItemDetails, handleSettingsItemAction, rememberSettingsSearch, sections, visibleRegistryItems])
 
     const searchResults = useMemo(() => {
         if (!searchQuery.trim()) return []
         return searchSettingsIndex(searchQuery, allSearchableItems, sections)
     }, [searchQuery, allSearchableItems, sections])
+
+    const defaultSearchSuggestions = useMemo(() => {
+        const preferredIds = [
+            'guided_form_assistant',
+            'date_of_birth_picker',
+            'missing_info_prompt',
+            'offline_mode',
+            'notifications',
+            'android_apk'
+        ]
+        return preferredIds
+            .map((id) => allSearchableItems.find((item) => item.id === id))
+            .filter(Boolean)
+    }, [allSearchableItems])
+
+    const getSettingPath = (item) => {
+        const sectionLabel = item?.sectionLabel || sections.find(section => section.id === item?.section)?.label || 'Settings'
+        const label = item?.label || 'Open'
+        return `Settings / ${sectionLabel} / ${label}`
+    }
 
     const getIconBgColor = (color) => {
         const colors = {
@@ -1443,16 +1923,44 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const getSettingTargetClass = (settingId) =>
         highlightedSettingId === settingId ? 'settings-search-target-highlight' : ''
 
+    const settingsSearchQuickActionsEnabled = preferences?.settings_search_quick_actions_enabled === true
+
+    const handleSettingsSearchResultSelect = useCallback((item) => {
+        rememberSettingsSearch()
+        setLastSettingsPath(item)
+        if (settingsSearchQuickActionsEnabled) {
+            setQuickSettingsSearchItem(item)
+            return
+        }
+        item.action()
+        setIsSettingsSearchFocused(false)
+    }, [rememberSettingsSearch, settingsSearchQuickActionsEnabled])
+
+    const openQuickSettingsSearchItem = useCallback(() => {
+        if (!quickSettingsSearchItem) return
+        quickSettingsSearchItem.action()
+        setQuickSettingsSearchItem(null)
+        setIsSettingsSearchFocused(false)
+    }, [quickSettingsSearchItem])
+
+    const handleSettingsSearchEnter = useCallback((event) => {
+        if (event.key !== 'Enter') return
+        const first = searchResults[0]
+        if (!first) return
+        event.preventDefault()
+        handleSettingsSearchResultSelect(first)
+    }, [handleSettingsSearchResultSelect, searchResults])
+
     // Show Help Center Page
     if (showHelpCenter) {
         return (
             <React.Suspense fallback={<LazyPanelFallback />}>
                 <HelpCenterPage
-                    onBack={() => setShowHelpCenter(false)}
+                    onBack={closeSettingsPanel}
                     onNavigate={(target, options) => {
                         setShowHelpCenter(false)
                         if (target === 'dashboard' || target === 'settings') {
-                            onBack?.()
+                            closeSettingsPage()
                         }
                     }}
                 />
@@ -1462,12 +1970,12 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
     // Render main settings list (when no section is active)
     const renderMainList = () => (
-        <div className="min-h-screen">
+        <div className="min-h-0">
             {/* Header */}
             <div className="settings-detail-header-safe sticky z-30 w-full sm:-mx-4 sm:w-[calc(100%+2rem)] bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/70 dark:border-gray-800/70 shadow-sm">
                 <div className="max-w-4xl mx-auto w-full px-3 sm:px-8 py-2.5 sm:py-3 flex items-center gap-3 sm:gap-4 font-[var(--font-family)]">
                     <button
-                        onClick={onBack}
+                        onClick={closeSettingsPage}
                         className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm touch-target"
                     >
                         <ChevronLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
@@ -1476,267 +1984,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 </div>
             </div>
 
-            <div className="max-w-4xl mx-auto px-3 sm:px-4 py-3 pb-8 space-y-3">
-                {/* Search Bar */}
-                <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 mb-4">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                        <input
-                            type="text"
-                            placeholder="Search settings... (e.g., 'change profile picture', 'make text bigger')"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
-                        />
-                        {searchQuery && (
-                            <button
-                                onClick={() => setSearchQuery('')}
-                                className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {/* Usage / Free plan awareness */}
-                <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-orange-200/70 dark:border-orange-900/50 shadow-sm overflow-hidden">
-                    <button
-                        onClick={() => setShowStorageLimits(prev => !prev)}
-                        className="w-full flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
-                    >
-                        <div className="flex items-center gap-2">
-                            <Database className="w-4 h-4 text-orange-500" />
-                            <p className="text-sm font-semibold text-gray-900 dark:text-white">Storage & Limits</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium px-2 py-1 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300">Free Plan</span>
-                            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${showStorageLimits ? 'rotate-180' : ''}`} />
-                        </div>
-                    </button>
-
-                    {showStorageLimits && (
-                        <div className="px-4 pb-4 space-y-4">
-                            {/* Database Size Bar */}
-                            <div className="space-y-1.5">
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="font-semibold text-gray-800 dark:text-gray-200">Database Storage</span>
-                                    {dbLoading ? (
-                                        <span className="text-gray-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Loading...</span>
-                                    ) : dbUsage ? (
-                                        <span className={`font-medium ${dbUsage.db_size_mb > DB_LIMIT_MB * 0.8 ? 'text-orange-600 dark:text-orange-400' : 'text-gray-700 dark:text-gray-200'}`}>
-                                            {dbUsage.db_size_mb} / {DB_LIMIT_MB} MB ({Math.round((dbUsage.db_size_mb / DB_LIMIT_MB) * 100)}%)
-                                        </span>
-                                    ) : (
-                                        <span className="text-gray-400">Unavailable</span>
-                                    )}
-                                </div>
-                                <div className="h-3 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden border border-gray-200 dark:border-gray-600">
-                                    <div
-                                        className={`h-full rounded-full transition-all ${
-                                            dbUsage && dbUsage.db_size_mb > DB_LIMIT_MB * 0.8
-                                                ? 'bg-gradient-to-r from-orange-400 to-red-500'
-                                                : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
-                                        }`}
-                                        style={{ width: `${dbUsage ? Math.max(1, Math.min(100, Math.round((dbUsage.db_size_mb / DB_LIMIT_MB) * 100))) : 0}%` }}
-                                    />
-                                </div>
-                                {dbUsage && (
-                                    <div className="flex items-center justify-between text-[11px]">
-                                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                                            {(DB_LIMIT_MB - dbUsage.db_size_mb).toFixed(1)} MB free
-                                        </span>
-                                        <button onClick={fetchDbUsage} className="text-orange-500 hover:text-orange-600 dark:hover:text-orange-400 flex items-center gap-1 transition-colors">
-                                            <RefreshCw className={`w-3 h-3 ${dbLoading ? 'animate-spin' : ''}`} /> Refresh
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Archive Recommendation */}
-                            {oldestMonthTable && (
-                                <div className="bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800/50 rounded-lg p-2.5 flex items-start gap-2">
-                                    <Archive className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-[11px] text-amber-800 dark:text-amber-300">
-                                            <span className="font-semibold">Tip:</span> Archive <strong>{oldestMonthTable.table_name.replace('_', ' ')}</strong> ({oldestMonthTable.size_mb} MB) to free up space.
-                                        </p>
-                                    </div>
-                                    <button
-                                        onClick={() => { setActiveSection('data'); setArchiveMonth(oldestMonthTable.table_name) }}
-                                        className="text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 whitespace-nowrap underline"
-                                    >
-                                        Archive
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Divider */}
-                            <div className="border-t border-gray-100 dark:border-gray-700" />
-
-                            {/* Email Rate Limit Bar */}
-                            <div className="space-y-1.5">
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
-                                        <Mail className="w-3.5 h-3.5 text-purple-500" />
-                                        Auth Emails
-                                    </span>
-                                    <span className={`font-medium ${emailsRemaining === 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>
-                                        {emailSends.length} / {EMAIL_RATE_LIMIT} per hour
-                                    </span>
-                                </div>
-                                <div className="h-3 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden border border-gray-200 dark:border-gray-600">
-                                    <div
-                                        className={`h-full rounded-full transition-all ${
-                                            emailsRemaining === 0
-                                                ? 'bg-gradient-to-r from-red-400 to-red-500'
-                                                : emailPct >= 66
-                                                ? 'bg-gradient-to-r from-amber-400 to-orange-500'
-                                                : 'bg-gradient-to-r from-purple-400 to-purple-500'
-                                        }`}
-                                        style={{ width: `${Math.max(emailPct > 0 ? 4 : 0, Math.min(100, emailPct))}%` }}
-                                    />
-                                </div>
-                                <div className="flex items-center justify-between text-[11px]">
-                                    {emailsRemaining > 0 ? (
-                                        <span className="text-purple-600 dark:text-purple-400 font-medium">
-                                            {emailsRemaining} email{emailsRemaining !== 1 ? 's' : ''} remaining
-                                        </span>
-                                    ) : (
-                                        <span className="text-red-600 dark:text-red-400 font-medium flex items-center gap-1">
-                                            Rate limit reached
-                                        </span>
-                                    )}
-                                    {emailCountdown && (
-                                        <span className="text-orange-600 dark:text-orange-400 font-medium flex items-center gap-1">
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                            Resets in {emailCountdown}
-                                        </span>
-                                    )}
-                                    {!emailCountdown && emailSends.length === 0 && (
-                                        <span className="text-gray-400">No emails sent recently</span>
-                                    )}
-                                </div>
-                            </div>
-
-                            <p className="text-[10px] text-gray-400 dark:text-gray-500">
-                                Includes magic links, password resets, and invites. Resets hourly.
-                            </p>
-
-                            {/* Brief explanation */}
-                            <div className="pt-3 border-t border-gray-100 dark:border-gray-700 space-y-2">
-                                <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-    <strong className="text-gray-800 dark:text-gray-200">Database Storage</strong> is the space your member data, attendance records, badges, tags, and monthly tables use on the server.{' '}
-    <strong className="text-gray-800 dark:text-gray-200">Auth Emails</strong> are login-related emails such as magic links, password resets, and invites, and they are limited to 3 per hour on the free plan.{' '}
-    Archiving old months exports them as CSV and removes them from the database, which frees up storage.
-</p>
-
-                                {/* Learn More dropdown */}
-                                <button
-                                    onClick={() => setShowUsageDetails(prev => !prev)}
-                                    className="flex items-center gap-1.5 text-xs font-medium text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 transition-colors"
-                                >
-                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showUsageDetails ? 'rotate-180' : ''}`} />
-                                    {showUsageDetails ? 'Show less' : 'Learn more about how this works'}
-                                </button>
-
-                                {showUsageDetails && (
-                                    <div className="bg-gray-50 dark:bg-gray-700/40 rounded-lg p-3 space-y-3 text-xs text-gray-600 dark:text-gray-400 leading-relaxed animate-in fade-in">
-
-                                        {/* What is Supabase */}
-                                        <div>
-                                            <p className="font-semibold text-gray-800 dark:text-gray-200 mb-1 flex items-center gap-1.5">
-                                                <Database className="w-3.5 h-3.5 text-emerald-500" />
-                                                What powers this app?
-                                            </p>
-                                            <p>
-                                                This app uses <strong>Supabase</strong> for the hosted database and authentication.
-                                                Supabase handles your database, user authentication (login/signup), and secure access control so your data stays private and only accessible to you and your team.
-                                            </p>
-                                        </div>
-
-                                        {/* Database Storage explained */}
-                                        <div>
-                                            <p className="font-semibold text-gray-800 dark:text-gray-200 mb-1 flex items-center gap-1.5">
-                                                <Database className="w-3.5 h-3.5 text-orange-500" />
-                                                Database Storage (500 MB limit)
-                                            </p>
-                                            <p>
-                                                Every member you add, every attendance record you mark, and every monthly table you create takes up space in the database.
-                                                On the <strong>free plan</strong>, you get <strong>500 MB</strong> of total database storage. The bar above shows how much you've used.
-                                            </p>
-                                            <p className="mt-1">
-                                                For context, 500 MB can comfortably hold <strong>thousands of members</strong> across dozens of monthly tables.
-                                                You'll likely never hit this limit with normal use, but it's good to keep an eye on it.
-                                            </p>
-                                        </div>
-
-                                        {/* Why archive */}
-                                        <div>
-                                            <p className="font-semibold text-gray-800 dark:text-gray-200 mb-1 flex items-center gap-1.5">
-                                                <Archive className="w-3.5 h-3.5 text-amber-500" />
-                                                Why archive old months?
-                                            </p>
-                                            <p>
-                                                Each monthly table (e.g. "January 2026") stores member names, attendance dates, and status for that month.
-                                                Over time, old months you no longer need to edit just sit in the database taking up space.
-                                            </p>
-                                            <p className="mt-1">
-                                                <strong>Archiving</strong> exports the month's data as a CSV file (which you download and keep), then deletes the table from the database.
-                                                This frees up storage while keeping your records safe on your device. You can always re-import the CSV later if needed.
-                                            </p>
-                                            <p className="mt-1 text-amber-700 dark:text-amber-400">
-                                                <strong>Recommendation:</strong> Archive months that are more than 2 months old when you no longer need to edit them.
-                                            </p>
-                                        </div>
-
-                                        {/* Auth Emails explained */}
-                                        <div>
-                                            <p className="font-semibold text-gray-800 dark:text-gray-200 mb-1 flex items-center gap-1.5">
-                                                <Mail className="w-3.5 h-3.5 text-purple-500" />
-                                                Auth Emails (3 per hour limit)
-                                            </p>
-                                            <p>
-                                                Supabase sends authentication emails on your behalf for:
-                                            </p>
-                                            <ul className="list-disc list-inside mt-1 space-y-0.5 ml-1">
-                                                <li><strong>Magic links</strong> for passwordless login</li>
-                                                <li><strong>Password resets</strong> for account recovery</li>
-                                                <li><strong>Invites</strong> for shared workspace access</li>
-                                                <li><strong>Signup confirmations</strong> for new accounts</li>
-                                            </ul>
-                                            <p className="mt-1">
-                                                On the free plan, Supabase limits this to <strong>3 emails per hour</strong> to prevent abuse.
-                                                The counter above tracks how many you've sent in the current hour. Once you hit 3, you'll need to wait for the timer to reset before sending more.
-                                            </p>
-                                            <p className="mt-1">
-                                                This is a <strong>server-side limit</strong> set by Supabase.
-                                                Normal usage (occasional invites or password resets) will rarely hit this limit.
-                                            </p>
-                                        </div>
-
-                                        {/* Free plan summary */}
-                                        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-lg p-2.5">
-                                            <p className="font-semibold text-orange-800 dark:text-orange-300 mb-1 text-[11px]">Free Plan Summary</p>
-                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-                                                <span className="text-gray-600 dark:text-gray-400">Database</span>
-                                                <span className="font-medium text-gray-800 dark:text-gray-200">500 MB</span>
-                                                <span className="text-gray-600 dark:text-gray-400">Auth emails</span>
-                                                <span className="font-medium text-gray-800 dark:text-gray-200">3 per hour</span>
-                                                <span className="text-gray-600 dark:text-gray-400">File storage</span>
-                                                <span className="font-medium text-gray-800 dark:text-gray-200">1 GB</span>
-                                                <span className="text-gray-600 dark:text-gray-400">Realtime connections</span>
-                                                <span className="font-medium text-gray-800 dark:text-gray-200">200 concurrent</span>
-                                                <span className="text-gray-600 dark:text-gray-400">Edge functions</span>
-                                                <span className="font-medium text-gray-800 dark:text-gray-200">500K invocations/month</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-                </div>
+            <div className="max-w-4xl mx-auto px-3 sm:px-4 pt-3 pb-4 xl:pb-3 space-y-3">
 
                 {/* Profile Card */}
                 <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
@@ -1771,7 +2019,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{user?.email}</p>
                         </div>
                         <button
-                            onClick={() => setActiveSection('account')}
+                            onClick={() => openSettingsSection('account')}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
                         >
                             <ChevronRight className="w-5 h-5 text-gray-400" />
@@ -1779,20 +2027,20 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     </div>
                 </div>
 
-                {/* Tutorial / Onboarding */}
-                <button
-                    onClick={() => window.openOnboarding?.()}
-                    className="w-full flex items-center gap-3 px-4 py-3.5 bg-gradient-to-r from-orange-500 to-purple-600 text-white rounded-xl shadow-sm hover:shadow-md transition-all"
-                >
-                    <div className="p-2 bg-white/20 rounded-lg">
-                        <HelpCircle className="w-5 h-5 text-white" />
+                <div className="hidden xl:block">
+                    <div className="relative">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <input
+                            type="text"
+                            placeholder="Search settings"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onKeyDown={handleSettingsSearchEnter}
+                            onFocus={() => setIsSettingsSearchFocused(true)}
+                            className="h-12 w-full rounded-2xl border border-gray-200/80 bg-white/70 pl-12 pr-4 text-base text-gray-900 outline-none shadow-inner backdrop-blur-2xl transition-all focus:border-orange-500 focus:bg-white/85 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700/80 dark:bg-white/6 dark:text-white dark:placeholder-gray-500 dark:focus:bg-white/10"
+                        />
                     </div>
-                    <div className="flex-1 text-left">
-                        <p className="font-semibold">Show Tutorial</p>
-                        <p className="text-sm text-white/80">Replay the getting started guide</p>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-white/70" />
-                </button>
+                </div>
 
                 {/* Content Area: Either Search Results or Section List */}
                 <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
@@ -1806,9 +2054,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                 return (
                                     <button
                                         key={item.id}
-                                        onClick={() => {
-                                            item.action()
-                                        }}
+                                        onClick={() => handleSettingsSearchResultSelect(item)}
                                         className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors text-left group"
                                     >
                                         <div className={`p-2 rounded-lg ${item.isDestructive ? 'bg-red-100 dark:bg-red-900/30' : getIconBgColor(sectionColor)}`}>
@@ -1824,6 +2070,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                                     {sections.find(s => s.id === item.section)?.label}
                                                 </span>
                                             </div>
+                                            <p className="mt-0.5 text-[11px] font-medium text-orange-600 dark:text-orange-300 truncate">
+                                                {getSettingPath(item)}
+                                            </p>
                                             <p className="text-sm text-gray-500 dark:text-gray-400 truncate group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
                                                 {item.description}
                                             </p>
@@ -1853,9 +2102,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                     key={section.id}
                                     onClick={() => {
                                         if (section.id === 'help') {
-                                            setShowHelpCenter(true)
+                                            openHelpCenter()
                                         } else {
-                                            setActiveSection(section.id)
+                                            openSettingsSection(section.id)
                                         }
                                     }}
                                     className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors group"
@@ -1893,7 +2142,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 {!searchQuery && (
                     <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-900/50 overflow-hidden mt-4">
                         <button
-                            onClick={() => setActiveSection('danger')}
+                            onClick={() => openSettingsSection('danger')}
                             className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors group"
                         >
                             <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30">
@@ -1916,23 +2165,179 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     Sign Out
                 </button>
             </div>
+
+            {isSettingsSearchFocused && (
+                <div className="fixed inset-0 z-[90] bg-white/95 dark:bg-black/95 backdrop-blur-2xl overflow-y-auto overscroll-contain md:grid md:grid-cols-[minmax(300px,42vw)_minmax(420px,1fr)]">
+                    <div className="hidden md:block" onClick={() => setIsSettingsSearchFocused(false)} />
+                    <div className="flex min-h-screen flex-col gap-5 px-4 pb-28 pt-5 md:px-8 md:pt-6">
+                        <div className="mb-1 hidden items-center gap-3 md:flex">
+                            <button
+                                type="button"
+                                onClick={() => setIsSettingsSearchFocused(false)}
+                                className="grid h-10 w-10 place-items-center rounded-full text-gray-700 transition hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/10"
+                                aria-label="Back to settings"
+                            >
+                                <ChevronLeft className="h-6 w-6" />
+                            </button>
+                            <div className="relative flex-1">
+                                <input
+                                    type="text"
+                                    placeholder="Search"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    onKeyDown={handleSettingsSearchEnter}
+                                    autoFocus
+                                    className="h-12 w-full rounded-2xl border border-transparent bg-transparent px-1 text-xl font-semibold text-gray-900 outline-none placeholder:text-gray-500 dark:text-white dark:placeholder:text-gray-400"
+                                />
+                            </div>
+                            <Mic className="h-5 w-5 text-gray-500 dark:text-gray-300" />
+                        </div>
+
+                        {!searchQuery && (
+                            <div className="order-3 rounded-[1.35rem] bg-gray-100 p-4 dark:bg-[#191919] md:order-1">
+                                <p className="mb-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Recent searches</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {(recentSettingsSearches.length ? recentSettingsSearches : ['theme', 'offline', 'updates', 'password']).slice(0, 6).map((term) => (
+                                        <button
+                                            key={term}
+                                            type="button"
+                                            onClick={() => setSearchQuery(term)}
+                                            className="inline-flex items-center gap-2 rounded-full bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-300 dark:bg-[#303030] dark:text-gray-200 dark:hover:bg-[#3a3a3a]"
+                                        >
+                                            {term}
+                                            <X
+                                                className="h-3.5 w-3.5 opacity-60"
+                                                onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    setRecentSettingsSearches((current) => current.filter((item) => item !== term))
+                                                }}
+                                            />
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {!searchQuery && (
+                            <div className="order-2 rounded-[1.35rem] bg-gray-100 p-4 dark:bg-[#191919] md:order-2">
+                                <p className="mb-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Suggestions</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {[
+                                        ['#DarkMode', 'theme_dark'],
+                                        ['#Notifications', 'notifications'],
+                                        ['#Offline', 'offline_mode'],
+                                        ['#Updates', 'android_apk'],
+                                        ['#BirthDate', 'date_of_birth_picker']
+                                    ].map(([label, id]) => {
+                                        const item = allSearchableItems.find((candidate) => candidate.id === id)
+                                        return (
+                                            <button
+                                                key={label}
+                                                type="button"
+                                                onClick={() => {
+                                                    if (item) {
+                                                        item.action()
+                                                        setIsSettingsSearchFocused(false)
+                                                    } else {
+                                                        setSearchQuery(label.replace('#', ''))
+                                                    }
+                                                }}
+                                                className="rounded-full border border-orange-500/70 px-4 py-2 text-sm font-bold text-orange-600 transition hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-500/10"
+                                            >
+                                                {label}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="order-1 md:order-3">
+                            <p className="mb-3 text-sm font-semibold text-gray-500 dark:text-gray-400">
+                                Results
+                            </p>
+                            <div className="overflow-hidden rounded-[1.35rem] border border-gray-200/80 bg-white/90 shadow-2xl shadow-black/10 backdrop-blur-xl divide-y divide-gray-100 dark:border-[#282828] dark:bg-[#121212]/95 dark:divide-[#242424] dark:shadow-black/40">
+                                {(searchQuery ? searchResults : defaultSearchSuggestions).slice(0, 8).map((item) => {
+                                    const Icon = item.icon || Search
+                                    return (
+                                        <button
+                                            key={item.id}
+                                            type="button"
+                                            onClick={() => handleSettingsSearchResultSelect(item)}
+                                            className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-white/5"
+                                        >
+                                            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gray-100 dark:bg-[#242424]">
+                                                <Icon className="w-5 h-5 text-gray-500 dark:text-gray-300" />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="font-semibold text-gray-900 dark:text-white truncate">{item.label}</p>
+                                                <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{getSettingPath(item)}</p>
+                                            </div>
+                                            <ChevronRight className="w-4 h-4 text-gray-400" />
+                                        </button>
+                                    )
+                                })}
+                                {searchQuery && searchResults.length === 0 && (
+                                    <div className="p-6 text-center">
+                                        <p className="font-semibold text-gray-900 dark:text-white">No settings found</p>
+                                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Try another word or open a section below.</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div className="fixed inset-x-0 bottom-0 z-[100] border-t border-gray-200/60 dark:border-gray-800/60 bg-white/65 dark:bg-black/45 backdrop-blur-2xl px-3 py-3 shadow-[0_-18px_45px_rgba(0,0,0,0.16)] xl:hidden">
+                <div className="max-w-4xl mx-auto flex items-center gap-3">
+                    <div className={`relative flex-1 transition-all duration-300 ease-out ${isSettingsSearchFocused ? 'translate-x-0' : 'translate-x-0'}`}>
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <input
+                            type="text"
+                            placeholder="Search settings"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onKeyDown={handleSettingsSearchEnter}
+                            onFocus={() => setIsSettingsSearchFocused(true)}
+                            className="h-12 w-full rounded-2xl border border-gray-200/80 bg-white/58 pl-12 pr-4 text-base text-gray-900 outline-none shadow-inner backdrop-blur-2xl transition-all duration-300 ease-out focus:border-orange-500 focus:bg-white/75 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700/80 dark:bg-white/5 dark:text-white dark:placeholder-gray-500 dark:focus:bg-white/8"
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setSearchQuery('')
+                            setIsSettingsSearchFocused(false)
+                        }}
+                        className={`grid h-12 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 transition-all duration-300 ease-out hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 ${
+                            isSettingsSearchFocused
+                                ? 'w-12 translate-x-0 scale-100 opacity-100'
+                                : 'w-0 translate-x-4 scale-75 opacity-0 pointer-events-none'
+                        }`}
+                        aria-label="Close settings search"
+                    >
+                        <X className="w-6 h-6" />
+                    </button>
+                </div>
+            </div>
         </div>
     )
 
     // Render detail view (when a section is active)
-    const renderDetailView = () => {
-        const currentSection = sections.find(s => s.id === activeSection)
+    const renderDetailView = ({ embedded = false, sectionId = activeSection } = {}) => {
+        const effectiveSection = sectionId || 'account'
+        const currentSection = sections.find(s => s.id === effectiveSection)
         const Icon = currentSection?.icon || User
 
         return (
-            <div className="min-h-screen">
+            <div className={embedded ? 'min-h-full bg-white/96 dark:bg-[#121212]' : 'min-h-screen bg-white/88 backdrop-blur-xl dark:bg-[#121212]/96'}>
                 {/* Sticky Header - full-bleed across the detail page */}
-                <div className="settings-detail-header-safe sticky z-30 w-full sm:-mx-4 sm:w-[calc(100%+2rem)] bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/70 dark:border-gray-800/70 shadow-sm">
-                    <div className="max-w-4xl mx-auto w-full px-3 sm:px-8 py-2.5 sm:py-3 font-[var(--font-family)]">
+                <div className={`${embedded ? 'relative' : 'settings-detail-header-safe sticky'} z-30 w-full ${embedded ? '' : 'sm:-mx-4 sm:w-[calc(100%+2rem)]'} bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/70 dark:border-gray-800/70 shadow-sm`}>
+                    <div className={`${embedded ? 'max-w-none' : 'max-w-4xl mx-auto'} w-full px-3 sm:px-8 py-2.5 sm:py-3 font-[var(--font-family)]`}>
                         <div className="flex items-center gap-2 sm:gap-3">
                             <button
-                                onClick={() => setActiveSection(null)}
-                                className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm touch-target"
+                                onClick={closeSettingsPanel}
+                                className={`${embedded ? 'hidden' : 'grid'} p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm touch-target`}
                             >
                                 <ChevronLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                             </button>
@@ -1946,17 +2351,433 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     </div>
                 </div>
 
-                <div className="max-w-4xl mx-auto px-3 sm:px-4 py-3 pb-8 space-y-3">
-                    {renderContent()}
+                <div className={`${embedded ? 'max-w-none px-4 pb-6 bg-white/96 dark:bg-[#121212]' : 'max-w-4xl mx-auto px-3 sm:px-4 pb-8'} py-3`}>
+                    <div className={embedded ? '' : 'rounded-[1.35rem] border border-gray-200/80 bg-white/86 p-3 shadow-xl shadow-black/5 backdrop-blur-xl dark:border-[#303030] dark:bg-[#171717]/95 dark:shadow-black/30'}>
+                        {renderContent(effectiveSection)}
+                    </div>
                 </div>
             </div>
         )
     }
 
+    const renderSettingsSearchPanel = () => (
+        <div className="min-h-0">
+            <div className="relative z-30 w-full border-b border-gray-200/70 bg-white/85 shadow-sm backdrop-blur-sm dark:border-gray-800/70 dark:bg-[#121212]/90">
+                <div className="w-full px-3 py-3 sm:px-8">
+                    <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setIsSettingsSearchFocused(false)}
+                            className="grid h-10 w-10 place-items-center rounded-full text-gray-700 transition hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/10"
+                            aria-label="Back to settings"
+                        >
+                            <ChevronLeft className="h-6 w-6" />
+                        </button>
+                        <input
+                            type="text"
+                            placeholder="Search"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onKeyDown={handleSettingsSearchEnter}
+                            autoFocus
+                            className="h-12 min-w-0 flex-1 rounded-2xl border border-transparent bg-transparent px-1 text-xl font-semibold text-gray-900 outline-none placeholder:text-gray-500 dark:text-white dark:placeholder:text-gray-400"
+                        />
+                        <Mic className="h-5 w-5 text-gray-500 dark:text-gray-300" />
+                    </div>
+                </div>
+            </div>
+
+            <div className="space-y-5 px-4 py-5 sm:px-8">
+                {!searchQuery && (
+                    <div className="rounded-[1.35rem] bg-gray-100 p-4 dark:bg-[#191919]">
+                        <p className="mb-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Recent searches</p>
+                        <div className="flex flex-wrap gap-2">
+                            {(recentSettingsSearches.length ? recentSettingsSearches : ['theme', 'offline', 'updates', 'password']).slice(0, 6).map((term) => (
+                                <button
+                                    key={term}
+                                    type="button"
+                                    onClick={() => setSearchQuery(term)}
+                                    className="inline-flex items-center gap-2 rounded-full bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-300 dark:bg-[#303030] dark:text-gray-200 dark:hover:bg-[#3a3a3a]"
+                                >
+                                    {term}
+                                    <X
+                                        className="h-3.5 w-3.5 opacity-60"
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            setRecentSettingsSearches((current) => current.filter((item) => item !== term))
+                                        }}
+                                    />
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {!searchQuery && (
+                    <div className="rounded-[1.35rem] bg-gray-100 p-4 dark:bg-[#191919]">
+                        <p className="mb-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Suggestions</p>
+                        <div className="flex flex-wrap gap-2">
+                            {[
+                                ['#DarkMode', 'theme_dark'],
+                                ['#Notifications', 'notifications'],
+                                ['#Offline', 'offline_mode'],
+                                ['#Updates', 'android_apk'],
+                                ['#BirthDate', 'date_of_birth_picker']
+                            ].map(([label, id]) => {
+                                const item = allSearchableItems.find((candidate) => candidate.id === id)
+                                return (
+                                    <button
+                                        key={label}
+                                        type="button"
+                                        onClick={() => {
+                                            if (item) {
+                                                item.action()
+                                                setIsSettingsSearchFocused(false)
+                                            } else {
+                                                setSearchQuery(label.replace('#', ''))
+                                            }
+                                        }}
+                                        className="rounded-full border border-orange-500/70 px-4 py-2 text-sm font-bold text-orange-600 transition hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-500/10"
+                                    >
+                                        {label}
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                <div>
+                    <p className="mb-3 text-sm font-semibold text-gray-500 dark:text-gray-400">Results</p>
+                    <div className="overflow-hidden rounded-[1.35rem] border border-gray-200/80 bg-white/90 shadow-2xl shadow-black/10 backdrop-blur-xl divide-y divide-gray-100 dark:border-[#282828] dark:bg-[#121212]/95 dark:divide-[#242424] dark:shadow-black/40">
+                        {(searchQuery ? searchResults : defaultSearchSuggestions).slice(0, 8).map((item) => {
+                            const Icon = item.icon || Search
+                            return (
+                                <button
+                                    key={item.id}
+                                    type="button"
+                                    onClick={() => handleSettingsSearchResultSelect(item)}
+                                    className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-white/5"
+                                >
+                                    <div className="grid h-10 w-10 place-items-center rounded-xl bg-gray-100 dark:bg-[#242424]">
+                                        <Icon className="h-5 w-5 text-gray-500 dark:text-gray-300" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="truncate font-semibold text-gray-900 dark:text-white">{item.label}</p>
+                                        <p className="truncate text-xs text-gray-500 dark:text-gray-400">{getSettingPath(item)}</p>
+                                    </div>
+                                    <ChevronRight className="h-4 w-4 text-gray-400" />
+                                </button>
+                            )
+                        })}
+                        {searchQuery && searchResults.length === 0 && (
+                            <div className="p-6 text-center">
+                                <p className="font-semibold text-gray-900 dark:text-white">No settings found</p>
+                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Try another word or open a section below.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+
+    const renderSplitSettingsView = () => {
+        const visibleSections = sections.filter(section => section.id !== 'danger')
+        const effectiveSection = activeSection || 'account'
+        const isSidebarCollapsed = settingsSidebarWidth <= 120
+        return (
+            <>
+                <div className="hidden h-[calc(100vh-var(--app-settings-main-top-offset,64px))] overflow-hidden px-4 py-4 md:flex md:flex-col">
+                    <div
+                        ref={splitContainerRef}
+                        className="grid min-h-0 flex-1"
+                        style={{ gridTemplateColumns: `${settingsSidebarWidth}px 18px minmax(0, 1fr)` }}
+                    >
+                    <aside className="h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl border border-gray-200 bg-white/90 shadow-sm backdrop-blur-xl transition-[width] duration-150 dark:!border-[#333] dark:!bg-[#121212]">
+                        <div className={`sticky top-0 z-10 border-b border-gray-200 bg-white/95 py-4 backdrop-blur-xl dark:!border-[#333] dark:!bg-[#121212] ${isSidebarCollapsed ? 'px-2' : 'px-4'}`}>
+                            <div className={`flex items-center ${isSidebarCollapsed ? 'flex-col gap-2' : 'gap-3'}`}>
+                                <div className={isSidebarCollapsed ? 'hidden' : ''}>
+                                    <h1 className="text-xl font-bold text-gray-900 dark:text-white">Settings</h1>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">Compact split view</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsSettingsSearchFocused(true)}
+                                    {...getSettingsRailTooltipHandlers('Search')}
+                                    className={`${isSidebarCollapsed ? '' : 'ml-auto'} group relative grid h-10 w-10 place-items-center rounded-full text-gray-600 transition hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/10`}
+                                    aria-label="Search settings"
+                                >
+                                    <Search className="h-5 w-5" />
+                                </button>
+                            </div>
+                        </div>
+                        <div className={isSidebarCollapsed ? 'p-2' : 'p-3'}>
+                            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:!border-[#303030] dark:!bg-[#1f1f1f]">
+                                {visibleSections.map((section) => {
+                                    const Icon = section.icon
+                                    const isActive = effectiveSection === section.id
+                                    return (
+                                        <button
+                                            key={section.id}
+                                            type="button"
+                                            onClick={() => {
+                                                hideSettingsRailTooltip()
+                                                if (section.id === 'help') {
+                                                    openHelpCenter()
+                                                } else {
+                                                    openSettingsSection(section.id)
+                                                }
+                                            }}
+                                            {...getSettingsRailTooltipHandlers(section.label)}
+                                            title={isSidebarCollapsed ? section.label : undefined}
+                                            className={`group relative flex w-full items-center border-b border-gray-100 text-left transition-colors last:border-b-0 dark:border-gray-800 ${
+                                                isSidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3.5'
+                                            } ${
+                                                isActive
+                                                    ? 'bg-orange-50 text-orange-700 dark:!bg-[#3a2419] dark:!text-orange-100'
+                                                    : 'bg-transparent text-gray-900 hover:bg-gray-50 dark:!text-white dark:hover:!bg-white/5'
+                                            }`}
+                                        >
+                                            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${isActive ? 'bg-orange-100 dark:!bg-orange-500/20' : getIconBgColor(section.color)}`}>
+                                                <Icon className={`h-5 w-5 ${isActive ? 'text-orange-600 dark:text-orange-300' : getIconColor(section.color)}`} />
+                                            </div>
+                                            <div className={`min-w-0 flex-1 ${isSidebarCollapsed ? 'hidden' : ''}`}>
+                                                <p className="font-semibold truncate">{section.label}</p>
+                                                <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">{getSectionPreview(section.id)}</p>
+                                            </div>
+                                            {!isSidebarCollapsed && <ChevronRight className={`h-5 w-5 ${isActive ? 'text-orange-500' : 'text-gray-400'}`} />}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    hideSettingsRailTooltip()
+                                    openSettingsSection('danger')
+                                }}
+                                {...getSettingsRailTooltipHandlers('Danger Zone')}
+                                title={isSidebarCollapsed ? 'Danger Zone' : undefined}
+                                className={`group relative mt-3 flex w-full items-center rounded-2xl border border-red-200 bg-white text-left text-red-600 transition-colors hover:bg-red-50 dark:!border-red-900/50 dark:!bg-[#1f1f1f] dark:!text-red-300 dark:hover:!bg-red-950/20 ${
+                                    isSidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3.5'
+                                }`}
+                            >
+                                <div className="grid h-10 w-10 place-items-center rounded-xl bg-red-100 dark:bg-red-900/30">
+                                    <AlertTriangle className="h-5 w-5" />
+                                </div>
+                                <div className={`flex-1 ${isSidebarCollapsed ? 'hidden' : ''}`}>
+                                    <p className="font-semibold">Danger Zone</p>
+                                    <p className="text-xs text-red-500/75 dark:text-red-300/75">Delete account</p>
+                                </div>
+                                {!isSidebarCollapsed && <ChevronRight className="h-5 w-5" />}
+                            </button>
+                        </div>
+                    </aside>
+                    <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="Resize settings sidebar"
+                        title="Drag to resize settings list. Double-click to reset."
+                        onPointerDown={beginSettingsResize}
+                        onDoubleClick={() => setSettingsSidebarWidth(380)}
+                        className="group flex h-full cursor-col-resize items-center justify-center"
+                    >
+                        <div className="h-20 w-1.5 rounded-full bg-gray-300/80 transition-all group-hover:h-28 group-hover:bg-orange-500 dark:bg-white/20 dark:group-hover:bg-orange-400" />
+                    </div>
+                    <section className="h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl border border-orange-100 bg-white/96 shadow-xl shadow-orange-900/5 backdrop-blur-xl dark:!border-[#303030] dark:!bg-[#121212] dark:shadow-black/30">
+                        {isSettingsSearchFocused ? renderSettingsSearchPanel() : renderDetailView({ embedded: true, sectionId: effectiveSection })}
+                    </section>
+                    </div>
+                    {isSidebarCollapsed && settingsRailTooltip && (
+                        <div
+                            className="pointer-events-none fixed z-[140] -translate-y-1/2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-900 shadow-xl shadow-black/15 dark:border-white/10 dark:bg-[#202121] dark:text-white"
+                            style={{
+                                left: settingsRailTooltip.left,
+                                top: settingsRailTooltip.top
+                            }}
+                        >
+                            {settingsRailTooltip.label}
+                        </div>
+                    )}
+                </div>
+                <div className="md:hidden">
+                    {activeSection === null ? renderMainList() : renderDetailView({ sectionId: effectiveSection })}
+                </div>
+            </>
+        )
+    }
+
     // Main render
     return (
-        <div onClickCapture={handleInteractionFeedback}>
-            {activeSection === null ? renderMainList() : renderDetailView()}
+        <div>
+            {compactMode ? renderSplitSettingsView() : (activeSection === null ? renderMainList() : renderDetailView())}
+
+            {false && compactMode && isSettingsSearchFocused && (
+                <div className="fixed inset-0 z-[90] hidden bg-white/95 backdrop-blur-2xl dark:bg-black/95 md:grid md:grid-cols-[minmax(300px,42vw)_minmax(420px,1fr)]">
+                    <div className="hidden md:block" onClick={() => setIsSettingsSearchFocused(false)} />
+                    <div className="min-h-screen overflow-y-auto overscroll-contain px-4 pb-28 pt-5 md:px-8 md:pt-6">
+                        <div className="mb-6 flex items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setIsSettingsSearchFocused(false)}
+                                className="grid h-10 w-10 place-items-center rounded-full text-gray-700 transition hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/10"
+                                aria-label="Back to settings"
+                            >
+                                <ChevronLeft className="h-6 w-6" />
+                            </button>
+                            <input
+                                type="text"
+                                placeholder="Search"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onKeyDown={handleSettingsSearchEnter}
+                                autoFocus
+                                className="h-12 min-w-0 flex-1 rounded-2xl border border-transparent bg-transparent px-1 text-xl font-semibold text-gray-900 outline-none placeholder:text-gray-500 dark:text-white dark:placeholder:text-gray-400"
+                            />
+                            <Mic className="h-5 w-5 text-gray-500 dark:text-gray-300" />
+                        </div>
+
+                        {!searchQuery && (
+                            <div className="mb-5 rounded-[1.35rem] bg-gray-100 p-4 dark:bg-[#191919]">
+                                <p className="mb-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Recent searches</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {(recentSettingsSearches.length ? recentSettingsSearches : ['theme', 'offline', 'updates', 'password']).slice(0, 6).map((term) => (
+                                        <button
+                                            key={term}
+                                            type="button"
+                                            onClick={() => setSearchQuery(term)}
+                                            className="inline-flex items-center gap-2 rounded-full bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-300 dark:bg-[#303030] dark:text-gray-200 dark:hover:bg-[#3a3a3a]"
+                                        >
+                                            {term}
+                                            <X
+                                                className="h-3.5 w-3.5 opacity-60"
+                                                onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    setRecentSettingsSearches((current) => current.filter((item) => item !== term))
+                                                }}
+                                            />
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {!searchQuery && (
+                            <div className="mb-5 rounded-[1.35rem] bg-gray-100 p-4 dark:bg-[#191919]">
+                                <p className="mb-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Suggestions</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {[
+                                        ['#DarkMode', 'theme_dark'],
+                                        ['#Notifications', 'notifications'],
+                                        ['#Offline', 'offline_mode'],
+                                        ['#Updates', 'android_apk'],
+                                        ['#BirthDate', 'date_of_birth_picker']
+                                    ].map(([label, id]) => {
+                                        const item = allSearchableItems.find((candidate) => candidate.id === id)
+                                        return (
+                                            <button
+                                                key={label}
+                                                type="button"
+                                                onClick={() => {
+                                                    if (item) {
+                                                        item.action()
+                                                        setIsSettingsSearchFocused(false)
+                                                    } else {
+                                                        setSearchQuery(label.replace('#', ''))
+                                                    }
+                                                }}
+                                                className="rounded-full border border-orange-500/70 px-4 py-2 text-sm font-bold text-orange-600 transition hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-500/10"
+                                            >
+                                                {label}
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        <div>
+                            <p className="mb-3 text-sm font-semibold text-gray-500 dark:text-gray-400">
+                                Results
+                            </p>
+                            <div className="overflow-hidden rounded-[1.35rem] border border-gray-200/80 bg-white/90 shadow-2xl shadow-black/10 backdrop-blur-xl divide-y divide-gray-100 dark:border-[#282828] dark:bg-[#121212]/95 dark:divide-[#242424] dark:shadow-black/40">
+                                {(searchQuery ? searchResults : defaultSearchSuggestions).slice(0, 8).map((item) => {
+                                    const Icon = item.icon || Search
+                                    return (
+                                        <button
+                                            key={item.id}
+                                            type="button"
+                                            onClick={() => handleSettingsSearchResultSelect(item)}
+                                            className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-white/5"
+                                        >
+                                            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gray-100 dark:bg-[#242424]">
+                                                <Icon className="h-5 w-5 text-gray-500 dark:text-gray-300" />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate font-semibold text-gray-900 dark:text-white">{item.label}</p>
+                                                <p className="truncate text-xs text-gray-500 dark:text-gray-400">{getSettingPath(item)}</p>
+                                            </div>
+                                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                                        </button>
+                                    )
+                                })}
+                                {searchQuery && searchResults.length === 0 && (
+                                    <div className="p-6 text-center">
+                                        <p className="font-semibold text-gray-900 dark:text-white">No settings found</p>
+                                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Try another word or open a section below.</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {quickSettingsSearchItem && (
+                <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 p-4 backdrop-blur-md">
+                    <div className="w-full max-w-sm overflow-hidden rounded-[1.6rem] border border-gray-200 bg-white shadow-2xl shadow-black/20 dark:border-white/10 dark:bg-[#181818] dark:shadow-black/50">
+                        <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-white/10">
+                            <div className="min-w-0">
+                                <p className="text-xs font-bold uppercase tracking-wide text-orange-600 dark:text-orange-300">Quick setting</p>
+                                <h3 className="truncate text-lg font-black text-gray-900 dark:text-white">{quickSettingsSearchItem.label}</h3>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setQuickSettingsSearchItem(null)}
+                                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+                                aria-label="Close quick setting"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <div className="space-y-4 px-5 py-5">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">{getSettingPath(quickSettingsSearchItem)}</p>
+                            {quickSettingsSearchItem.description && (
+                                <p className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700 dark:bg-white/5 dark:text-gray-300">
+                                    {quickSettingsSearchItem.description}
+                                </p>
+                            )}
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setQuickSettingsSearchItem(null)}
+                                    className="min-h-[46px] rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 transition hover:bg-gray-50 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 dark:hover:bg-white/10"
+                                >
+                                    Keep searching
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={openQuickSettingsSearchItem}
+                                    className="min-h-[46px] rounded-xl bg-orange-600 px-3 text-sm font-bold text-white shadow-lg shadow-orange-600/20 transition hover:bg-orange-700"
+                                >
+                                    Open setting
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Modals */}
             {isShareModalOpen && (
@@ -1991,6 +2812,13 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         onClose={() => setIsExportModalOpen(false)}
                     />
                 </React.Suspense>
+            )}
+            {showExportCenter && (
+                <div className="fixed inset-0 z-[95] overflow-y-auto overscroll-contain bg-white dark:bg-[#121212]">
+                    <React.Suspense fallback={<LazyPanelFallback />}>
+                        <ExportCenterPage onBack={() => setShowExportCenter(false)} />
+                    </React.Suspense>
+                </div>
             )}
             {isPhotoEditorOpen && (
                 <React.Suspense fallback={null}>

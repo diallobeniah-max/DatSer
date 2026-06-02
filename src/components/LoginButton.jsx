@@ -20,7 +20,9 @@ import {
   TrendingUp,
   Calendar,
   Sparkles,
-  Copy
+  Copy,
+  Wifi,
+  WifiOff
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
@@ -28,14 +30,33 @@ import { useApp } from '../context/AppContext'
 import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 
-const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboardTab, currentView, dashboardTab }) => {
+const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboardTab, currentView, dashboardTab, compactStatus = null }) => {
   const { user, loading, signInWithGoogle, signOut, isAuthenticated, preferences } = useAuth()
   const { isDarkMode, toggleTheme } = useTheme()
   const { members, currentTable, filteredMembers, attendanceData } = useApp()
   const { selection } = useHapticFeedback()
   const [showDropdown, setShowDropdown] = useState(false)
+  const [shouldRender, setShouldRender] = useState(false)
+  const [isTransitioning, setIsTransitioning] = useState(false)
   const [isSigningIn, setIsSigningIn] = useState(false)
   const dropdownRef = useRef(null)
+
+  // Handle drawer transition states
+  useEffect(() => {
+    let timer
+    if (showDropdown) {
+      setShouldRender(true)
+      timer = setTimeout(() => {
+        setIsTransitioning(true)
+      }, 10)
+    } else {
+      setIsTransitioning(false)
+      timer = setTimeout(() => {
+        setShouldRender(false)
+      }, 300)
+    }
+    return () => clearTimeout(timer)
+  }, [showDropdown])
 
   // Count edited members
   const editedCount = React.useMemo(() => {
@@ -164,18 +185,28 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
       </button>
 
       {/* Professional Profile Dropdown */}
-      {showDropdown && (
+      {shouldRender && (
         <>
           {/* Backdrop */}
           <div
-            className="fixed inset-0 z-[9998]"
+            className={`fixed inset-0 z-[9998] drawer-backdrop-transition ${
+              isTransitioning
+                ? 'bg-black/40 backdrop-blur-sm'
+                : 'bg-transparent backdrop-blur-none pointer-events-none'
+            }`}
             onClick={() => setShowDropdown(false)}
           />
 
-          <div className="fixed inset-0 md:absolute md:inset-auto md:right-0 md:mt-2 md:w-72 z-[9999] md:rounded-xl border-0 md:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-xl overflow-hidden animate-scale-in flex flex-col">
+          <div
+            className={`fixed inset-y-0 right-0 w-[85vw] sm:w-80 md:w-[360px] z-[9999] border-y-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl overflow-hidden drawer-panel-transition flex flex-col ${
+              isTransitioning
+                ? 'translate-x-0 opacity-100'
+                : 'translate-x-full opacity-0'
+            }`}
+          >
 
-            {/* Mobile Header with Close Button */}
-            <div className="mobile-panel-header-safe md:hidden flex items-center justify-between px-4 pb-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+            {/* Header with Close Button */}
+            <div className="mobile-panel-header-safe flex items-center justify-between px-4 pb-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Profile</h2>
               <button
                 onClick={() => { selection(); setShowDropdown(false) }}
@@ -212,6 +243,60 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                 </div>
               </div>
             </div>
+
+            {compactStatus && (
+              <div className="border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+                <div className="mb-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Dashboard Snapshot</p>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Month, total, and connection live here when the top status bar is off.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selection()
+                      setShowDropdown(false)
+                      compactStatus.onOpenMonthPicker?.()
+                    }}
+                    className="rounded-2xl border border-orange-200 bg-orange-50/80 px-3 py-2 text-left text-sm font-bold text-orange-700 transition hover:bg-orange-100 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200"
+                  >
+                    <span className="block text-[10px] font-black uppercase text-orange-500/80 dark:text-orange-300/80">Month</span>
+                    <span className="block truncate">{compactStatus.monthLabel}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selection()
+                      setShowDropdown(false)
+                      compactStatus.onOpenConnectionMenu?.()
+                    }}
+                    className={`rounded-2xl border px-3 py-2 text-left text-sm font-bold transition hover:brightness-105 ${compactStatus.connectionToneClass}`}
+                  >
+                    <span className="mb-1 flex items-center gap-1 text-[10px] font-black uppercase opacity-80">
+                      {compactStatus.isSupabaseConfigured
+                        ? compactStatus.isConnectionLive
+                          ? <Wifi className="h-3.5 w-3.5" />
+                          : <WifiOff className="h-3.5 w-3.5" />
+                        : <WifiOff className="h-3.5 w-3.5" />}
+                      Connection
+                    </span>
+                    <span className="block truncate">{compactStatus.connectionLabel}</span>
+                  </button>
+                  {compactStatus.dateLabel && (
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100">
+                      <span className="block text-[10px] font-black uppercase text-gray-500 dark:text-gray-400">Date</span>
+                      {compactStatus.dateLabel}
+                    </div>
+                  )}
+                  {compactStatus.foundCount !== null && (
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100">
+                      <span className="block text-[10px] font-black uppercase text-gray-500 dark:text-gray-400">Total</span>
+                      {compactStatus.foundCount} found
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Navigation Section */}
             <div className="flex-1 px-3 md:px-2 py-3 md:py-2 border-b border-gray-200 dark:border-gray-700 overflow-y-auto">

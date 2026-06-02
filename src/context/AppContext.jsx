@@ -4,6 +4,7 @@ import { toast } from 'react-toastify'
 import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabaseWrite'
 import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
+import { buildMemberIndexCodeMap, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import {
   clearAllOfflineData,
@@ -53,6 +54,12 @@ const FALLBACK_MONTHLY_TABLES = [DEFAULT_TABLE]
 const DEFAULT_COLLAB_TABLE = 'January_2026'
 const COLLAB_FALLBACK_TABLES = [DEFAULT_COLLAB_TABLE]
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+const NOTIFICATION_DURATION_STORAGE_KEY = 'datser_notification_duration_ms'
+const NOTIFICATION_DURATION_MIGRATION_KEY = 'datser_notification_duration_readable_default_v2'
+const DEFAULT_NOTIFICATION_DURATION_MS = 6500
+const SEARCH_SUGGESTION_VIEW_STORAGE_KEY = 'datser_search_suggestion_view'
+const SEARCH_SUGGESTION_VIEW_MODES = ['short', 'full']
+const DEFAULT_SEARCH_SUGGESTION_VIEW = 'short'
 
 
 const shouldLogAppContext = import.meta.env.MODE !== 'test'
@@ -410,10 +417,32 @@ export const AppProvider = ({ children }) => {
   const [isSyncingOffline, setIsSyncingOffline] = useState(false)
   const [offlineMode, setOfflineModeState] = useState(getStoredOfflineMode)
   const [offlineSaveNoticeThreshold, setOfflineSaveNoticeThresholdState] = useState(getStoredOfflineSaveNoticeThreshold)
+  const [notificationDurationMs, setNotificationDurationMsState] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_NOTIFICATION_DURATION_MS
+    const stored = Number(localStorage.getItem(NOTIFICATION_DURATION_STORAGE_KEY))
+    const needsReadableDefault = localStorage.getItem(NOTIFICATION_DURATION_MIGRATION_KEY) !== 'true'
+    if (needsReadableDefault && (!Number.isFinite(stored) || stored < DEFAULT_NOTIFICATION_DURATION_MS)) {
+      localStorage.setItem(NOTIFICATION_DURATION_STORAGE_KEY, String(DEFAULT_NOTIFICATION_DURATION_MS))
+      localStorage.setItem(NOTIFICATION_DURATION_MIGRATION_KEY, 'true')
+      return DEFAULT_NOTIFICATION_DURATION_MS
+    }
+    if (needsReadableDefault) {
+      localStorage.setItem(NOTIFICATION_DURATION_MIGRATION_KEY, 'true')
+    }
+    return Number.isFinite(stored)
+      ? Math.min(20000, Math.max(1800, Math.round(stored)))
+      : DEFAULT_NOTIFICATION_DURATION_MS
+  })
+  const [searchSuggestionView, setSearchSuggestionViewState] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_SEARCH_SUGGESTION_VIEW
+    const stored = localStorage.getItem(SEARCH_SUGGESTION_VIEW_STORAGE_KEY)
+    return SEARCH_SUGGESTION_VIEW_MODES.includes(stored) ? stored : DEFAULT_SEARCH_SUGGESTION_VIEW
+  })
   const autoSyncTimerRef = useRef(null)
   const autoSyncSignatureRef = useRef({ signature: '', at: 0 })
   const autoSnapshotTimerRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
+  const applyOfflineSnapshotRef = useRef(null)
 
   const setOfflineMode = useCallback((mode) => {
     const nextMode = OFFLINE_MODES.includes(mode) ? mode : 'auto'
@@ -421,12 +450,41 @@ export const AppProvider = ({ children }) => {
     if (typeof window !== 'undefined') {
       localStorage.setItem(OFFLINE_MODE_STORAGE_KEY, nextMode)
     }
+    window.setTimeout(async () => {
+      try {
+        const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        const pendingChanges = await getPendingOfflineChanges().catch(() => [])
+        const snapshot = snapshotRecord?.snapshot
+        setOfflineCacheMeta(snapshotRecord ? {
+          cached_at: snapshotRecord.cached_at,
+          member_count: snapshot?.members?.length || 0,
+          table_count: snapshot?.monthlyTables?.length || 0,
+          attendance_date_count: snapshot?.attendanceData ? Object.keys(snapshot.attendanceData).length : 0,
+          authenticated_user_id: snapshot?.authenticated_user_id || null,
+          data_owner_id: snapshot?.data_owner_id || null,
+          workspace: snapshot?.workspace || null
+        } : null)
+        setOfflinePendingChanges(pendingChanges)
+        setPendingSyncCount(pendingChanges.length)
+        if (nextMode === 'offline' && snapshotRecord) {
+          applyOfflineSnapshotRef.current?.(snapshotRecord)
+          setOfflineStatusMessage('Offline Mode - using saved local data.')
+        } else if (nextMode === 'offline') {
+          setOfflineStatusMessage('Download offline data before using forced offline mode.')
+        } else if (nextMode === 'auto' && !isBrowserOnline() && snapshotRecord) {
+          applyOfflineSnapshotRef.current?.(snapshotRecord)
+          setOfflineStatusMessage('Offline Mode - using saved local data.')
+        } else if (nextMode === 'online') {
+          setOfflineStatusMessage('')
+        }
+      } catch (error) {
+        console.warn('Unable to apply offline mode change:', error)
+      }
+    }, 0)
     if (nextMode === 'online' && !isBrowserOnline()) {
       toast.warn('Online mode selected, but internet is unavailable.')
     } else if (nextMode === 'offline') {
       setOfflineStatusMessage(isBrowserOnline() ? '' : 'Offline Mode - using saved local data.')
-    } else {
-      toast.info('Offline mode set to Auto.')
     }
   }, [])
 
@@ -438,6 +496,25 @@ export const AppProvider = ({ children }) => {
     setOfflineSaveNoticeThresholdState(nextValue)
     if (typeof window !== 'undefined') {
       localStorage.setItem(OFFLINE_SAVE_NOTICE_THRESHOLD_KEY, String(nextValue))
+    }
+  }, [])
+
+  const setNotificationDurationMs = useCallback((value) => {
+    const numericValue = Number(value)
+    const nextValue = Number.isFinite(numericValue)
+      ? Math.min(20000, Math.max(1800, Math.round(numericValue)))
+      : DEFAULT_NOTIFICATION_DURATION_MS
+    setNotificationDurationMsState(nextValue)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(NOTIFICATION_DURATION_STORAGE_KEY, String(nextValue))
+    }
+  }, [])
+
+  const setSearchSuggestionView = useCallback((value) => {
+    const nextValue = SEARCH_SUGGESTION_VIEW_MODES.includes(value) ? value : DEFAULT_SEARCH_SUGGESTION_VIEW
+    setSearchSuggestionViewState(nextValue)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SEARCH_SUGGESTION_VIEW_STORAGE_KEY, nextValue)
     }
   }, [])
 
@@ -508,6 +585,10 @@ export const AppProvider = ({ children }) => {
 
     return true
   }, [user?.id])
+
+  useEffect(() => {
+    applyOfflineSnapshotRef.current = applyOfflineSnapshot
+  }, [applyOfflineSnapshot])
 
   useEffect(() => {
     refreshOfflineStatus()
@@ -3691,12 +3772,18 @@ export const AppProvider = ({ children }) => {
       return members
     }
 
+    const memberIndexCodeMap = buildMemberIndexCodeMap(members)
+    const search = searchTerm.toLowerCase().trim()
+    const codeMatches = members.filter(member => memberMatchesIndexCode(member, memberIndexCodeMap, searchTerm))
+    if (codeMatches.length > 0) {
+      return codeMatches.slice(0, 20)
+    }
+
     if (serverSearchResults) {
       return serverSearchResults.slice(0, 20)
     }
 
     // Fast client-side search
-    const search = searchTerm.toLowerCase().trim()
     const tokens = search.split(/\s+/).filter(Boolean)
     const filtered = members.filter(member => {
       const fullName = (
@@ -5320,6 +5407,10 @@ export const AppProvider = ({ children }) => {
     setOfflineMode,
     offlineSaveNoticeThreshold,
     setOfflineSaveNoticeThreshold,
+    notificationDurationMs,
+    setNotificationDurationMs,
+    searchSuggestionView,
+    setSearchSuggestionView,
     shouldUseOfflineData,
     isOfflineModeActive,
     offlineModeStatus,
@@ -5369,7 +5460,7 @@ export const AppProvider = ({ children }) => {
     initializeAttendanceDates, getSundaysInMonth, toggleBadgeFilter,
     focusDateSelector, validateMemberData, getPastSundays, getMissingAttendance,
     autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, isDeveloperBypass,
-    isOnline, offlineMode, setOfflineMode, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, shouldUseOfflineData, isOfflineModeActive, offlineModeStatus,
+    isOnline, offlineMode, setOfflineMode, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, shouldUseOfflineData, isOfflineModeActive, offlineModeStatus,
     offlineCacheMeta, pendingSyncCount, offlinePendingChanges, offlineStatusMessage, isPreparingOffline, isSyncingOffline,
     prepareOfflineData, clearOfflineCacheData, syncOfflineChanges, refreshOfflineStatus,
     hasAccess, isCollaborator, isAdminCollaborator, dataOwnerId, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil,

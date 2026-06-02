@@ -1,9 +1,55 @@
 import { useCallback, useRef } from 'react'
 import { useWebHaptics } from 'web-haptics/react'
 
+const getStoredBoolean = (key, fallback = true) => {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const value = window.localStorage.getItem(key)
+    if (value === null) return fallback
+    return value !== 'false'
+  } catch {
+    return fallback
+  }
+}
+
+const getStoredNumber = (key, fallback = 1) => {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const value = Number(window.localStorage.getItem(key))
+    return Number.isFinite(value) ? value : fallback
+  } catch {
+    return fallback
+  }
+}
+
+let lastGlobalTapAt = 0
+
 const useHapticFeedback = () => {
   const { trigger } = useWebHaptics()
   const audioContextRef = useRef(null)
+
+  const isMotionAndSoundEnabled = useCallback(() => {
+    if (typeof document !== 'undefined' && document.documentElement.classList.contains('animations-disabled')) {
+      return false
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        return window.localStorage.getItem('datser_motion_and_sounds_enabled') !== 'false'
+      } catch {
+        return true
+      }
+    }
+    return true
+  }, [])
+
+  const isHapticEnabled = useCallback(() => (
+    getStoredBoolean('datser_haptic_feedback_enabled', true)
+  ), [])
+
+  const getHapticStrength = useCallback(() => {
+    const value = getStoredNumber('datser_haptic_feedback_strength', 1)
+    return Math.min(2, Math.max(0.35, value))
+  }, [])
 
   const createAudioContext = useCallback(() => {
     if (typeof window === 'undefined') return null
@@ -23,6 +69,7 @@ const useHapticFeedback = () => {
         const now = context.currentTime
         const oscillator = context.createOscillator()
         const gainNode = context.createGain()
+        const strength = getHapticStrength()
         oscillator.type = tone === 'error' ? 'triangle' : 'sine'
         if (tone === 'success') {
           oscillator.frequency.setValueAtTime(760, now)
@@ -34,7 +81,7 @@ const useHapticFeedback = () => {
           oscillator.frequency.setValueAtTime(640, now)
         }
         gainNode.gain.setValueAtTime(0.0001, now)
-        gainNode.gain.exponentialRampToValueAtTime(tone === 'error' ? 0.03 : 0.024, now + 0.01)
+        gainNode.gain.exponentialRampToValueAtTime((tone === 'error' ? 0.03 : 0.024) * Math.min(strength, 1.35), now + 0.01)
         gainNode.gain.exponentialRampToValueAtTime(0.0001, now + (tone === 'success' ? 0.1 : tone === 'error' ? 0.11 : 0.06))
         oscillator.connect(gainNode)
         gainNode.connect(context.destination)
@@ -47,48 +94,34 @@ const useHapticFeedback = () => {
       }
       playTone()
     } catch { }
-  }, [createAudioContext])
-
-  const shouldUseSoundFallback = useCallback(() => {
-    const hasFinePointer = typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(pointer: fine)').matches
-    const hasHoverPointer = typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(hover: hover)').matches
-    const hasNoTouchPoints = typeof navigator !== 'undefined' &&
-      typeof navigator.maxTouchPoints === 'number' &&
-      navigator.maxTouchPoints === 0
-    if (hasFinePointer || hasHoverPointer || hasNoTouchPoints) {
-      return true
-    }
-    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') {
-      return true
-    }
-    try {
-      return navigator.vibrate(0) === false
-    } catch {
-      return true
-    }
-  }, [])
+  }, [createAudioContext, getHapticStrength])
 
   const tap = useCallback((pattern = 'nudge', tone = 'tap') => {
-    const useSoundFallback = shouldUseSoundFallback()
+    if (!isMotionAndSoundEnabled()) return
+    const now = Date.now()
+    if (now - lastGlobalTapAt < 80) return
+    lastGlobalTapAt = now
+    const strength = getHapticStrength()
+    const hapticEnabled = isHapticEnabled()
+    const vibrationDuration = Math.round((tone === 'error' ? 38 : tone === 'success' ? 32 : 18) * strength)
     try {
-      if (pattern === null) {
-        trigger()
-      } else if (pattern) {
-        trigger(pattern)
-      } else {
-        trigger()
+      if (hapticEnabled) {
+        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+          navigator.vibrate(vibrationDuration)
+        }
+        if (pattern === null) {
+          trigger()
+        } else if (pattern) {
+          trigger(pattern)
+        } else {
+          trigger()
+        }
       }
     } catch {
     } finally {
-      if (useSoundFallback) {
-        playClick(tone)
-      }
+      playClick(tone)
     }
-  }, [playClick, shouldUseSoundFallback, trigger])
+  }, [getHapticStrength, isHapticEnabled, isMotionAndSoundEnabled, playClick, trigger])
 
   const selection = useCallback(() => {
     tap('nudge', 'tap')

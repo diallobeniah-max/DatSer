@@ -218,6 +218,7 @@
 
   /* Use dynamic viewport height when available */
   :root {
+    --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
     --app-vh: 100vh;
     --app-safe-top: env(safe-area-inset-top, 0px);
     --app-safe-right: env(safe-area-inset-right, 0px);
@@ -242,8 +243,8 @@
   /* Professional app text sizing */
   html {
     font-size: var(--font-size-base);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    font-family: var(--font-family);
+    font-optical-sizing: auto;
   }
 
   @media (max-width: 640px) {
@@ -266,9 +267,7 @@
   }
 
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-      sans-serif;
+    font-family: var(--font-family);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     @apply text-gray-900 dark:text-gray-100 transition-colors duration-200;
@@ -285,6 +284,21 @@
     background: linear-gradient(135deg, #c2410c 0%, #111111 50%, #000000 100%);
     background-size: 260% 260%;
     animation: appBackgroundFlow 18s ease-in-out infinite;
+  }
+
+  html.background-static body,
+  body.background-static {
+    background: #fff4e6 !important;
+    background-size: auto !important;
+    animation: none !important;
+  }
+
+  html.dark.background-static body,
+  html.dark body.background-static,
+  .dark body.background-static {
+    background: #16110f !important;
+    background-size: auto !important;
+    animation: none !important;
   }
 
   /* Ensure proper dark mode colors throughout */
@@ -544,6 +558,47 @@
   scroll-behavior: auto !important;
 }
 
+/* Compact UI mode: tighter spacing without changing the information architecture. */
+.compact-ui .app-shell .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 1rem;
+}
+
+.compact-ui .app-shell .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.75rem;
+}
+
+.compact-ui .app-shell .rounded-2xl {
+  border-radius: 0.875rem;
+}
+
+.compact-ui .app-shell .p-5 {
+  padding: 1rem;
+}
+
+.compact-ui .app-shell .p-4 {
+  padding: 0.875rem;
+}
+
+.compact-ui .app-shell .py-4 {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.compact-ui .app-shell .gap-4 {
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .compact-ui .app-shell .text-lg {
+    font-size: 1rem;
+    line-height: 1.35;
+  }
+
+  .compact-ui .app-shell .min-h-\[48px\] {
+    min-height: 42px;
+  }
+}
+
 /* Enhanced reduced motion */
 .reduced-motion *,
 .reduced-motion *::before,
@@ -653,6 +708,7 @@
 .performance-mode .animate-fade-in-up,
 .performance-mode .animate-scale-in,
 .performance-mode .animate-slide-up,
+.performance-mode .animate-slide-in-right,
 .performance-mode .page-enter,
 .performance-mode .page-exit,
 .performance-mode .filter-enter,
@@ -1636,6 +1692,44 @@ details[open] summary~* {
   overscroll-behavior: contain;
 }
 
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
+body:has(.mobile-bottom-sheet),
+body:has(.modal-overlay),
+body:has([aria-modal="true"]),
+body:has([data-testid="add-member-modal"]),
+body:has([data-testid="edit-member-modal"]),
+body:has([data-testid="missing-data-modal"]) {
+  overflow: hidden;
+  touch-action: none;
+}
+
+body:has(.mobile-bottom-sheet) #root,
+body:has(.modal-overlay) #root,
+body:has([aria-modal="true"]) #root,
+body:has([data-testid="add-member-modal"]) #root,
+body:has([data-testid="edit-member-modal"]) #root,
+body:has([data-testid="missing-data-modal"]) #root {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.fixed.inset-0 {
+  overscroll-behavior: contain;
+}
+
+.fixed.inset-0 .overflow-y-auto,
+.fixed.inset-0 [class*="overflow-y-auto"],
+.mobile-bottom-sheet .overflow-y-auto,
+.mobile-bottom-sheet [class*="overflow-y-auto"] {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
 /* Scale-in for modals */
 @keyframes scaleIn {
   from {
@@ -1757,37 +1851,42 @@ details[open] summary~* {
 }
 
 .date-picker-birth {
-  color: #f8fafc !important;
+  color: #111827 !important;
   border-color: rgba(249, 115, 22, 0.35) !important;
+  box-shadow: 0 30px 76px rgba(15, 23, 42, 0.16), 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+}
+
+.dark .date-picker-birth {
+  color: #f8fafc !important;
   box-shadow: 0 30px 76px rgba(0, 0, 0, 0.62), 0 12px 28px rgba(0, 0, 0, 0.42) !important;
 }
 
 .dark .date-picker-birth,
-.date-picker-birth .dark\:bg-\[\#1c1c1e\],
-.date-picker-birth .dark\:bg-\[\#151515\],
-.date-picker-birth .dark\:bg-\[\#1a1a1c\] {
+.dark .date-picker-birth .dark\:bg-\[\#1c1c1e\],
+.dark .date-picker-birth .dark\:bg-\[\#151515\],
+.dark .date-picker-birth .dark\:bg-\[\#1a1a1c\] {
   background-color: #2F3030 !important;
 }
 
-.date-picker-birth .dark\:bg-gray-900\/80,
-.date-picker-birth .dark\:bg-gray-800,
-.date-picker-birth .dark\:bg-gray-800\/50 {
+.dark .date-picker-birth .dark\:bg-gray-900\/80,
+.dark .date-picker-birth .dark\:bg-gray-800,
+.dark .date-picker-birth .dark\:bg-gray-800\/50 {
   background-color: #252626 !important;
 }
 
-.date-picker-birth .dark\:border-gray-800\/60,
-.date-picker-birth .dark\:border-gray-800,
-.date-picker-birth .dark\:border-gray-700\/60 {
+.dark .date-picker-birth .dark\:border-gray-800\/60,
+.dark .date-picker-birth .dark\:border-gray-800,
+.dark .date-picker-birth .dark\:border-gray-700\/60 {
   border-color: rgba(255, 255, 255, 0.12) !important;
 }
 
-.date-picker-birth .dark\:text-gray-100,
-.date-picker-birth .dark\:text-gray-300 {
+.dark .date-picker-birth .dark\:text-gray-100,
+.dark .date-picker-birth .dark\:text-gray-300 {
   color: #f4f6f6 !important;
 }
 
-.date-picker-birth .dark\:text-gray-400,
-.date-picker-birth .dark\:text-gray-500 {
+.dark .date-picker-birth .dark\:text-gray-400,
+.dark .date-picker-birth .dark\:text-gray-500 {
   color: #c5cbcb !important;
 }
 
@@ -1809,7 +1908,7 @@ details[open] summary~* {
 
 .date-picker-birth .bg-primary-50,
 .date-picker-birth .hover\:bg-primary-50\/70:hover,
-.date-picker-birth .dark\:bg-primary-500\/10 {
+.dark .date-picker-birth .dark\:bg-primary-500\/10 {
   background-color: rgba(249, 115, 22, 0.16) !important;
 }
 

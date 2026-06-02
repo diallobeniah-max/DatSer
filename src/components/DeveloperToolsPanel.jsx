@@ -860,7 +860,7 @@ const DeveloperToolsPanel = ({
                         </div>
                     </div>
 
-                    <div className="mt-4 rounded-xl border border-orange-200 dark:border-orange-900/50 bg-orange-50/60 dark:bg-orange-950/10 p-4">
+                    <div className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-4">
                         <div className="flex flex-col lg:flex-row lg:items-start gap-4">
                             <div className="flex-1">
                                 <h5 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
@@ -874,7 +874,7 @@ const DeveloperToolsPanel = ({
                             <button
                                 type="button"
                                 onClick={() => { selection(); setIsNotificationQaOpen(true) }}
-                                className="min-h-10 rounded-xl border border-orange-200 bg-white px-4 text-sm font-semibold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 dark:border-orange-800 dark:bg-gray-900 dark:text-orange-300 dark:hover:bg-orange-950/30"
+                                className="px-3 py-1.5 rounded-lg border border-orange-500 bg-orange-500/10 text-orange-700 dark:text-orange-300 text-xs font-semibold transition-colors hover:bg-orange-500/20 shadow-sm"
                             >
                                 Open Preview
                             </button>
@@ -889,7 +889,7 @@ const DeveloperToolsPanel = ({
                                     max="30"
                                     value={notificationQaCount}
                                     onChange={(event) => setNotificationQaCount(Math.max(1, Math.min(30, Number(event.target.value) || 1)))}
-                                    className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                                    className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-900 outline-none focus:ring-2 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                                 />
                             </label>
 
@@ -904,7 +904,7 @@ const DeveloperToolsPanel = ({
                                             key={value}
                                             type="button"
                                             onClick={() => setNotificationQaPlayback(value)}
-                                            className={`h-10 rounded-xl border px-3 text-sm font-semibold transition-colors ${notificationQaPlayback === value ? 'border-orange-500 bg-orange-100 text-orange-800 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200' : 'border-gray-200 bg-white text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300'}`}
+                                            className={`h-9 rounded-lg border px-3 text-sm font-semibold transition-colors ${notificationQaPlayback === value ? 'border-orange-500 bg-orange-500 text-white' : 'border-gray-200 bg-white text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'}`}
                                         >
                                             {label}
                                         </button>
@@ -924,7 +924,7 @@ const DeveloperToolsPanel = ({
                                             key={value}
                                             type="button"
                                             onClick={() => setNotificationQaDevice(value)}
-                                            className={`h-10 rounded-xl border px-2 text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1.5 ${notificationQaDevice === value ? 'border-orange-500 bg-orange-100 text-orange-800 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200' : 'border-gray-200 bg-white text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300'}`}
+                                            className={`h-9 rounded-lg border px-2 text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1.5 ${notificationQaDevice === value ? 'border-orange-500 bg-orange-500 text-white' : 'border-gray-200 bg-white text-gray-650 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'}`}
                                         >
                                             <Icon className="h-3.5 w-3.5" />
                                             {label}
@@ -935,16 +935,16 @@ const DeveloperToolsPanel = ({
                         </div>
 
                         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
-                            <button type="button" onClick={() => runNotificationQaPreview('sync')} className="min-h-10 rounded-xl bg-blue-600 px-3 text-sm font-bold text-white hover:bg-blue-700">Preview Syncing</button>
-                            <button type="button" onClick={() => runNotificationQaPreview('offline')} className="min-h-10 rounded-xl bg-orange-600 px-3 text-sm font-bold text-white hover:bg-orange-700">Preview Offline</button>
-                            <button type="button" onClick={() => runNotificationQaPreview('general')} className="min-h-10 rounded-xl bg-gray-800 px-3 text-sm font-bold text-white hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600">Preview General</button>
-                            <button type="button" onClick={() => runNotificationQaPreview('all')} className="min-h-10 rounded-xl bg-fuchsia-600 px-3 text-sm font-bold text-white hover:bg-fuchsia-700">Preview All</button>
+                            <button type="button" onClick={() => runNotificationQaPreview('sync')} className="h-9 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700">Preview Syncing</button>
+                            <button type="button" onClick={() => runNotificationQaPreview('offline')} className="h-9 rounded-lg bg-orange-600 px-3 text-xs font-bold text-white hover:bg-orange-700">Preview Offline</button>
+                            <button type="button" onClick={() => runNotificationQaPreview('general')} className="h-9 rounded-lg bg-gray-800 px-3 text-xs font-bold text-white hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600">Preview General</button>
+                            <button type="button" onClick={() => runNotificationQaPreview('all')} className="h-9 rounded-lg bg-fuchsia-600 px-3 text-xs font-bold text-white hover:bg-fuchsia-700">Preview All</button>
                         </div>
                         <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
-                            <button type="button" onClick={() => runLiveNotificationQa('sync')} className="min-h-10 rounded-xl border border-blue-200 bg-white px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-900 dark:bg-gray-900 dark:text-blue-300">Live Sync Toast</button>
-                            <button type="button" onClick={() => runLiveNotificationQa('offline')} className="min-h-10 rounded-xl border border-orange-200 bg-white px-3 text-sm font-semibold text-orange-700 hover:bg-orange-50 dark:border-orange-900 dark:bg-gray-900 dark:text-orange-300">Live Offline Toast</button>
-                            <button type="button" onClick={() => runLiveNotificationQa('general')} className="min-h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">Live General Toast</button>
-                            <button type="button" onClick={() => runLiveNotificationQa('all')} className="min-h-10 rounded-xl border border-fuchsia-200 bg-white px-3 text-sm font-semibold text-fuchsia-700 hover:bg-fuchsia-50 dark:border-fuchsia-900 dark:bg-gray-900 dark:text-fuchsia-300">Live All Toasts</button>
+                            <button type="button" onClick={() => runLiveNotificationQa('sync')} className="h-9 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-900 dark:bg-gray-800 dark:text-blue-300">Live Sync Toast</button>
+                            <button type="button" onClick={() => runLiveNotificationQa('offline')} className="h-9 rounded-lg border border-orange-200 bg-white px-3 text-xs font-semibold text-orange-700 hover:bg-orange-50 dark:border-orange-900 dark:bg-gray-800 dark:text-orange-300">Live Offline Toast</button>
+                            <button type="button" onClick={() => runLiveNotificationQa('general')} className="h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">Live General Toast</button>
+                            <button type="button" onClick={() => runLiveNotificationQa('all')} className="h-9 rounded-lg border border-fuchsia-200 bg-white px-3 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-50 dark:border-fuchsia-900 dark:bg-gray-800 dark:text-fuchsia-300">Live All Toasts</button>
                         </div>
                     </div>
 

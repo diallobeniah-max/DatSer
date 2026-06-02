@@ -52,12 +52,12 @@ const useBottomSheetDrag = ({ onDismiss, enabled = true, dismissDistance = DISMI
 
     if (shouldDismiss) {
       if (delegateDismissAnimation) {
-        setDragY(0)
-        onDismiss?.({ viaDrag: true })
+        setDragY(typeof window !== 'undefined' ? window.innerHeight : 900)
+        window.setTimeout(() => onDismiss?.({ viaDrag: true }), 260)
         return
       }
       setDragY(window.innerHeight)
-      window.setTimeout(() => onDismiss?.({ viaDrag: true }), 140)
+      window.setTimeout(() => onDismiss?.({ viaDrag: true }), 260)
       return
     }
 
@@ -193,7 +193,7 @@ const useBottomSheetDrag = ({ onDismiss, enabled = true, dismissDistance = DISMI
     },
     sheetStyle: {
       ...(dragY !== 0 ? { transform: `translateY(${dragY}px)` } : {}),
-      transition: isDragging ? 'none' : 'transform 300ms cubic-bezier(0.32, 0.72, 0, 1)',
+      transition: isDragging ? 'none' : 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1)',
       willChange: 'transform'
     },
     isDragging,

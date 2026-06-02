@@ -10,6 +10,8 @@ import LoginPage from './components/LoginPage'
 import TutorialPromptBar from './components/TutorialPromptBar'
 import AppUpdatePrompt from './components/AppUpdatePrompt'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
+import useHapticFeedback from './hooks/useHapticFeedback'
+import { Check, Minimize2, X } from 'lucide-react'
 
 // Lazy-loaded components - loaded on demand for faster initial load
 const MemberModal = lazy(() => import('./components/MemberModal'))
@@ -134,7 +136,8 @@ const CustomCloseButton = ({ closeToast }) => {
 
 function AppContent({ isMobile }) {
 
-  const { preferences, signOut } = useAuth()
+  const { preferences, signOut, updatePreference } = useAuth()
+  const { selection } = useHapticFeedback()
   const {
     members,
     loading: appLoading,
@@ -179,6 +182,7 @@ function AppContent({ isMobile }) {
   
   // Tutorial prompt bar instead of auto-popup
   const [showTutorialPrompt, setShowTutorialPrompt] = useState(false)
+  const [showCompactSuggestion, setShowCompactSuggestion] = useState(false)
 
   // Handle navigation from onboarding wizard
   const handleOnboardingNavigate = (view, options) => {
@@ -189,6 +193,12 @@ function AppContent({ isMobile }) {
   }
 
   const isExecutive = preferences?.role === 'executive' || preferences?.is_executive === true
+  const backgroundAnimationEnabled = preferences?.background_animation_enabled !== false
+  const motionAndSoundsEnabled = preferences?.motion_and_sounds_enabled !== false
+  const compactUiEnabled = preferences?.compact_ui_enabled === true
+  const smartCompactPromptEnabled = preferences?.smart_compact_prompt_enabled !== false
+  const hapticFeedbackEnabled = preferences?.haptic_feedback_enabled !== false
+  const hapticFeedbackStrength = preferences?.haptic_feedback_strength || 1
   const adminTargetLabel = adminSyncNotice?.targetDate
     ? new Date(adminSyncNotice.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : (adminSyncNotice?.targetTable ? adminSyncNotice.targetTable.replace('_', ' ') : null)
@@ -241,6 +251,57 @@ function AppContent({ isMobile }) {
       document.removeEventListener('scroll', clearTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const root = document.documentElement
+    const body = document.body
+    const classTargets = [root, body]
+    classTargets.forEach((target) => {
+      target.classList.toggle('background-static', !backgroundAnimationEnabled)
+      target.classList.toggle('animations-disabled', !motionAndSoundsEnabled)
+      target.classList.toggle('compact-ui', compactUiEnabled)
+    })
+    try {
+      window.localStorage.setItem('datser_motion_and_sounds_enabled', String(motionAndSoundsEnabled))
+      window.localStorage.setItem('datser_haptic_feedback_enabled', String(hapticFeedbackEnabled))
+      window.localStorage.setItem('datser_haptic_feedback_strength', String(hapticFeedbackStrength))
+    } catch { }
+    return () => {
+      classTargets.forEach((target) => {
+        target.classList.remove('background-static')
+        target.classList.remove('animations-disabled')
+        target.classList.remove('compact-ui')
+      })
+    }
+  }, [backgroundAnimationEnabled, compactUiEnabled, hapticFeedbackEnabled, hapticFeedbackStrength, motionAndSoundsEnabled])
+
+  useEffect(() => {
+    if (!smartCompactPromptEnabled || compactUiEnabled || typeof window === 'undefined') return
+    if (window.localStorage.getItem('datser_compact_suggestion_dismissed') === 'true') return
+
+    const checkCrowdedScreen = () => {
+      const rootFontSize = parseFloat(window.getComputedStyle(document.documentElement).fontSize || '16')
+      const width = window.innerWidth || 0
+      const height = window.innerHeight || 0
+      const visualScale = window.visualViewport?.scale || 1
+      const crowded = width <= 390 || height <= 680 || rootFontSize >= 18 || visualScale > 1.08
+      if (crowded) window.setTimeout(() => setShowCompactSuggestion(true), 900)
+    }
+
+    checkCrowdedScreen()
+    window.addEventListener('resize', checkCrowdedScreen)
+    return () => window.removeEventListener('resize', checkCrowdedScreen)
+  }, [compactUiEnabled, smartCompactPromptEnabled])
+
+  const handleGlobalInteractionFeedback = React.useCallback((event) => {
+    if (event.defaultPrevented) return
+    const target = event.target instanceof Element
+      ? event.target.closest('button, a, [role="button"], summary, input[type="checkbox"], input[type="radio"], input[type="range"], select')
+      : null
+    if (!target || target.matches(':disabled,[aria-disabled="true"]')) return
+    selection()
+  }, [selection])
 
   // Expose modal openers globally via window for profile dropdown
   useEffect(() => {
@@ -312,6 +373,13 @@ function AppContent({ isMobile }) {
     window.openSettings = () => setCurrentView('settings')
     window.openExecutive = () => setCurrentView('exec')
     window.openOnboarding = () => setShowOnboarding(true)
+
+    const openApkUpdateSettings = () => {
+      setCurrentView('settings')
+      setNavigateToSettingsSection({ section: 'updates', settingId: 'android_apk' })
+    }
+    window.addEventListener('datser-open-apk-update-settings', openApkUpdateSettings)
+
     return () => {
       delete window.openDashboard
       delete window.openAddMember
@@ -324,6 +392,7 @@ function AppContent({ isMobile }) {
       delete window.openSettings
       delete window.openExecutive
       delete window.openOnboarding
+      window.removeEventListener('datser-open-apk-update-settings', openApkUpdateSettings)
     }
   }, [members, validateMemberData, getMissingAttendance, getPastSundays, showDeveloperMissingDataModal])
 
@@ -407,7 +476,45 @@ function AppContent({ isMobile }) {
   }
 
   return (
-    <div className="min-app-vh app-shell transition-colors duration-200 ios-overscroll-none">
+    <div
+      onClick={handleGlobalInteractionFeedback}
+      className={`min-app-vh app-shell ios-overscroll-none ${backgroundAnimationEnabled ? 'transition-colors duration-200' : 'background-static'} ${motionAndSoundsEnabled ? '' : 'animations-disabled'} ${compactUiEnabled ? 'compact-ui' : ''}`}
+    >
+      {showCompactSuggestion && (
+        <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top,0px)+72px)] z-[1000000] mx-auto max-w-sm rounded-2xl border border-orange-300/70 bg-white/95 p-3 shadow-2xl shadow-black/20 backdrop-blur-xl dark:border-orange-400/25 dark:bg-[#202121]/95">
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+              <Minimize2 className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-gray-900 dark:text-white">Enable Compact UI?</p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Your screen looks tight. Compact UI fits more with less spacing.</p>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                await updatePreference?.('compact_ui_enabled', true)
+                setShowCompactSuggestion(false)
+              }}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-orange-600 text-white"
+              aria-label="Enable compact UI"
+            >
+              <Check className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                window.localStorage.setItem('datser_compact_suggestion_dismissed', 'true')
+                setShowCompactSuggestion(false)
+              }}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-200"
+              aria-label="Dismiss compact UI suggestion"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
       <Header
         currentView={currentView}
         setCurrentView={setCurrentView}
@@ -644,7 +751,7 @@ function AppContent({ isMobile }) {
         toastClassName="datser-toast"
         bodyClassName="datser-toast-body"
         position="top-center"
-        autoClose={3200}
+        autoClose={6500}
         transition={Slide}
         hideProgressBar={false}
         newestOnTop

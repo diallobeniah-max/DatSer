@@ -47,10 +47,28 @@ const staleWhileRevalidate = async (request) => {
   return cached || networkPromise || caches.match('/index.html')
 }
 
+const cacheBuiltAssetsFromIndex = async (cache) => {
+  try {
+    const response = await fetch('/index.html', { cache: 'no-store' })
+    if (!response?.ok) return
+    const html = await response.clone().text()
+    await cache.put('/index.html', response)
+    const assetUrls = Array.from(html.matchAll(/(?:src|href)="([^"]+)"/g))
+      .map((match) => match[1])
+      .filter((url) => url.startsWith('/assets/') || url.startsWith('./assets/') || url.startsWith('assets/'))
+      .map((url) => new URL(url, self.location.origin).pathname)
+    await Promise.allSettled([...new Set(assetUrls)].map((url) => cache.add(url)))
+  } catch {
+    // Runtime caching will still fill this after the app has loaded once.
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(APP_SHELL_CACHE)
       .then((cache) => cache.addAll(APP_SHELL_URLS))
+      .then(() => caches.open(RUNTIME_CACHE))
+      .then((cache) => cacheBuiltAssetsFromIndex(cache))
       .then(() => self.skipWaiting())
   )
 })

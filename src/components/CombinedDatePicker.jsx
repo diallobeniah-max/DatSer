@@ -249,19 +249,10 @@ const CombinedDatePicker = ({
     : viewMode === 'combined'
       ? Boolean(selectedDate && combinedTouched.day && combinedTouched.month && combinedTouched.year)
       : Boolean(selectedDate)
+  const selectedPickerClass = 'text-orange-700 dark:text-orange-300 font-bold bg-orange-100 dark:bg-orange-500/15 border border-orange-200 dark:border-orange-400/25 shadow-sm transition-none'
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
-      <style>{`
-        @keyframes slideUpSheet {
-          from { transform: translateY(100%); }
-          to { transform: translateY(0); }
-        }
-        .animate-slide-up-sheet {
-          animation: slideUpSheet 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-      `}</style>
-      
       {label && <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{label}</label>}
       
       <button
@@ -306,9 +297,9 @@ const CombinedDatePicker = ({
             ref={dropdownRef}
             data-testid={`combined-date-picker-${pickerId}-dropdown`}
             className={`
-              bg-white dark:bg-[#2F3030] shadow-2xl overflow-hidden font-sans z-[999999] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
+              bg-white text-gray-900 dark:bg-[#2F3030] dark:text-gray-100 shadow-2xl overflow-hidden font-sans z-[999999] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
               ${isSheetViewport 
-                ? 'fixed bottom-0 left-0 right-0 w-full rounded-t-2xl animate-slide-up-sheet pb-safe' 
+                ? 'fixed bottom-0 left-0 right-0 w-full rounded-t-2xl filter-enter pb-safe' 
                 : 'border border-gray-200 dark:border-gray-700/60 rounded-xl animate-scale-in'
               }
             `}
@@ -334,19 +325,19 @@ const CombinedDatePicker = ({
                     type="button"
                     onClick={openMonthYearSelector}
                     aria-label={`${MONTHS[currentMonth]} ${currentYear}. Tap to change month and year`}
-                    className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/80 px-3 py-2 text-left text-gray-900 dark:text-gray-100 hover:border-primary-300 hover:bg-primary-50/70 dark:hover:bg-primary-500/10 transition-colors group"
+                    className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/80 px-3 py-2 text-left text-gray-900 dark:text-gray-100 hover:border-orange-300 hover:bg-orange-50/70 dark:hover:bg-orange-500/10 transition-colors group"
                   >
                     <span className="flex flex-col leading-tight">
                       <span className="text-[16px] font-semibold">{MONTHS[currentMonth]} {currentYear}</span>
                       <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">Tap to change month/year</span>
                     </span>
-                    <ChevronDown className="w-4 h-4 text-gray-400 dark:text-gray-500 group-hover:text-primary-600 dark:group-hover:text-primary-500 transition-colors" />
+                    <ChevronDown className="w-4 h-4 text-gray-400 dark:text-gray-500 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors" />
                   </button>
                   <div className="flex items-center gap-3">
-                    <button onClick={() => setViewDate(new Date(currentYear, currentMonth - 1, 1))} className="text-primary-600 dark:text-primary-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full p-1.5 transition-colors">
+                    <button onClick={() => setViewDate(new Date(currentYear, currentMonth - 1, 1))} className="text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-full p-1.5 transition-colors">
                       <ChevronLeft className="w-6 h-6" />
                     </button>
-                    <button onClick={() => setViewDate(new Date(currentYear, currentMonth + 1, 1))} className="text-primary-600 dark:text-primary-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full p-1.5 transition-colors">
+                    <button onClick={() => setViewDate(new Date(currentYear, currentMonth + 1, 1))} className="text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-full p-1.5 transition-colors">
                       <ChevronRight className="w-6 h-6" />
                     </button>
                   </div>
@@ -368,9 +359,9 @@ const CombinedDatePicker = ({
                           onClick={() => onDayClick(day)}
                           className={`w-10 h-10 rounded-full flex items-center justify-center text-[17px] transition-all
                             ${isSelected(day) 
-                              ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10 shadow-sm' 
+                              ? selectedPickerClass
                               : isToday(day)
-                                ? 'text-primary-600 dark:text-primary-400 font-semibold hover:bg-gray-100 dark:hover:bg-gray-800'
+                                ? 'text-orange-600 dark:text-orange-400 font-semibold hover:bg-orange-50 dark:hover:bg-orange-500/10'
                                 : 'text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800'
                             }
                           `}
@@ -400,7 +391,7 @@ const CombinedDatePicker = ({
                         key={day}
                         type="button"
                         onClick={() => handleCombinedDayChange(day)}
-                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${selectedDate && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl ${selectedDate && selectedDate.getDate() === day && selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear ? selectedPickerClass : 'text-gray-700 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors'}`}
                       >
                         {day}
                       </button>
@@ -412,7 +403,7 @@ const CombinedDatePicker = ({
                         key={m} 
                         type="button"
                         onClick={() => handleCombinedMonthChange(i)}
-                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${combinedTouched.month && currentMonth === i ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl ${combinedTouched.month && currentMonth === i ? selectedPickerClass : 'text-gray-700 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors'}`}
                       >
                         {m}
                       </button>
@@ -424,7 +415,7 @@ const CombinedDatePicker = ({
                         key={y} 
                         type="button"
                         onClick={() => handleCombinedYearChange(y)}
-                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${combinedTouched.year && currentYear === y ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl ${combinedTouched.year && currentYear === y ? selectedPickerClass : 'text-gray-700 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors'}`}
                       >
                         {y}
                       </button>
@@ -443,7 +434,7 @@ const CombinedDatePicker = ({
                      type="button"
                      onClick={handleMonthYearApply}
                      disabled={!canApplyMonthYear}
-                     className={`font-semibold text-[16px] transition-opacity ${canApplyMonthYear ? 'text-primary-600 dark:text-primary-500 hover:opacity-70' : 'text-gray-400 dark:text-gray-500 cursor-not-allowed'}`}
+                     className={`font-semibold text-[16px] transition-opacity ${canApplyMonthYear ? 'text-orange-600 dark:text-orange-400 hover:opacity-70' : 'text-gray-400 dark:text-gray-500 cursor-not-allowed'}`}
                    >
                      Done
                    </button>
@@ -455,7 +446,7 @@ const CombinedDatePicker = ({
                       <button 
                         key={m} 
                         onClick={() => { setViewDate(new Date(currentYear, i, 1)); setMonthYearTouched((current) => ({ ...current, month: true })) }}
-                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${monthYearTouched.month && currentMonth === i ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl ${monthYearTouched.month && currentMonth === i ? selectedPickerClass : 'text-gray-700 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors'}`}
                       >
                         {m}
                       </button>
@@ -467,7 +458,7 @@ const CombinedDatePicker = ({
                       <button 
                         key={y} 
                         onClick={() => { setViewDate(new Date(y, currentMonth, 1)); setMonthYearTouched((current) => ({ ...current, year: true })) }}
-                        className={`w-full py-3 text-center text-[16px] rounded-xl transition-colors ${monthYearTouched.year && currentYear === y ? 'text-primary-700 dark:text-primary-400 font-bold bg-primary-50 dark:bg-primary-500/10' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'}`}
+                        className={`w-full py-3 text-center text-[16px] rounded-xl ${monthYearTouched.year && currentYear === y ? selectedPickerClass : 'text-gray-700 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors'}`}
                       >
                         {y}
                       </button>
@@ -488,7 +479,7 @@ const CombinedDatePicker = ({
               <button 
                 onClick={viewMode === 'wheels' ? handleMonthYearApply : handleSave}
                 disabled={!canSaveDate}
-                className={`text-[17px] text-white transition-colors font-semibold px-8 py-2 rounded-xl shadow-sm ${canSaveDate ? 'bg-primary-600 hover:bg-primary-700 shadow-primary-500/20' : 'bg-gray-500/40 dark:bg-gray-700/70 cursor-not-allowed opacity-70'}`}
+                className={`text-[17px] text-white transition-colors font-semibold px-8 py-2 rounded-xl shadow-sm ${canSaveDate ? 'bg-orange-600 hover:bg-orange-700 shadow-black/20' : 'bg-gray-500/40 dark:bg-gray-700/70 cursor-not-allowed opacity-70'}`}
               >
                 {viewMode === 'wheels' ? 'Apply' : 'Save'}
               </button>

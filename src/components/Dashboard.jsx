@@ -12,6 +12,7 @@ import useHapticFeedback from '../hooks/useHapticFeedback'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { toast } from 'react-toastify'
 import MemberCard from './MemberCard'
+import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 
 
 // Lazy load heavy modals for better initial load performance
@@ -100,7 +101,6 @@ const Dashboard = ({ isAdmin = false }) => {
     loading,
     searchTerm,
     setSearchTerm,
-    refreshSearch,
     forceRefreshMembers,
     forceRefreshMembersSilent,
     searchMemberAcrossAllTables,
@@ -136,7 +136,8 @@ const Dashboard = ({ isAdmin = false }) => {
     isCollaborator,
     dataOwnerId,
     user,
-    isDeveloperBypass
+    isDeveloperBypass,
+    searchSuggestionView
   } = useApp()
   const { isDarkMode } = useTheme()
   const { selection, success, error: errorHaptic } = useHapticFeedback()
@@ -301,23 +302,24 @@ const Dashboard = ({ isAdmin = false }) => {
     clearSelection
   } = useLongPressSelection()
 
-  // Local search term state for debounced search
+  // Local search term state for the bottom suggestion tray
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm)
+  const [isSearchFocused, setIsSearchFocused] = useState(false)
 
   // Keep local input in sync when external searchTerm changes
   useEffect(() => {
     setLocalSearchTerm(searchTerm)
   }, [searchTerm])
 
-  // Debounce updates to global search term to reduce re-renders
   useEffect(() => {
+    if (searchSuggestionView !== 'full') return undefined
     const tid = setTimeout(() => {
       if (localSearchTerm !== searchTerm) {
         setSearchTerm(localSearchTerm)
       }
     }, 250)
     return () => clearTimeout(tid)
-  }, [localSearchTerm])
+  }, [localSearchTerm, searchSuggestionView, searchTerm, setSearchTerm])
 
   const selectedTagFilters = useMemo(() => (
     Array.isArray(tagFilter)
@@ -1503,6 +1505,131 @@ const Dashboard = ({ isAdmin = false }) => {
     }
   }
 
+  const getMemberSearchName = (member) => (
+    member?.full_name || member?.['full_name'] || member?.['Full Name'] || 'Unknown member'
+  )
+
+  const pendingSearchTerm = localSearchTerm.trim()
+  const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+  const searchSuggestionMembers = pendingSearchTerm
+    ? (() => {
+        const lowerTerm = pendingSearchTerm.toLowerCase()
+        const sourceMembers = dashboardTab === 'edited'
+          ? members.filter(isEditedMember)
+          : dashboardTab === 'duplicates'
+            ? duplicateGroups.flatMap(group => group.members)
+            : members
+        const seen = new Set()
+        return sourceMembers
+          .filter(member => {
+            if (!member?.id || seen.has(member.id)) return false
+            seen.add(member.id)
+            return getMemberSearchName(member).toLowerCase().includes(lowerTerm) || memberMatchesIndexCode(member, memberIndexCodeMap, pendingSearchTerm)
+          })
+          .sort((a, b) => {
+            const nameA = getMemberSearchName(a).toLowerCase()
+            const nameB = getMemberSearchName(b).toLowerCase()
+            const codeA = getMemberIndexCode(a, memberIndexCodeMap).toLowerCase()
+            const codeB = getMemberIndexCode(b, memberIndexCodeMap).toLowerCase()
+            const aCodeStarts = codeA.startsWith(lowerTerm) ? 0 : 1
+            const bCodeStarts = codeB.startsWith(lowerTerm) ? 0 : 1
+            if (aCodeStarts !== bCodeStarts) return aCodeStarts - bCodeStarts
+            const aStarts = nameA.startsWith(lowerTerm) ? 0 : 1
+            const bStarts = nameB.startsWith(lowerTerm) ? 0 : 1
+            if (aStarts !== bStarts) return aStarts - bStarts
+            return nameA.localeCompare(nameB)
+          })
+          .slice(0, 10)
+      })()
+    : []
+  const showSearchSuggestions = isSearchFocused && pendingSearchTerm.length > 0
+  const isShortSearchView = searchSuggestionView !== 'full'
+  const isShortSearchActive = isShortSearchView && showSearchSuggestions
+
+  const applySearchSelection = (value) => {
+    selection()
+    setLocalSearchTerm(value)
+    setSearchTerm(value)
+    setIsSearchFocused(false)
+  }
+
+  const renderSearchSuggestionTray = () => {
+    if (!showSearchSuggestions || !isShortSearchView) return null
+    return (
+      <div className="fixed bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))] left-3 right-3 z-40 overflow-hidden rounded-t-none rounded-b-2xl border border-t-0 border-gray-200 bg-white shadow-2xl shadow-black/15 dark:border-gray-700 dark:bg-[#202121] dark:shadow-black/50 sm:left-1/2 sm:right-auto sm:w-[min(92rem,calc(100vw-2rem))] sm:-translate-x-1/2">
+        <div className="border-b border-gray-100 px-4 py-2 dark:border-gray-800 sm:px-6">
+          <p className="text-xs font-bold uppercase tracking-wide text-orange-600 dark:text-orange-300">Search matches</p>
+        </div>
+        <div className="max-h-[264px] overflow-y-auto">
+          {searchSuggestionMembers.length > 0 ? (
+            searchSuggestionMembers.map((member) => {
+              const name = getMemberSearchName(member)
+              const targetDate = getDateString(selectedAttendanceDate)
+              const memberIndexCode = getMemberIndexCode(member, memberIndexCodeMap)
+              return (
+                <div
+                  key={member.id}
+                  className="border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-800 sm:px-6"
+                >
+                  <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-3 dark:border-gray-700 dark:bg-[#1f2020]">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <button
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => applySearchSelection(name)}
+                        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left transition-colors hover:bg-orange-50 dark:hover:bg-orange-500/10"
+                      >
+                        <ChevronRight className="h-5 w-5 shrink-0 text-gray-400" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-base font-black text-gray-900 dark:text-white">{name}</span>
+                          <span className="block truncate text-xs text-gray-500 dark:text-gray-400">
+                            {memberIndexCode ? `${memberIndexCode} · ` : ''}Joined {member.joined_at || member.inserted_at || member.created_at ? new Date(member.joined_at || member.inserted_at || member.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Jan 10'}
+                          </span>
+                        </span>
+                      </button>
+                      <div className="grid grid-cols-3 gap-2 sm:w-[23rem]">
+                        <button
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => targetDate && handleAttendance(member.id, true)}
+                          disabled={!targetDate || attendanceLoading[member.id]}
+                          className="min-h-12 rounded-xl bg-orange-600 px-3 text-sm font-bold text-white transition-colors hover:bg-orange-700 disabled:opacity-50"
+                        >
+                          Present
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => targetDate && handleAttendance(member.id, false)}
+                          disabled={!targetDate || attendanceLoading[member.id]}
+                          className="min-h-12 rounded-xl bg-red-600 px-3 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                        >
+                          Absent
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => openDeleteConfirm(member)}
+                          className="min-h-12 rounded-xl border border-gray-300 px-3 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+          ) : (
+            <div className="px-4 py-4 text-sm font-semibold text-gray-500 dark:text-gray-400">
+              No matching names yet
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-0 sm:px-4 mt-8">
@@ -1909,6 +2036,7 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Members List */}
+      {!isShortSearchActive && (
       <div className={`${longPressSelectedIds.size > 0 ? '' : 'mt-4 sm:mt-10'} grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${searchTerm ? '' : 'transition-colors duration-200'} grid-animate`}>
         {(() => {
           const tabFilteredMembers = getTabFilteredMembers()
@@ -1924,6 +2052,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   <MemberCard
                     key={member.id}
                     member={member}
+                    memberIndexCode={getMemberIndexCode(member, memberIndexCodeMap)}
                     isExpanded={isExpanded}
                     isSelected={isSelected}
                     selectionMode={selectionMode}
@@ -1995,9 +2124,22 @@ const Dashboard = ({ isAdmin = false }) => {
           )
         })()}
       </div>
+      )}
+
+      {isShortSearchActive && (
+        <div className="mx-auto mt-6 flex min-h-[48vh] w-[96%] items-center justify-center rounded-3xl border border-gray-200 bg-gradient-to-b from-white to-orange-50/50 px-5 py-10 text-center shadow-inner dark:border-gray-800 dark:from-[#111111] dark:to-orange-950/10">
+          <div className="max-w-md">
+            <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+              <Search className="h-7 w-7" />
+            </div>
+            <p className="text-lg font-black text-gray-900 dark:text-white">Search tray is active</p>
+            <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">Pick a name above, mark Present or Absent, or clear the search to bring the member list back.</p>
+          </div>
+        </div>
+      )}
 
       {/* Empty State - use the same getTabFilteredMembers() for consistency */}
-      {getTabFilteredMembers().length === 0 && !loading && (
+      {!isShortSearchActive && getTabFilteredMembers().length === 0 && !loading && (
         <div className="text-center py-12">
           <Users className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No members found</h3>
@@ -2415,7 +2557,7 @@ const Dashboard = ({ isAdmin = false }) => {
       {/* Filter Modal */}
       {(showFilters || isClosingFilters) && (
         <div
-          className="fixed inset-0 z-50 flex items-end md:items-center justify-center"
+          className="fixed inset-0 z-[90] flex items-end md:items-center justify-center"
           onKeyDown={(e) => e.key === 'Escape' && closeFilters()}
         >
           {/* Backdrop */}
@@ -2571,24 +2713,27 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Bottom Search Bar */}
-      <div className="bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 z-30 safe-area-x">
+      <div className={`bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
         <div className="mx-auto px-3 sm:px-4 py-3">
           <div className="flex items-center gap-2">
             {dashboardTab === 'edited' ? (
               /* Marked tab: Search bar that only searches within Present/Absent members */
               <div className="flex-1 relative">
+                {renderSearchSuggestionTray()}
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
                 <input
                   type="text"
                   placeholder="Search marked members..."
                   value={localSearchTerm}
                   onChange={(e) => setLocalSearchTerm(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { setSearchTerm(localSearchTerm); refreshSearch() } }}
-                  className="w-full pl-10 pr-10 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+                  onFocus={() => setIsSearchFocused(true)}
+                  onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
+                  className={`w-full pl-10 pr-10 py-2 border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors ${isShortSearchActive ? 'rounded-b-2xl rounded-t-none border-orange-500 border-t-orange-500 dark:border-orange-500' : 'rounded-lg border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
-                    onClick={() => { selection(); setSearchTerm(''); setLocalSearchTerm('') }}
+                    onClick={() => { selection(); setSearchTerm(''); setLocalSearchTerm(''); setIsSearchFocused(false) }}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
                     title="Clear search"
                   >
@@ -2599,18 +2744,21 @@ const Dashboard = ({ isAdmin = false }) => {
             ) : (
               /* Other tabs: Normal text search */
               <div className="flex-1 relative">
+                {renderSearchSuggestionTray()}
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
                 <input
                   type="text"
                   placeholder="Search members..."
                   value={localSearchTerm}
                   onChange={(e) => setLocalSearchTerm(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { setSearchTerm(localSearchTerm); refreshSearch() } }}
-                  className="w-full pl-10 pr-10 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+                  onFocus={() => setIsSearchFocused(true)}
+                  onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
+                  className={`w-full pl-10 pr-10 py-2 border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors ${isShortSearchActive ? 'rounded-b-2xl rounded-t-none border-orange-500 border-t-orange-500 dark:border-orange-500' : 'rounded-lg border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
-                    onClick={() => { selection(); setSearchTerm(''); setLocalSearchTerm('') }}
+                    onClick={() => { selection(); setSearchTerm(''); setLocalSearchTerm(''); setIsSearchFocused(false) }}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
                     title="Clear search"
                   >
@@ -2624,7 +2772,9 @@ const Dashboard = ({ isAdmin = false }) => {
               onClick={() => { selection(); setShowFilters(!showFilters) }}
               className={`flex items-center gap-1 px-3 py-2 rounded-lg transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
                 ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border border-primary-300 dark:border-primary-700'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'
+                : isShortSearchActive
+                  ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               title="Filters"
             >

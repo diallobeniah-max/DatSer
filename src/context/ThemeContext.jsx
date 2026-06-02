@@ -3,6 +3,13 @@ import { useAuth } from './AuthContext'
 
 const ThemeContext = createContext()
 
+const APPLE_SYSTEM_FONT_STACK = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"'
+
+const resolveFontFamily = (fontFamily) => {
+  if (!fontFamily || fontFamily === 'system') return APPLE_SYSTEM_FONT_STACK
+  return fontFamily
+}
+
 export const useTheme = () => {
   const context = useContext(ThemeContext)
   if (!context) {
@@ -119,7 +126,7 @@ export const ThemeProvider = ({ children }) => {
   useEffect(() => {
     if (typeof window === 'undefined') return
     localStorage.setItem('fontFamily', fontFamily)
-    document.documentElement.style.setProperty('--font-family', fontFamily)
+    document.documentElement.style.setProperty('--font-family', resolveFontFamily(fontFamily))
   }, [fontFamily])
 
   useEffect(() => {

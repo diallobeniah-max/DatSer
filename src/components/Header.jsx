@@ -3,17 +3,52 @@ import {
   Users,
   CheckSquare,
   ChevronDown,
+  ChevronRight,
   HelpCircle,
   TrendingUp,
   Wifi,
-  WifiOff
+  WifiOff,
+  Download,
+  RefreshCw,
+  History,
+  X
 } from 'lucide-react'
 import MonthPickerPopup from './MonthPickerPopup'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 import LoginButton from './LoginButton'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 
+const getMemberDisplayName = (member) => (
+  member?.full_name || member?.['Full Name'] || member?.name || 'Unknown member'
+)
+
+const getMemberRecentDate = (member) => {
+  const raw = member?.updated_at || member?.updatedAt || member?.last_updated || member?.modified_at || member?.created_at || member?.inserted_at || member?.joined_at
+  if (!raw) return null
+  const date = new Date(raw)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+const formatRecentEditLabel = (date) => {
+  if (!date) return 'recently'
+  const diffMs = Date.now() - date.getTime()
+  if (diffMs < 60_000) return 'edited just now'
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hr ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`
+  const weeks = Math.floor(days / 7)
+  if (weeks < 5) return `${weeks} week${weeks === 1 ? '' : 's'} ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember, onCreateMonth, onToggleAIChat }) => {
+  const { preferences } = useAuth()
   const {
     searchTerm,
     setSearchTerm,
@@ -33,14 +68,26 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     focusDateSelector,
     isCollaborator,
     isAdminCollaborator,
-    ownerStickyMonth,
     isOnline,
-    offlineModeStatus
+    offlineModeStatus,
+    offlineMode,
+    setOfflineMode,
+    pendingSyncCount,
+    offlineCacheMeta,
+    prepareOfflineData,
+    isPreparingOffline,
+    members
   } = useApp()
   const { selection } = useHapticFeedback()
   const [showMonthPicker, setShowMonthPicker] = useState(false)
+  const [showConnectionMenu, setShowConnectionMenu] = useState(false)
+  const [showRecentMenu, setShowRecentMenu] = useState(false)
   const monthButtonRef = useRef(null)
-  const [liveClock, setLiveClock] = useState(() => new Date())
+  const connectionButtonRef = useRef(null)
+  const recentMenuRef = useRef(null)
+  const [apkUpdateBadge, setApkUpdateBadge] = useState(() => (
+    typeof window !== 'undefined' && window.localStorage.getItem('datser_apk_update_badge') === 'true'
+  ))
   // Debounced search input for performance on low-end devices
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm)
 
@@ -60,9 +107,35 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   }, [localSearchTerm])
 
   useEffect(() => {
-    const timer = setInterval(() => setLiveClock(new Date()), 30000)
-    return () => clearInterval(timer)
+    const syncApkBadge = () => {
+      setApkUpdateBadge(window.localStorage.getItem('datser_apk_update_badge') === 'true')
+    }
+    syncApkBadge()
+    window.addEventListener('datser-apk-update-badge', syncApkBadge)
+    window.addEventListener('storage', syncApkBadge)
+    return () => {
+      window.removeEventListener('datser-apk-update-badge', syncApkBadge)
+      window.removeEventListener('storage', syncApkBadge)
+    }
   }, [])
+
+  useEffect(() => {
+    if (!showRecentMenu) return undefined
+    const handlePointerDown = (event) => {
+      if (recentMenuRef.current && !recentMenuRef.current.contains(event.target)) {
+        setShowRecentMenu(false)
+      }
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setShowRecentMenu(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showRecentMenu])
 
   const generateSundayDates = (table) => {
     if (!table) return []
@@ -176,33 +249,80 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     }
   }, [filteredMembers, attendanceData, sundayDates, visibleSelectedDateKey])
 
-  const currentMonthTable = `${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][liveClock.getMonth()]}_${liveClock.getFullYear()}`
-  const liveSundayDate = (() => {
-    const today = new Date(liveClock.getFullYear(), liveClock.getMonth(), liveClock.getDate())
-    const sunday = new Date(today)
-    if (sunday.getDay() !== 0) {
-      sunday.setDate(sunday.getDate() - sunday.getDay())
-    }
-    if (sunday.getMonth() !== today.getMonth()) {
-      const firstSunday = new Date(today.getFullYear(), today.getMonth(), 1)
-      while (firstSunday.getDay() !== 0) {
-        firstSunday.setDate(firstSunday.getDate() + 1)
-      }
-      return firstSunday
-    }
-    return sunday
-  })()
-  const liveSundayDateKey = `${liveSundayDate.getFullYear()}-${String(liveSundayDate.getMonth() + 1).padStart(2, '0')}-${String(liveSundayDate.getDate()).padStart(2, '0')}`
-  const isCalendarLive = currentTable === currentMonthTable && visibleSelectedDateKey === liveSundayDateKey
-  const hasStickyMonth = Boolean(ownerStickyMonth)
-  const isStickyMonthLive = isCollaborator && hasStickyMonth && currentTable === ownerStickyMonth
-  const isStickyMonthMismatch = isCollaborator && hasStickyMonth && currentTable !== ownerStickyMonth
-  const showStickyState = !isCollaborator || !hasStickyMonth || isStickyMonthLive
-  const showLiveState = showStickyState && isCalendarLive
-  const liveLabel = isSupabaseConfigured()
-    ? (isStickyMonthMismatch ? 'Out of Sync' : (isCalendarLive ? 'Live' : 'Live Off'))
-    : 'Demo'
+  const recentEditedMembers = useMemo(() => {
+    const source = Array.isArray(members) && members.length ? members : filteredMembers || []
+    return source
+      .map((member) => ({
+        member,
+        date: getMemberRecentDate(member),
+        name: getMemberDisplayName(member)
+      }))
+      .sort((a, b) => {
+        const timeA = a.date?.getTime() || 0
+        const timeB = b.date?.getTime() || 0
+        if (timeA !== timeB) return timeB - timeA
+        return a.name.localeCompare(b.name)
+      })
+      .slice(0, 6)
+  }, [members, filteredMembers])
+
+  const focusRecentMember = useCallback((member) => {
+    const name = getMemberDisplayName(member)
+    selection()
+    setCurrentView('dashboard')
+    setSearchTerm(name)
+    setLocalSearchTerm(name)
+    setShowRecentMenu(false)
+  }, [selection, setCurrentView, setSearchTerm])
+
   const isConnectionLive = isOnline && offlineModeStatus !== 'offline' && offlineModeStatus !== 'forced-offline' && offlineModeStatus !== 'online-unavailable'
+  const connectionLabel = isSupabaseConfigured()
+    ? (isConnectionLive ? 'Online' : offlineMode === 'offline' ? 'Offline' : 'Offline')
+    : 'Demo'
+  const connectionToneClass = isSupabaseConfigured()
+    ? isConnectionLive
+      ? 'text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30'
+      : 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30'
+    : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
+  const mobileStatusBarEnabled = preferences?.mobile_dashboard_status_enabled !== false
+  const visibleDateLabel = visibleSelectedDate
+    ? visibleSelectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : null
+  const monthLabel = currentTable ? currentTable.replace('_', ' ') : 'Select Month'
+
+  const recentButton = (extraClass = '', compact = false) => (
+    <div ref={recentMenuRef} className={`relative ${extraClass}`}>
+      <button
+        type="button"
+        onClick={() => {
+          selection()
+          setShowRecentMenu((value) => !value)
+        }}
+        className={`inline-flex items-center gap-1.5 rounded-full font-semibold whitespace-nowrap transition-colors ${
+          compact ? 'px-2 py-1.5' : 'px-2.5 py-1'
+        } ${
+          showRecentMenu
+            ? 'bg-gray-900/10 text-gray-900 dark:bg-white/10 dark:text-white'
+            : 'text-gray-700 hover:bg-gray-200/80 dark:text-gray-200 dark:hover:bg-white/10'
+        }`}
+        title="Recent updates"
+        aria-expanded={showRecentMenu}
+      >
+        <History className="h-3.5 w-3.5" />
+        <span className={compact ? 'sr-only' : ''}>Recent</span>
+        <ChevronDown className={`${compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} transition-transform ${showRecentMenu ? 'rotate-180' : ''}`} />
+      </button>
+    </div>
+  )
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const root = document.documentElement
+    root.style.setProperty('--app-dashboard-header-height-mobile', mobileStatusBarEnabled ? '126px' : '86px')
+    return () => {
+      root.style.removeProperty('--app-dashboard-header-height-mobile')
+    }
+  }, [mobileStatusBarEnabled])
 
   // Menu items moved to LoginButton profile dropdown
 
@@ -278,9 +398,9 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 title="Settings"
               >
                 <HelpCircle className="w-4 h-4" />
-                {window.__needsPasswordSetup && (
+                {(window.__needsPasswordSetup || apkUpdateBadge) && (
                   <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center h-3.5 min-w-3.5 px-0.5 rounded-full bg-red-500 text-white text-[8px] font-bold">
-                    1
+                    {(window.__needsPasswordSetup ? 1 : 0) + (apkUpdateBadge ? 1 : 0)}
                   </span>
                 )}
               </button>
@@ -334,6 +454,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                   </span>
                 )}
               </button>
+              {!mobileStatusBarEnabled && currentView === 'dashboard' && recentButton('', true)}
             </div>
 
             {/* Right: Profile (contains all menu options) */}
@@ -345,6 +466,17 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 setDashboardTab={setDashboardTab}
                 currentView={currentView}
                 dashboardTab={dashboardTab}
+                compactStatus={!mobileStatusBarEnabled && currentView === 'dashboard' ? {
+                  dateLabel: visibleDateLabel,
+                  foundCount: (!isCollaborator || isAdminCollaborator) ? compactFoundCount : null,
+                  monthLabel,
+                  connectionLabel,
+                  connectionToneClass,
+                  isSupabaseConfigured: isSupabaseConfigured(),
+                  isConnectionLive,
+                  onOpenMonthPicker: () => setShowMonthPicker(true),
+                  onOpenConnectionMenu: () => setShowConnectionMenu(true)
+                } : null}
               />
             </div>
           </div>
@@ -352,15 +484,20 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       </div>
       {/* Summary pill - info bar */}
       {currentView === 'dashboard' && (
-        <div className="md:border-t border-gray-200 dark:border-gray-700">
+        <div className={`${mobileStatusBarEnabled ? '' : 'hidden md:block'} md:border-t border-gray-200 dark:border-gray-700`}>
           <div className="mx-auto px-3 sm:px-4 py-1.5 md:py-1">
-            <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 px-4 py-1.5 rounded-full bg-gray-100/95 dark:bg-gray-700/95 text-xs sm:text-sm leading-none text-gray-700 dark:text-gray-300 shadow-sm w-fit mx-auto">
+            <div className="flex items-center justify-center gap-x-1.5 gap-y-1 overflow-x-auto rounded-2xl bg-white/82 px-2.5 py-1.5 text-[11px] leading-none text-gray-700 shadow-sm ring-1 ring-gray-200/80 backdrop-blur-xl dark:bg-[#202121]/88 dark:text-gray-300 dark:ring-white/10 sm:w-fit sm:mx-auto sm:rounded-full sm:px-4 sm:text-sm">
+              {recentButton('shrink-0')}
+
+              {(visibleSelectedDate || (!isCollaborator || isAdminCollaborator)) && (
+                <span className="text-gray-400/80">&middot;</span>
+              )}
               {visibleSelectedDate && (
                 <>
                   <span className="inline-flex items-center font-medium whitespace-nowrap">
-                    {visibleSelectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    {visibleDateLabel}
                   </span>
-                  <span className="text-gray-400/80">•</span>
+                  <span className="text-gray-400/80">&middot;</span>
                 </>
               )}
 
@@ -368,7 +505,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
               {(!isCollaborator || isAdminCollaborator) && (
                 <>
                   <span className="inline-flex items-center font-medium whitespace-nowrap">{compactFoundCount} found</span>
-                  <span className="text-gray-400/80">•</span>
+                  <span className="text-gray-400/80">&middot;</span>
                 </>
               )}
 
@@ -378,24 +515,153 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 className="inline-flex items-center gap-1 text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 font-semibold whitespace-nowrap transition-colors"
                 title={isCollaborator ? "Click to switch month" : "Select Month"}
               >
-                {currentTable ? currentTable.replace('_', ' ') : 'Select Month'}
+                {monthLabel}
                 <ChevronDown className="w-3.5 h-3.5" />
               </button>
 
-              <span className={`inline-flex items-center gap-1.5 -ml-0.5 px-2 py-1 text-[11px] sm:text-xs font-semibold whitespace-nowrap rounded-full border ${isSupabaseConfigured()
-                ? isConnectionLive && showLiveState
-                  ? 'text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30'
-                  : 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30 animate-pulse'
-                : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
-                }`}>
+              <button
+                ref={connectionButtonRef}
+                type="button"
+                onClick={() => { selection(); setShowConnectionMenu(prev => !prev) }}
+                className={`relative inline-flex items-center gap-1.5 -ml-0.5 px-2 py-1 text-[11px] sm:text-xs font-semibold whitespace-nowrap rounded-full border transition-colors hover:brightness-105 ${connectionToneClass}`}
+                title="Connection and offline mode"
+              >
                 {isSupabaseConfigured()
-                  ? isConnectionLive && showLiveState
+                  ? isConnectionLive
                     ? <Wifi className="h-3.5 w-3.5 animate-pulse" />
                     : <WifiOff className="h-3.5 w-3.5 animate-pulse" />
                   : <WifiOff className="h-3.5 w-3.5 text-yellow-500" />}
-                <span>{liveLabel}</span>
-              </span>
+                <span>{connectionLabel}</span>
+              </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showRecentMenu && currentView === 'dashboard' && (
+        <div
+          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/55 px-4 py-8 backdrop-blur-sm animate-fade-in"
+          onClick={() => setShowRecentMenu(false)}
+        >
+          <div
+            ref={recentMenuRef}
+            className="relative w-[min(92vw,390px)] overflow-hidden rounded-3xl border border-gray-200 bg-white/95 text-left shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in dark:border-white/10 dark:bg-[#202121]/95"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowRecentMenu(false)}
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/10 dark:hover:text-white"
+              aria-label="Close recent edits"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="border-b border-gray-200/70 px-5 py-4 pr-14 dark:border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-2xl border border-orange-300/70 bg-orange-500/10 text-orange-600 shadow-sm backdrop-blur-md dark:border-orange-400/30 dark:bg-orange-400/10 dark:text-orange-300">
+                  <History className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-base font-bold text-gray-900 dark:text-white">Recent Edits</p>
+                  <p className="mt-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">Latest names changed in this workspace</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="max-h-[min(65vh,420px)] overflow-y-auto overscroll-contain p-2">
+              {recentEditedMembers.length > 0 ? (
+                recentEditedMembers.map(({ member, date, name }) => (
+                  <button
+                    key={member.id || name}
+                    type="button"
+                    onClick={() => focusRecentMember(member)}
+                    className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors hover:bg-gray-100/80 focus:bg-gray-100/80 focus:outline-none dark:hover:bg-white/10 dark:focus:bg-white/10"
+                  >
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-500/10 text-sm font-black text-orange-700 dark:bg-orange-400/10 dark:text-orange-300">
+                      {name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold text-gray-900 dark:text-white">{name}</span>
+                      <span className="mt-0.5 block truncate text-xs text-gray-500 dark:text-gray-400">{formatRecentEditLabel(date)}</span>
+                    </span>
+                    <ChevronRight className="h-5 w-5 shrink-0 text-gray-400 dark:text-gray-300" />
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-8 text-center text-sm font-medium text-gray-500 dark:text-gray-400">No recent edits yet</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConnectionMenu && currentView === 'dashboard' && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm animate-fade-in"
+          onClick={() => setShowConnectionMenu(false)}
+        >
+          <div
+            className="relative w-[min(92vw,380px)] rounded-3xl border border-gray-200 bg-white/95 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in dark:border-white/10 dark:bg-[#202121]/95"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowConnectionMenu(false)}
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/10 dark:hover:text-white"
+              aria-label="Close connection mode"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="mb-4 px-8 text-center">
+              <p className="text-base font-bold text-gray-900 dark:text-white">Connection Mode</p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {isConnectionLive ? 'Wi-Fi/internet is available.' : 'You are using offline-safe mode.'}
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'auto', label: 'Auto' },
+                { id: 'online', label: 'Online' },
+                { id: 'offline', label: 'Offline' }
+              ].map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => {
+                    setOfflineMode(mode.id)
+                    setShowConnectionMenu(false)
+                  }}
+                  className={`min-h-[42px] rounded-xl border text-sm font-bold transition-colors ${
+                    offlineMode === mode.id
+                      ? 'border-orange-500 bg-orange-500 text-white shadow-sm'
+                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-orange-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/10 dark:bg-white/5">
+                <p className="font-bold text-gray-900 dark:text-white">Recent cache</p>
+                <p className="mt-1 text-gray-500 dark:text-gray-400">{offlineCacheMeta?.cached_at ? new Date(offlineCacheMeta.cached_at).toLocaleDateString() : 'Not downloaded'}</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/10 dark:bg-white/5">
+                <p className="font-bold text-gray-900 dark:text-white">Pending</p>
+                <p className="mt-1 text-gray-500 dark:text-gray-400">{pendingSyncCount || 0} change{pendingSyncCount === 1 ? '' : 's'}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={prepareOfflineData}
+              disabled={isPreparingOffline || !isOnline}
+              className="mt-3 flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:bg-gray-300 disabled:text-white/80 dark:disabled:bg-gray-700"
+            >
+              {isPreparingOffline ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {isPreparingOffline ? 'Downloading...' : 'Download recent data'}
+            </button>
           </div>
         </div>
       )}

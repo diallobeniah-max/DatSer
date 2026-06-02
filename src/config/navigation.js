@@ -70,6 +70,22 @@ export const SETTINGS_SECTIONS = [
         keywords: 'export import backup members data storage csv download upload database offline sync cache'
     },
     {
+        id: 'storage',
+        label: 'Storage & Limits',
+        icon: Archive,
+        color: 'orange',
+        content: 'Review database storage, free plan usage, auth email limits, and archive recommendations.',
+        keywords: 'storage limits free plan database emails auth archive supabase quota usage'
+    },
+    {
+        id: 'updates',
+        label: 'Updates',
+        icon: Download,
+        color: 'green',
+        content: 'Download Android APK updates, check the installed app version, and review recent release details.',
+        keywords: 'updates apk android download version release install latest'
+    },
+    {
         id: 'appearance',
         label: 'Appearance',
         icon: Palette,
@@ -78,12 +94,20 @@ export const SETTINGS_SECTIONS = [
         keywords: 'theme dark light colors display visual interface'
     },
     {
+        id: 'forms',
+        label: 'Forms & Workflow',
+        icon: UserPlus,
+        color: 'orange',
+        content: 'Control member form helpers, the Next button, guided field order, missing info prompts, attendance completion, and date of birth picker behavior.',
+        keywords: 'forms workflow next button guided form date birth missing info auto all dates member attendance'
+    },
+    {
         id: 'accessibility',
         label: 'Accessibility',
         icon: Zap,
         color: 'yellow',
-        content: 'Command Menu, keyboard shortcuts, and in-app alert settings. Enable quick navigation with Ctrl K or Cmd K.',
-        keywords: 'command menu keyboard shortcuts navigation ctrl k cmd k notifications alerts'
+        content: 'Command Menu, keyboard shortcuts, search behavior, notifications, website sharing, QR code, and in-app alert settings.',
+        keywords: 'command menu keyboard shortcuts navigation ctrl k cmd k notifications alerts search share qr code'
     },
     {
         id: 'help',
@@ -155,11 +179,27 @@ export const SETTINGS_SEARCH_INDEX = [
         icon: Monitor
     },
     {
+        id: 'android_apk',
+        section: 'updates',
+        label: 'Android Updates',
+        description: 'Download the latest Android APK and see recent release details',
+        keywords: 'android apk update download install latest release version',
+        icon: Download
+    },
+    {
         id: 'date_of_birth',
         section: 'account',
         label: 'Date of Birth',
         description: 'Update your profile date of birth',
         keywords: 'dob birthday birth date age profile',
+        icon: Calendar
+    },
+    {
+        id: 'date_of_birth_picker',
+        section: 'forms',
+        label: 'Date of Birth Picker',
+        description: 'Choose the member form birthday picker style',
+        keywords: 'dob birthday birth date picker combined month year day member form',
         icon: Calendar
     },
     {
@@ -196,7 +236,7 @@ export const SETTINGS_SEARCH_INDEX = [
     },
     {
         id: 'auto_all_dates',
-        section: 'workspace',
+        section: 'forms',
         label: 'Auto-All-Dates',
         description: 'Automatically mark all dates up to today as present',
         keywords: 'auto all dates attendance present automation missing completed',
@@ -204,7 +244,7 @@ export const SETTINGS_SEARCH_INDEX = [
     },
     {
         id: 'missing_info_prompt',
-        section: 'workspace',
+        section: 'forms',
         label: 'Missing Info Popup',
         description: 'Turn the missing information prompt on or off',
         keywords: 'missing info popup prompt complete information override age phone level',
@@ -212,7 +252,7 @@ export const SETTINGS_SEARCH_INDEX = [
     },
     {
         id: 'guided_form_assistant',
-        section: 'workspace',
+        section: 'forms',
         label: 'Guided Form Assistant',
         description: 'Highlight the next field in member and attendance forms',
         keywords: 'guided form assistant highlight next field notes tags auto focus scroll attendance auto present',
@@ -292,7 +332,7 @@ export const SETTINGS_SEARCH_INDEX = [
     },
     {
         id: 'storage_limits',
-        section: 'data',
+        section: 'storage',
         label: 'Storage & Limits',
         description: 'Review database storage, free plan limits, and auth email limits',
         keywords: 'storage limits database supabase emails auth rate limit free plan',

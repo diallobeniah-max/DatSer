@@ -424,6 +424,23 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
                     )}
                 </div>
 
+                <button
+                    type="button"
+                    onClick={() => window.openOnboarding?.()}
+                    className="w-full rounded-2xl border border-orange-200 bg-orange-50/80 p-4 text-left shadow-sm transition-all hover:border-orange-300 hover:bg-orange-100/80 dark:border-orange-400/20 dark:bg-orange-500/10 dark:hover:bg-orange-500/15"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-orange-600 text-white shadow-sm">
+                            <Play className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <p className="font-bold text-gray-900 dark:text-white">Replay Tutorial</p>
+                            <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">Open the getting started guide again.</p>
+                        </div>
+                        <ChevronRight className="h-5 w-5 text-orange-500" />
+                    </div>
+                </button>
+
                 {/* Category Tabs with Arrow Navigation */}
                 <div className="relative animate-fade-in-up" style={{ animationDelay: '50ms' }}>
                     {/* Left Arrow */}

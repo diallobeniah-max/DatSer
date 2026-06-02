@@ -12,6 +12,7 @@ import {
 
 const MemberCard = memo(({ 
     member, 
+    memberIndexCode,
     isExpanded, 
     isSelected, 
     selectionMode, 
@@ -50,6 +51,15 @@ const MemberCard = memo(({
 
     const isPresentSelected = attendanceStatus === true
     const isAbsentSelected = attendanceStatus === false
+    const indexLetter = memberIndexCode?.charAt(0) || ''
+    const indexHue = indexLetter && indexLetter !== '#'
+        ? ((indexLetter.charCodeAt(0) - 65) * 37) % 360
+        : 24
+    const indexStyle = {
+        borderColor: `hsl(${indexHue} 70% 46% / 0.72)`,
+        background: `hsl(${indexHue} 76% 46% / 0.16)`,
+        color: `hsl(${indexHue} 78% 38%)`
+    }
 
     return (
         <div className={`relative transition-colors duration-200`}>
@@ -91,9 +101,20 @@ const MemberCard = memo(({
                                 {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                             </div>
                             <div className="flex-1 min-w-0">
-                                <h3 className="font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
-                                    {name}
-                                </h3>
+                                <div className="flex items-start gap-2">
+                                    <h3 className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
+                                        {name}
+                                    </h3>
+                                    {memberIndexCode && (
+                                        <span
+                                            className="inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white"
+                                            style={indexStyle}
+                                            title={`Member index ${memberIndexCode}`}
+                                        >
+                                            {memberIndexCode}
+                                        </span>
+                                    )}
+                                </div>
                                 {regDateRaw && (
                                     <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
                                         Joined {getRelativeRegTime()}
@@ -110,25 +131,33 @@ const MemberCard = memo(({
                     <div className="flex items-stretch gap-2 ml-0 w-full px-3 sm:px-0">
                         <div className="flex flex-row items-stretch gap-2 w-full">
                             <button
-                                onClick={() => onAttendance(member.id, true)}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                    event.stopPropagation()
+                                    onAttendance(member.id, true)
+                                }}
                                 disabled={attendanceLoading}
                                 className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
-                                    ? 'bg-orange-600 dark:bg-orange-700 text-white shadow ring-1 ring-orange-300 dark:ring-orange-500'
+                                    ? 'bg-orange-600 dark:bg-orange-800 text-white shadow ring-1 ring-orange-300 dark:ring-orange-500/70'
                                     : attendanceLoading
                                         ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
-                                        : 'bg-orange-600 dark:bg-orange-700 text-white shadow-sm'
+                                        : 'bg-orange-600 dark:bg-orange-800 text-white shadow-sm hover:bg-orange-700 dark:hover:bg-orange-700'
                                     }`}
                             >
                                 {attendanceLoading ? '...' : 'Present'}
                             </button>
                             <button
-                                onClick={() => onAttendance(member.id, false)}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                    event.stopPropagation()
+                                    onAttendance(member.id, false)
+                                }}
                                 disabled={attendanceLoading}
                                 className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
-                                    ? 'bg-red-600 dark:bg-red-700 text-white shadow ring-1 ring-red-300 dark:ring-red-500'
+                                    ? 'bg-red-600 dark:bg-red-900 text-white shadow ring-1 ring-red-300 dark:ring-red-500/70'
                                     : attendanceLoading
                                         ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
-                                        : 'bg-red-600 dark:bg-red-700 text-white shadow-sm'
+                                        : 'bg-red-600 dark:bg-red-900 text-white shadow-sm hover:bg-red-700 dark:hover:bg-red-800'
                                     }`}
                             >
                                 {attendanceLoading ? '...' : 'Absent'}
@@ -213,14 +242,22 @@ const MemberCard = memo(({
                                                 </div>
                                                 <div className="flex gap-1">
                                                     <button
-                                                        onClick={() => onAttendanceForDate(member.id, true, date)}
-                                                        className={`flex-1 py-1 rounded text-[10px] font-bold ${isP ? 'bg-green-600 text-white' : 'bg-green-50 text-green-600'}`}
+                                                        onPointerDown={(event) => event.stopPropagation()}
+                                                        onClick={(event) => {
+                                                            event.stopPropagation()
+                                                            onAttendanceForDate(member.id, true, date)
+                                                        }}
+                                                        className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${isP ? 'bg-green-600 dark:bg-green-800 text-white' : 'bg-green-50 text-green-600 dark:bg-green-950/60 dark:text-green-300'}`}
                                                     >
                                                         P
                                                     </button>
                                                     <button
-                                                        onClick={() => onAttendanceForDate(member.id, false, date)}
-                                                        className={`flex-1 py-1 rounded text-[10px] font-bold ${isA ? 'bg-red-600 text-white' : 'bg-red-50 text-red-600'}`}
+                                                        onPointerDown={(event) => event.stopPropagation()}
+                                                        onClick={(event) => {
+                                                            event.stopPropagation()
+                                                            onAttendanceForDate(member.id, false, date)
+                                                        }}
+                                                        className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${isA ? 'bg-red-600 dark:bg-red-900 text-white' : 'bg-red-50 text-red-600 dark:bg-red-950/60 dark:text-red-300'}`}
                                                     >
                                                         A
                                                     </button>
@@ -240,6 +277,7 @@ const MemberCard = memo(({
     // Custom comparison for better performance
     return (
         prev.member.id === next.member.id &&
+        prev.memberIndexCode === next.memberIndexCode &&
         prev.isExpanded === next.isExpanded &&
         prev.isSelected === next.isSelected &&
         prev.selectionMode === next.selectionMode &&

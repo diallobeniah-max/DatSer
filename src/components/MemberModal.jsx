@@ -509,7 +509,7 @@ const MemberModal = ({ isOpen, onClose }) => {
   if (!isOpen && !isClosingSheet) return null
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[60] backdrop-animate">
+    <div className="fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate">
       {/* Drag handle for mobile */}
       <div className="flex justify-center pt-3 pb-1 sm:hidden absolute left-0 right-0" style={{ top: 'calc(10vh)' }}>
       </div>

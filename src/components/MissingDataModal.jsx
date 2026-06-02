@@ -445,11 +445,23 @@ const MissingDataModal = ({
         scrollContainerRef
     })
 
+    const stopBackdropScroll = (event) => {
+        const sheet = event.currentTarget.querySelector('.mobile-bottom-sheet')
+        if (sheet && !sheet.contains(event.target)) {
+            event.preventDefault()
+        }
+    }
+
     return (
-        <div data-testid="missing-data-modal" className="fixed inset-0 bg-black bg-opacity-50 dark:bg-black dark:bg-opacity-70 flex items-end sm:items-center justify-center p-0 sm:p-4 z-[60] backdrop-animate">
+        <div
+            data-testid="missing-data-modal"
+            className="fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate overscroll-contain"
+            onWheelCapture={stopBackdropScroll}
+            onTouchMoveCapture={stopBackdropScroll}
+        >
             {/* Modal sheet: flex-col so header+footer never scroll */}
             <div
-                className={`mobile-bottom-sheet w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[90vh] flex flex-col transition-all duration-300 ring-1 sm:rounded-xl rounded-t-2xl rounded-b-none sm:rounded-b-xl animate-scale-in ${isOverrideMode
+                className={`mobile-bottom-sheet w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[calc(100vh-4rem)] flex flex-col transition-all duration-300 ring-1 sm:rounded-xl rounded-t-2xl rounded-b-none sm:rounded-b-xl animate-scale-in ${isOverrideMode
                 ? 'bg-orange-50 dark:bg-orange-900 ring-orange-300 dark:ring-orange-700'
                 : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
                 }`}
@@ -482,7 +494,10 @@ const MissingDataModal = ({
                         <button
                             type="button"
                             data-testid="missing-data-override-toggle"
-                            onClick={() => setIsOverrideMode(!isOverrideMode)}
+                            onClick={(event) => {
+                                event.stopPropagation()
+                                setIsOverrideMode((current) => !current)
+                            }}
                             className={`px-2.5 py-1.5 rounded-lg text-xs border transition-colors min-h-[36px] touch-target ${isOverrideMode
                                 ? 'bg-orange-200 dark:bg-orange-700 text-orange-800 dark:text-orange-200 border-orange-300 dark:border-orange-600 font-medium'
                                 : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600'
@@ -501,8 +516,8 @@ const MissingDataModal = ({
                 </div>
 
                 {/* Scrollable content — grows to fill remaining space */}
-                <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overscroll-contain pb-28" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
-                <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-5">
+                <div ref={scrollContainerRef} className="min-h-0 overflow-y-auto overscroll-contain" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', maxHeight: 'calc(100vh - 168px)' }}>
+                <div className="px-4 sm:px-6 py-4 sm:py-5 space-y-4">
                     {saveError && (
                         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
                             <div className="flex items-center gap-2 text-red-800 dark:text-red-200 font-medium mb-1">
@@ -774,7 +789,7 @@ const MissingDataModal = ({
 
                     {/* Missing Attendance Dates */}
                     {missingDates.length > 0 && (
-                        <GuidedField ref={guideRefs.attendance} active={activeStepId === 'attendance'} className="space-y-4">
+                        <GuidedField ref={guideRefs.attendance} active={activeStepId === 'attendance'} className="space-y-3">
                             <h3 className="text-lg font-medium text-gray-900 dark:text-white">Past Sunday Attendance</h3>
                             <p className="text-sm text-gray-600 dark:text-gray-400">
                                 Please mark attendance for the following past Sundays:
@@ -799,7 +814,7 @@ const MissingDataModal = ({
                                 <p className="text-xs text-gray-500 mt-1">The selected date will be used for the pending attendance action (the one that triggered this modal).</p>
                             </div>
 
-                            <div className="space-y-3">
+                            <div className="space-y-2.5">
                                 {missingDates.map(date => {
                                     const dateKey = date.toISOString().split('T')[0]
                                     const dateLabel = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', weekday: 'long' })
@@ -809,7 +824,7 @@ const MissingDataModal = ({
                                         <div
                                             key={dateKey}
                                             data-testid={`missing-data-attendance-card-${dateKey}`}
-                                            className={`border rounded-lg p-3 ${isMissing ? 'bg-red-50 dark:bg-red-900/10 border-red-300 dark:border-red-700' : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600'} transition-colors`}
+                                            className={`border rounded-xl p-3 ${isMissing ? 'bg-red-50 dark:bg-red-900/10 border-red-300 dark:border-red-700' : 'bg-white dark:bg-[#2F3030] border-gray-200 dark:border-white/10'} transition-colors`}
                                         >
                                             <div className={`text-sm font-medium mb-2 ${isMissing ? 'text-red-800 dark:text-red-200' : 'text-gray-700 dark:text-gray-300'}`}>
                                                 {dateLabel} {isMissing && '(Required)'}
@@ -857,7 +872,7 @@ const MissingDataModal = ({
 
                 {/* Footer — always pinned at bottom, never scrolls */}
                 <div className={`flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 sm:px-6 pt-3 flex gap-3 rounded-b-none sm:rounded-b-xl ${isOverrideMode ? 'bg-orange-50/95 dark:bg-orange-900/95' : 'bg-white dark:bg-gray-800'}`}
-                    style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))' }}>
+                    style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}>
                     <button
                         onClick={onClose}
                         className="flex-1 sm:flex-none px-4 py-3 sm:py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-xl transition-colors min-h-[48px] sm:min-h-[40px] font-medium"

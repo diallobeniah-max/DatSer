@@ -664,7 +664,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
   return (
     <div 
-      className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[60] backdrop-animate"
+      className="fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate"
       onClick={() => closeWithAnimation()}
     >
       <div
