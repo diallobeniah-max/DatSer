@@ -379,31 +379,25 @@ const HelpCenterPage = ({ onBack, onNavigate }) => {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-            {/* Header */}
-            <div className="fixed top-[76px] md:top-[48px] left-0 right-0 z-50 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md border-b border-gray-200 dark:border-gray-700">
-                <div className="max-w-4xl mx-auto px-4 py-4">
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={onBack}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors btn-press"
-                        >
-                            <ArrowLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                        </button>
-                        <div>
-                            <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                                <HelpCircle className="w-5 h-5 text-orange-500" />
-                                Help Center
-                            </h1>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                                Find answers to common questions
-                            </p>
-                        </div>
+        <div className="min-h-0 bg-[#f7f7f5] dark:bg-[#121212]">
+            <div className="max-w-4xl mx-auto px-4 pt-1 pb-4 space-y-4">
+                <div className="flex min-w-0 items-center gap-2 font-[var(--font-family)]">
+                    <button
+                        onClick={onBack}
+                        className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-gray-200 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-100 active:scale-95 dark:border-white/10 dark:bg-[#202121] dark:text-gray-200 dark:hover:bg-white/10"
+                        aria-label="Back from help center"
+                    >
+                        <ArrowLeft className="h-5 w-5" />
+                    </button>
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                        <HelpCircle className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                        <h1 className="truncate text-lg font-bold text-gray-900 dark:text-white sm:text-xl">Help Center</h1>
+                        <p className="truncate text-sm text-gray-500 dark:text-gray-400">Find answers to common questions</p>
                     </div>
                 </div>
-            </div>
 
-            <div className="max-w-4xl mx-auto px-4 pt-[104px] md:pt-[112px] pb-6 space-y-6">
                 {/* Search Bar */}
                 <div className="relative animate-fade-in-up">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />

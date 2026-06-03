@@ -203,7 +203,6 @@ function AppContent({ isMobile }) {
   }
 
   const isExecutive = preferences?.role === 'executive' || preferences?.is_executive === true
-  const backgroundAnimationEnabled = preferences?.background_animation_enabled !== false
   const motionAndSoundsEnabled = preferences?.motion_and_sounds_enabled !== false
   const compactUiEnabled = preferences?.compact_ui_enabled === true
   const smartCompactPromptEnabled = preferences?.smart_compact_prompt_enabled !== false
@@ -268,7 +267,6 @@ function AppContent({ isMobile }) {
     const body = document.body
     const classTargets = [root, body]
     classTargets.forEach((target) => {
-      target.classList.toggle('background-static', !backgroundAnimationEnabled)
       target.classList.toggle('animations-disabled', !motionAndSoundsEnabled)
       target.classList.toggle('compact-ui', compactUiEnabled)
     })
@@ -279,12 +277,11 @@ function AppContent({ isMobile }) {
     } catch { }
     return () => {
       classTargets.forEach((target) => {
-        target.classList.remove('background-static')
         target.classList.remove('animations-disabled')
         target.classList.remove('compact-ui')
       })
     }
-  }, [backgroundAnimationEnabled, compactUiEnabled, hapticFeedbackEnabled, hapticFeedbackStrength, motionAndSoundsEnabled])
+  }, [compactUiEnabled, hapticFeedbackEnabled, hapticFeedbackStrength, motionAndSoundsEnabled])
 
   useEffect(() => {
     if (!smartCompactPromptEnabled || compactUiEnabled || typeof window === 'undefined') return
@@ -488,7 +485,7 @@ function AppContent({ isMobile }) {
   return (
     <div
       onClick={handleGlobalInteractionFeedback}
-      className={`min-app-vh app-shell ios-overscroll-none ${backgroundAnimationEnabled ? 'transition-colors duration-200' : 'background-static'} ${motionAndSoundsEnabled ? '' : 'animations-disabled'} ${compactUiEnabled ? 'compact-ui' : ''}`}
+      className={`min-app-vh app-shell ios-overscroll-none transition-colors duration-200 ${motionAndSoundsEnabled ? '' : 'animations-disabled'} ${compactUiEnabled ? 'compact-ui' : ''}`}
     >
       {showCompactSuggestion && (
         <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top,0px)+72px)] z-[1000000] mx-auto max-w-sm rounded-2xl border border-orange-300/70 bg-white/95 p-3 shadow-2xl shadow-black/20 backdrop-blur-xl dark:border-orange-400/25 dark:bg-[#202121]/95">

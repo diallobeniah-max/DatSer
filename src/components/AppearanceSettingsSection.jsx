@@ -1,5 +1,5 @@
 import React from 'react'
-import { Sun, Moon, Monitor, Sparkles, CheckCircle, ImageOff, VolumeX, LayoutDashboard, Minimize2, ScanSearch } from 'lucide-react'
+import { Sun, Moon, Monitor, Sparkles, CheckCircle, VolumeX, LayoutDashboard, Minimize2, ScanSearch } from 'lucide-react'
 
 const AppearanceSettingsSection = ({
     themeMode,
@@ -14,9 +14,8 @@ const AppearanceSettingsSection = ({
         { id: 'dark', name: 'Dark', icon: Moon, color: 'text-purple-500', bg: 'bg-purple-50' },
         { id: 'system', name: 'System', icon: Monitor, color: 'text-blue-500', bg: 'bg-blue-50' }
     ]
-    const backgroundAnimationEnabled = preferences?.background_animation_enabled !== false
     const motionAndSoundsEnabled = preferences?.motion_and_sounds_enabled !== false
-    const mobileDashboardStatusEnabled = preferences?.mobile_dashboard_status_enabled !== false
+    const mobileDashboardStatusEnabled = preferences?.mobile_dashboard_status_enabled === true
     const compactUiEnabled = preferences?.compact_ui_enabled === true
     const smartCompactPromptEnabled = preferences?.smart_compact_prompt_enabled !== false
 
@@ -95,16 +94,8 @@ const AppearanceSettingsSection = ({
                 </div>
             </div>
 
-            {/* Motion and Background */}
+            {/* Motion and layout */}
             <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:divide-gray-700">
-                <ToggleRow
-                    icon={ImageOff}
-                    title="Background Animation"
-                    description="Use the moving DatSer background. Turn off for a calm solid color."
-                    checked={backgroundAnimationEnabled}
-                    settingId="background_animation"
-                    onChange={() => updatePreferences?.({ background_animation_enabled: !backgroundAnimationEnabled })}
-                />
                 <ToggleRow
                     icon={VolumeX}
                     title="Animations & Sounds"
@@ -115,8 +106,8 @@ const AppearanceSettingsSection = ({
                 />
                 <ToggleRow
                     icon={LayoutDashboard}
-                    title="Dashboard Status Bar"
-                    description="Show the mobile row for Recent, date, total, month, and online status. Turn off to move the details into Profile."
+                    title="Phone Dashboard Status Bar"
+                    description="Show Recent, date, total, month, and online status on the phone dashboard. Off keeps them inside Profile."
                     checked={mobileDashboardStatusEnabled}
                     settingId="mobile_dashboard_status"
                     onChange={() => updatePreferences?.({ mobile_dashboard_status_enabled: !mobileDashboardStatusEnabled })}

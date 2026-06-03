@@ -240,7 +240,7 @@
     --app-header-height-desktop: 76px;
     --app-main-top-offset: calc(var(--app-header-height-mobile) + var(--app-safe-top));
     --app-dashboard-main-top-offset: calc(var(--app-dashboard-header-height-mobile) + var(--app-safe-top));
-    --app-settings-main-top-offset: calc(84px + max(8px, var(--app-safe-top)));
+    --app-settings-main-top-offset: calc(64px + var(--app-safe-top));
     --app-admin-main-top-offset: var(--app-settings-main-top-offset);
     --app-bottom-control-offset: calc(var(--app-safe-bottom) + var(--keyboard-offset, 0px));
   }
@@ -265,26 +265,12 @@
     }
   }
 
-  @keyframes appBackgroundFlow {
-    0% {
-      background-position: 0% 50%;
-    }
-    50% {
-      background-position: 100% 50%;
-    }
-    100% {
-      background-position: 0% 50%;
-    }
-  }
-
   body {
     font-family: var(--font-family);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     @apply text-gray-900 dark:text-gray-100 transition-colors duration-200;
-    background: linear-gradient(135deg, #fff7ed 0%, #ffffff 40%, #fdba74 75%, #fff7ed 100%);
-    background-size: 260% 260%;
-    animation: appBackgroundFlow 16s ease-in-out infinite;
+    background: #f4efe8;
     width: 100%;
     max-width: 100%;
     overflow-x: clip;
@@ -292,14 +278,12 @@
   }
 
   .dark body {
-    background: linear-gradient(135deg, #c2410c 0%, #111111 50%, #000000 100%);
-    background-size: 260% 260%;
-    animation: appBackgroundFlow 18s ease-in-out infinite;
+    background: #0d0d0d;
   }
 
   html.background-static body,
   body.background-static {
-    background: #fff4e6 !important;
+    background: #f4efe8 !important;
     background-size: auto !important;
     animation: none !important;
   }
@@ -307,7 +291,7 @@
   html.dark.background-static body,
   html.dark body.background-static,
   .dark body.background-static {
-    background: #16110f !important;
+    background: #0d0d0d !important;
     background-size: auto !important;
     animation: none !important;
   }

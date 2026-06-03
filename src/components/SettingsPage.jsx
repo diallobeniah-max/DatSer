@@ -1971,20 +1971,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     // Render main settings list (when no section is active)
     const renderMainList = () => (
         <div className="min-h-0">
-            {/* Header */}
-            <div className="settings-detail-header-safe sticky z-30 w-full sm:-mx-4 sm:w-[calc(100%+2rem)] bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/70 dark:border-gray-800/70 shadow-sm">
-                <div className="max-w-4xl mx-auto w-full px-3 sm:px-8 py-2.5 sm:py-3 flex items-center gap-3 sm:gap-4 font-[var(--font-family)]">
-                    <button
-                        onClick={closeSettingsPage}
-                        className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm touch-target"
-                    >
-                        <ChevronLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                    </button>
-                    <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Settings</h1>
-                </div>
-            </div>
-
-            <div className="max-w-4xl mx-auto px-3 sm:px-4 pt-3 pb-4 xl:pb-3 space-y-3">
+            <div className="max-w-4xl mx-auto px-3 sm:px-4 pt-1 pb-2 xl:pb-2 space-y-3">
 
                 {/* Profile Card */}
                 <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
@@ -2140,7 +2127,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
                 {/* Danger Zone - Separate Card (Only show if no search or if matching) */}
                 {!searchQuery && (
-                    <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-900/50 overflow-hidden mt-4">
+                    <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-900/50 overflow-hidden mt-3">
                         <button
                             onClick={() => openSettingsSection('danger')}
                             className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors group"
@@ -2160,7 +2147,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 {/* Sign Out Button */}
                 <button
                     onClick={handleSignOut}
-                    className="w-full mt-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-medium rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                    className="w-full mt-3 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-medium rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
                 >
                     Sign Out
                 </button>
@@ -2289,7 +2276,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 </div>
             )}
 
-            <div className="fixed inset-x-0 bottom-0 z-[100] border-t border-gray-200/60 dark:border-gray-800/60 bg-white/65 dark:bg-black/45 backdrop-blur-2xl px-3 py-3 shadow-[0_-18px_45px_rgba(0,0,0,0.16)] xl:hidden">
+            <div className="fixed inset-x-0 bottom-0 z-[100] border-t border-gray-200/60 dark:border-gray-800/60 bg-white/65 dark:bg-black/45 backdrop-blur-2xl px-3 py-2 shadow-[0_-18px_45px_rgba(0,0,0,0.16)] xl:hidden">
                 <div className="max-w-4xl mx-auto flex items-center gap-3">
                     <div className={`relative flex-1 transition-all duration-300 ease-out ${isSettingsSearchFocused ? 'translate-x-0' : 'translate-x-0'}`}>
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
@@ -2300,7 +2287,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             onChange={(e) => setSearchQuery(e.target.value)}
                             onKeyDown={handleSettingsSearchEnter}
                             onFocus={() => setIsSettingsSearchFocused(true)}
-                            className="h-12 w-full rounded-2xl border border-gray-200/80 bg-white/58 pl-12 pr-4 text-base text-gray-900 outline-none shadow-inner backdrop-blur-2xl transition-all duration-300 ease-out focus:border-orange-500 focus:bg-white/75 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700/80 dark:bg-white/5 dark:text-white dark:placeholder-gray-500 dark:focus:bg-white/8"
+                            className="h-11 w-full rounded-2xl border border-gray-200/80 bg-white/58 pl-12 pr-4 text-base text-gray-900 outline-none shadow-inner backdrop-blur-2xl transition-all duration-300 ease-out focus:border-orange-500 focus:bg-white/75 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700/80 dark:bg-white/5 dark:text-white dark:placeholder-gray-500 dark:focus:bg-white/8"
                         />
                     </div>
                     <button
@@ -2309,9 +2296,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             setSearchQuery('')
                             setIsSettingsSearchFocused(false)
                         }}
-                        className={`grid h-12 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 transition-all duration-300 ease-out hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 ${
+                        className={`grid h-11 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 transition-all duration-300 ease-out hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 ${
                             isSettingsSearchFocused
-                                ? 'w-12 translate-x-0 scale-100 opacity-100'
+                                ? 'w-11 translate-x-0 scale-100 opacity-100'
                                 : 'w-0 translate-x-4 scale-75 opacity-0 pointer-events-none'
                         }`}
                         aria-label="Close settings search"
@@ -2330,29 +2317,27 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         const Icon = currentSection?.icon || User
 
         return (
-            <div className={embedded ? 'min-h-full bg-white/96 dark:bg-[#121212]' : 'min-h-screen bg-white/88 backdrop-blur-xl dark:bg-[#121212]/96'}>
-                {/* Sticky Header - full-bleed across the detail page */}
-                <div className={`${embedded ? 'relative' : 'settings-detail-header-safe sticky'} z-30 w-full ${embedded ? '' : 'sm:-mx-4 sm:w-[calc(100%+2rem)]'} bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/70 dark:border-gray-800/70 shadow-sm`}>
-                    <div className={`${embedded ? 'max-w-none' : 'max-w-4xl mx-auto'} w-full px-3 sm:px-8 py-2.5 sm:py-3 font-[var(--font-family)]`}>
-                        <div className="flex items-center gap-2 sm:gap-3">
+            <div className={embedded ? 'min-h-full bg-[#f7f7f5] dark:bg-[#121212]' : 'min-h-0'}>
+                <div className={`${embedded ? 'max-w-none px-4 pb-4 bg-[#f7f7f5] dark:bg-[#121212]' : 'max-w-4xl mx-auto px-3 sm:px-4 pb-4'} pt-3`}>
+                    <div className={`${embedded ? 'mb-2 border-b border-gray-200/70 pb-2 dark:border-white/10' : 'mb-2.5'} font-[var(--font-family)]`}>
+                        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                             <button
                                 onClick={closeSettingsPanel}
-                                className={`${embedded ? 'hidden' : 'grid'} p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm touch-target`}
+                                className={`${embedded ? 'hidden' : 'grid'} h-11 w-11 shrink-0 place-items-center rounded-2xl border border-gray-200 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-100 active:scale-95 dark:border-white/10 dark:bg-[#202121] dark:text-gray-200 dark:hover:bg-white/10`}
+                                aria-label={`Back from ${currentSection?.label || 'Settings'}`}
                             >
-                                <ChevronLeft className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                                <ChevronLeft className="h-5 w-5" />
                             </button>
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <div className={`p-1.5 rounded-lg ${getIconBgColor(currentSection?.color || 'blue')}`}>
-                                    <Icon className={`w-4 h-4 ${getIconColor(currentSection?.color || 'blue')}`} />
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl ${getIconBgColor(currentSection?.color || 'blue')}`}>
+                                    <Icon className={`h-5 w-5 ${getIconColor(currentSection?.color || 'blue')}`} />
                                 </div>
-                                <h1 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate">{currentSection?.label || 'Settings'}</h1>
+                                <h1 className="truncate text-lg font-bold text-gray-900 dark:text-white sm:text-xl">{currentSection?.label || 'Settings'}</h1>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <div className={`${embedded ? 'max-w-none px-4 pb-6 bg-white/96 dark:bg-[#121212]' : 'max-w-4xl mx-auto px-3 sm:px-4 pb-8'} py-3`}>
-                    <div className={embedded ? '' : 'rounded-[1.35rem] border border-gray-200/80 bg-white/86 p-3 shadow-xl shadow-black/5 backdrop-blur-xl dark:border-[#303030] dark:bg-[#171717]/95 dark:shadow-black/30'}>
+                    <div className={embedded ? '' : 'rounded-[1.35rem] border border-gray-200 bg-[#f7f7f5] p-2.5 shadow-xl shadow-black/8 dark:border-[#303030] dark:bg-[#1b1b1b] dark:shadow-black/30'}>
                         {renderContent(effectiveSection)}
                     </div>
                 </div>
@@ -2585,7 +2570,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     >
                         <div className="h-20 w-1.5 rounded-full bg-gray-300/80 transition-all group-hover:h-28 group-hover:bg-orange-500 dark:bg-white/20 dark:group-hover:bg-orange-400" />
                     </div>
-                    <section className="h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl border border-orange-100 bg-white/96 shadow-xl shadow-orange-900/5 backdrop-blur-xl dark:!border-[#303030] dark:!bg-[#121212] dark:shadow-black/30">
+                    <section className="h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl border border-gray-200 bg-[#f7f7f5] shadow-xl shadow-black/8 dark:!border-[#303030] dark:!bg-[#1b1b1b] dark:shadow-black/30">
                         {isSettingsSearchFocused ? renderSettingsSearchPanel() : renderDetailView({ embedded: true, sectionId: effectiveSection })}
                     </section>
                     </div>

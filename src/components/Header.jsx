@@ -83,6 +83,9 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   const [showMonthPicker, setShowMonthPicker] = useState(false)
   const [showConnectionMenu, setShowConnectionMenu] = useState(false)
   const [showRecentMenu, setShowRecentMenu] = useState(false)
+  const [isPhoneViewport, setIsPhoneViewport] = useState(() => (
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false
+  ))
   const monthButtonRef = useRef(null)
   const connectionButtonRef = useRef(null)
   const recentMenuRef = useRef(null)
@@ -96,6 +99,15 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   useEffect(() => {
     setLocalSearchTerm(searchTerm)
   }, [searchTerm])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const media = window.matchMedia('(max-width: 767px)')
+    const updateViewport = () => setIsPhoneViewport(media.matches)
+    updateViewport()
+    media.addEventListener?.('change', updateViewport)
+    return () => media.removeEventListener?.('change', updateViewport)
+  }, [])
 
   // Debounce updates to global search term to reduce re-renders during typing
   useEffect(() => {
@@ -285,7 +297,11 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       ? 'text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30'
       : 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30'
     : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
-  const mobileStatusBarEnabled = preferences?.mobile_dashboard_status_enabled !== false
+  const phoneStatusPreference = preferences?.mobile_dashboard_status_enabled
+  const phoneStatusBarEnabled = isPhoneViewport
+    ? phoneStatusPreference === true
+    : true
+  const showDashboardStatusBar = !isPhoneViewport || phoneStatusBarEnabled
   const visibleDateLabel = visibleSelectedDate
     ? visibleSelectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null
@@ -319,18 +335,18 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const root = document.documentElement
-    root.style.setProperty('--app-dashboard-header-height-mobile', mobileStatusBarEnabled ? '126px' : '86px')
+    root.style.setProperty('--app-dashboard-header-height-mobile', showDashboardStatusBar ? '126px' : '64px')
     return () => {
       root.style.removeProperty('--app-dashboard-header-height-mobile')
     }
-  }, [mobileStatusBarEnabled])
+  }, [showDashboardStatusBar])
 
   // Menu items moved to LoginButton profile dropdown
 
   return (
     <header className="bg-white dark:bg-gray-800 shadow-sm md:border-b border-gray-200 dark:border-gray-700 z-[55] w-full app-header-safe safe-area-x fixed top-0 left-0 right-0">
       <div className="mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-0 md:py-1 w-full">
-        <div className="flex items-center justify-center md:justify-between min-h-[36px] md:min-h-[44px]">
+        <div className="flex items-center justify-center md:justify-between min-h-0 md:min-h-[44px]">
           {/* Compact brand mark for the website header. The detailed app icon stays for PWA/Android. */}
           <div className="hidden items-center md:flex">
             <button
@@ -424,7 +440,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
         </div>
 
         {/* Mobile Navigation */}
-        <div className="md:hidden py-0">
+        <div className="md:hidden pb-2 pt-1">
           <div className="flex items-center justify-between">
             {/* Left: Quick nav */}
             <div className="flex items-center gap-1">
@@ -461,7 +477,6 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                   </span>
                 )}
               </button>
-              {!mobileStatusBarEnabled && currentView === 'dashboard' && recentButton('', true)}
             </div>
 
             {/* Right: Profile (contains all menu options) */}
@@ -473,7 +488,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 setDashboardTab={setDashboardTab}
                 currentView={currentView}
                 dashboardTab={dashboardTab}
-                compactStatus={!mobileStatusBarEnabled && currentView === 'dashboard' ? {
+                compactStatus={isPhoneViewport && !showDashboardStatusBar && currentView === 'dashboard' ? {
                   dateLabel: visibleDateLabel,
                   foundCount: (!isCollaborator || isAdminCollaborator) ? compactFoundCount : null,
                   monthLabel,
@@ -491,7 +506,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       </div>
       {/* Summary pill - info bar */}
       {currentView === 'dashboard' && (
-        <div className={`${mobileStatusBarEnabled ? '' : 'hidden md:block'} md:border-t border-gray-200 dark:border-gray-700`}>
+        <div className={`${showDashboardStatusBar ? '' : 'hidden'} md:border-t border-gray-200 dark:border-gray-700`}>
           <div className="mx-auto px-3 pb-2 pt-1.5 sm:px-4 md:py-1">
             <div className="dashboard-status-pill no-scrollbar flex w-full max-w-full flex-wrap items-center justify-center gap-x-1 gap-y-1 overflow-visible rounded-[1.35rem] bg-white/82 px-2.5 py-2 text-[10.5px] leading-none text-gray-700 shadow-sm ring-1 ring-gray-200/80 backdrop-blur-xl dark:bg-[#202121]/88 dark:text-gray-300 dark:ring-white/10 sm:w-fit sm:mx-auto sm:gap-x-1.5 sm:rounded-full sm:px-4 sm:text-sm md:flex-nowrap md:overflow-x-auto md:py-1.5">
               {recentButton('shrink-0')}
