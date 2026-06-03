@@ -2399,7 +2399,6 @@ export const AppProvider = ({ children }) => {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - update local state
         applyLocalAttendanceState(memberId, effectiveDate, present)
-        toast.success('Attendance marked! (Demo Mode)')
         return { success: true }
       }
 
@@ -2713,10 +2712,12 @@ export const AppProvider = ({ children }) => {
     }
   }, [attendanceData, findAttendanceColumnForDateInTable, isSupabaseConfigured])
 
-  // Update member
-  // Options: { silent: boolean, allowLocalFallback: boolean }
+  // Update member.
+  // skipRefresh keeps optimistic local state without triggering the dashboard skeleton.
+  // Use it only for flows that immediately update all affected local state themselves.
+  // Options: { silent: boolean, allowLocalFallback: boolean, skipRefresh: boolean }
   const updateMember = async (id, updates, options = {}) => {
-    const { silent = false, allowLocalFallback = false } = options
+    const { silent = false, allowLocalFallback = false, skipRefresh = false } = options
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - update local state
@@ -3053,12 +3054,15 @@ export const AppProvider = ({ children }) => {
       // Update search term to trigger re-filtering
       refreshSearch()
 
-      // Invalidate stale caches and force fresh pull so all views update instantly
+      // Invalidate stale caches. Some flows, like missing-info saves, should avoid
+      // forcing the whole dashboard into skeleton loading after optimistic state updates.
       invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
-      try {
-        await fetchMembers(currentTable, { forceRefresh: true })
-      } catch (refreshErr) {
-        console.warn('[updateMember] Post-update refresh failed, using optimistic state:', refreshErr)
+      if (!skipRefresh) {
+        try {
+          await fetchMembers(currentTable, { forceRefresh: true })
+        } catch (refreshErr) {
+          console.warn('[updateMember] Post-update refresh failed, using optimistic state:', refreshErr)
+        }
       }
 
       if (!silent) toast.success(`Member updated successfully in ${currentTable}!`)

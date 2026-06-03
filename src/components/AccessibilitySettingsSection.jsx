@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Type, MousePointer2, Command, BellRing, Clock3, Search, Share2, Copy, MessageCircle, Mail, QrCode, X } from 'lucide-react'
+import { Type, MousePointer2, Command, BellRing, Clock3, Search, Share2, Copy, MessageCircle, Mail, QrCode, X, RefreshCw } from 'lucide-react'
 
 const AccessibilitySettingsSection = ({
     preferences,
@@ -18,7 +18,8 @@ const AccessibilitySettingsSection = ({
     const [isQrExpanded, setIsQrExpanded] = useState(false)
     const hapticFeedbackEnabled = preferences?.haptic_feedback_enabled !== false
     const hapticFeedbackStrength = Number(preferences?.haptic_feedback_strength || 1)
-    const settingsSearchQuickActionsEnabled = preferences?.settings_search_quick_actions_enabled === true
+    const settingsSearchQuickActionsEnabled = preferences?.settings_search_quick_actions_enabled !== false
+    const commandPaletteAutoScanEnabled = preferences?.command_palette_auto_scan_settings !== false
     const appShareUrl = typeof window !== 'undefined' ? `${window.location.origin}${import.meta.env?.BASE_URL || '/'}` : ''
     const shareText = 'Open DatSer here:'
     const qrCodeUrl = appShareUrl
@@ -240,8 +241,9 @@ const AccessibilitySettingsSection = ({
                             <Search className="w-5 h-5 text-orange-600 dark:text-orange-300" />
                         </div>
                         <div className="min-w-0">
-                            <p className="font-semibold text-gray-900 dark:text-white">Quick Settings Search</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">Show a quick action popup instead of leaving search immediately</p>
+                            <p className="font-semibold text-gray-900 dark:text-white">Command Menu Quick Look</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Preview and adjust settings inside Ctrl K before opening Settings</p>
+                            <p className="mt-1 text-xs font-bold text-orange-600 dark:text-orange-300">Shortcut: Ctrl/Cmd + Enter</p>
                         </div>
                     </div>
                     <button
@@ -255,6 +257,32 @@ const AccessibilitySettingsSection = ({
                         <span
                             className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-300 ease-out ${
                                 settingsSearchQuickActionsEnabled ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                        />
+                    </button>
+                </div>
+
+                <div className="p-4 flex items-center justify-between gap-4">
+                    <div className="flex min-w-0 items-center gap-3">
+                        <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
+                            <RefreshCw className="w-5 h-5 text-orange-600 dark:text-orange-300" />
+                        </div>
+                        <div className="min-w-0">
+                            <p className="font-semibold text-gray-900 dark:text-white">Auto-Scan Settings Search</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Automatically add new settings and panels to Ctrl K search</p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => updatePreferences?.({ command_palette_auto_scan_settings: !commandPaletteAutoScanEnabled })}
+                        className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+                            commandPaletteAutoScanEnabled ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
+                        }`}
+                        aria-pressed={commandPaletteAutoScanEnabled}
+                    >
+                        <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-300 ease-out ${
+                                commandPaletteAutoScanEnabled ? 'translate-x-6' : 'translate-x-1'
                             }`}
                         />
                     </button>

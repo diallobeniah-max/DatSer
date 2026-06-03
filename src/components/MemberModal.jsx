@@ -26,6 +26,7 @@ const MemberModal = ({ isOpen, onClose }) => {
   }
   const [loading, setLoading] = useState(false)
   const submitRequestIdRef = useRef(null)
+  const submitInFlightRef = useRef(false)
   const [showErrors, setShowErrors] = useState(false)
   const [showParentErrors, setShowParentErrors] = useState(false)
   const [isLevelOpen, setIsLevelOpen] = useState(false)
@@ -256,6 +257,11 @@ const MemberModal = ({ isOpen, onClose }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+
+    if (submitInFlightRef.current || loading) {
+      return
+    }
+
     setHasAttemptedSave(true)
 
     const isFullNameValid = formData.full_name && formData.full_name.trim().length > 0
@@ -301,6 +307,7 @@ const MemberModal = ({ isOpen, onClose }) => {
         return
       }
     }
+    submitInFlightRef.current = true
     setLoading(true)
 
     try {
@@ -432,6 +439,7 @@ const MemberModal = ({ isOpen, onClose }) => {
       toast.error(error.message || 'Failed to save member')
     } finally {
       setLoading(false)
+      submitInFlightRef.current = false
     }
   }
 

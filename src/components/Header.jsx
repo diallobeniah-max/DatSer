@@ -11,7 +11,8 @@ import {
   Download,
   RefreshCw,
   History,
-  X
+  X,
+  Database
 } from 'lucide-react'
 import MonthPickerPopup from './MonthPickerPopup'
 import { useApp } from '../context/AppContext'
@@ -330,14 +331,18 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     <header className="bg-white dark:bg-gray-800 shadow-sm md:border-b border-gray-200 dark:border-gray-700 z-[55] w-full app-header-safe safe-area-x fixed top-0 left-0 right-0">
       <div className="mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-0 md:py-1 w-full">
         <div className="flex items-center justify-center md:justify-between min-h-[36px] md:min-h-[44px]">
-          {/* Compact brand label */}
-          <div className="flex items-center">
+          {/* Compact brand mark for the website header. The detailed app icon stays for PWA/Android. */}
+          <div className="hidden items-center md:flex">
             <button
               onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('all') }}
-              className="text-xs sm:text-sm font-bold text-gray-900 dark:text-white hover:underline"
+              className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-gray-900 transition-colors hover:bg-gray-100 active:scale-95 dark:text-white dark:hover:bg-gray-700"
               title="Go to Dashboard"
+              aria-label="Go to DatSer dashboard"
             >
-              Datser
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-orange-600 text-white shadow-sm shadow-orange-950/20 ring-1 ring-orange-400/30">
+                <Database className="h-4 w-4" strokeWidth={2.5} />
+              </span>
+              <span className="text-sm font-black tracking-tight">DatSer</span>
             </button>
           </div>
 
@@ -435,7 +440,9 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                   }`}
                 title="Members"
               >
-                <Users className="w-4 h-4" />
+                <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md ${currentView === 'dashboard' && dashboardTab === 'all' ? 'bg-orange-600 text-white' : 'bg-orange-500/12 text-orange-500'}`}>
+                  <Database className="h-3.5 w-3.5" strokeWidth={2.5} />
+                </span>
                 <span>Members</span>
               </button>
               <button
@@ -485,8 +492,8 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       {/* Summary pill - info bar */}
       {currentView === 'dashboard' && (
         <div className={`${mobileStatusBarEnabled ? '' : 'hidden md:block'} md:border-t border-gray-200 dark:border-gray-700`}>
-          <div className="mx-auto px-3 sm:px-4 py-1.5 md:py-1">
-            <div className="flex items-center justify-center gap-x-1.5 gap-y-1 overflow-x-auto rounded-2xl bg-white/82 px-2.5 py-1.5 text-[11px] leading-none text-gray-700 shadow-sm ring-1 ring-gray-200/80 backdrop-blur-xl dark:bg-[#202121]/88 dark:text-gray-300 dark:ring-white/10 sm:w-fit sm:mx-auto sm:rounded-full sm:px-4 sm:text-sm">
+          <div className="mx-auto px-3 pb-2 pt-1.5 sm:px-4 md:py-1">
+            <div className="dashboard-status-pill no-scrollbar flex w-full max-w-full flex-wrap items-center justify-center gap-x-1 gap-y-1 overflow-visible rounded-[1.35rem] bg-white/82 px-2.5 py-2 text-[10.5px] leading-none text-gray-700 shadow-sm ring-1 ring-gray-200/80 backdrop-blur-xl dark:bg-[#202121]/88 dark:text-gray-300 dark:ring-white/10 sm:w-fit sm:mx-auto sm:gap-x-1.5 sm:rounded-full sm:px-4 sm:text-sm md:flex-nowrap md:overflow-x-auto md:py-1.5">
               {recentButton('shrink-0')}
 
               {(visibleSelectedDate || (!isCollaborator || isAdminCollaborator)) && (
@@ -523,7 +530,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 ref={connectionButtonRef}
                 type="button"
                 onClick={() => { selection(); setShowConnectionMenu(prev => !prev) }}
-                className={`relative inline-flex items-center gap-1.5 -ml-0.5 px-2 py-1 text-[11px] sm:text-xs font-semibold whitespace-nowrap rounded-full border transition-colors hover:brightness-105 ${connectionToneClass}`}
+                className={`relative inline-flex items-center gap-1 px-1.5 py-1 text-[10.5px] sm:gap-1.5 sm:px-2 sm:text-xs font-semibold whitespace-nowrap rounded-full border transition-colors hover:brightness-105 md:-ml-0.5 ${connectionToneClass}`}
                 title="Connection and offline mode"
               >
                 {isSupabaseConfigured()

@@ -33,6 +33,7 @@ const MissingDataModal = ({
     const [saveError, setSaveError] = useState(null)
     const [hasAttemptedSave, setHasAttemptedSave] = useState(false)
     const [isOverrideMode, setIsOverrideMode] = useState(false)
+    const [isDismissing, setIsDismissing] = useState(false)
     const [showLevelDropdown, setShowLevelDropdown] = useState(false)
     const isSaveInFlightRef = useRef(false)
     // Tracks whether we have already initiated closing to block ghost-click re-opens
@@ -172,7 +173,6 @@ const MissingDataModal = ({
                 return new Date(year, month - 1, day)
             }
             await markAttendance(member.id, parseLocalDate(dateKey), status)
-            toast.success(status === null ? 'Attendance cleared' : (status ? 'Marked present' : 'Marked absent'))
         } catch (error) {
             console.error('Error marking attendance:', error)
             toast.error('Failed to mark attendance')
@@ -249,9 +249,13 @@ const MissingDataModal = ({
         isSaveInFlightRef.current = true
         isClosingRef.current = true
         setIsSaving(true)
+        setIsDismissing(true)
         setSaveError(null)
 
         try {
+            // Unmount the sheet before writes begin so data refreshes cannot repaint it.
+            onClose?.({ suppressAll: true })
+
             // Update member data if there are missing fields
             if (missingFields.length > 0) {
                 const updates = {}
@@ -278,7 +282,7 @@ const MissingDataModal = ({
                 }
 
                 console.log('Updating member with:', updates)
-                await updateMember(member.id, updates)
+                await updateMember(member.id, updates, { silent: true, skipRefresh: true })
                 console.log('Member updated successfully')
             }
 
@@ -371,8 +375,7 @@ const MissingDataModal = ({
             }
 
             toast.success(isOverrideMode ? 'Attendance saved (Override)' : 'Missing data saved successfully!')
-            setIsSaving(false)
-            isSaveInFlightRef.current = false
+            setIsDismissing(true)
             // Call onSave which will close the modal – isClosingRef stays true to block ghost re-opens
             if (onSave) {
                 await onSave(updatedSnapshot)
@@ -385,6 +388,7 @@ const MissingDataModal = ({
             setSaveError(errorMsg)
             toast.error(`Failed to save data: ${errorMsg}`)
             setIsSaving(false)
+            setIsDismissing(false)
             isSaveInFlightRef.current = false
             isClosingRef.current = false
         }
@@ -455,13 +459,13 @@ const MissingDataModal = ({
     return (
         <div
             data-testid="missing-data-modal"
-            className="fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate overscroll-contain"
+            className={`fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate overscroll-contain transition-opacity duration-200 ${isDismissing ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
             onWheelCapture={stopBackdropScroll}
             onTouchMoveCapture={stopBackdropScroll}
         >
             {/* Modal sheet: flex-col so header+footer never scroll */}
             <div
-                className={`mobile-bottom-sheet w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[calc(100vh-4rem)] flex flex-col transition-all duration-300 ring-1 sm:rounded-xl rounded-t-2xl rounded-b-none sm:rounded-b-xl animate-scale-in ${isOverrideMode
+                className={`mobile-bottom-sheet w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[calc(100vh-4rem)] flex flex-col transition-all duration-300 ring-1 sm:rounded-xl rounded-t-2xl rounded-b-none sm:rounded-b-xl ${isDismissing ? 'translate-y-4 scale-[0.98]' : 'animate-scale-in'} ${isOverrideMode
                 ? 'bg-orange-50 dark:bg-orange-900 ring-orange-300 dark:ring-orange-700'
                 : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
                 }`}
@@ -874,15 +878,23 @@ const MissingDataModal = ({
                 <div className={`flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 sm:px-6 pt-3 flex gap-3 rounded-b-none sm:rounded-b-xl ${isOverrideMode ? 'bg-orange-50/95 dark:bg-orange-900/95' : 'bg-white dark:bg-gray-800'}`}
                     style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}>
                     <button
-                        onClick={onClose}
+                        type="button"
+                        onClick={(event) => {
+                            event.stopPropagation()
+                            onClose?.()
+                        }}
                         className="flex-1 sm:flex-none px-4 py-3 sm:py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-xl transition-colors min-h-[48px] sm:min-h-[40px] font-medium"
                         disabled={isSaving}
                     >
                         Cancel
                     </button>
                     <button
+                        type="button"
                         data-testid="missing-data-save"
-                        onClick={handleSave}
+                        onClick={(event) => {
+                            event.stopPropagation()
+                            handleSave()
+                        }}
                         className={`flex-1 sm:flex-none px-6 py-3 sm:py-2 rounded-xl font-semibold transition-colors min-h-[48px] sm:min-h-[40px] ${isSaving
                             ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
                             : (isOverrideMode ? 'bg-orange-600 active:bg-orange-700 text-white shadow-sm' : 'bg-primary-600 active:bg-primary-700 text-white shadow-sm')

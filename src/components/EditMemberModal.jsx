@@ -37,6 +37,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const stableMemberRef = useRef(null)
   const isDirtyRef = useRef(false)
   const submitRequestIdRef = useRef(null)
+  const submitInFlightRef = useRef(false)
   const [formData, setFormData] = useState({
     full_name: '',
     gender: '',
@@ -318,6 +319,11 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+
+    if (submitInFlightRef.current || loading) {
+      return
+    }
+
     setHasAttemptedSave(true)
 
     // Validate required fields
@@ -350,6 +356,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       }
     }
 
+    submitInFlightRef.current = true
     setLoading(true)
 
     try {
@@ -571,6 +578,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       toast.error(error.message || 'Failed to update member')
     } finally {
       setLoading(false)
+      submitInFlightRef.current = false
     }
   }
 

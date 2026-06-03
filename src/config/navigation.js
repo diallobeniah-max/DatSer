@@ -372,6 +372,22 @@ export const SETTINGS_SEARCH_INDEX = [
         icon: Zap
     },
     {
+        id: 'command_palette_preview',
+        section: 'accessibility',
+        label: 'Command Menu Preview',
+        description: 'Preview settings inside the command menu before opening the full Settings page',
+        keywords: 'command palette preview quick settings popup search results ctrl k',
+        icon: Zap
+    },
+    {
+        id: 'command_palette_auto_scan',
+        section: 'accessibility',
+        label: 'Auto-Scan Settings Search',
+        description: 'Automatically add new settings and panels to command menu search',
+        keywords: 'auto scan settings search command palette discover panels automatic',
+        icon: RefreshCw
+    },
+    {
         id: 'notifications',
         section: 'accessibility',
         label: 'In-App Notifications',

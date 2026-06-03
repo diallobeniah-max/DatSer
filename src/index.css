@@ -201,6 +201,17 @@
   /* Firefox */
 }
 
+.dashboard-status-pill {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.dashboard-status-pill::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 @layer base {
   * {
     box-sizing: border-box;
@@ -559,43 +570,104 @@
 }
 
 /* Compact UI mode: tighter spacing without changing the information architecture. */
+.compact-ui.app-shell .space-y-6 > :not([hidden]) ~ :not([hidden]),
 .compact-ui .app-shell .space-y-6 > :not([hidden]) ~ :not([hidden]) {
   margin-top: 1rem;
 }
 
+.compact-ui.app-shell .space-y-4 > :not([hidden]) ~ :not([hidden]),
 .compact-ui .app-shell .space-y-4 > :not([hidden]) ~ :not([hidden]) {
   margin-top: 0.75rem;
 }
 
+.compact-ui.app-shell .rounded-2xl,
 .compact-ui .app-shell .rounded-2xl {
   border-radius: 0.875rem;
 }
 
+.compact-ui.app-shell .p-5,
 .compact-ui .app-shell .p-5 {
   padding: 1rem;
 }
 
+.compact-ui.app-shell .p-4,
 .compact-ui .app-shell .p-4 {
   padding: 0.875rem;
 }
 
+.compact-ui.app-shell .py-4,
 .compact-ui .app-shell .py-4 {
   padding-top: 0.75rem;
   padding-bottom: 0.75rem;
 }
 
+.compact-ui.app-shell .gap-4,
 .compact-ui .app-shell .gap-4 {
   gap: 0.75rem;
 }
 
+.compact-ui.app-shell header .min-h-\[36px\],
+.compact-ui .app-shell header .min-h-\[36px\] {
+  min-height: 32px;
+}
+
+.compact-ui.app-shell header .min-h-\[44px\],
+.compact-ui .app-shell header .min-h-\[44px\] {
+  min-height: 38px;
+}
+
+.compact-ui.app-shell header button,
+.compact-ui .app-shell header button {
+  min-height: 34px;
+}
+
+.compact-ui.app-shell main,
+.compact-ui .app-shell main {
+  font-size: 0.94rem;
+}
+
+.compact-ui.app-shell .grid.gap-4,
+.compact-ui .app-shell .grid.gap-4 {
+  gap: 0.625rem;
+}
+
+.compact-ui.app-shell [class*="min-h-[48px]"],
+.compact-ui .app-shell [class*="min-h-[48px]"] {
+  min-height: 42px !important;
+}
+
+.compact-ui.app-shell .fixed.bottom-0,
+.compact-ui .app-shell .fixed.bottom-0 {
+  padding-top: 0.5rem !important;
+}
+
 @media (max-width: 640px) {
+  .compact-ui.app-shell .text-lg,
   .compact-ui .app-shell .text-lg {
     font-size: 1rem;
     line-height: 1.35;
   }
 
+  .compact-ui.app-shell .min-h-\[48px\],
   .compact-ui .app-shell .min-h-\[48px\] {
     min-height: 42px;
+  }
+
+  .compact-ui.app-shell .px-4,
+  .compact-ui .app-shell .px-4 {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .compact-ui.app-shell .py-3,
+  .compact-ui .app-shell .py-3 {
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+  }
+
+  .compact-ui.app-shell .rounded-xl,
+  .compact-ui .app-shell .rounded-xl {
+    border-radius: 0.65rem;
   }
 }
 
@@ -1266,8 +1338,9 @@ details[open] summary~* {
 .datser-toast-stack .datser-toast-close,
 .datser-toast-stack .datser-notification-close,
 .datser-toast-stack .Toastify__close-button {
-  display: grid !important;
-  place-items: center !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   flex: 0 0 28px !important;
   width: 28px !important;
   height: 28px !important;
@@ -1350,14 +1423,22 @@ details[open] summary~* {
   animation: datserToastIn 0.28s cubic-bezier(0.2, 1, 0.2, 1) both !important;
 }
 
-.datser-toast-stack .Toastify__toast.Toastify__toast--exit {
-  animation: datserToastOut 0.18s ease-in both !important;
+.datser-toast-stack .Toastify__toast.Toastify__toast--exit,
+.datser-toast-stack .Toastify__toast.Toastify__slide-exit--top-center,
+.datser-toast-stack .Toastify__toast.Toastify__slide-exit--top-right,
+.datser-toast-stack .Toastify__toast.Toastify__slide-exit--top-left,
+.datser-toast-stack .Toastify__toast.Toastify__bounce-exit--top-center,
+.datser-toast-stack .Toastify__toast.Toastify__zoom-exit,
+.Toastify__toast-container.datser-toast-stack .Toastify__slide-exit--top-center,
+.Toastify__toast-container.datser-toast-stack .Toastify__slide-exit--top-right,
+.Toastify__toast-container.datser-toast-stack .Toastify__slide-exit--top-left {
+  animation: datserToastOut 0.26s cubic-bezier(0.4, 0, 0.2, 1) both !important;
 }
 
 @keyframes datserToastIn {
   from {
     opacity: 0;
-    transform: translateY(-24px) scale(0.95);
+    transform: translateY(-52px) scale(0.96);
   }
   to {
     opacity: 1;
@@ -1366,10 +1447,39 @@ details[open] summary~* {
 }
 
 @keyframes datserToastOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
   to {
     opacity: 0;
-    transform: translateY(-16px) scale(0.96);
+    transform: translateY(-52px) scale(0.96);
   }
+}
+
+.datser-command-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(249, 115, 22, 0.42) rgba(255, 255, 255, 0.06);
+}
+
+.datser-command-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.datser-command-scroll::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.datser-command-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(249, 115, 22, 0.85), rgba(180, 83, 9, 0.72)) border-box;
+}
+
+.datser-command-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(251, 146, 60, 0.95), rgba(249, 115, 22, 0.86)) border-box;
 }
 
 @media (max-width: 640px) {
@@ -1510,9 +1620,14 @@ details[open] summary~* {
   background:
     radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.13), transparent 34%),
     rgba(255, 255, 255, 0.88) !important;
-  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.16) !important;
+  box-shadow:
+    0 30px 70px rgba(15, 23, 42, 0.24),
+    0 12px 28px rgba(15, 23, 42, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.74) !important;
   -webkit-backdrop-filter: blur(20px) saturate(170%) !important;
   backdrop-filter: blur(20px) saturate(170%) !important;
+  transform-origin: top center !important;
+  will-change: opacity, transform !important;
 }
 
 .dark .datser-toast-stack .datser-toast,
@@ -1522,7 +1637,10 @@ details[open] summary~* {
   background:
     radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.16), transparent 34%),
     rgba(18, 18, 20, 0.88) !important;
-  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.38) !important;
+  box-shadow:
+    0 32px 78px rgba(0, 0, 0, 0.56),
+    0 14px 30px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
 }
 
 .datser-notification-card {
@@ -1609,6 +1727,51 @@ details[open] summary~* {
   height: 2px !important;
   opacity: 0.34 !important;
   background: currentColor !important;
+}
+
+.datser-toast-stack .datser-notification-close,
+.datser-toast-stack .datser-toast-close,
+.datser-toast-stack .Toastify__close-button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+  text-align: center !important;
+}
+
+.datser-toast-stack .datser-notification-close svg,
+.datser-toast-stack .datser-toast-close svg,
+.datser-toast-stack .Toastify__close-button svg {
+  display: block !important;
+  width: 18px !important;
+  height: 18px !important;
+  margin: 0 !important;
+  transform: none !important;
+}
+
+.datser-toast-stack .datser-toast-close::before {
+  display: none !important;
+  content: none !important;
+}
+
+.datser-toast-stack .Toastify__toast--enter,
+.datser-toast-stack .Toastify__slide-enter--top-center,
+.datser-toast-stack .Toastify__slide-enter--top-center.Toastify__slide-enter--top-center--active,
+.datser-toast-stack .Toastify__slide-enter-active {
+  animation: datserToastIn 0.34s cubic-bezier(0.16, 1, 0.3, 1) both !important;
+}
+
+.datser-toast-stack .Toastify__toast--exit,
+.datser-toast-stack .Toastify__slide-exit--top-center,
+.datser-toast-stack .Toastify__slide-exit--top-right,
+.datser-toast-stack .Toastify__slide-exit--top-left,
+.datser-toast-stack .Toastify__slide-exit-active,
+.datser-toast-stack .Toastify__bounce-exit--top-center,
+.datser-toast-stack .Toastify__zoom-exit,
+.datser-toast-stack .Toastify__toast.datser-toast-manual-closing {
+  animation: datserToastOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) both !important;
+  pointer-events: none !important;
 }
 
 @media (max-width: 640px) {

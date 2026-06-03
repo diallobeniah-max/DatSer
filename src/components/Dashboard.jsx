@@ -268,13 +268,16 @@ const Dashboard = ({ isAdmin = false }) => {
   const [missingFields, setMissingFields] = useState([])
   const [missingDates, setMissingDates] = useState([])
   const [pendingAttendanceAction, setPendingAttendanceAction] = useState(null)
-  const recentMissingDataCloseRef = useRef({ memberId: null, present: null, at: 0 })
+  const recentMissingDataCloseRef = useRef({ memberId: null, present: null, at: 0, suppressAll: false })
+  const missingDataPromptLockRef = useRef(null)
+  const attendanceActionLocksRef = useRef(new Set())
 
-  const closeMissingDataModal = () => {
+  const closeMissingDataModal = ({ suppressAll = false } = {}) => {
     recentMissingDataCloseRef.current = {
       memberId: pendingAttendanceAction?.memberId ?? missingDataMember?.id ?? null,
       present: pendingAttendanceAction?.present ?? null,
-      at: Date.now()
+      at: Date.now(),
+      suppressAll
     }
     setShowMissingDataModal(false)
     setMissingDataMember(null)
@@ -484,21 +487,25 @@ const Dashboard = ({ isAdmin = false }) => {
       return false
     }
 
+    const promptKey = `${member?.id || 'unknown'}:${present ? 'present' : 'absent'}`
+    const activePromptLock = missingDataPromptLockRef.current
+    if (
+      activePromptLock?.key === promptKey &&
+      Date.now() - activePromptLock.at < 5000
+    ) {
+      return true
+    }
+
     const recentClose = recentMissingDataCloseRef.current
     if (
       recentClose.memberId === member?.id &&
+      (recentClose.suppressAll || recentClose.present === present) &&
       Date.now() - recentClose.at < 5000
     ) {
       return true
     }
 
-    // If modal is already open, close it first to reset state
-    if (showMissingDataModal) {
-      closeMissingDataModal()
-      // Small delay to allow state to reset before re-opening
-      setTimeout(() => {
-        proceedWithAttendanceCheck(member, present)
-      }, 50)
+    if (showMissingDataModal || pendingAttendanceAction) {
       return true
     }
     
@@ -511,6 +518,10 @@ const Dashboard = ({ isAdmin = false }) => {
     const dates = getMissingAttendance(member.id, pastSundays)
 
     if (fields.length > 0 || dates.length > 0) {
+      missingDataPromptLockRef.current = {
+        key: `${member?.id || 'unknown'}:${present ? 'present' : 'absent'}`,
+        at: Date.now()
+      }
       setMissingDataMember(member)
       setMissingFields(fields)
       setMissingDates(dates)
@@ -1068,24 +1079,34 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   const handleAttendance = async (memberId, present) => {
-    // Check for missing data before marking attendance
-    const member = members.find(m => m.id === memberId)
-    if (member && checkMissingDataBeforeAttendance(member, present)) {
-      return // Stop here if missing data found
-    }
-
-    // Use the selected attendance date from the picker
     const targetDate = getDateString(selectedAttendanceDate)
-    if (!targetDate) {
-      toast.error('Please select an attendance date first.')
+    const actionKey = `${memberId}:${targetDate || 'no-date'}:${present ? 'present' : 'absent'}`
+
+    if (attendanceActionLocksRef.current.has(actionKey)) {
       return
     }
 
-    setAttendanceLoading(prev => ({ ...prev, [memberId]: true }))
+    if (attendanceLoading[memberId]) {
+      return
+    }
+
+    attendanceActionLocksRef.current.add(actionKey)
+
+    const member = members.find(m => m.id === memberId)
     try {
-      const memberName = member ? (member['full_name'] || member['Full Name']) : 'Member'
+      // Check for missing data before marking attendance
+      if (member && checkMissingDataBeforeAttendance(member, present)) {
+        return // Stop here if missing data found
+      }
+
+      // Use the selected attendance date from the picker
+      if (!targetDate) {
+        toast.error('Please select an attendance date first.')
+        return
+      }
+
+      setAttendanceLoading(prev => ({ ...prev, [memberId]: true }))
       const currentStatus = attendanceData[targetDate]?.[memberId]
-      const dateLabel = selectedAttendanceDate ? new Date(selectedAttendanceDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
 
       // Toggle functionality: if clicking the same status, deselect it (set to null)
       if (currentStatus === present) {
@@ -1093,24 +1114,12 @@ const Dashboard = ({ isAdmin = false }) => {
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
         selection()
-        toast.success(`Attendance cleared for: ${memberName}`, {
-          style: {
-            background: '#f3f4f6',
-            color: '#374151'
-          }
-        })
       } else {
         await markAttendance(memberId, new Date(targetDate), present)
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
         if (present) success()
         else errorHaptic()
-        toast.success(`Marked ${present ? 'present' : 'absent'} for ${dateLabel}: ${memberName}`, {
-          style: {
-            background: present ? '#10b981' : '#ef4444',
-            color: '#ffffff'
-          }
-        })
       }
     } catch (error) {
       console.error('Error marking attendance:', error)
@@ -1118,13 +1127,21 @@ const Dashboard = ({ isAdmin = false }) => {
       toast.error('Failed to update attendance. Please try again.')
     } finally {
       setAttendanceLoading(prev => ({ ...prev, [memberId]: false }))
+      attendanceActionLocksRef.current.delete(actionKey)
     }
   }
 
   const handleAttendanceForDate = async (memberId, present, specificDate) => {
     const loadingKey = `${memberId}_${specificDate}`
-    setAttendanceLoading(prev => ({ ...prev, [loadingKey]: true }))
+    const actionKey = `${memberId}:${specificDate || 'no-date'}:${present ? 'present' : 'absent'}`
+
+    if (attendanceActionLocksRef.current.has(actionKey) || attendanceLoading[loadingKey]) {
+      return
+    }
+
+    attendanceActionLocksRef.current.add(actionKey)
     try {
+      setAttendanceLoading(prev => ({ ...prev, [loadingKey]: true }))
       // Read from date-keyed attendance map
       const currentStatus = attendanceData[specificDate]?.[memberId]
 
@@ -1134,14 +1151,12 @@ const Dashboard = ({ isAdmin = false }) => {
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
         selection()
-        toast.success(`Attendance cleared for ${new Date(specificDate).toLocaleDateString()}`)
       } else {
         await markAttendance(memberId, new Date(specificDate), present)
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
         if (present) success()
         else errorHaptic()
-        toast.success(`Marked as ${present ? 'present' : 'absent'} for ${new Date(specificDate).toLocaleDateString()}`)
       }
     } catch (error) {
       console.error('Error marking attendance:', error)
@@ -1149,6 +1164,7 @@ const Dashboard = ({ isAdmin = false }) => {
       toast.error('Failed to update attendance. Please try again.')
     } finally {
       setAttendanceLoading(prev => ({ ...prev, [loadingKey]: false }))
+      attendanceActionLocksRef.current.delete(actionKey)
     }
   }
 
@@ -2539,16 +2555,10 @@ const Dashboard = ({ isAdmin = false }) => {
             pendingAttendanceAction={pendingAttendanceAction}
             selectedAttendanceDate={selectedAttendanceDate}
             onClose={closeMissingDataModal}
-            onSave={async () => {
-              // Close modal first, THEN do async refresh so ghost touches can't re-open
-              closeMissingDataModal()
-              // Refresh attendance data for the saved date
-              const dateToRefresh = selectedAttendanceDate ? getDateString(selectedAttendanceDate) : selectedSundayDate
-              if (dateToRefresh) {
-                const freshMap = await fetchAttendanceForDate(new Date(dateToRefresh))
-                setAttendanceData(prev => ({ ...prev, [dateToRefresh]: freshMap || {} }))
-              }
-              await forceRefreshMembersSilent()
+            onSave={() => {
+              // Keep the modal closed and avoid full-page refresh/jump after save.
+              // updateMember and markAttendance already update local app state.
+              closeMissingDataModal({ suppressAll: true })
             }}
           />
         </Suspense>

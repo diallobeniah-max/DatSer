@@ -1923,7 +1923,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const getSettingTargetClass = (settingId) =>
         highlightedSettingId === settingId ? 'settings-search-target-highlight' : ''
 
-    const settingsSearchQuickActionsEnabled = preferences?.settings_search_quick_actions_enabled === true
+    const settingsSearchQuickActionsEnabled = preferences?.settings_search_quick_actions_enabled !== false
 
     const handleSettingsSearchResultSelect = useCallback((item) => {
         rememberSettingsSearch()

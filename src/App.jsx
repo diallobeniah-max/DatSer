@@ -48,6 +48,28 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 const CustomCloseButton = ({ closeToast }) => {
   const [showCloseAll, setShowCloseAll] = React.useState(false);
   const timerRef = React.useRef(null);
+  const closeTimerRef = React.useRef(null);
+  const isClosingRef = React.useRef(false);
+
+  React.useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
+
+  const playCloseAnimation = (event, dismiss) => {
+    event?.stopPropagation?.();
+    event?.preventDefault?.();
+
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    const toastElement = event?.currentTarget?.closest?.('.Toastify__toast');
+    toastElement?.classList?.add('datser-toast-manual-closing');
+
+    closeTimerRef.current = setTimeout(() => {
+      dismiss?.(event);
+    }, 280);
+  };
 
   const handleStart = (e) => {
     if (e.type === 'mousedown' && e.button !== 0) return;
@@ -60,15 +82,14 @@ const CustomCloseButton = ({ closeToast }) => {
   const handleEnd = (e) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (!showCloseAll) {
-      closeToast(e);
+      playCloseAnimation(e, closeToast);
     }
   };
 
   const handleCloseAll = (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    // Small defer so the click doesn't get swallowed by the toast's closeOnClick handler
-    setTimeout(() => toast.dismiss(), 0);
+    const toasts = document.querySelectorAll('.datser-toast-stack .Toastify__toast');
+    toasts.forEach((toastElement) => toastElement.classList.add('datser-toast-manual-closing'));
+    playCloseAnimation(e, () => toast.dismiss());
   };
 
   const handleCancelCloseAll = (e) => {
@@ -109,26 +130,15 @@ const CustomCloseButton = ({ closeToast }) => {
     <button
       type="button"
       className="datser-toast-close"
+      aria-label="Close notification"
       onMouseDown={handleStart}
       onMouseUp={handleEnd}
       onMouseLeave={() => { if (timerRef.current) clearTimeout(timerRef.current); }}
       onTouchStart={handleStart}
       onTouchEnd={handleEnd}
       onTouchCancel={() => { if (timerRef.current) clearTimeout(timerRef.current); }}
-      style={{
-        background: 'transparent',
-        border: 'none',
-        cursor: 'pointer',
-        color: '#9ca3af',
-        fontSize: '18px',
-        lineHeight: 1,
-        padding: '4px 8px',
-        touchAction: 'none',
-        userSelect: 'none',
-        WebkitUserSelect: 'none',
-      }}
     >
-      x
+      <X aria-hidden="true" size={18} strokeWidth={2.4} />
     </button>
   );
 }

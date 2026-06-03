@@ -33,6 +33,15 @@ const isBrowserOffline = () => (
 
 const makePreferenceChangeId = (userId) => `preferences_update_${userId || 'local'}`
 
+const normalizePreferencePayload = (payload, userId) => {
+  if (!payload) return { user_id: userId }
+  const { id: _id, created_at: _createdAt, updated_at: _updatedAt, ...rest } = payload
+  return {
+    ...rest,
+    user_id: rest.user_id || userId
+  }
+}
+
 export const useAuth = () => {
   const context = useContext(AuthContext)
   if (!context) {
@@ -46,9 +55,14 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [preferences, setPreferences] = useState(null)
+  const preferencesRef = useRef(null)
   const welcomeToastShownRef = useRef(false) // Prevent duplicate welcome toasts
   const offlineLoginToastShownRef = useRef(false)
   const isDeveloperBypassEnabled = import.meta.env.DEV && localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
+
+  useEffect(() => {
+    preferencesRef.current = preferences
+  }, [preferences])
 
   const applyOfflineAuthProfile = useCallback(async () => {
     try {
@@ -341,25 +355,32 @@ export const AuthProvider = ({ children }) => {
   const saveUserPreferences = async (newPreferences) => {
     if (!user) return
 
+    const cached = await getOfflinePreferences(user.id).catch(() => null)
+    const freshestPreferences = {
+      ...(cached?.preferences || {}),
+      ...(preferencesRef.current || {})
+    }
     const nextPreferences = {
-      ...(preferences || {}),
-      user_id: preferences?.user_id || user.id,
-      ...newPreferences
+      ...freshestPreferences,
+      ...normalizePreferencePayload(newPreferences, user.id),
+      user_id: user.id
     }
 
     try {
       if (isDeveloperBypassEnabled) {
         const devPreferences = {
           ...(preferences || DEV_BYPASS_PREFERENCES),
-          user_id: user.id,
-          ...newPreferences
+          ...normalizePreferencePayload(newPreferences, user.id),
+          user_id: user.id
         }
         setPreferences(devPreferences)
+        preferencesRef.current = devPreferences
         await saveOfflinePreferences(user.id, devPreferences).catch(() => {})
         return devPreferences
       }
 
       setPreferences(nextPreferences)
+      preferencesRef.current = nextPreferences
       await saveOfflinePreferences(user.id, nextPreferences).catch((error) => {
         console.warn('Could not cache preferences for offline use:', error)
       })
@@ -375,7 +396,7 @@ export const AuthProvider = ({ children }) => {
             .from('user_preferences')
             .upsert({
               user_id: user.id,
-              ...nextPreferences,
+              ...normalizePreferencePayload(nextPreferences, user.id),
               updated_at: new Date().toISOString()
             }, {
               onConflict: 'user_id'
@@ -387,6 +408,7 @@ export const AuthProvider = ({ children }) => {
 
         const savedPreferences = data || nextPreferences
         setPreferences(savedPreferences)
+        preferencesRef.current = savedPreferences
         await saveOfflinePreferences(user.id, savedPreferences).catch(() => {})
         return savedPreferences
       }
@@ -399,6 +421,7 @@ export const AuthProvider = ({ children }) => {
         console.error('Error saving preferences:', error)
       }
       setPreferences(nextPreferences)
+      preferencesRef.current = nextPreferences
       await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
       if (isTransientSupabaseError(error) || isBrowserOffline()) {
         await queuePreferenceSync(user.id, nextPreferences)
@@ -416,13 +439,14 @@ export const AuthProvider = ({ children }) => {
 
     try {
       const nextPreferences = {
-        ...(preferences || {}),
-        user_id: preferences?.user_id || user.id,
+        ...(preferencesRef.current || preferences || {}),
+        user_id: preferencesRef.current?.user_id || preferences?.user_id || user.id,
         [key]: value
       }
 
       // Always update local state immediately so UI reflects change.
       setPreferences(nextPreferences)
+      preferencesRef.current = nextPreferences
       await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
 
       // If Supabase isn't ready/online, skip remote write.
@@ -431,7 +455,7 @@ export const AuthProvider = ({ children }) => {
         return
       }
 
-      await saveUserPreferences(nextPreferences)
+      return await saveUserPreferences(nextPreferences)
     } catch (error) {
       console.error('Error updating preference:', error)
     }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Search, UserPlus, Settings, Moon, Sun, Download, Home, X, Users, LogOut, Zap, Eye, Monitor, Palette, Building2, Database, TrendingUp, HelpCircle, AlertTriangle } from 'lucide-react'
+import { ArrowRight, CheckCircle2, Download, ExternalLink, LogOut, Maximize2, Moon, Search, Settings, SlidersHorizontal, Sparkles, Sun, UserPlus, Zap } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -13,10 +13,26 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
     const [isOpen, setIsOpen] = useState(false)
     const [query, setQuery] = useState('')
     const [selectedIndex, setSelectedIndex] = useState(0)
+    const [quickLookOverrideId, setQuickLookOverrideId] = useState(null)
+    const [splitPercent, setSplitPercent] = useState(() => {
+        if (typeof window === 'undefined') return 46
+        const saved = Number(window.localStorage.getItem('datser_command_palette_split_percent'))
+        return Number.isFinite(saved) ? Math.min(62, Math.max(34, saved)) : 46
+    })
+    const paletteShellRef = useRef(null)
     const inputRef = useRef(null)
 
-    const { isDarkMode, toggleTheme, commandKEnabled } = useTheme()
-    const { signOut } = useAuth()
+    const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
+    const { signOut, preferences, saveUserPreferences } = useAuth()
+    const settingsPreviewEnabled = preferences?.settings_search_quick_actions_enabled !== false
+    const autoScanSettingsEnabled = preferences?.command_palette_auto_scan_settings !== false
+
+    const updatePreferences = (patch) => {
+        saveUserPreferences?.({
+            ...(preferences || {}),
+            ...patch
+        })
+    }
 
     // Toggle open on Ctrl+K or Cmd+K
     useEffect(() => {
@@ -42,8 +58,14 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         } else {
             setQuery('')
             setSelectedIndex(0)
+            setQuickLookOverrideId(null)
         }
     }, [isOpen])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        window.localStorage.setItem('datser_command_palette_split_percent', String(Math.round(splitPercent)))
+    }, [splitPercent])
 
     const defaultActions = [
         {
@@ -114,6 +136,8 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         label: 'Settings > ' + sec.label,
         icon: sec.icon,
         category: 'settings',
+        type: 'setting-section',
+        sectionId: sec.id,
         description: sec.content || '',
         aliases: (sec.keywords || '') + ' ' + (sec.content || ''),
         action: () => {
@@ -123,13 +147,17 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         }
     }))
 
-    const settingsItemActions = getVisibleSettingsSearchItems(import.meta.env.DEV).map(item => {
+    const settingsItemActions = autoScanSettingsEnabled ? getVisibleSettingsSearchItems(import.meta.env.DEV).map(item => {
         const section = settingsSections.find(candidate => candidate.id === item.section)
         return {
             id: 'setting-item-' + item.id,
             label: 'Settings > ' + item.label,
             icon: item.icon || section?.icon || Settings,
             category: 'settings',
+            type: 'setting-item',
+            sectionId: item.section,
+            settingId: item.id,
+            sectionLabel: section?.label,
             description: item.description,
             shortcut: item.shortcut,
             aliases: [
@@ -148,7 +176,7 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                 setIsOpen(false)
             }
         }
-    })
+    }) : []
 
     const actions = [...navActions, ...settingsSectionActions, ...settingsItemActions, ...defaultActions]
 
@@ -158,7 +186,7 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                 const target = (action.label + ' ' + (action.description || '') + ' ' + (action.aliases || '') + ' ' + (action.shortcut || '')).toLowerCase()
                 return query.toLowerCase().split(/\s+/).filter(Boolean).every(token => target.includes(token))
             }),
-            ...searchSettingsIndex(query, getVisibleSettingsSearchItems(import.meta.env.DEV), settingsSections)
+            ...searchSettingsIndex(query, autoScanSettingsEnabled ? getVisibleSettingsSearchItems(import.meta.env.DEV) : [], settingsSections)
                 .map(item => actions.find(action => action.id === 'setting-item-' + item.id))
                 .filter(Boolean)
         ].filter((action, index, list) => list.findIndex(candidate => candidate.id === action.id) === index)
@@ -182,9 +210,179 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         account: 'Account'
     }
 
+    const openSettingAction = (action) => {
+        if (!action) return
+        setCurrentView('settings')
+        if (onNavigateToSettingsSection) {
+            if (action.type === 'setting-item') {
+                onNavigateToSettingsSection({ section: action.sectionId, settingId: action.settingId })
+            } else {
+                onNavigateToSettingsSection(action.sectionId || action.id?.replace('settings-', ''))
+            }
+        }
+        setIsOpen(false)
+    }
+
     const handleSelect = (action) => {
         action.action()
         setIsOpen(false)
+    }
+
+    const handleResultClick = (action, globalIndex) => {
+        setSelectedIndex(globalIndex)
+        const canUsePreviewPane = typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches
+        if (settingsPreviewEnabled && canUsePreviewPane && action.category === 'settings') return
+        handleSelect(action)
+    }
+
+    const selectedAction = filteredActions[selectedIndex] || filteredActions[0]
+    const showSettingsPreview = selectedAction?.category === 'settings' && (
+        settingsPreviewEnabled || quickLookOverrideId === selectedAction.id
+    )
+    const SelectedIcon = selectedAction?.icon || Settings
+    const selectedSectionId = selectedAction?.sectionId || selectedAction?.id?.replace('settings-', '')
+    const selectedSection = settingsSections.find(section => section.id === selectedSectionId)
+    const selectedSectionItems = autoScanSettingsEnabled
+        ? getVisibleSettingsSearchItems(import.meta.env.DEV).filter(item => item.section === selectedSectionId)
+        : []
+    const selectedPath = selectedAction?.category === 'settings'
+        ? ['Settings', selectedAction.sectionLabel || selectedSection?.label, selectedAction.type === 'setting-item' ? selectedAction.label.replace(/^Settings > /, '') : null]
+            .filter(Boolean)
+            .join(' / ')
+        : ''
+
+    const renderQuickControls = () => {
+        if (!selectedAction || selectedAction.category !== 'settings') return null
+        const settingId = selectedAction.settingId || selectedAction.sectionId
+        if (['theme_light', 'theme_dark', 'theme_auto', 'appearance'].includes(settingId)) {
+            const options = [
+                { id: 'light', label: 'Light', icon: Sun },
+                { id: 'dark', label: 'Dark', icon: Moon },
+                { id: 'system', label: 'System', icon: Settings }
+            ]
+            return (
+                <div className="grid grid-cols-3 gap-2">
+                    {options.map(option => (
+                        <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => setThemeMode(option.id)}
+                            className={`rounded-xl border px-3 py-3 text-sm font-bold transition-colors ${
+                                themeMode === option.id
+                                    ? 'border-orange-500 bg-orange-500/15 text-orange-300'
+                                    : 'border-white/10 bg-white/5 text-gray-300 hover:border-orange-400/60'
+                            }`}
+                        >
+                            <option.icon className="mx-auto mb-1 h-4 w-4" />
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+            )
+        }
+
+        if (settingId === 'command_menu' || settingId === 'accessibility') {
+            return (
+                <div className="space-y-3">
+                    <button
+                        type="button"
+                        onClick={() => setCommandKEnabled(!commandKEnabled)}
+                        className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left"
+                    >
+                        <span>
+                            <span className="block font-bold text-white">Command menu shortcut</span>
+                            <span className="text-sm text-gray-400">Ctrl/Cmd + K</span>
+                        </span>
+                        <span className={`h-7 w-12 rounded-full p-1 transition-colors ${commandKEnabled ? 'bg-orange-600' : 'bg-gray-700'}`}>
+                            <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${commandKEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => updatePreferences({ settings_search_quick_actions_enabled: !settingsPreviewEnabled })}
+                        className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left"
+                    >
+                        <span>
+                            <span className="block font-bold text-white">Settings preview in search</span>
+                            <span className="text-sm text-gray-400">Preview before opening full Settings</span>
+                        </span>
+                        <span className={`h-7 w-12 rounded-full p-1 transition-colors ${settingsPreviewEnabled ? 'bg-orange-600' : 'bg-gray-700'}`}>
+                            <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${settingsPreviewEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => updatePreferences({ command_palette_auto_scan_settings: !autoScanSettingsEnabled })}
+                        className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left"
+                    >
+                        <span>
+                            <span className="block font-bold text-white">Auto-scan new settings</span>
+                            <span className="text-sm text-gray-400">Add new panels to search automatically</span>
+                        </span>
+                        <span className={`h-7 w-12 rounded-full p-1 transition-colors ${autoScanSettingsEnabled ? 'bg-orange-600' : 'bg-gray-700'}`}>
+                            <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${autoScanSettingsEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </span>
+                    </button>
+                </div>
+            )
+        }
+
+        return (
+            <div className="space-y-3">
+                {selectedSectionItems.length > 0 ? (
+                    selectedSectionItems.map(item => {
+                        const ItemIcon = item.icon || selectedSection?.icon || Settings
+                        return (
+                            <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => openSettingAction({
+                                    type: 'setting-item',
+                                    sectionId: item.section,
+                                    settingId: item.id
+                                })}
+                                className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left transition-colors hover:border-orange-400/50 hover:bg-orange-500/10"
+                            >
+                                <span className="flex min-w-0 items-center gap-3">
+                                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/8 text-orange-200">
+                                        <ItemIcon className="h-4 w-4" />
+                                    </span>
+                                    <span className="min-w-0">
+                                        <span className="block truncate font-bold text-white">{item.label}</span>
+                                        <span className="block truncate text-sm text-gray-400">{item.description}</span>
+                                    </span>
+                                </span>
+                                <ArrowRight className="h-4 w-4 shrink-0 text-orange-300" />
+                            </button>
+                        )
+                    })
+                ) : (
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-gray-300">
+                        This panel is ready to open in Settings. More direct controls will appear here as panel actions are added to the search index.
+                    </div>
+                )}
+            </div>
+        )
+    }
+
+    const beginDividerDrag = (event) => {
+        event.preventDefault()
+        const pointerId = event.pointerId
+        event.currentTarget.setPointerCapture?.(pointerId)
+        const handlePointerMove = (moveEvent) => {
+            const rect = paletteShellRef.current?.getBoundingClientRect()
+            if (!rect) return
+            const next = ((moveEvent.clientX - rect.left) / rect.width) * 100
+            setSplitPercent(Math.min(62, Math.max(34, next)))
+        }
+        const cleanup = () => {
+            window.removeEventListener('pointermove', handlePointerMove)
+            window.removeEventListener('pointerup', cleanup)
+            window.removeEventListener('pointercancel', cleanup)
+        }
+        window.addEventListener('pointermove', handlePointerMove)
+        window.addEventListener('pointerup', cleanup)
+        window.addEventListener('pointercancel', cleanup)
     }
 
     // Handle arrow navigation
@@ -202,7 +400,12 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         } else if (e.key === 'Enter') {
             e.preventDefault()
             if (filteredActions[selectedIndex]) {
-                handleSelect(filteredActions[selectedIndex])
+                const action = filteredActions[selectedIndex]
+                if ((e.ctrlKey || e.metaKey) && action.category === 'settings') {
+                    setQuickLookOverrideId(action.id)
+                    return
+                }
+                handleSelect(action)
             } else if (query.trim().toLowerCase().includes('setting')) {
                 setCurrentView('settings')
                 setIsOpen(false)
@@ -218,8 +421,9 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
             onClick={() => setIsOpen(false)}
         >
             <div
-                className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-xl shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700 animate-in zoom-in-95 duration-200"
+                className={`w-full ${showSettingsPreview ? 'max-w-5xl' : 'max-w-lg'} bg-white dark:bg-gray-800 rounded-xl shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700 animate-in zoom-in-95 duration-200`}
                 onClick={e => e.stopPropagation()}
+                ref={paletteShellRef}
             >
                 <div className="flex items-center px-4 py-3 border-b border-gray-200 dark:border-gray-700">
                     <Search className="w-5 h-5 text-gray-400 mr-3" />
@@ -243,56 +447,137 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                     </button>
                 </div>
 
-                <div className="max-h-[60vh] overflow-y-auto py-2">
-                    {filteredActions.length === 0 ? (
-                        <div className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                            No results found.
-                        </div>
-                    ) : (
-                        <div className="px-2">
-                            {Object.entries(groupedActions).map(([category, categoryActions], categoryIndex) => {
-                                const categoryStartIndex = Object.values(groupedActions)
-                                    .slice(0, categoryIndex)
-                                    .reduce((sum, actions) => sum + actions.length, 0)
-                                
-                                return (
-                                    <div key={category} className="mb-4">
-                                        <div className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-3 py-2">
-                                            {categoryTitles[category] || category}
-                                        </div>
-                                        {categoryActions.map((action, index) => {
-                                            const globalIndex = categoryStartIndex + index
-                                            return (
-                                                <button
-                                                    key={action.id}
-                                                    onClick={() => handleSelect(action)}
-                                                    onMouseEnter={() => setSelectedIndex(globalIndex)}
-                                                    className={`w-full flex items-center justify-between px-3 py-3 rounded-lg transition-colors text-left
+                <div
+                    className={showSettingsPreview ? 'grid max-h-[64vh]' : ''}
+                    style={showSettingsPreview ? { gridTemplateColumns: `${splitPercent}% 12px minmax(320px, 1fr)` } : undefined}
+                >
+                    <div className="datser-command-scroll max-h-[60vh] overflow-y-auto py-2">
+                        {filteredActions.length === 0 ? (
+                            <div className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                No results found.
+                            </div>
+                        ) : (
+                            <div className="px-2">
+                                {Object.entries(groupedActions).map(([category, categoryActions], categoryIndex) => {
+                                    const categoryStartIndex = Object.values(groupedActions)
+                                        .slice(0, categoryIndex)
+                                        .reduce((sum, actions) => sum + actions.length, 0)
+
+                                    return (
+                                        <div key={category} className="mb-4">
+                                            <div className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-3 py-2">
+                                                {categoryTitles[category] || category}
+                                            </div>
+                                            {categoryActions.map((action, index) => {
+                                                const globalIndex = categoryStartIndex + index
+                                                return (
+                                                    <button
+                                                        key={action.id}
+                                                        onClick={() => handleResultClick(action, globalIndex)}
+                                                        className={`w-full flex items-center justify-between px-3 py-3 rounded-lg transition-colors text-left
                             ${globalIndex === selectedIndex
-                                                            ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
-                                                            : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
-                                                        }`}
-                                                >
-                                                    <div className="flex items-center gap-3">
-                                                        <action.icon className={`w-5 h-5 ${globalIndex === selectedIndex ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400'}`} />
-                                                        <span className="font-medium">{action.label}</span>
-                                                    </div>
-                                                    {action.shortcut && (
-                                                        <span className={`text-xs px-1.5 py-0.5 rounded border
+                                                                ? 'bg-primary-50 dark:bg-orange-900/30 text-primary-700 dark:text-orange-200'
+                                                                : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                                            }`}
+                                                    >
+                                                        <div className="flex min-w-0 items-center gap-3">
+                                                            <action.icon className={`w-5 h-5 shrink-0 ${globalIndex === selectedIndex ? 'text-primary-600 dark:text-orange-300' : 'text-gray-400'}`} />
+                                                            <span className="truncate font-medium">{action.label}</span>
+                                                        </div>
+                                                        <div className="ml-3 flex items-center gap-2">
+                                                            {action.shortcut && (
+                                                                <span className={`text-xs px-1.5 py-0.5 rounded border
                               ${globalIndex === selectedIndex
-                                                            ? 'bg-white dark:bg-gray-800 border-primary-200 dark:border-primary-800 text-primary-600 dark:text-primary-400'
-                                                            : 'bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-500'
-                                                        }`}>
-                                                            {action.shortcut}
-                                                        </span>
-                                                    )}
-                                                </button>
-                                            )
-                                        })}
+                                                                        ? 'bg-white dark:bg-gray-800 border-primary-200 dark:border-orange-800 text-primary-600 dark:text-orange-300'
+                                                                        : 'bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-500'
+                                                                    }`}>
+                                                                    {action.shortcut}
+                                                                </span>
+                                                            )}
+                                                            {action.category === 'settings' && (
+                                                                <span className="rounded-md border border-orange-400/30 bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-orange-300">
+                                                                    Ctrl Enter
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {showSettingsPreview && (
+                        <>
+                        <button
+                            type="button"
+                            aria-label="Resize command menu preview"
+                            onPointerDown={beginDividerDrag}
+                            className="hidden cursor-col-resize border-x border-white/5 bg-gray-900/80 transition-colors hover:bg-orange-500/20 md:flex md:items-center md:justify-center"
+                        >
+                            <span className="h-16 w-1 rounded-full bg-white/20 shadow-inner" />
+                        </button>
+                        <aside className="datser-command-scroll hidden overflow-y-auto bg-gray-950 p-5 text-white md:block">
+                            <div className="mb-5 flex items-start justify-between gap-3">
+                                <div className="flex min-w-0 items-center gap-3">
+                                    <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-orange-500/15 text-orange-300 ring-1 ring-orange-400/30">
+                                        <SelectedIcon className="h-6 w-6" />
                                     </div>
-                                )
-                            })}
-                        </div>
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-black uppercase tracking-wide text-orange-300">Quick Look</p>
+                                        <h3 className="truncate text-xl font-black">{selectedAction.label.replace(/^Settings > /, '')}</h3>
+                                        <p className="truncate text-sm text-gray-400">{selectedPath}</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => openSettingAction(selectedAction)}
+                                    className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-orange-400/40 bg-orange-500/10 text-orange-200 hover:bg-orange-500/20"
+                                    aria-label="Open full setting page"
+                                    title="Open full setting page"
+                                >
+                                    <Maximize2 className="h-5 w-5" />
+                                </button>
+                            </div>
+
+                            <div className="mb-5 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                                <div className="mb-2 flex items-center gap-2 text-sm font-bold text-orange-200">
+                                    <Sparkles className="h-4 w-4" />
+                                    Quick preview
+                                </div>
+                                <p className="text-sm leading-6 text-gray-300">
+                                    {selectedAction.description || 'Open this setting directly, or make quick changes here when available.'}
+                                </p>
+                            </div>
+
+                            <div className="mb-5">
+                                {renderQuickControls()}
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => openSettingAction(selectedAction)}
+                                    className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 text-sm font-black text-white hover:bg-orange-500"
+                                >
+                                    <ExternalLink className="h-4 w-4" />
+                                    Open in Settings
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => updatePreferences({ command_palette_auto_scan_settings: !autoScanSettingsEnabled })}
+                                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 text-sm font-bold text-gray-200 hover:border-orange-400/50"
+                                    title="Toggle automatic settings discovery"
+                                >
+                                    {autoScanSettingsEnabled ? <CheckCircle2 className="h-4 w-4 text-orange-300" /> : <SlidersHorizontal className="h-4 w-4" />}
+                                    Auto
+                                </button>
+                            </div>
+                        </aside>
+                        </>
                     )}
                 </div>
 
