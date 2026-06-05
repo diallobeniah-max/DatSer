@@ -276,7 +276,7 @@ const LazyPanelFallback = () => (
 )
 
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMember }) => {
-    const { user, signOut, preferences, resetPassword, saveUserPreferences, isDeveloperBypass } = useAuth()
+    const { user, signOut, preferences, resetPassword, saveUserPreferences, updatePreference, isDeveloperBypass } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
     const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil, setPersonalCalendarMode, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
     const { selection } = useHapticFeedback()
@@ -303,6 +303,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     })
     const [highlightedSettingId, setHighlightedSettingId] = useState(null)
     const [quickSettingsSearchItem, setQuickSettingsSearchItem] = useState(null)
+    const [optimisticPreferencePatch, setOptimisticPreferencePatch] = useState({})
+    const effectivePreferences = useMemo(
+        () => ({
+            ...(preferences || {}),
+            ...optimisticPreferencePatch
+        }),
+        [optimisticPreferencePatch, preferences]
+    )
     const [guidedOrderDragId, setGuidedOrderDragId] = useState(null)
     const highlightTimerRef = useRef(null)
     const activeSectionRef = useRef(null)
@@ -745,8 +753,18 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     })
     const updatePreferences = useCallback((nextPreferences) => {
         if (!nextPreferences || typeof nextPreferences !== 'object') return
+        setOptimisticPreferencePatch((prev) => ({
+            ...prev,
+            ...nextPreferences
+        }))
+        const entries = Object.entries(nextPreferences)
+        if (entries.length === 1 && typeof updatePreference === 'function') {
+            const [key, value] = entries[0]
+            updatePreference(key, value)
+            return
+        }
         saveUserPreferences?.(nextPreferences)
-    }, [saveUserPreferences])
+    }, [saveUserPreferences, updatePreference])
 
     const toggleWorkspacePanel = useCallback((panelKey) => {
         selection()
@@ -1307,7 +1325,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 return (
                     <React.Suspense fallback={<LazyPanelFallback />}>
                         <WorkspaceSettingsSection
-                            preferences={preferences}
+                            preferences={effectivePreferences}
                             isCollaborator={isCollaborator}
                             isAdminCollaborator={isAdminCollaborator}
                             currentTable={currentTable}
@@ -1506,7 +1524,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         <AppearanceSettingsSection
                             themeMode={themeMode}
                             setThemeMode={setThemeMode}
-                            preferences={preferences}
+                            preferences={effectivePreferences}
                             updatePreferences={updatePreferences}
                             isCollaborator={isCollaborator}
                             getSettingTargetClass={getSettingTargetClass}
@@ -1604,7 +1622,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                             type="button"
                                             onClick={() => updatePreferences({ date_of_birth_picker_mode: option.value })}
                                             className={`px-3 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${
-                                                (preferences?.date_of_birth_picker_mode || 'combined') === option.value
+                                                (effectivePreferences?.date_of_birth_picker_mode || 'combined') === option.value
                                                     ? 'border-orange-500 bg-orange-50 text-orange-800 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200'
                                                     : 'border-gray-200 bg-white text-gray-600 hover:border-orange-300 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300'
                                             }`}
@@ -1622,7 +1640,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                             value={dob}
                                             onChange={(event) => setDob(event.target.value)}
                                             placeholder="Tap to preview"
-                                            birthDateMode={preferences?.date_of_birth_picker_mode || 'combined'}
+                                            birthDateMode={effectivePreferences?.date_of_birth_picker_mode || 'combined'}
                                         />
                                     </React.Suspense>
                                 </div>
@@ -1923,7 +1941,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const getSettingTargetClass = (settingId) =>
         highlightedSettingId === settingId ? 'settings-search-target-highlight' : ''
 
-    const settingsSearchQuickActionsEnabled = preferences?.settings_search_quick_actions_enabled !== false
+    const settingsSearchQuickActionsEnabled = effectivePreferences?.settings_search_quick_actions_enabled !== false
 
     const handleSettingsSearchResultSelect = useCallback((item) => {
         rememberSettingsSearch()
@@ -1971,7 +1989,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     // Render main settings list (when no section is active)
     const renderMainList = () => (
         <div className="min-h-0">
-            <div className="max-w-4xl mx-auto px-3 sm:px-4 pt-1 pb-2 xl:pb-2 space-y-3">
+            <div className="max-w-4xl mx-auto px-3 sm:px-4 pt-5 pb-2 xl:pb-2 space-y-3">
 
                 {/* Profile Card */}
                 <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
@@ -2318,7 +2336,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
         return (
             <div className={embedded ? 'min-h-full bg-[#f7f7f5] dark:bg-[#121212]' : 'min-h-0'}>
-                <div className={`${embedded ? 'max-w-none px-4 pb-4 bg-[#f7f7f5] dark:bg-[#121212]' : 'max-w-4xl mx-auto px-3 sm:px-4 pb-4'} pt-3`}>
+                <div className={`${embedded ? 'max-w-none px-4 pb-4 bg-[#f7f7f5] dark:bg-[#121212]' : 'max-w-4xl mx-auto px-3 sm:px-4 pb-4'} pt-5`}>
                     <div className={`${embedded ? 'mb-2 border-b border-gray-200/70 pb-2 dark:border-white/10' : 'mb-2.5'} font-[var(--font-family)]`}>
                         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                             <button

@@ -20,6 +20,8 @@ const AccessibilitySettingsSection = ({
     const hapticFeedbackStrength = Number(preferences?.haptic_feedback_strength || 1)
     const settingsSearchQuickActionsEnabled = preferences?.settings_search_quick_actions_enabled !== false
     const commandPaletteAutoScanEnabled = preferences?.command_palette_auto_scan_settings !== false
+    const memberSearchTrayDeleteEnabled = preferences?.member_search_tray_delete_enabled !== false
+    const memberFilterButtonEnabled = preferences?.member_filter_button_enabled === true
     const appShareUrl = typeof window !== 'undefined' ? `${window.location.origin}${import.meta.env?.BASE_URL || '/'}` : ''
     const shareText = 'Open DatSer here:'
     const qrCodeUrl = appShareUrl
@@ -200,6 +202,46 @@ const AccessibilitySettingsSection = ({
                                 <span className="mt-0.5 block text-xs opacity-75">{option.desc}</span>
                             </button>
                         ))}
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+                        <div className="min-w-0">
+                            <p className="text-sm font-bold text-gray-900 dark:text-white">Show Delete in search tray</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">Display the Delete action on phone, tablet, and desktop tray cards</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => updatePreferences?.({ member_search_tray_delete_enabled: !memberSearchTrayDeleteEnabled })}
+                            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+                                memberSearchTrayDeleteEnabled ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
+                            }`}
+                            aria-pressed={memberSearchTrayDeleteEnabled}
+                        >
+                            <span
+                                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-300 ease-out ${
+                                    memberSearchTrayDeleteEnabled ? 'translate-x-6' : 'translate-x-1'
+                                }`}
+                            />
+                        </button>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+                        <div className="min-w-0">
+                            <p className="text-sm font-bold text-gray-900 dark:text-white">Show member filter button</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">Turn on the filter popup button for the Members screen. Off clears active filters.</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => updatePreferences?.({ member_filter_button_enabled: !memberFilterButtonEnabled })}
+                            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+                                memberFilterButtonEnabled ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
+                            }`}
+                            aria-pressed={memberFilterButtonEnabled}
+                        >
+                            <span
+                                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-300 ease-out ${
+                                    memberFilterButtonEnabled ? 'translate-x-6' : 'translate-x-1'
+                                }`}
+                            />
+                        </button>
                     </div>
                     <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
                         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Preview</p>

@@ -137,7 +137,8 @@ const Dashboard = ({ isAdmin = false }) => {
     dataOwnerId,
     user,
     isDeveloperBypass,
-    searchSuggestionView
+    searchSuggestionView,
+    preferences
   } = useApp()
   const { isDarkMode } = useTheme()
   const { selection, success, error: errorHaptic } = useHapticFeedback()
@@ -1505,7 +1506,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       const badgeName = badgeType.charAt(0).toUpperCase() + badgeType.slice(1)
       // Single consolidated notification and silent refresh
-      const message = `${badgeName} badge ${hasBadge ? 'removed' : 'assigned'} for: ${memberName} • data refreshed`
+      const message = `${badgeName} badge ${hasBadge ? 'removed' : 'assigned'} for: ${memberName} - data refreshed`
       toast.success(message, {
         style: hasBadge
           ? { background: '#f3f4f6', color: '#374151' }
@@ -1558,9 +1559,32 @@ const Dashboard = ({ isAdmin = false }) => {
           .slice(0, 10)
       })()
     : []
-  const showSearchSuggestions = isSearchFocused && pendingSearchTerm.length > 0
   const isShortSearchView = searchSuggestionView !== 'full'
+  const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
   const isShortSearchActive = isShortSearchView && showSearchSuggestions
+  const isShortSearchDisplayActive = isShortSearchView && dashboardTab !== 'edited'
+  const showSearchTrayDelete = preferences?.member_search_tray_delete_enabled !== false
+  const memberFilterButtonEnabled = preferences?.member_filter_button_enabled === true
+
+  useEffect(() => {
+    if (memberFilterButtonEnabled) return
+    if (showFilters || isClosingFilters) {
+      setShowFilters(false)
+      setIsClosingFilters(false)
+    }
+    if (genderFilter) setGenderFilter(null)
+    if (levelFilter) setLevelFilter(null)
+    if (visitorFilter !== null) setVisitorFilter(null)
+    if (tagFilter) setTagFilter(null)
+  }, [
+    memberFilterButtonEnabled,
+    showFilters,
+    isClosingFilters,
+    genderFilter,
+    levelFilter,
+    visitorFilter,
+    tagFilter
+  ])
 
   const applySearchSelection = (value) => {
     selection()
@@ -1572,72 +1596,48 @@ const Dashboard = ({ isAdmin = false }) => {
   const renderSearchSuggestionTray = () => {
     if (!showSearchSuggestions || !isShortSearchView) return null
     return (
-      <div className="fixed bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))] left-3 right-3 z-40 overflow-hidden rounded-t-none rounded-b-2xl border border-t-0 border-gray-200 bg-white shadow-2xl shadow-black/15 dark:border-gray-700 dark:bg-[#202121] dark:shadow-black/50 sm:left-1/2 sm:right-auto sm:w-[min(92rem,calc(100vw-2rem))] sm:-translate-x-1/2">
-        <div className="border-b border-gray-100 px-4 py-2 dark:border-gray-800 sm:px-6">
-          <p className="text-xs font-bold uppercase tracking-wide text-orange-600 dark:text-orange-300">Search matches</p>
+      <div className="fixed bottom-[calc(4.35rem+env(safe-area-inset-bottom,0px))] left-3 right-3 z-40 overflow-hidden rounded-[1.45rem] border border-orange-200/80 bg-white/96 ring-1 ring-white/70 backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-3 duration-200 dark:border-orange-500/45 dark:bg-[#101111]/96 dark:ring-white/[0.04] sm:left-1/2 sm:right-auto sm:w-[min(92rem,calc(100vw-2rem))] sm:-translate-x-1/2 md:bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] md:rounded-[1.8rem]">
+        <div className="border-b border-orange-100/80 bg-gradient-to-r from-orange-50/95 via-white/95 to-orange-50/70 px-4 pb-2 pt-4 dark:border-white/[0.06] dark:from-[#171817] dark:via-[#171817] dark:to-[#201714] sm:px-7 sm:pt-5">
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-orange-600 dark:text-orange-300 sm:text-sm">Search matches</p>
         </div>
-        <div className="max-h-[264px] overflow-y-auto">
+        <div className="datser-search-scroll grid max-h-[44vh] gap-3 overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_50%_0%,rgba(249,115,22,0.10),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,247,237,0.55))] px-2 pb-3 pt-3 dark:bg-[radial-gradient(circle_at_50%_0%,rgba(249,115,22,0.16),transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0.10))] sm:max-h-[48vh] sm:px-5 sm:pb-5 md:grid-cols-2 xl:grid-cols-3">
           {searchSuggestionMembers.length > 0 ? (
             searchSuggestionMembers.map((member) => {
-              const name = getMemberSearchName(member)
+              const isExpanded = !!expandedMembers[member.id]
+              const isSelected = longPressSelectedIds.has(member.id) || selectedMemberIds.has(member.id)
               const targetDate = getDateString(selectedAttendanceDate)
-              const memberIndexCode = getMemberIndexCode(member, memberIndexCodeMap)
               return (
-                <div
+                <MemberCard
                   key={member.id}
-                  className="border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-800 sm:px-6"
-                >
-                  <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-3 dark:border-gray-700 dark:bg-[#1f2020]">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                      <button
-                        type="button"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => applySearchSelection(name)}
-                        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left transition-colors hover:bg-orange-50 dark:hover:bg-orange-500/10"
-                      >
-                        <ChevronRight className="h-5 w-5 shrink-0 text-gray-400" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-base font-black text-gray-900 dark:text-white">{name}</span>
-                          <span className="block truncate text-xs text-gray-500 dark:text-gray-400">
-                            {memberIndexCode ? `${memberIndexCode} · ` : ''}Joined {member.joined_at || member.inserted_at || member.created_at ? new Date(member.joined_at || member.inserted_at || member.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Jan 10'}
-                          </span>
-                        </span>
-                      </button>
-                      <div className="grid grid-cols-3 gap-2 sm:w-[23rem]">
-                        <button
-                          type="button"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => targetDate && handleAttendance(member.id, true)}
-                          disabled={!targetDate || attendanceLoading[member.id]}
-                          className="min-h-12 rounded-xl bg-orange-600 px-3 text-sm font-bold text-white transition-colors hover:bg-orange-700 disabled:opacity-50"
-                        >
-                          Present
-                        </button>
-                        <button
-                          type="button"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => targetDate && handleAttendance(member.id, false)}
-                          disabled={!targetDate || attendanceLoading[member.id]}
-                          className="min-h-12 rounded-xl bg-red-600 px-3 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
-                        >
-                          Absent
-                        </button>
-                        <button
-                          type="button"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => openDeleteConfirm(member)}
-                          className="min-h-12 rounded-xl border border-gray-300 px-3 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  member={member}
+                  memberIndexCode={getMemberIndexCode(member, memberIndexCodeMap)}
+                  isExpanded={isExpanded}
+                  isSelected={isSelected}
+                  selectionMode={selectionMode}
+                  onToggleExpansion={toggleMemberExpansion}
+                  onToggleSelection={toggleSelection}
+                  onLongPressStart={handleLongPressStart}
+                  onLongPressMove={handleLongPressMove}
+                  onLongPressEnd={handleLongPressEnd}
+                  onMouseDown={handleMouseDown}
+                  onMouseUp={handleMouseUp}
+                  onAttendance={handleAttendance}
+                  onAttendanceForDate={handleAttendanceForDate}
+                  onEdit={setEditingMember}
+                  onDelete={openDeleteConfirm}
+                  attendanceStatus={targetDate ? attendanceData[targetDate]?.[member.id] : undefined}
+                  attendanceLoading={attendanceLoading[member.id]}
+                  monthSundays={sundayDates}
+                  attendanceData={attendanceData}
+                  memberTags={memberTags[member.id]}
+                  currentTable={currentTable}
+                  getMonthDisplayName={getMonthDisplayName}
+                  showDeleteActions={showSearchTrayDelete}
+                />
               )
             })
           ) : (
-            <div className="px-4 py-4 text-sm font-semibold text-gray-500 dark:text-gray-400">
+            <div className="px-4 py-8 text-center text-sm font-semibold text-gray-400 md:col-span-2 xl:col-span-3">
               No matching names yet
             </div>
           )}
@@ -1679,7 +1679,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   }`}
                 title={sortNewestFirst ? 'Newest to Oldest' : 'Oldest to Newest'}
               >
-                <span className="text-xs">↓↑</span>
+                <span className="text-xs">Sort</span>
                 {sortNewestFirst ? 'Newest' : 'Oldest'}
               </button>
               {selectedSundayDate && (
@@ -2052,7 +2052,7 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Members List */}
-      {!isShortSearchActive && (
+      {!isShortSearchDisplayActive && (
       <div className={`${longPressSelectedIds.size > 0 ? '' : 'mt-4 sm:mt-10'} grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${searchTerm ? '' : 'transition-colors duration-200'} grid-animate`}>
         {(() => {
           const tabFilteredMembers = getTabFilteredMembers()
@@ -2142,20 +2142,44 @@ const Dashboard = ({ isAdmin = false }) => {
       </div>
       )}
 
-      {isShortSearchActive && (
-        <div className="mx-auto mt-6 flex min-h-[48vh] w-[96%] items-center justify-center rounded-3xl border border-gray-200 bg-gradient-to-b from-white to-orange-50/50 px-5 py-10 text-center shadow-inner dark:border-gray-800 dark:from-[#111111] dark:to-orange-950/10">
-          <div className="max-w-md">
-            <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
-              <Search className="h-7 w-7" />
+      {isShortSearchDisplayActive && (
+        <div className={`relative mx-auto mt-14 flex w-[calc(100%-1.5rem)] max-w-[92rem] overflow-hidden rounded-[1.75rem] border px-5 text-center shadow-inner backdrop-blur-xl transition-all duration-300 sm:mt-14 ${
+          pendingSearchTerm
+            ? 'min-h-[8.75rem] items-center justify-center py-5 sm:min-h-[9.5rem] md:min-h-[7.25rem] md:px-8'
+            : 'min-h-[clamp(20rem,48vh,33rem)] items-center justify-center py-12 sm:min-h-[27rem] sm:py-16'
+        } ${isDarkMode ? 'border-white/[0.08] bg-[#0d0e0e]/95 shadow-black/40' : 'border-orange-200/70 bg-white/85 shadow-orange-950/5'}`}>
+          <div className={`pointer-events-none absolute inset-0 ${
+            isDarkMode
+              ? 'bg-[radial-gradient(circle_at_50%_42%,rgba(249,115,22,0.30),rgba(249,115,22,0.10)_27%,transparent_58%)]'
+              : 'bg-[radial-gradient(circle_at_50%_42%,rgba(249,115,22,0.24),rgba(249,115,22,0.08)_25%,transparent_55%)]'
+          }`} />
+          <div className={`pointer-events-none absolute inset-0 ${
+            isDarkMode
+              ? 'bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.008),rgba(255,255,255,0.025))]'
+              : 'bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(255,247,237,0.42),rgba(255,255,255,0.72))]'
+          }`} />
+          <div className={`relative mx-auto max-w-2xl ${pendingSearchTerm ? 'md:flex md:max-w-4xl md:items-center md:justify-center md:gap-5 md:text-left' : ''}`}>
+            <div className={`grid place-items-center rounded-2xl border border-orange-500/35 bg-orange-500/10 text-orange-600 shadow-lg transition-all duration-300 ${
+              isDarkMode ? 'bg-orange-500/15 text-orange-300 shadow-orange-950/25' : 'shadow-orange-950/10'
+            } ${
+              pendingSearchTerm ? 'mx-auto mb-3 h-12 w-12 md:mx-0 md:mb-0 md:h-14 md:w-14' : 'mx-auto mb-5 h-16 w-16'
+            }`}>
+              <Search className={pendingSearchTerm ? 'h-6 w-6' : 'h-8 w-8'} />
             </div>
-            <p className="text-lg font-black text-gray-900 dark:text-white">Search tray is active</p>
-            <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">Pick a name above, mark Present or Absent, or clear the search to bring the member list back.</p>
+            <div>
+              <p className={`${pendingSearchTerm ? 'text-base sm:text-lg' : 'text-xl'} font-black drop-shadow-sm ${isDarkMode ? 'text-white' : 'text-gray-950'}`}>Search tray is active</p>
+              <p className={`mx-auto mt-2 max-w-xl text-sm leading-6 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} ${pendingSearchTerm ? 'line-clamp-2 md:mt-1' : ''}`}>
+                {pendingSearchTerm
+                  ? 'Pick from the search queue below, mark Present or Absent, or clear the search to bring the member list back.'
+                  : 'Start typing to open the short queue. The full member list stays hidden in this mode.'}
+              </p>
+            </div>
           </div>
         </div>
       )}
 
       {/* Empty State - use the same getTabFilteredMembers() for consistency */}
-      {!isShortSearchActive && getTabFilteredMembers().length === 0 && !loading && (
+      {!isShortSearchDisplayActive && getTabFilteredMembers().length === 0 && !loading && (
         <div className="text-center py-12">
           <Users className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No members found</h3>
@@ -2170,7 +2194,7 @@ const Dashboard = ({ isAdmin = false }) => {
           {/* Debug Information for Search Issues */}
           {searchTerm && members.length > 0 && (
             <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 max-w-md mx-auto text-left">
-              <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">🔍 Debug Info</h4>
+              <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">Debug Info</h4>
               <div className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
                 <p><strong>Search term:</strong> "{searchTerm}"</p>
                 <p><strong>Total members:</strong> {members.length}</p>
@@ -2565,7 +2589,7 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Filter Modal */}
-      {(showFilters || isClosingFilters) && (
+      {memberFilterButtonEnabled && (showFilters || isClosingFilters) && (
         <div
           className="fixed inset-0 z-[90] flex items-end md:items-center justify-center"
           onKeyDown={(e) => e.key === 'Escape' && closeFilters()}
@@ -2724,7 +2748,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {/* Bottom Search Bar */}
       <div className={`bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
-        <div className="mx-auto px-3 sm:px-4 py-3">
+        <div className="mx-auto px-3 sm:px-4 py-1.5">
           <div className="flex items-center gap-2">
             {dashboardTab === 'edited' ? (
               /* Marked tab: Search bar that only searches within Present/Absent members */
@@ -2739,15 +2763,17 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`w-full pl-10 pr-10 py-2 border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors ${isShortSearchActive ? 'rounded-b-2xl rounded-t-none border-orange-500 border-t-orange-500 dark:border-orange-500' : 'rounded-lg border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-1 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
+                    type="button"
                     onClick={() => { selection(); setSearchTerm(''); setLocalSearchTerm(''); setIsSearchFocused(false) }}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                    className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-600 dark:hover:text-gray-200"
                     title="Clear search"
+                    aria-label="Clear search"
                   >
-                    ×
+                    <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
@@ -2764,39 +2790,45 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`w-full pl-10 pr-10 py-2 border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors ${isShortSearchActive ? 'rounded-b-2xl rounded-t-none border-orange-500 border-t-orange-500 dark:border-orange-500' : 'rounded-lg border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-1 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
+                    type="button"
                     onClick={() => { selection(); setSearchTerm(''); setLocalSearchTerm(''); setIsSearchFocused(false) }}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                    className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-600 dark:hover:text-gray-200"
                     title="Clear search"
+                    aria-label="Clear search"
                   >
-                    ×
+                    <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
             )}
             {/* Filter Button */}
-            <button
-              onClick={() => { selection(); setShowFilters(!showFilters) }}
-              className={`flex items-center gap-1 px-3 py-2 rounded-lg transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
-                ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border border-primary-300 dark:border-primary-700'
-                : isShortSearchActive
-                  ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              title="Filters"
-            >
-              <Filter className="w-4 h-4" />
-              {(genderFilter || levelFilter || visitorFilter !== null || hasTagFilters) && (
-                <span className="w-2 h-2 bg-primary-500 rounded-full" />
-              )}
-            </button>
+            {memberFilterButtonEnabled && (
+              <button
+                type="button"
+                onClick={() => { selection(); setShowFilters(!showFilters) }}
+                className={`member-filter-toggle inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-1 transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
+                  ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border border-primary-300 dark:border-primary-700'
+                  : isShortSearchActive
+                    ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                title="Filters"
+                aria-label="Show member filters"
+              >
+                <Filter className="w-4 h-4" />
+                {(genderFilter || levelFilter || visitorFilter !== null || hasTagFilters) && (
+                  <span className="w-2 h-2 bg-primary-500 rounded-full" />
+                )}
+              </button>
+            )}
             {/* Add Member Button */}
             <button
               onClick={() => { selection(); setShowMemberModal(true) }}
-              className="flex items-center gap-2 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
+              className="flex items-center gap-2 px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
               title="Add New Member"
             >
               <UserPlus className="w-5 h-5" />
@@ -2808,7 +2840,7 @@ const Dashboard = ({ isAdmin = false }) => {
       </div>
 
       {/* Add padding to prevent content from being hidden behind bottom search bar */}
-      <div className="h-24 md:h-12" />
+      <div className="h-14 md:h-7" />
     </div>
   )
 }

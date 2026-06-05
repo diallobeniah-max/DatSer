@@ -362,7 +362,7 @@
 
   .app-main-safe {
     padding-top: var(--app-main-top-offset) !important;
-    padding-bottom: calc(var(--app-safe-bottom) + 6rem) !important;
+    padding-bottom: calc(var(--app-safe-bottom) + 4.75rem) !important;
   }
 
   .app-main-dashboard-safe {
@@ -383,7 +383,7 @@
   }
 
   .bottom-control-safe {
-    padding-bottom: calc(var(--app-safe-bottom) + 0.75rem) !important;
+    padding-bottom: calc(var(--app-safe-bottom) + 0.2rem) !important;
   }
 
   .settings-detail-header-safe {
@@ -426,7 +426,7 @@
     }
 
     .app-main-safe {
-      padding-bottom: 2rem !important;
+      padding-bottom: 1.25rem !important;
     }
 
     .app-main-dashboard-safe {
@@ -652,6 +652,111 @@
   .compact-ui.app-shell .rounded-xl,
   .compact-ui .app-shell .rounded-xl {
     border-radius: 0.65rem;
+  }
+}
+
+.compact-ui.app-shell .member-card-shell,
+.compact-ui .app-shell .member-card-shell {
+  margin-block: -0.1rem;
+}
+
+.compact-ui.app-shell .member-card,
+.compact-ui .app-shell .member-card {
+  border-radius: 0.85rem;
+}
+
+.compact-ui.app-shell .member-card-inner,
+.compact-ui .app-shell .member-card-inner {
+  padding-top: 0.55rem !important;
+  padding-bottom: 0.55rem !important;
+}
+
+.compact-ui.app-shell .member-card-header,
+.compact-ui .app-shell .member-card-header {
+  margin-bottom: 0.35rem !important;
+  gap: 0.4rem !important;
+  padding-block: 0.15rem !important;
+}
+
+.compact-ui.app-shell .member-card-chevron,
+.compact-ui .app-shell .member-card-chevron {
+  padding: 0.1rem !important;
+}
+
+.compact-ui.app-shell .member-card-chevron svg,
+.compact-ui .app-shell .member-card-chevron svg {
+  width: 1rem !important;
+  height: 1rem !important;
+}
+
+.compact-ui.app-shell .member-card-name,
+.compact-ui .app-shell .member-card-name {
+  font-size: 0.95rem !important;
+  line-height: 1.2rem !important;
+}
+
+.compact-ui.app-shell .member-card-meta,
+.compact-ui .app-shell .member-card-meta {
+  margin-top: 0 !important;
+  font-size: 0.66rem !important;
+  line-height: 0.9rem !important;
+}
+
+.compact-ui.app-shell .member-index-badge,
+.compact-ui .app-shell .member-index-badge {
+  padding: 0.18rem 0.5rem !important;
+  font-size: 0.62rem !important;
+  line-height: 0.8rem !important;
+}
+
+.compact-ui.app-shell .member-card-actions,
+.compact-ui .app-shell .member-card-actions {
+  gap: 0.4rem !important;
+}
+
+.compact-ui.app-shell .member-card-action,
+.compact-ui .app-shell .member-card-action {
+  min-height: 2rem !important;
+  padding-block: 0.42rem !important;
+  border-radius: 0.55rem !important;
+  font-size: 0.78rem !important;
+}
+
+.compact-ui.app-shell .member-card-expanded,
+.compact-ui .app-shell .member-card-expanded {
+  padding-bottom: 0.45rem !important;
+}
+
+.compact-ui.app-shell .member-card-detail-grid,
+.compact-ui .app-shell .member-card-detail-grid {
+  gap: 0.6rem !important;
+  margin-bottom: 0.6rem !important;
+  padding: 0.65rem !important;
+  border-radius: 0.75rem !important;
+}
+
+.compact-ui.app-shell .member-card-attendance-grid,
+.compact-ui .app-shell .member-card-attendance-grid {
+  gap: 0.45rem !important;
+}
+
+.compact-ui.app-shell .member-filter-toggle,
+.compact-ui .app-shell .member-filter-toggle {
+  min-height: 2.25rem !important;
+  padding-inline: 0.65rem !important;
+}
+
+@media (min-width: 768px) {
+  .compact-ui.app-shell .member-card-name,
+  .compact-ui .app-shell .member-card-name {
+    font-size: 1rem !important;
+    line-height: 1.25rem !important;
+  }
+
+  .compact-ui.app-shell .member-card-action,
+  .compact-ui .app-shell .member-card-action {
+    min-height: 2.15rem !important;
+    padding-block: 0.48rem !important;
   }
 }
 
@@ -1466,6 +1571,39 @@ details[open] summary~* {
   background: linear-gradient(180deg, rgba(251, 146, 60, 0.95), rgba(249, 115, 22, 0.86)) border-box;
 }
 
+.datser-search-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(249, 115, 22, 0.42) rgba(251, 146, 60, 0.10);
+}
+
+.datser-search-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.datser-search-scroll::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(251, 146, 60, 0.10);
+}
+
+.datser-search-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(251, 146, 60, 0.78), rgba(249, 115, 22, 0.72)) border-box;
+}
+
+.datser-search-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(249, 115, 22, 0.95), rgba(194, 65, 12, 0.86)) border-box;
+}
+
+.dark .datser-search-scroll {
+  scrollbar-color: rgba(251, 146, 60, 0.48) rgba(255, 255, 255, 0.06);
+}
+
+.dark .datser-search-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 @media (max-width: 640px) {
   .Toastify__toast-container.datser-toast-stack {
     width: min(calc(100vw - 48px), 330px) !important;
@@ -1801,7 +1939,7 @@ details[open] summary~* {
 
   /* Tighter, nicer bottom search bar on mobile */
   .bottom-search-bar {
-    padding-bottom: calc(var(--app-safe-bottom) + 8px);
+    padding-bottom: calc(var(--app-safe-bottom) + 2px);
   }
 
   /* MissingDataModal - slide up from bottom as sheet */

@@ -297,11 +297,8 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       ? 'text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30'
       : 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30'
     : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
-  const phoneStatusPreference = preferences?.mobile_dashboard_status_enabled
-  const phoneStatusBarEnabled = isPhoneViewport
-    ? phoneStatusPreference === true
-    : true
-  const showDashboardStatusBar = !isPhoneViewport || phoneStatusBarEnabled
+  const dashboardStatusPreference = preferences?.mobile_dashboard_status_enabled
+  const showDashboardStatusBar = dashboardStatusPreference === true
   const visibleDateLabel = visibleSelectedDate
     ? visibleSelectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null

@@ -33,7 +33,8 @@ const MemberCard = memo(({
     attendanceData, // Full attendance data for the month
     memberTags = [],
     currentTable,
-    getMonthDisplayName
+    getMonthDisplayName,
+    showDeleteActions = true
 }) => {
     const name = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || 'Unnamed member'
     const regDateRaw = member.inserted_at || member.created_at
@@ -62,7 +63,7 @@ const MemberCard = memo(({
     }
 
     return (
-        <div className={`relative transition-colors duration-200`}>
+        <div className={`member-card-shell relative transition-colors duration-200`}>
             {/* Selection checkmark */}
             {isSelected && (
                 <div className="selection-checkmark">
@@ -70,7 +71,7 @@ const MemberCard = memo(({
                 </div>
             )}
             <div
-                className={`relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-primary-300 dark:hover:border-primary-600 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden w-[96%] sm:w-full mx-auto ${isSelected ? 'selection-highlight' : ''}`}
+                className={`member-card relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-primary-300 dark:hover:border-primary-600 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden w-[96%] sm:w-full mx-auto ${isSelected ? 'selection-highlight' : ''}`}
                 style={{ touchAction: 'pan-y', userSelect: 'none' }}
                 onTouchStart={(e) => !selectionMode && onLongPressStart(member.id, e)}
                 onTouchMove={onLongPressMove}
@@ -82,7 +83,7 @@ const MemberCard = memo(({
                 onContextMenu={(e) => e.preventDefault()}
                 onClick={() => selectionMode && onToggleSelection(member.id)}
             >
-                <div className="px-0 py-3 sm:px-4 sm:py-3.5">
+                <div className="member-card-inner px-0 py-3 sm:px-4 sm:py-3.5">
                     {/* Row 1: Expand toggle row */}
                     <div className="w-full px-3 sm:px-0">
                         <button
@@ -95,19 +96,19 @@ const MemberCard = memo(({
                                     onToggleExpansion(member.id)
                                 }
                             }}
-                            className="w-full flex items-center gap-2 mb-2 text-left hover:bg-primary-50 dark:hover:bg-primary-900/40 rounded px-1 py-1 transition-colors duration-150"
+                            className="member-card-header w-full flex items-center gap-2 mb-2 text-left hover:bg-primary-50 dark:hover:bg-primary-900/40 rounded px-1 py-1 transition-colors duration-150"
                         >
-                            <div className="p-1 text-gray-500 dark:text-gray-400 rounded flex-shrink-0 flex items-center justify-center">
+                            <div className="member-card-chevron p-1 text-gray-500 dark:text-gray-400 rounded flex-shrink-0 flex items-center justify-center">
                                 {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-start gap-2">
-                                    <h3 className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
+                                    <h3 className="member-card-name min-w-0 flex-1 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
                                         {name}
                                     </h3>
                                     {memberIndexCode && (
                                         <span
-                                            className="inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white"
+                                            className="member-index-badge inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white"
                                             style={indexStyle}
                                             title={`Member index ${memberIndexCode}`}
                                         >
@@ -116,7 +117,7 @@ const MemberCard = memo(({
                                     )}
                                 </div>
                                 {regDateRaw && (
-                                    <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                                    <p className="member-card-meta text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
                                         Joined {getRelativeRegTime()}
                                     </p>
                                 )}
@@ -128,7 +129,7 @@ const MemberCard = memo(({
                     </div>
 
                     {/* Row 2: Attendance Buttons */}
-                    <div className="flex items-stretch gap-2 ml-0 w-full px-3 sm:px-0">
+                    <div className="member-card-actions flex items-stretch gap-2 ml-0 w-full px-3 sm:px-0">
                         <div className="flex flex-row items-stretch gap-2 w-full">
                             <button
                                 onPointerDown={(event) => event.stopPropagation()}
@@ -137,7 +138,7 @@ const MemberCard = memo(({
                                     onAttendance(member.id, true)
                                 }}
                                 disabled={attendanceLoading}
-                                className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
+                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
                                     ? 'bg-orange-600 dark:bg-orange-800 text-white shadow ring-1 ring-orange-300 dark:ring-orange-500/70'
                                     : attendanceLoading
                                         ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
@@ -153,7 +154,7 @@ const MemberCard = memo(({
                                     onAttendance(member.id, false)
                                 }}
                                 disabled={attendanceLoading}
-                                className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
+                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
                                     ? 'bg-red-600 dark:bg-red-900 text-white shadow ring-1 ring-red-300 dark:ring-red-500/70'
                                     : attendanceLoading
                                         ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
@@ -163,21 +164,23 @@ const MemberCard = memo(({
                                 {attendanceLoading ? '...' : 'Absent'}
                             </button>
                         </div>
-                        <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); onDelete(e, member) }}
-                            className="hidden md:inline-flex flex-1 items-center justify-center px-3 py-2 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 hover:border-red-200 dark:hover:border-red-800 text-sm font-medium transition-colors duration-150"
-                        >
-                            Delete
-                        </button>
+                        {showDeleteActions && (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onDelete(e, member) }}
+                                className="member-card-action hidden md:inline-flex flex-1 items-center justify-center px-3 py-2 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 hover:border-red-200 dark:hover:border-red-800 text-sm font-medium transition-colors duration-150"
+                            >
+                                Delete
+                            </button>
+                        )}
                     </div>
                 </div>
 
                 {/* Expandable Content */}
                 {isExpanded && (
-                    <div className="px-2 sm:px-3 pb-2 sm:pb-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700 transition-colors">
+                    <div className="member-card-expanded px-2 sm:px-3 pb-2 sm:pb-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700 transition-colors">
                         <div className="pt-2 sm:pt-2.5">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4 p-3 sm:p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700">
+                            <div className="member-card-detail-grid grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4 p-3 sm:p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700">
                                 <div className="space-y-3">
                                     <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Member Info</h4>
                                     <div className="space-y-2 text-xs sm:text-sm">
@@ -214,13 +217,15 @@ const MemberCard = memo(({
                                             <Edit3 className="w-4 h-4" />
                                             <span>Edit Details</span>
                                         </button>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); onDelete(e, member) }}
-                                            className="md:hidden w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-red-300 text-red-700 rounded-lg transition-colors shadow-sm"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                            <span>Delete Member</span>
-                                        </button>
+                                        {showDeleteActions && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onDelete(e, member) }}
+                                                className="md:hidden w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-red-300 text-red-700 rounded-lg transition-colors shadow-sm"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                                <span>Delete Member</span>
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -230,7 +235,7 @@ const MemberCard = memo(({
                                 <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
                                     {getMonthDisplayName(currentTable)} Sunday Attendance
                                 </h4>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                <div className="member-card-attendance-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                     {monthSundays.map(date => {
                                         const status = attendanceData[date]?.[member.id]
                                         const isP = status === true
