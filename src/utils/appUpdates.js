@@ -45,13 +45,19 @@ export const getInstalledAppInfo = async () => {
 
 export const normalizeRelease = (release) => {
   if (!release) return null
+  const rawApkUrl = release.apk_url || release.apkUrl || ''
+  const apkUrl =
+    rawApkUrl && rawApkUrl.startsWith('/') && typeof window !== 'undefined'
+      ? `${window.location.origin}${rawApkUrl}`
+      : rawApkUrl
+
   return {
     id: release.id || null,
     versionName: String(release.version_name || release.latestVersion || ''),
     versionCode: Number(release.version_code || release.versionCode || 0),
     title: release.title || 'DatSer update',
     description: release.description || release.message || 'A new DatSer app update is available.',
-    apkUrl: release.apk_url || release.apkUrl || '',
+    apkUrl,
     forceUpdate: Boolean(release.force_update ?? release.forceUpdate),
     isActive: Boolean(release.is_active ?? true),
     publishedAt: release.published_at || release.publishedAt || null,
@@ -68,7 +74,26 @@ export const isReleaseNewer = (release, appInfo) => {
   return compareVersions(release.versionName, appInfo.versionName) > 0
 }
 
+const getHigherRelease = (primary, fallback) => {
+  if (!primary) return fallback
+  if (!fallback) return primary
+
+  if (fallback.versionCode && primary.versionCode && fallback.versionCode !== primary.versionCode) {
+    return fallback.versionCode > primary.versionCode ? fallback : primary
+  }
+
+  return compareVersions(fallback.versionName, primary.versionName) > 0 ? fallback : primary
+}
+
+const fetchStaticAppRelease = async () => {
+  const response = await fetch(`/app-version.json?t=${Date.now()}`, { cache: 'no-store' })
+  if (!response.ok) return null
+  return normalizeRelease(await response.json())
+}
+
 export const fetchLatestAppRelease = async () => {
+  let backendRelease = null
+
   if (supabase) {
     const { data, error } = await supabase
       .from('app_releases')
@@ -80,7 +105,7 @@ export const fetchLatestAppRelease = async () => {
       .maybeSingle()
 
     if (!error && data) {
-      return normalizeRelease(data)
+      backendRelease = normalizeRelease(data)
     }
 
     const missingBackend =
@@ -92,9 +117,8 @@ export const fetchLatestAppRelease = async () => {
     }
   }
 
-  const response = await fetch(`/app-version.json?t=${Date.now()}`, { cache: 'no-store' })
-  if (!response.ok) return null
-  return normalizeRelease(await response.json())
+  const staticRelease = await fetchStaticAppRelease()
+  return getHigherRelease(backendRelease, staticRelease)
 }
 
 export const fetchReleaseHistory = async () => {
