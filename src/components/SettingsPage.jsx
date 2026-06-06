@@ -77,6 +77,7 @@ const TeamSettingsSection = React.lazy(() => import('./TeamSettingsSection'))
 const DataSettingsSection = React.lazy(() => import('./DataSettingsSection'))
 const AppearanceSettingsSection = React.lazy(() => import('./AppearanceSettingsSection'))
 const AccessibilitySettingsSection = React.lazy(() => import('./AccessibilitySettingsSection'))
+const MemberCodeSettingsSection = React.lazy(() => import('./MemberCodeSettingsSection'))
 const UpdatesSettingsSection = React.lazy(() => import('./UpdatesSettingsSection'))
 const DangerSettingsSection = React.lazy(() => import('./DangerSettingsSection'))
 const DeveloperToolsPanel = React.lazy(() => import('./DeveloperToolsPanel'))
@@ -1527,6 +1528,16 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             preferences={effectivePreferences}
                             updatePreferences={updatePreferences}
                             isCollaborator={isCollaborator}
+                            getSettingTargetClass={getSettingTargetClass}
+                        />
+                    </React.Suspense>
+                )
+            case 'member_codes':
+                return (
+                    <React.Suspense fallback={<LazyPanelFallback />}>
+                        <MemberCodeSettingsSection
+                            preferences={effectivePreferences}
+                            updatePreferences={updatePreferences}
                             getSettingTargetClass={getSettingTargetClass}
                         />
                     </React.Suspense>

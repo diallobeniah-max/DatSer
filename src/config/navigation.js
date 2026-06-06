@@ -23,7 +23,8 @@ import {
     RefreshCw,
     Archive,
     BellRing,
-    Shield
+    Shield,
+    BadgeCheck
 } from 'lucide-react'
 
 // Main Application Views
@@ -100,6 +101,14 @@ export const SETTINGS_SECTIONS = [
         color: 'orange',
         content: 'Control member form helpers, the Next button, guided field order, missing info prompts, attendance completion, and date of birth picker behavior.',
         keywords: 'forms workflow next button guided form date birth missing info auto all dates member attendance'
+    },
+    {
+        id: 'member_codes',
+        label: 'Member Codes',
+        icon: BadgeCheck,
+        color: 'orange',
+        content: 'Configure member index codes, quick pass bottom sheet, badge style, member profile previews, and exact-match code lookup.',
+        keywords: 'member codes index badge quick pass profile preview check in lookup attendance code'
     },
     {
         id: 'accessibility',
@@ -257,6 +266,46 @@ export const SETTINGS_SEARCH_INDEX = [
         description: 'Highlight the next field in member and attendance forms',
         keywords: 'guided form assistant highlight next field notes tags auto focus scroll attendance auto present',
         icon: Zap
+    },
+    {
+        id: 'member_codes_enabled',
+        section: 'member_codes',
+        label: 'Member Codes',
+        description: 'Show index codes on member cards',
+        keywords: 'member codes index badge card quick check in id number',
+        icon: BadgeCheck
+    },
+    {
+        id: 'member_code_quick_pass',
+        section: 'member_codes',
+        label: 'Quick Pass',
+        description: 'Open the member pass when a code is tapped',
+        keywords: 'quick pass bottom sheet member code profile tap badge',
+        icon: BadgeCheck
+    },
+    {
+        id: 'member_code_badge_style',
+        section: 'member_codes',
+        label: 'Code Badge Style',
+        description: 'Choose the member code badge style',
+        keywords: 'badge style member code color shape index',
+        icon: Palette
+    },
+    {
+        id: 'member_code_card_style',
+        section: 'member_codes',
+        label: 'Pass Card Style',
+        description: 'Choose the member pass card style',
+        keywords: 'member pass card style wave glass gradient classic',
+        icon: Palette
+    },
+    {
+        id: 'member_code_accent',
+        section: 'member_codes',
+        label: 'Member Code Accent',
+        description: 'Choose the accent color for member passes',
+        keywords: 'member code accent color pass profile',
+        icon: Palette
     },
     {
         id: 'current_month',

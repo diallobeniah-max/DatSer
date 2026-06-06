@@ -58,8 +58,9 @@ const NOTIFICATION_DURATION_STORAGE_KEY = 'datser_notification_duration_ms'
 const NOTIFICATION_DURATION_MIGRATION_KEY = 'datser_notification_duration_readable_default_v2'
 const DEFAULT_NOTIFICATION_DURATION_MS = 6500
 const SEARCH_SUGGESTION_VIEW_STORAGE_KEY = 'datser_search_suggestion_view'
+const SEARCH_SUGGESTION_PROMPT_STORAGE_KEY = 'datser_search_suggestion_prompt_seen_v1'
 const SEARCH_SUGGESTION_VIEW_MODES = ['short', 'full']
-const DEFAULT_SEARCH_SUGGESTION_VIEW = 'short'
+const DEFAULT_SEARCH_SUGGESTION_VIEW = 'full'
 
 
 const shouldLogAppContext = import.meta.env.MODE !== 'test'
@@ -436,6 +437,11 @@ export const AppProvider = ({ children }) => {
   const [searchSuggestionView, setSearchSuggestionViewState] = useState(() => {
     if (typeof window === 'undefined') return DEFAULT_SEARCH_SUGGESTION_VIEW
     const stored = localStorage.getItem(SEARCH_SUGGESTION_VIEW_STORAGE_KEY)
+    const promptSeen = localStorage.getItem(SEARCH_SUGGESTION_PROMPT_STORAGE_KEY) === 'true'
+    if (!promptSeen) {
+      localStorage.setItem(SEARCH_SUGGESTION_VIEW_STORAGE_KEY, DEFAULT_SEARCH_SUGGESTION_VIEW)
+      return DEFAULT_SEARCH_SUGGESTION_VIEW
+    }
     return SEARCH_SUGGESTION_VIEW_MODES.includes(stored) ? stored : DEFAULT_SEARCH_SUGGESTION_VIEW
   })
   const autoSyncTimerRef = useRef(null)
@@ -443,6 +449,7 @@ export const AppProvider = ({ children }) => {
   const autoSnapshotTimerRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
   const applyOfflineSnapshotRef = useRef(null)
+  const searchDisplayPromptQueuedRef = useRef(false)
 
   const setOfflineMode = useCallback((mode) => {
     const nextMode = OFFLINE_MODES.includes(mode) ? mode : 'auto'
@@ -517,6 +524,46 @@ export const AppProvider = ({ children }) => {
       localStorage.setItem(SEARCH_SUGGESTION_VIEW_STORAGE_KEY, nextValue)
     }
   }, [])
+
+  useEffect(() => {
+    if (!user || authLoading || typeof window === 'undefined') return
+    if (localStorage.getItem(SEARCH_SUGGESTION_PROMPT_STORAGE_KEY) === 'true') return
+    if (searchDisplayPromptQueuedRef.current) return
+
+    searchDisplayPromptQueuedRef.current = true
+    setSearchSuggestionView(DEFAULT_SEARCH_SUGGESTION_VIEW)
+
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(SEARCH_SUGGESTION_PROMPT_STORAGE_KEY, 'true')
+      toast.dismiss()
+      toast.clearWaitingQueue()
+      window.setTimeout(() => {
+        notify.info('Try the new search tray?', {
+          title: 'New search display',
+          details: 'Full list stays default. You can switch to the short tray now, or keep the full list.',
+          defaultExpanded: true,
+          autoClose: 12000,
+          toastId: 'search-display-mode-prompt',
+          actions: [
+            {
+              label: '✓ Try tray',
+              variant: 'primary',
+              onClick: () => setSearchSuggestionView('short')
+            },
+            {
+              label: '× Keep full',
+              onClick: () => setSearchSuggestionView('full')
+            }
+          ]
+        })
+      }, 180)
+    }, 1400)
+
+    return () => {
+      window.clearTimeout(timer)
+      searchDisplayPromptQueuedRef.current = false
+    }
+  }, [authLoading, setSearchSuggestionView, user])
 
   const shouldUseOfflineData = offlineMode === 'offline' || (offlineMode === 'auto' && !isOnline)
   const isOfflineModeActive = shouldUseOfflineData && Boolean(offlineCacheMeta)
@@ -1622,7 +1669,7 @@ export const AppProvider = ({ children }) => {
           inserted_at: new Date().toISOString()
         }
         setMembers(prev => [newMember, ...prev])
-        toast.success('Member added successfully! (Demo Mode)')
+        toast.success('Member added')
         // Return the created member object directly for downstream usage
         return newMember
       }
@@ -1689,7 +1736,7 @@ export const AppProvider = ({ children }) => {
       fetchMembers(currentTable, { forceRefresh: true, background: true }).catch((refreshError) => {
         console.warn('[addMember] Background refresh failed after save:', refreshError)
       })
-      toast.success(`Member added successfully to ${currentTable}!`)
+      toast.success('Member added')
 
       // Log the action
       logActivity('ADD_MEMBER', `Added new member: ${memberData.full_name || memberData.fullName || memberData['Full Name']}`)
@@ -2731,7 +2778,7 @@ export const AppProvider = ({ children }) => {
           updatedMember['Full Name'] = updatedNameDemo
         }
         setMembers(prev => prev.map(m => m.id === id ? updatedMember : m))
-        if (!silent) toast.success('Member updated successfully! (Demo Mode)')
+        if (!silent) toast.success('Member updated')
         return updatedMember
       }
 
@@ -3065,7 +3112,7 @@ export const AppProvider = ({ children }) => {
         }
       }
 
-      if (!silent) toast.success(`Member updated successfully in ${currentTable}!`)
+      if (!silent) toast.success('Member updated')
 
       // Log the action
       const memberName = members.find(m => m.id === id)?.['full_name'] || members.find(m => m.id === id)?.['Full Name'] || 'Unknown'
@@ -3568,7 +3615,7 @@ export const AppProvider = ({ children }) => {
 
         changeCurrentTable(monthIdentifier)
         if (resolvedCopyMode === 'empty') {
-          toast.success(`${monthIdentifier} created as a fresh month (Demo Mode)`)
+          toast.success(`${monthIdentifier.replace('_', ' ')} ready`)
         } else if (resolvedCopyMode === 'custom') {
           if (selectedMemberIds.length === 0) {
             toast.info(`${monthIdentifier} created empty (Demo Mode)`)
@@ -3576,7 +3623,7 @@ export const AppProvider = ({ children }) => {
             toast.info(`${monthIdentifier} created with selected members (Demo Mode only simulates this state)`)
           }
         } else {
-          toast.success(`${monthIdentifier} created successfully! (Demo Mode)`)
+          toast.success(`${monthIdentifier.replace('_', ' ')} ready`)
         }
         return { success: true, tableName: monthIdentifier }
       }
@@ -3722,12 +3769,12 @@ export const AppProvider = ({ children }) => {
 
 
       if (resolvedCopyMode === 'empty') {
-        toast.success(`Month ${monthName} ${year} created as a fresh workspace.`)
+        toast.success(`${monthName} ${year} ready`)
       } else if (resolvedCopyMode === 'custom') {
         const copiedCount = selectedMemberIds.length
-        toast.success(`Month ${monthName} ${year} created with ${copiedCount} selected member${copiedCount === 1 ? '' : 's'}.`)
+        toast.success(`${monthName} ${year} ready (${copiedCount} copied)`)
       } else {
-        toast.success(`Month ${monthName} ${year} created successfully! Copied ${result?.members_copied || 0} members from ${sourceTable}. RLS enabled with all policies.`)
+        toast.success(`${monthName} ${year} ready (${result?.members_copied || 0} copied)`)
       }
 
       // Optimistically add new month locally so menus update immediately

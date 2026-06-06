@@ -34,7 +34,9 @@ const MemberCard = memo(({
     memberTags = [],
     currentTable,
     getMonthDisplayName,
-    showDeleteActions = true
+    showDeleteActions = true,
+    onIndexClick,
+    memberCodeBadgeStyle = 'soft'
 }) => {
     const name = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || 'Unnamed member'
     const regDateRaw = member.inserted_at || member.created_at
@@ -61,6 +63,20 @@ const MemberCard = memo(({
         background: `hsl(${indexHue} 76% 46% / 0.16)`,
         color: `hsl(${indexHue} 78% 38%)`
     }
+    const indexBadgeClass = memberCodeBadgeStyle === 'solid'
+        ? 'member-index-badge inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider text-white shadow-sm'
+        : memberCodeBadgeStyle === 'outline'
+            ? 'member-index-badge inline-flex shrink-0 items-center rounded-full border bg-transparent px-2.5 py-1 text-[11px] font-black tracking-wider'
+            : memberCodeBadgeStyle === 'circle'
+                ? 'member-index-badge inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white'
+                : 'member-index-badge inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white'
+    const resolvedIndexStyle = memberCodeBadgeStyle === 'solid'
+        ? {
+            borderColor: `hsl(${indexHue} 70% 42% / 0.92)`,
+            background: `hsl(${indexHue} 72% 42% / 0.92)`,
+            color: '#fff'
+        }
+        : indexStyle
 
     return (
         <div className={`member-card-shell relative transition-colors duration-200`}>
@@ -86,9 +102,20 @@ const MemberCard = memo(({
                 <div className="member-card-inner px-0 py-3 sm:px-4 sm:py-3.5">
                     {/* Row 1: Expand toggle row */}
                     <div className="w-full px-3 sm:px-0">
-                        <button
-                            type="button"
+                        <div
+                            role="button"
+                            tabIndex={0}
                             onClick={(e) => {
+                                if (selectionMode) {
+                                    e.stopPropagation()
+                                    onToggleSelection(member.id)
+                                } else {
+                                    onToggleExpansion(member.id)
+                                }
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key !== 'Enter' && e.key !== ' ') return
+                                e.preventDefault()
                                 if (selectionMode) {
                                     e.stopPropagation()
                                     onToggleSelection(member.id)
@@ -107,13 +134,20 @@ const MemberCard = memo(({
                                         {name}
                                     </h3>
                                     {memberIndexCode && (
-                                        <span
-                                            className="member-index-badge inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white"
-                                            style={indexStyle}
+                                        <button
+                                            type="button"
+                                            onPointerDown={(event) => event.stopPropagation()}
+                                            onClick={(event) => {
+                                                event.stopPropagation()
+                                                onIndexClick?.(member)
+                                            }}
+                                            className={`${indexBadgeClass} transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500`}
+                                            style={resolvedIndexStyle}
                                             title={`Member index ${memberIndexCode}`}
+                                            aria-label={`Open member pass for ${name}, code ${memberIndexCode}`}
                                         >
                                             {memberIndexCode}
-                                        </span>
+                                        </button>
                                     )}
                                 </div>
                                 {regDateRaw && (
@@ -125,7 +159,7 @@ const MemberCard = memo(({
                             <span className="hidden xs:inline text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0 ml-1">
                                 {isExpanded ? 'Hide details' : 'Details'}
                             </span>
-                        </button>
+                        </div>
                     </div>
 
                     {/* Row 2: Attendance Buttons */}
@@ -290,7 +324,8 @@ const MemberCard = memo(({
         prev.attendanceLoading === next.attendanceLoading &&
         prev.attendanceData === next.attendanceData &&
         prev.memberTags === next.memberTags &&
-        prev.currentTable === next.currentTable
+        prev.currentTable === next.currentTable &&
+        prev.memberCodeBadgeStyle === next.memberCodeBadgeStyle
     )
 })
 

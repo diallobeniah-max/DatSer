@@ -415,7 +415,7 @@ const MemberModal = ({ isOpen, onClose }) => {
         }
 
         submitRequestIdRef.current = null
-        toast.success(`Member saved successfully to ${currentTable}! Receipt: ${bundleResult?.receipt?.request_id || 'saved'}`)
+        toast.success('Member saved')
       }
 
       // Reset form (this component is unmounting but we reset for consistency if it remounts)

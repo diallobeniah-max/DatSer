@@ -9,7 +9,7 @@ const AccessibilitySettingsSection = ({
     setOfflineSaveNoticeThreshold,
     notificationDurationMs = 6500,
     setNotificationDurationMs,
-    searchSuggestionView = 'short',
+    searchSuggestionView = 'full',
     setSearchSuggestionView,
     getSettingTargetClass
 }) => {

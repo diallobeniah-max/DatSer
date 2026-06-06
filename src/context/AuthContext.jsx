@@ -274,9 +274,9 @@ export const AuthProvider = ({ children }) => {
             const isInvitedUser = session.user.user_metadata?.role === 'collaborator'
             const invitedBy = session.user.user_metadata?.invited_by
             if (isInvitedUser && invitedBy) {
-              toast.success(`Welcome! You've been invited by ${invitedBy}.`)
+              toast.success('Welcome to DatSer')
             } else {
-              toast.success(`Welcome, ${session.user.user_metadata?.full_name || session.user.email}!`)
+              toast.success('Welcome')
             }
           }
         } else if (event === 'SIGNED_OUT') {

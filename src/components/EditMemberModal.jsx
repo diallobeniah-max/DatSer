@@ -564,7 +564,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         if (onTagsChange) {
           onTagsChange()
         }
-        toast.success(`Member saved successfully in ${currentTable}! Receipt: ${bundleResult?.receipt?.request_id || 'saved'}`)
+        toast.success('Member saved')
       }
 
       // Reset Sunday attendance state

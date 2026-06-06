@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, memo, lazy, S
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
-import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield } from 'lucide-react'
+import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church } from 'lucide-react'
 import DateSelector from './DateSelector'
 import ConfirmModal from './ConfirmModal'
 import TableSkeleton from './TableSkeleton'
@@ -148,6 +148,8 @@ const Dashboard = ({ isAdmin = false }) => {
   const [memberTags, setMemberTags] = useState({}) // memberId -> tags array
   const [showMemberModal, setShowMemberModal] = useState(false)
   const [showMonthModal, setShowMonthModal] = useState(false)
+  const [quickPassMember, setQuickPassMember] = useState(null)
+  const [profileMember, setProfileMember] = useState(null)
 
   // Pagination state
   const [displayLimit, setDisplayLimit] = useState(20) // Initial display limit
@@ -1526,8 +1528,81 @@ const Dashboard = ({ isAdmin = false }) => {
     member?.full_name || member?.['full_name'] || member?.['Full Name'] || 'Unknown member'
   )
 
+  const getMemberEmail = (member) => (
+    member?.email || member?.Email || member?.['Email Address'] || ''
+  )
+
+  const getMemberPhone = (member) => (
+    member?.['Phone Number'] || member?.phone || member?.Phone || ''
+  )
+
+  const getMemberLevel = (member) => (
+    member?.['Current Level'] || member?.level || member?.Level || 'N/A'
+  )
+
+  const getMemberJoinLabel = (member) => {
+    const rawDate = member?.inserted_at || member?.created_at
+    if (!rawDate) return 'Joined Jan 10'
+    const date = new Date(rawDate)
+    if (Number.isNaN(date.getTime())) return 'Joined Jan 10'
+    return `Joined ${date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
+  }
+
+  const openMemberPass = useCallback((member) => {
+    if (!member || preferences?.member_codes_enabled !== true) return
+    selection()
+    if (preferences?.member_code_quick_pass_enabled === false) {
+      setProfileMember(member)
+      return
+    }
+    setQuickPassMember(member)
+  }, [preferences?.member_code_quick_pass_enabled, preferences?.member_codes_enabled, selection])
+
+  const openMemberProfile = useCallback((member) => {
+    if (!member) return
+    selection()
+    setQuickPassMember(null)
+    setProfileMember(member)
+  }, [selection])
+
   const pendingSearchTerm = localSearchTerm.trim()
   const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+  const contactMember = useCallback(async (member, type) => {
+    const phone = getMemberPhone(member).replace(/[^\d+]/g, '')
+    const email = getMemberEmail(member)
+    const name = getMemberSearchName(member)
+    if (type === 'whatsapp') {
+      if (!phone) {
+        toast.info('No phone number')
+        return
+      }
+      window.open(`https://wa.me/${phone.replace(/^\+/, '')}`, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (type === 'sms') {
+      if (!phone) {
+        toast.info('No phone number')
+        return
+      }
+      window.location.href = `sms:${phone}`
+      return
+    }
+    if (type === 'email') {
+      if (!email) {
+        toast.info('No email address')
+        return
+      }
+      window.location.href = `mailto:${email}`
+      return
+    }
+    const code = getMemberIndexCode(member, memberIndexCodeMap)
+    try {
+      await navigator.clipboard.writeText(`${name} - ${code}`)
+      toast.success('Member code copied')
+    } catch {
+      toast.error('Copy failed')
+    }
+  }, [memberIndexCodeMap])
   const searchSuggestionMembers = pendingSearchTerm
     ? (() => {
         const lowerTerm = pendingSearchTerm.toLowerCase()
@@ -1565,6 +1640,11 @@ const Dashboard = ({ isAdmin = false }) => {
   const isShortSearchDisplayActive = isShortSearchView && dashboardTab !== 'edited'
   const showSearchTrayDelete = preferences?.member_search_tray_delete_enabled !== false
   const memberFilterButtonEnabled = preferences?.member_filter_button_enabled === true
+  const memberCodesEnabled = preferences?.member_codes_enabled === true
+  const memberCodeBadgeStyle = preferences?.member_code_badge_style || 'soft'
+  const memberCodeShowLogo = preferences?.member_code_show_logo !== false
+  const memberCodeShowPhoto = preferences?.member_code_show_photo !== false
+  const memberCodeShowEmail = preferences?.member_code_show_email !== false
 
   useEffect(() => {
     if (memberFilterButtonEnabled) return
@@ -1610,7 +1690,9 @@ const Dashboard = ({ isAdmin = false }) => {
                 <MemberCard
                   key={member.id}
                   member={member}
-                  memberIndexCode={getMemberIndexCode(member, memberIndexCodeMap)}
+                  memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
+                  onIndexClick={openMemberPass}
+                  memberCodeBadgeStyle={memberCodeBadgeStyle}
                   isExpanded={isExpanded}
                   isSelected={isSelected}
                   selectionMode={selectionMode}
@@ -2068,7 +2150,9 @@ const Dashboard = ({ isAdmin = false }) => {
                   <MemberCard
                     key={member.id}
                     member={member}
-                    memberIndexCode={getMemberIndexCode(member, memberIndexCodeMap)}
+                    memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
+                    onIndexClick={openMemberPass}
+                    memberCodeBadgeStyle={memberCodeBadgeStyle}
                     isExpanded={isExpanded}
                     isSelected={isSelected}
                     selectionMode={selectionMode}
@@ -2740,6 +2824,205 @@ const Dashboard = ({ isAdmin = false }) => {
                 className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 shadow-md transition-colors"
               >
                 Apply Filters
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quickPassMember && (
+        <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/65 backdrop-blur-md" onClick={() => { selection(); setQuickPassMember(null) }}>
+          <div
+            className="w-full max-w-md overflow-hidden rounded-t-[2rem] border border-white/10 bg-[#111313] text-white shadow-2xl md:mb-6 md:rounded-[2rem]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 pt-3">
+              <button
+                type="button"
+                onClick={() => { selection(); setQuickPassMember(null) }}
+                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                aria-label="Close member pass"
+              >
+                <X className="h-5 w-5" />
+              </button>
+              <div className="h-1.5 w-14 rounded-full bg-white/25" />
+              <button
+                type="button"
+                onClick={() => openMemberProfile(quickPassMember)}
+                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                aria-label="Open member profile"
+              >
+                <MoreHorizontal className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-6 pb-7 pt-3 text-center">
+              {memberCodeShowLogo && (
+                <>
+                  <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl text-orange-400">
+                    <Church className="h-11 w-11" />
+                  </div>
+                  <p className="text-sm font-semibold text-white/70">DatSer Church</p>
+                  <p className="text-xs text-white/45">Growing Together in Faith</p>
+                </>
+              )}
+
+              {memberCodeShowPhoto && (
+                <div className="relative mx-auto my-7 h-32 w-32 rounded-full border-4 border-orange-500 bg-gradient-to-br from-orange-100 via-white to-orange-200 p-1 shadow-[0_0_60px_rgba(249,115,22,0.25)]">
+                  <div className="grid h-full w-full place-items-center rounded-full bg-gradient-to-br from-orange-500 to-purple-500 text-5xl font-black text-white">
+                    {getMemberSearchName(quickPassMember).charAt(0).toUpperCase()}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-center gap-3">
+                <h3 className="text-3xl font-black">{getMemberSearchName(quickPassMember)}</h3>
+                <span className="rounded-lg border border-green-400/35 bg-green-500/15 px-3 py-1 text-sm font-black text-green-300">
+                  {getMemberIndexCode(quickPassMember, memberIndexCodeMap)}
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-white/55">{getMemberJoinLabel(quickPassMember)}</p>
+
+              <div className="mt-7 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => contactMember(quickPassMember, 'whatsapp')}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 font-bold hover:bg-white/[0.10]"
+                >
+                  <Phone className="h-5 w-5 text-green-400" />
+                  WhatsApp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => contactMember(quickPassMember, 'sms')}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 font-bold hover:bg-white/[0.10]"
+                >
+                  <MessageSquare className="h-5 w-5" />
+                  SMS
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => contactMember(quickPassMember, 'copy')}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/70 hover:bg-white/[0.08]"
+              >
+                <Share2 className="h-4 w-4" />
+                Share member pass and code
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {profileMember && (
+        <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md" onClick={() => { selection(); setProfileMember(null) }}>
+          <div
+            className="relative w-full max-w-md overflow-hidden rounded-[2rem] border border-white/10 bg-[#111313] p-5 text-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => { selection(); setProfileMember(null); setQuickPassMember(profileMember) }}
+                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                aria-label="Back to member pass"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => { selection(); setProfileMember(null) }}
+                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                aria-label="Close member profile"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-4">
+              {memberCodeShowPhoto && (
+                <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full border-2 border-orange-500 bg-gradient-to-br from-orange-500 to-purple-500 text-4xl font-black text-white shadow-xl">
+                  {getMemberSearchName(profileMember).charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="truncate text-2xl font-black">{getMemberSearchName(profileMember)}</h3>
+                  <span className="rounded-lg border border-green-400/35 bg-green-500/15 px-2 py-1 text-xs font-black text-green-300">
+                    {getMemberIndexCode(profileMember, memberIndexCodeMap)}
+                  </span>
+                </div>
+                {memberCodeShowEmail && (
+                  <p className="mt-1 flex items-center gap-2 text-sm text-white/60">
+                    <Mail className="h-4 w-4" />
+                    {getMemberEmail(profileMember) || 'No email'}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-3">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                <p className="mb-3 text-sm font-bold text-white/80">Contact</p>
+                <button
+                  type="button"
+                  onClick={() => contactMember(profileMember, 'whatsapp')}
+                  className="flex w-full items-center justify-between rounded-xl bg-black/20 px-3 py-3 text-left"
+                >
+                  <span className="flex items-center gap-3"><Phone className="h-5 w-5 text-green-400" />{getMemberPhone(profileMember) || 'No phone'}</span>
+                  <MessageSquare className="h-5 w-5 text-white/45" />
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-white/45">Gender</p>
+                    <p className="mt-1 font-bold">{profileMember?.Gender || profileMember?.gender || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/45">Level</p>
+                    <p className="mt-1 font-bold">{getMemberLevel(profileMember)}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-white/45">Joined</p>
+                    <p className="mt-1 font-bold">{getMemberJoinLabel(profileMember).replace('Joined ', '')}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-bold text-white/80">Recent Attendance</p>
+                  <button type="button" className="text-xs font-bold text-orange-400">See All</button>
+                </div>
+                <div className="grid grid-cols-5 gap-2">
+                  {sundayDates.slice(-5).map((date) => {
+                    const status = attendanceData[date]?.[profileMember.id]
+                    const dateObj = new Date(date)
+                    return (
+                      <div key={date} className={`rounded-xl px-2 py-2 text-center text-xs ${status === false ? 'bg-red-500/20 text-red-100' : status === true ? 'bg-green-500/20 text-green-100' : 'bg-white/10 text-white/55'}`}>
+                        <p className="font-bold uppercase">{dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</p>
+                        <p className="text-base font-black">{dateObj.getDate()}</p>
+                        <p>{status === false ? 'A' : status === true ? 'P' : '-'}</p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  selection()
+                  setEditingMember(profileMember)
+                  setProfileMember(null)
+                  setQuickPassMember(null)
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-3 font-black text-white hover:bg-orange-700"
+              >
+                <Edit3 className="h-5 w-5" />
+                Edit Member
               </button>
             </div>
           </div>
