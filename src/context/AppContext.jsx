@@ -8,10 +8,14 @@ import { buildMemberIndexCodeMap, memberMatchesIndexCode } from '../utils/member
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import {
   clearAllOfflineData,
+  deleteMemberPreviewMember,
   getOfflineSnapshot,
+  getMemberPreviewMembers,
+  isOfflineStoreAvailable,
   getPendingOfflineChanges,
   queueOfflineChange,
   removeOfflineChange,
+  saveMemberPreviewMembers,
   saveOfflineSnapshot,
   updateOfflineChangeStatus
 } from '../utils/offlineStore'
@@ -466,6 +470,13 @@ export const AppProvider = ({ children }) => {
   const [members, setMembers] = useState([])
   const [membersTotalCount, setMembersTotalCount] = useState(0)
   const [membersLoadedAll, setMembersLoadedAll] = useState(false)
+  const [memberPreviewSyncStatus, setMemberPreviewSyncStatus] = useState({
+    isSyncing: false,
+    cachedCount: 0,
+    totalCount: 0,
+    lastSyncedAt: null,
+    source: 'idle'
+  })
   const [recentMemberEdits, setRecentMemberEdits] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -480,6 +491,7 @@ export const AppProvider = ({ children }) => {
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
   const membersCacheRef = useRef(new Map()) // tableName -> { data, ts }
+  const memberPreviewSyncRef = useRef(new Map())
   const workspaceCacheScope = useMemo(() => getWorkspaceCacheScope({
     userId: user?.id,
     dataOwnerId,
@@ -1758,6 +1770,155 @@ export const AppProvider = ({ children }) => {
     setMembersLoadedAll(loadedAll)
   }
 
+  const persistMemberPreviewIndex = useCallback(async (tableName, nextMembers, overrides = {}) => {
+    if (!tableName || !Array.isArray(nextMembers) || nextMembers.length === 0) return 0
+    if (!isOfflineStoreAvailable()) return 0
+    try {
+      const normalizedMembers = nextMembers.map(normalizeMemberRecord)
+      const savedCount = await saveMemberPreviewMembers(workspaceCacheScope, tableName, normalizedMembers)
+      setMemberPreviewSyncStatus(prev => ({
+        ...prev,
+        cachedCount: Math.max(prev.cachedCount || 0, overrides.cachedCount || normalizedMembers.length),
+        totalCount: overrides.totalCount ?? prev.totalCount,
+        lastSyncedAt: overrides.lastSyncedAt || new Date().toISOString(),
+        source: overrides.source || prev.source || 'indexeddb'
+      }))
+      return savedCount
+    } catch (error) {
+      console.warn('Could not persist member preview index:', error)
+      return 0
+    }
+  }, [workspaceCacheScope])
+
+  const readMemberPreviewIndex = useCallback(async (tableName = currentTable) => {
+    if (!tableName) return []
+    if (!isOfflineStoreAvailable()) return []
+    try {
+      const cachedMembers = await getMemberPreviewMembers(workspaceCacheScope, tableName)
+      return (cachedMembers || []).map(normalizeMemberRecord)
+    } catch (error) {
+      console.warn('Could not read member preview index:', error)
+      return []
+    }
+  }, [currentTable, workspaceCacheScope])
+
+  const searchMemberPreviewIndex = useCallback(async (term, tableName = currentTable) => {
+    const search = String(term || '').toLowerCase().trim()
+    if (!search || !tableName) return []
+    const cachedMembers = await readMemberPreviewIndex(tableName)
+    const cachedCodeMap = buildMemberIndexCodeMap(cachedMembers)
+    const matched = cachedMembers.filter(member => {
+      if (memberMatchesIndexCode(member, cachedCodeMap, term)) return true
+      const searchable = [
+        member['Full Name'],
+        member.full_name,
+        member.name,
+        member.Name,
+        member.member_code,
+        member['Phone Number'],
+        member.phone_number,
+        member.Gender,
+        member.gender,
+        member['Current Level'],
+        member.current_level
+      ].filter(Boolean).join(' ').toLowerCase()
+      return searchable.includes(search)
+    })
+    return matched.slice(0, 50)
+  }, [currentTable, readMemberPreviewIndex])
+
+  function startMemberPreviewBackgroundSync(tableName = currentTable, options = {}) {
+    if (!tableName || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
+    if (offlineMode === 'online' && !isOnline) return
+
+    const syncKey = `${workspaceCacheScope}::${tableName || 'default'}`
+    if (memberPreviewSyncRef.current.get(syncKey)) return
+    memberPreviewSyncRef.current.set(syncKey, true)
+
+    setMemberPreviewSyncStatus(prev => ({
+      ...prev,
+      isSyncing: true,
+      source: options.source || 'background'
+    }))
+
+    ;(async () => {
+      let offset = 0
+      let totalCount = options.totalCount || 0
+      let mergedMembers = []
+      let lastPageSize = MEMBER_PREVIEW_PAGE_SIZE
+
+      while (lastPageSize === MEMBER_PREVIEW_PAGE_SIZE) {
+        const { data, error, count } = await fetchMemberPreviewPage(tableName, offset)
+        if (error) throw error
+
+        const pageMembers = (data || []).map(normalizeMemberRecord)
+        lastPageSize = pageMembers.length
+        if (Number.isFinite(count)) {
+          totalCount = count
+        }
+        if (pageMembers.length > 0) {
+          await persistMemberPreviewIndex(tableName, pageMembers, {
+            cachedCount: offset + pageMembers.length,
+            totalCount,
+            source: 'background'
+          })
+          mergedMembers = mergeMemberPreviewPages(mergedMembers, pageMembers)
+          if (tableName === currentTable) {
+            setMembers(prev => mergeMemberPreviewPages(prev, pageMembers))
+            setMembersTotalCount(totalCount || Math.max(membersTotalCount || 0, offset + pageMembers.length))
+            setMembersLoadedAll(Boolean(totalCount) && (offset + pageMembers.length) >= totalCount)
+          }
+        }
+
+        offset += MEMBER_PREVIEW_PAGE_SIZE
+        setMemberPreviewSyncStatus(prev => ({
+          ...prev,
+          isSyncing: true,
+          cachedCount: Math.max(prev.cachedCount || 0, Math.min(offset, totalCount || offset)),
+          totalCount: totalCount || prev.totalCount,
+          source: 'background'
+        }))
+
+        if (totalCount && offset >= totalCount) break
+        if (pageMembers.length === 0) break
+        await sleep(80)
+      }
+
+      const indexedMembers = await readMemberPreviewIndex(tableName)
+      const doneTotal = totalCount || indexedMembers.length
+      if (tableName === currentTable && indexedMembers.length > 0) {
+        const loadedAll = !doneTotal || indexedMembers.length >= doneTotal
+        const cachePayload = {
+          data: indexedMembers,
+          ts: Date.now(),
+          totalCount: doneTotal,
+          loadedAll
+        }
+        membersCacheRef.current.set(tableName || 'default', cachePayload)
+        writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+        setMembers(indexedMembers)
+        setMembersTotalCount(doneTotal)
+        setMembersLoadedAll(loadedAll)
+      }
+      setMemberPreviewSyncStatus({
+        isSyncing: false,
+        cachedCount: indexedMembers.length,
+        totalCount: doneTotal,
+        lastSyncedAt: new Date().toISOString(),
+        source: 'indexeddb'
+      })
+    })().catch((error) => {
+      console.warn('Background member preview sync failed:', error)
+      setMemberPreviewSyncStatus(prev => ({
+        ...prev,
+        isSyncing: false,
+        source: 'error'
+      }))
+    }).finally(() => {
+      memberPreviewSyncRef.current.delete(syncKey)
+    })
+  }
+
   // Fetch members from current monthly table or use mock data
   const fetchMembers = async (tableName = currentTable, options = {}) => {
     const { forceRefresh = false, background = false, forceOnline = false, fullSnapshot = false } = options
@@ -1889,6 +2050,31 @@ export const AppProvider = ({ children }) => {
         return applyMemberPreviewCache(tableName, persistedCache, { background })
       }
 
+      if (!forceRefresh) {
+        const indexedMembers = await readMemberPreviewIndex(tableName)
+        if (indexedMembers.length > 0) {
+          appContextLog('Using IndexedDB member preview index for', cacheKey)
+          const cachePayload = {
+            data: indexedMembers,
+            ts: now,
+            totalCount: Math.max(membersTotalCount || 0, indexedMembers.length),
+            loadedAll: false
+          }
+          setMemberPreviewSyncStatus(prev => ({
+            ...prev,
+            cachedCount: indexedMembers.length,
+            totalCount: Math.max(prev.totalCount || 0, cachePayload.totalCount),
+            source: 'indexeddb'
+          }))
+          applyMemberPreviewCache(tableName, cachePayload, { background })
+          startMemberPreviewBackgroundSync(tableName, {
+            existingMembers: indexedMembers,
+            silent: true
+          })
+          return indexedMembers
+        }
+      }
+
       appContextLog(`Querying first ${MEMBER_PREVIEW_PAGE_SIZE} members from ${tableName} with session user: ${session.user?.id}`)
       const { data, error, count } = await fetchMemberPreviewPage(tableName, 0)
 
@@ -1934,6 +2120,18 @@ export const AppProvider = ({ children }) => {
         setMembersLoadedAll(loadedAll)
         membersCacheRef.current.set(cacheKey, cachePayload)
         writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+        persistMemberPreviewIndex(tableName, normalizedMembers, {
+          cachedCount: normalizedMembers.length,
+          totalCount,
+          source: 'first-page'
+        })
+        if (!loadedAll) {
+          startMemberPreviewBackgroundSync(tableName, {
+            existingMembers: normalizedMembers,
+            totalCount,
+            silent: true
+          })
+        }
         appContextLog(`Successfully loaded ${normalizedMembers.length} members from ${tableName}`)
         appContextLog('First few members:', normalizedMembers.slice(0, 3))
         appContextLog('Sample member structure:', normalizedMembers[0])
@@ -1995,6 +2193,11 @@ export const AppProvider = ({ children }) => {
       setMembersLoadedAll(loadedAll)
       membersCacheRef.current.set(tableName || 'default', cachePayload)
       writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+      persistMemberPreviewIndex(tableName, normalizedPage, {
+        cachedCount: mergedMembers.length,
+        totalCount,
+        source: 'load-more'
+      })
       return mergedMembers
     } catch (error) {
       console.error('Error loading more members:', error)
@@ -2035,6 +2238,11 @@ export const AppProvider = ({ children }) => {
           inserted_at: new Date().toISOString()
         }
         setMembers(prev => [newMember, ...prev])
+        await persistMemberPreviewIndex(currentTable, [newMember], {
+          cachedCount: members.length + 1,
+          totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
+          source: 'add'
+        })
         toast.success('Member added')
         // Return the created member object directly for downstream usage
         return newMember
@@ -2064,6 +2272,11 @@ export const AppProvider = ({ children }) => {
 
         setMembers(prev => [createdMember, ...prev.filter(existing => existing.id !== createdMember.id)])
         invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+        await persistMemberPreviewIndex(currentTable, [createdMember], {
+          cachedCount: members.length + 1,
+          totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
+          source: 'offline-add'
+        })
         await queueOfflineChange({
           local_change_id: `member_add_${createdMember.id}`,
           action_type: 'member_add',
@@ -2105,6 +2318,11 @@ export const AppProvider = ({ children }) => {
           loadedAll: membersLoadedAll
         })
         return nextMembers
+      })
+      await persistMemberPreviewIndex(currentTable, [createdMember], {
+        cachedCount: members.length + 1,
+        totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
+        source: 'add'
       })
       recordRecentMemberEdit(createdMember, new Date().toISOString(), {
         action: 'add',
@@ -3159,6 +3377,11 @@ export const AppProvider = ({ children }) => {
           updatedMember['Full Name'] = updatedNameDemo
         }
         setMembers(prev => prev.map(m => m.id === id ? updatedMember : m))
+        await persistMemberPreviewIndex(currentTable, [updatedMember], {
+          cachedCount: members.length,
+          totalCount: membersTotalCount,
+          source: 'update'
+        })
         recordRecentMemberEdit(updatedMember, editTimestamp)
         if (!silent) toast.success('Member updated')
         return updatedMember
@@ -3177,6 +3400,11 @@ export const AppProvider = ({ children }) => {
         setMembers(prev => prev.map(m => (m.id === id ? optimisticMember : m)))
         refreshSearch()
         invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+        await persistMemberPreviewIndex(currentTable, [optimisticMember], {
+          cachedCount: members.length,
+          totalCount: membersTotalCount,
+          source: 'offline-update'
+        })
         await queueOfflineChange({
           local_change_id: `member_update_${currentTable}_${id}`,
           action_type: 'member_update',
@@ -3507,6 +3735,11 @@ export const AppProvider = ({ children }) => {
         members.map((member) => member.id === id ? normalizeMemberRecord({ ...member, ...cachedUpdateMember }) : member),
         { totalCount: membersTotalCount, loadedAll: membersLoadedAll }
       )
+      await persistMemberPreviewIndex(currentTable, [cachedUpdateMember], {
+        cachedCount: members.length,
+        totalCount: membersTotalCount,
+        source: 'update'
+      })
       if (skipRefresh) {
         appContextLog('[updateMember] Kept optimistic member cache without post-save refetch.')
       }
@@ -3536,6 +3769,11 @@ export const AppProvider = ({ children }) => {
           return merged
         }))
         recordRecentMemberEdit(fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }, editTimestamp)
+        await persistMemberPreviewIndex(currentTable, [fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }], {
+          cachedCount: members.length,
+          totalCount: membersTotalCount,
+          source: 'local-fallback-update'
+        })
         refreshSearch()
         if (!silent) toast.info('Saved locally on this device')
         return members.find(m => m.id === id)
@@ -3574,6 +3812,7 @@ export const AppProvider = ({ children }) => {
         return next
       })
       refreshSearch()
+      await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
       toast.success('Member deleted (Demo Mode)')
       return { success: true }
     }
@@ -3592,6 +3831,7 @@ export const AppProvider = ({ children }) => {
       })
       refreshSearch()
       invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+      await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
       await queueOfflineChange({
         local_change_id: `member_delete_${currentTable}_${memberId}`,
         action_type: 'member_delete',
@@ -3707,6 +3947,7 @@ export const AppProvider = ({ children }) => {
 
       // Update caches/search without refetching the whole table.
       searchCacheRef.current.clear()
+      await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
       recordRecentMemberEdit(deletedMember, new Date().toISOString(), {
         action: 'delete',
         summary: 'Deleted member',
@@ -4290,10 +4531,6 @@ export const AppProvider = ({ children }) => {
       setServerSearchResults(null)
       return
     }
-    if (!isSupabaseConfigured()) {
-      setServerSearchResults(null)
-      return
-    }
 
     // Quick attendance keywords
     const kw = trimmed.toLowerCase()
@@ -4309,6 +4546,21 @@ export const AppProvider = ({ children }) => {
     const now = Date.now()
     if (hit && now - hit.timestamp < CACHE_DURATION) {
       setServerSearchResults(hit.data || [])
+      return
+    }
+
+    const localMatches = await searchMemberPreviewIndex(trimmed, currentTable)
+    if (localMatches.length > 0) {
+      searchCacheRef.current.set(cacheKey, { timestamp: now, data: localMatches })
+      setServerSearchResults(localMatches)
+      if (isSupabaseConfigured() && isOnline && !shouldUseOfflineData && localMatches.length < 20) {
+        startMemberPreviewBackgroundSync(currentTable, { source: 'search-refresh' })
+      }
+      return
+    }
+
+    if (!isSupabaseConfigured() || !isOnline || shouldUseOfflineData) {
+      setServerSearchResults([])
       return
     }
 
@@ -4354,12 +4606,12 @@ export const AppProvider = ({ children }) => {
         const fallback = isAge
           ? await supabase
               .from(currentTable)
-              .select('*')
+              .select(MEMBER_PREVIEW_SELECT)
               .eq('Age', parseInt(trimmed, 10))
               .limit(20)
           : await supabase
               .from(currentTable)
-              .select('*')
+              .select(MEMBER_PREVIEW_SELECT)
               .ilike(nameCol, `%${safe}%`)
               .limit(20)
         data = fallback.data
@@ -4379,8 +4631,13 @@ export const AppProvider = ({ children }) => {
       return 0
     })
     searchCacheRef.current.set(cacheKey, { timestamp: now, data: sorted })
+    await persistMemberPreviewIndex(currentTable, sorted, {
+      cachedCount: sorted.length,
+      totalCount: membersTotalCount,
+      source: 'search'
+    })
     setServerSearchResults(sorted)
-  }, [currentTable, isSupabaseConfigured, resolveNameColumn])
+  }, [currentTable, isOnline, membersTotalCount, persistMemberPreviewIndex, resolveNameColumn, searchMemberPreviewIndex, shouldUseOfflineData])
 
   useEffect(() => {
     performServerSearch(searchTerm)
@@ -4470,7 +4727,7 @@ export const AppProvider = ({ children }) => {
               const nameCol = await resolveNameColumn(tableName)
               const fallback = await supabase
                 .from(tableName)
-                .select('*')
+                .select(MEMBER_PREVIEW_SELECT)
                 .ilike(nameCol, `%${safe}%`)
                 .limit(20)
               data = fallback.data
@@ -5834,6 +6091,11 @@ export const AppProvider = ({ children }) => {
                 ? prevMembers.map(member => member.id === incoming.id ? { ...member, ...incoming } : member)
                 : [...prevMembers, incoming]
               membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+              persistMemberPreviewIndex(currentTable, [incoming], {
+                cachedCount: nextMembers.length,
+                totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
+                source: 'realtime-insert'
+              }).catch((error) => console.warn('Could not index realtime member insert:', error))
               return nextMembers
             });
           } else if (payload.eventType === 'UPDATE') {
@@ -5843,6 +6105,11 @@ export const AppProvider = ({ children }) => {
                 member.id === incoming.id ? { ...member, ...incoming } : member
               )
               membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+              persistMemberPreviewIndex(currentTable, [incoming], {
+                cachedCount: nextMembers.length,
+                totalCount: membersTotalCount || nextMembers.length,
+                source: 'realtime-update'
+              }).catch((error) => console.warn('Could not index realtime member update:', error))
               return nextMembers
             });
           } else if (payload.eventType === 'DELETE') {
@@ -5851,6 +6118,8 @@ export const AppProvider = ({ children }) => {
               membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
               return nextMembers
             });
+            deleteMemberPreviewMember(workspaceCacheScope, currentTable, payload.old.id)
+              .catch((error) => console.warn('Could not remove realtime member from index:', error))
           }
         }
       )
@@ -5859,7 +6128,7 @@ export const AppProvider = ({ children }) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentTable]);
+  }, [currentTable, membersTotalCount, persistMemberPreviewIndex, workspaceCacheScope]);
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)
@@ -5905,6 +6174,7 @@ export const AppProvider = ({ children }) => {
     members,
     membersTotalCount,
     membersLoadedAll,
+    memberPreviewSyncStatus,
     recentMemberEdits,
     recordRecentMemberEdit,
     filteredMembers,
@@ -6012,7 +6282,7 @@ export const AppProvider = ({ children }) => {
     fetchLockedDefaultDate,
     sendAdminPeriodBroadcast
   }), [
-    members, membersTotalCount, membersLoadedAll, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, searchTerm, serverSearchResults,
+    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, searchTerm, serverSearchResults,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,

@@ -1,9 +1,10 @@
 const DB_NAME = 'datser-offline'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const SNAPSHOT_STORE = 'snapshots'
 const PENDING_STORE = 'pendingChanges'
 const AUTH_STORE = 'auth'
 const LOCAL_STATE_STORE = 'localState'
+const MEMBER_PREVIEW_STORE = 'memberPreviews'
 const SNAPSHOT_KEY = 'latest'
 const AUTH_PROFILE_KEY = 'latest'
 const PREFERENCES_KEY = 'preferences'
@@ -37,6 +38,12 @@ const openOfflineDb = () => new Promise((resolve, reject) => {
     if (!db.objectStoreNames.contains(LOCAL_STATE_STORE)) {
       db.createObjectStore(LOCAL_STATE_STORE, { keyPath: 'key' })
     }
+    if (!db.objectStoreNames.contains(MEMBER_PREVIEW_STORE)) {
+      const store = db.createObjectStore(MEMBER_PREVIEW_STORE, { keyPath: 'key' })
+      store.createIndex('scope_table', ['scope', 'table_name'], { unique: false })
+      store.createIndex('member_id', 'member_id', { unique: false })
+      store.createIndex('updated_at', 'updated_at', { unique: false })
+    }
   }
 
   request.onsuccess = () => resolve(request.result)
@@ -59,6 +66,49 @@ const runStore = async (storeName, mode, runner) => {
     }
   })
 }
+
+const runTransaction = async (storeName, mode, runner) => {
+  const db = await openOfflineDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, mode)
+    const store = tx.objectStore(storeName)
+    let result
+    try {
+      result = runner(store)
+    } catch (error) {
+      db.close()
+      reject(error)
+      return
+    }
+    tx.oncomplete = () => {
+      db.close()
+      resolve(result)
+    }
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error || new Error('Offline storage transaction failed.'))
+    }
+    tx.onabort = () => {
+      db.close()
+      reject(tx.error || new Error('Offline storage transaction aborted.'))
+    }
+  })
+}
+
+const memberPreviewKey = (scope = 'guest', tableName = 'default', memberId = '') => (
+  `${scope || 'guest'}::${tableName || 'default'}::${memberId || ''}`
+)
+
+const getMemberId = (member = {}) => (
+  member.id ||
+  member.member_id ||
+  member.member_code ||
+  member['Full Name'] ||
+  member.full_name ||
+  member.name ||
+  member.Name ||
+  null
+)
 
 export const isOfflineStoreAvailable = canUseIndexedDb
 
@@ -146,6 +196,93 @@ export const clearOfflinePreferences = async () => (
   runStore(LOCAL_STATE_STORE, 'readwrite', (store) => store.delete(PREFERENCES_KEY))
 )
 
+export const saveMemberPreviewMembers = async (scope, tableName, members = []) => {
+  if (!Array.isArray(members) || members.length === 0) return 0
+  const savedAt = new Date().toISOString()
+  const records = members
+    .map((member) => {
+      const memberId = getMemberId(member)
+      if (!memberId) return null
+      return {
+        key: memberPreviewKey(scope, tableName, memberId),
+        scope: scope || 'guest',
+        table_name: tableName || 'default',
+        member_id: String(memberId),
+        member,
+        updated_at: member.updated_at || member.updatedAt || savedAt,
+        saved_at: savedAt
+      }
+    })
+    .filter(Boolean)
+
+  if (records.length === 0) return 0
+  await runTransaction(MEMBER_PREVIEW_STORE, 'readwrite', (store) => {
+    records.forEach((record) => store.put(record))
+    return records.length
+  })
+  return records.length
+}
+
+export const getMemberPreviewMembers = async (scope, tableName) => {
+  const db = await openOfflineDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MEMBER_PREVIEW_STORE, 'readonly')
+    const store = tx.objectStore(MEMBER_PREVIEW_STORE)
+    const index = store.indexNames.contains('scope_table') ? store.index('scope_table') : null
+    const request = index
+      ? index.getAll([scope || 'guest', tableName || 'default'])
+      : store.getAll()
+    request.onsuccess = () => {
+      const records = request.result || []
+      const filtered = records
+        .filter((record) => (
+          record?.scope === (scope || 'guest') &&
+          record?.table_name === (tableName || 'default')
+        ))
+        .map((record) => record.member)
+        .filter(Boolean)
+      resolve(filtered)
+    }
+    request.onerror = () => reject(request.error || new Error('Could not read member preview cache.'))
+    tx.oncomplete = () => db.close()
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error || new Error('Member preview cache read failed.'))
+    }
+  })
+}
+
+export const getMemberPreviewCount = async (scope, tableName) => {
+  const members = await getMemberPreviewMembers(scope, tableName)
+  return members.length
+}
+
+export const deleteMemberPreviewMember = async (scope, tableName, memberId) => {
+  if (!memberId) return null
+  return runStore(
+    MEMBER_PREVIEW_STORE,
+    'readwrite',
+    (store) => store.delete(memberPreviewKey(scope, tableName, memberId))
+  )
+}
+
+export const clearMemberPreviewTable = async (scope, tableName) => {
+  const members = await getMemberPreviewMembers(scope, tableName)
+  if (members.length === 0) return 0
+  await runTransaction(MEMBER_PREVIEW_STORE, 'readwrite', (store) => {
+    members.forEach((member) => {
+      const memberId = getMemberId(member)
+      if (memberId) store.delete(memberPreviewKey(scope, tableName, memberId))
+    })
+    return members.length
+  })
+  return members.length
+}
+
+export const clearMemberPreviewCache = async () => (
+  runStore(MEMBER_PREVIEW_STORE, 'readwrite', (store) => store.clear())
+)
+
 export const queueOfflineChange = async (change) => {
   const createdAt = change.created_at || new Date().toISOString()
   const queuedChange = {
@@ -184,4 +321,5 @@ export const clearAllOfflineData = async () => {
   await clearOfflineSnapshot()
   await clearPendingOfflineChanges()
   await clearOfflinePreferences()
+  await clearMemberPreviewCache()
 }
