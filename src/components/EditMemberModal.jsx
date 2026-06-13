@@ -14,7 +14,7 @@ import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
-  const { updateMember, markAttendance, refreshSearch, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings } = useApp()
+  const { updateMember, markAttendance, refreshSearch, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
@@ -542,6 +542,14 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         if (bundleResult?.receipt?.request_id) {
           localStorage.setItem('lastMemberSaveReceipt', JSON.stringify(bundleResult.receipt))
         }
+
+        const editedAt = new Date().toISOString()
+        recordRecentMemberEdit({
+          ...currentSnapshot,
+          ...nextMemberPayload,
+          id: latestMember.id,
+          updated_at: editedAt
+        }, editedAt)
 
         // Successful update - close modal immediately before triggering global refreshes
         // This prevents the parent dashboard from re-rendering the modal while it's still "open" 

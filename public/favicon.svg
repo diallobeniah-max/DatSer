@@ -1,33 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <defs>
-    <!-- Brand background gradient -->
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2563EB" />
-      <stop offset="100%" stop-color="#7C3AED" />
+    <linearGradient id="bg" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF7A18"/>
+      <stop offset="1" stop-color="#EA3F05"/>
     </linearGradient>
-
-    <!-- Soft top gloss like iOS icons -->
-    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55" />
-      <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.20" />
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    <linearGradient id="shine" x1="16" y1="8" x2="48" y2="36" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
-
-    <!-- Subtle shadow for the logo letters -->
-    <filter id="textShadow" x="-50%" y="-50%" width="200%" height="200%">
-      <feDropShadow dx="0" dy="1.2" stdDeviation="1.2" flood-color="#0F172A" flood-opacity="0.35" />
-    </filter>
   </defs>
-
-  <!-- Rounded square background -->
-  <rect x="2" y="2" width="28" height="28" rx="6.5" fill="url(#bgGrad)" />
-  <!-- Gloss layer -->
-  <rect x="2" y="2" width="28" height="14" rx="6.5" fill="url(#gloss)" />
-
-  <!-- DS monogram (Data + Service) -->
-  <g filter="url(#textShadow)">
-    <text x="16" y="20" text-anchor="middle" font-family="Inter, Segoe UI, Roboto, system-ui, -apple-system" font-size="12" font-weight="800" fill="#FFFFFF" letter-spacing="0.5">
-      DS
-    </text>
-  </g>
+  <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#bg)"/>
+  <rect x="6" y="6" width="52" height="30" rx="14" fill="url(#shine)"/>
+  <ellipse cx="30" cy="22" rx="12" ry="5.5" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M18 22v17c0 3 5.4 5.5 12 5.5s12-2.5 12-5.5V22" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M18 30.5c0 3 5.4 5.5 12 5.5s12-2.5 12-5.5" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M39 41.5l4.2 4.2L52 35.8" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

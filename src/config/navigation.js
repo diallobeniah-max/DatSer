@@ -24,7 +24,8 @@ import {
     Archive,
     BellRing,
     Shield,
-    BadgeCheck
+    BadgeCheck,
+    Search
 } from 'lucide-react'
 
 // Main Application Views
@@ -108,7 +109,7 @@ export const SETTINGS_SECTIONS = [
         icon: BadgeCheck,
         color: 'orange',
         content: 'Configure member index codes, quick pass bottom sheet, badge style, member profile previews, and exact-match code lookup.',
-        keywords: 'member codes index badge quick pass profile preview check in lookup attendance code'
+        keywords: 'member codes index badge quick pass profile preview check in lookup attendance code number id qr pass share'
     },
     {
         id: 'accessibility',
@@ -116,7 +117,7 @@ export const SETTINGS_SECTIONS = [
         icon: Zap,
         color: 'yellow',
         content: 'Command Menu, keyboard shortcuts, search behavior, notifications, website sharing, QR code, and in-app alert settings.',
-        keywords: 'command menu keyboard shortcuts navigation ctrl k cmd k notifications alerts search share qr code'
+        keywords: 'command menu keyboard shortcuts navigation ctrl k cmd k notifications alerts search share qr code tray short tray full list member search touch haptics'
     },
     {
         id: 'help',
@@ -132,7 +133,7 @@ export const SETTINGS_SECTIONS = [
         icon: ClipboardList,
         color: 'indigo',
         content: 'View a history of actions taken in your workspace. Monitor member additions, deletions, updates, and other important events.',
-        keywords: 'audit logs history updates tracking activity actions events'
+        keywords: 'audit logs history updates tracking activity actions events recent edits changes monthly dates'
     },
     {
         id: 'developer',
@@ -272,7 +273,7 @@ export const SETTINGS_SEARCH_INDEX = [
         section: 'member_codes',
         label: 'Member Codes',
         description: 'Show index codes on member cards',
-        keywords: 'member codes index badge card quick check in id number',
+        keywords: 'member codes index badge card quick check in id number code number display codes show hide',
         icon: BadgeCheck
     },
     {
@@ -280,7 +281,7 @@ export const SETTINGS_SEARCH_INDEX = [
         section: 'member_codes',
         label: 'Quick Pass',
         description: 'Open the member pass when a code is tapped',
-        keywords: 'quick pass bottom sheet member code profile tap badge',
+        keywords: 'quick pass bottom sheet member code profile tap badge qr share scan present',
         icon: BadgeCheck
     },
     {
@@ -296,7 +297,7 @@ export const SETTINGS_SEARCH_INDEX = [
         section: 'member_codes',
         label: 'Pass Card Style',
         description: 'Choose the member pass card style',
-        keywords: 'member pass card style wave glass gradient classic',
+        keywords: 'member pass card style wave glass gradient classic 3d ambient neon galaxy qr share',
         icon: Palette
     },
     {
@@ -338,6 +339,22 @@ export const SETTINGS_SEARCH_INDEX = [
         description: 'View, manage, and remove collaborators',
         keywords: 'team list collaborators remove delete permissions roles transfer',
         icon: Users
+    },
+    {
+        id: 'member_search_view',
+        section: 'accessibility',
+        label: 'Member Search View',
+        description: 'Choose Short Tray or Full List behavior for member search',
+        keywords: 'member search view tray short tray full list results search phone mobile suggestion suggestions',
+        icon: Search
+    },
+    {
+        id: 'recent_edits',
+        section: 'activity',
+        label: 'Recent Edits',
+        description: 'Review recent member edits by date and month',
+        keywords: 'recent edits changes history activity edited updated date tabs month june sunday',
+        icon: ClipboardList
     },
     {
         id: 'offline_mode',
@@ -499,12 +516,43 @@ export const buildSettingsSearchText = (item, sections = SETTINGS_SECTIONS) => {
     ].filter(Boolean).join(' ').toLowerCase()
 }
 
+const SEARCH_TOKEN_ALIASES = {
+    tray: ['tray', 'search', 'suggestion', 'short'],
+    code: ['code', 'codes', 'member', 'number'],
+    codes: ['code', 'codes', 'member', 'number'],
+    number: ['number', 'code', 'codes'],
+    recent: ['recent', 'edits', 'activity', 'history'],
+    edits: ['edits', 'changes', 'recent', 'activity'],
+    light: ['light', 'theme', 'appearance'],
+    dark: ['dark', 'theme', 'appearance'],
+    searhc: ['search'],
+    memebr: ['member'],
+    memberb: ['member'],
+    numnber: ['number'],
+    bades: ['badge'],
+    badge: ['badge', 'style', 'code'],
+    preve: ['preview'],
+    preview: ['preview', 'live'],
+    live: ['live', 'preview']
+}
+
+const getSearchTokenVariants = (token) => {
+    const variants = [token, ...(SEARCH_TOKEN_ALIASES[token] || [])]
+    if (token.length > 3 && token.endsWith('s')) variants.push(token.slice(0, -1))
+    if (token.length > 3 && !token.endsWith('s')) variants.push(`${token}s`)
+    return Array.from(new Set(variants))
+}
+
+export const settingsSearchTextMatches = (searchText, tokens = []) => (
+    tokens.every(token => getSearchTokenVariants(token).some(variant => searchText.includes(variant)))
+)
+
 export const searchSettingsIndex = (query, items = SETTINGS_SEARCH_INDEX, sections = SETTINGS_SECTIONS) => {
     const normalizedQuery = String(query || '').trim().toLowerCase()
     if (!normalizedQuery) return items
     const tokens = normalizedQuery.split(/\s+/).filter(Boolean)
     return items.filter(item => {
         const searchText = buildSettingsSearchText(item, sections)
-        return tokens.every(token => searchText.includes(token))
+        return settingsSearchTextMatches(searchText, tokens)
     })
 }

@@ -6,6 +6,7 @@ import { compareVersions } from './versionCompare'
 
 export const APP_UPDATES_BUCKET = 'app-updates'
 export const APK_FILE_LIMIT_BYTES = 150 * 1024 * 1024
+const APP_RELEASE_SELECT = 'id,version_name,version_code,title,description,apk_url,force_update,is_active,published_at,created_at,created_by'
 
 export const isAndroidNative = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
 
@@ -97,7 +98,7 @@ export const fetchLatestAppRelease = async () => {
   if (supabase) {
     const { data, error } = await supabase
       .from('app_releases')
-      .select('*')
+      .select(APP_RELEASE_SELECT)
       .eq('is_active', true)
       .order('version_code', { ascending: false })
       .order('published_at', { ascending: false })
@@ -125,7 +126,7 @@ export const fetchReleaseHistory = async () => {
   if (!supabase) return []
   const { data, error } = await supabase
     .from('app_releases')
-    .select('*')
+    .select(APP_RELEASE_SELECT)
     .order('version_code', { ascending: false })
     .order('created_at', { ascending: false })
 
@@ -186,7 +187,7 @@ export const uploadApkRelease = async ({ file, versionName, versionCode, title, 
       published_at: isActive ? new Date().toISOString() : null,
       created_by: userId || null
     })
-    .select('*')
+    .select(APP_RELEASE_SELECT)
     .single()
 
   if (error) throw error
@@ -202,7 +203,7 @@ export const setReleasePublished = async (releaseId, isActive) => {
       published_at: isActive ? new Date().toISOString() : null
     })
     .eq('id', releaseId)
-    .select('*')
+    .select(APP_RELEASE_SELECT)
     .single()
 
   if (error) throw error

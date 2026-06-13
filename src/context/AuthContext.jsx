@@ -14,6 +14,8 @@ import {
 
 const AuthContext = createContext(null)
 const DEV_BYPASS_STORAGE_KEY = 'datser_dev_bypass'
+const DEV_BYPASS_PREFERENCES_STORAGE_KEY = 'datser_dev_bypass_preferences'
+const LOCAL_PREFERENCE_OVERRIDES_PREFIX = 'datser_preference_overrides'
 const DEV_BYPASS_USER = {
   id: 'dev-bypass-user',
   email: 'dev@datser.local',
@@ -26,10 +28,84 @@ const DEV_BYPASS_PREFERENCES = {
   role: 'owner'
 }
 
+const readDeveloperBypassPreferenceCache = () => {
+  if (typeof window === 'undefined') return {}
+  try {
+    return JSON.parse(window.localStorage.getItem(DEV_BYPASS_PREFERENCES_STORAGE_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+const writeDeveloperBypassPreferenceCache = (preferences) => {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(
+      DEV_BYPASS_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({
+        ...(preferences || {}),
+        user_id: DEV_BYPASS_USER.id
+      })
+    )
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+const getLocalPreferenceOverrideKey = (userId) => `${LOCAL_PREFERENCE_OVERRIDES_PREFIX}_${userId || 'local'}`
+
+const readLocalPreferenceOverride = (userId) => {
+  if (typeof window === 'undefined' || !userId) return null
+  try {
+    return JSON.parse(window.localStorage.getItem(getLocalPreferenceOverrideKey(userId)) || 'null')
+  } catch {
+    return null
+  }
+}
+
+const writeLocalPreferenceOverride = (userId, preferences) => {
+  if (typeof window === 'undefined' || !userId) return
+  try {
+    window.localStorage.setItem(
+      getLocalPreferenceOverrideKey(userId),
+      JSON.stringify({
+        saved_at: new Date().toISOString(),
+        preferences: {
+          ...(preferences || {}),
+          user_id: userId
+        }
+      })
+    )
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+const getDeveloperBypassPreferences = async () => {
+  const cached = await getOfflinePreferences(DEV_BYPASS_USER.id).catch(() => null)
+  return {
+    ...DEV_BYPASS_PREFERENCES,
+    ...(cached?.preferences || {}),
+    ...readDeveloperBypassPreferenceCache(),
+    user_id: DEV_BYPASS_USER.id
+  }
+}
+
 const isBrowserOffline = () => (
   typeof navigator !== 'undefined' &&
   navigator.onLine === false
 )
+
+const isPreferenceSchemaError = (error) => {
+  if (!error) return false
+  const code = String(error.code || error.status || '').toUpperCase()
+  const message = String(error.message || error.details || error.hint || '').toLowerCase()
+
+  return code === 'PGRST204' || (
+    message.includes('user_preferences') &&
+    (message.includes('column') || message.includes('schema cache'))
+  )
+}
 
 const makePreferenceChangeId = (userId) => `preferences_update_${userId || 'local'}`
 
@@ -148,8 +224,14 @@ export const AuthProvider = ({ children }) => {
 
     if (isDeveloperBypassEnabled) {
       setUser(DEV_BYPASS_USER)
-      setPreferences(DEV_BYPASS_PREFERENCES)
-      setLoading(false)
+      getDeveloperBypassPreferences()
+        .then((devPreferences) => {
+          if (!mounted) return
+          setPreferences(devPreferences)
+        })
+        .finally(() => {
+          if (mounted) setLoading(false)
+        })
       return () => {
         mounted = false
       }
@@ -299,8 +381,9 @@ export const AuthProvider = ({ children }) => {
   // Load user preferences from database
   const loadUserPreferences = async (userId) => {
     if (isDeveloperBypassEnabled) {
-      setPreferences(DEV_BYPASS_PREFERENCES)
-      return DEV_BYPASS_PREFERENCES
+      const devPreferences = await getDeveloperBypassPreferences()
+      setPreferences(devPreferences)
+      return devPreferences
     }
 
     try {
@@ -326,8 +409,32 @@ export const AuthProvider = ({ children }) => {
         }
 
         if (data) {
-          setPreferences(data)
-          saveOfflinePreferences(userId, data).catch((error) => {
+          const cached = await getOfflinePreferences(userId).catch(() => null)
+          const localOverride = readLocalPreferenceOverride(userId)
+          const cachedSavedAt = cached?.saved_at ? new Date(cached.saved_at).getTime() : 0
+          const localOverrideSavedAt = localOverride?.saved_at ? new Date(localOverride.saved_at).getTime() : 0
+          const remoteUpdatedAt = data.updated_at ? new Date(data.updated_at).getTime() : 0
+          const localCacheIsNewer = cachedSavedAt > 0 && cachedSavedAt >= remoteUpdatedAt
+          const mergedBasePreferences = localCacheIsNewer
+            ? {
+              ...data,
+              ...(cached?.preferences || {}),
+              user_id: data.user_id || userId
+            }
+            : {
+              ...(cached?.preferences || {}),
+              ...data,
+              user_id: data.user_id || userId
+            }
+          const mergedPreferences = localOverrideSavedAt >= remoteUpdatedAt
+            ? {
+              ...mergedBasePreferences,
+              ...(localOverride?.preferences || {}),
+              user_id: data.user_id || userId
+            }
+            : mergedBasePreferences
+          setPreferences(mergedPreferences)
+          saveOfflinePreferences(userId, mergedPreferences).catch((error) => {
             console.warn('Could not cache preferences for offline use:', error)
           })
           // Only apply database preferences if localStorage doesn't have values
@@ -338,7 +445,7 @@ export const AuthProvider = ({ children }) => {
           if (data.badge_filter && !localStorage.getItem('badgeFilter')) {
             localStorage.setItem('badgeFilter', JSON.stringify(data.badge_filter))
           }
-          return data
+          return mergedPreferences
         }
       }
     } catch (error) {
@@ -375,12 +482,14 @@ export const AuthProvider = ({ children }) => {
         }
         setPreferences(devPreferences)
         preferencesRef.current = devPreferences
+        writeDeveloperBypassPreferenceCache(devPreferences)
         await saveOfflinePreferences(user.id, devPreferences).catch(() => {})
         return devPreferences
       }
 
       setPreferences(nextPreferences)
       preferencesRef.current = nextPreferences
+      writeLocalPreferenceOverride(user.id, nextPreferences)
       await saveOfflinePreferences(user.id, nextPreferences).catch((error) => {
         console.warn('Could not cache preferences for offline use:', error)
       })
@@ -415,15 +524,15 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       // Network / fetch errors are expected when Supabase is unreachable.
       // Keep the UI responsive and avoid throwing (which can cascade into repeated calls).
-      if (isTransientSupabaseError(error) || isBrowserOffline()) {
-        console.warn('Preference save queued for offline sync:', error)
+      if (isTransientSupabaseError(error) || isPreferenceSchemaError(error) || isBrowserOffline()) {
+        console.warn('Preference save queued for later sync:', error)
       } else {
         console.error('Error saving preferences:', error)
       }
       setPreferences(nextPreferences)
       preferencesRef.current = nextPreferences
       await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
-      if (isTransientSupabaseError(error) || isBrowserOffline()) {
+      if (isTransientSupabaseError(error) || isPreferenceSchemaError(error) || isBrowserOffline()) {
         await queuePreferenceSync(user.id, nextPreferences)
       }
       return nextPreferences
@@ -447,6 +556,10 @@ export const AuthProvider = ({ children }) => {
       // Always update local state immediately so UI reflects change.
       setPreferences(nextPreferences)
       preferencesRef.current = nextPreferences
+      writeLocalPreferenceOverride(user.id, nextPreferences)
+      if (isDeveloperBypassEnabled) {
+        writeDeveloperBypassPreferenceCache(nextPreferences)
+      }
       await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
 
       // If Supabase isn't ready/online, skip remote write.
@@ -701,8 +814,9 @@ export const AuthProvider = ({ children }) => {
   const bypassAuth = useCallback(async () => {
     if (import.meta.env.DEV) {
       localStorage.setItem(DEV_BYPASS_STORAGE_KEY, 'true')
+      const devPreferences = await getDeveloperBypassPreferences()
       setUser(DEV_BYPASS_USER)
-      setPreferences(DEV_BYPASS_PREFERENCES)
+      setPreferences(devPreferences)
       setLoading(false)
       toast.success('Entered Developer Mode')
       return DEV_BYPASS_USER

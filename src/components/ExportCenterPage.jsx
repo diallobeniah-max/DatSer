@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, useEffect, useRef, lazy, Suspense } from 'react'
+import React, { useCallback, useMemo, useState, useEffect, useRef, Suspense } from 'react'
 import {
     ChevronLeft,
     Download,
@@ -27,8 +27,9 @@ import {
 import { useApp } from '../context/AppContext'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
+import lazyWithRetry from '../utils/lazyWithRetry'
 
-const ExportContactsModal = lazy(() => import('./ExportContactsModal'))
+const ExportContactsModal = lazyWithRetry(() => import('./ExportContactsModal'))
 
 const MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',

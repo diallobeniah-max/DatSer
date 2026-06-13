@@ -32,7 +32,7 @@ export const useTags = (ownerId, currentTable) => {
       // Get all member_tags for the current table
       const { data: memberTagsData, error } = await supabase
         .from('member_tags')
-        .select('*')
+        .select('member_id,tag_id,table_name')
         .eq('table_name', currentTable)
 
       if (error) throw error

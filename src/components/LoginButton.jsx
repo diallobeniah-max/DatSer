@@ -3,7 +3,7 @@ import {
   LogIn,
   LogOut,
   User,
-  ChevronDown,
+  ChevronLeft,
   Moon,
   Sun,
   Settings,
@@ -162,7 +162,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
   const workspaceName = preferences?.workspace_name || 'My Workspace'
 
   return (
-    <div className="relative z-[9999]" ref={dropdownRef}>
+    <div className={`relative ${shouldRender ? 'z-[151]' : 'z-[60]'}`} ref={dropdownRef}>
       <button
         onClick={() => { selection(); setShowDropdown(!showDropdown) }}
         className="flex items-center gap-2 px-2 py-1 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -181,7 +181,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
         <span className="hidden md:inline text-sm font-medium text-gray-700 dark:text-gray-200 max-w-[100px] truncate">
           {userName}
         </span>
-        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+        <ChevronLeft className={`w-4 h-4 text-gray-500 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Professional Profile Dropdown */}
@@ -189,7 +189,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
         <>
           {/* Backdrop */}
           <div
-            className={`fixed inset-0 z-[9998] drawer-backdrop-transition ${
+            className={`fixed inset-0 z-[150] drawer-backdrop-transition ${
               isTransitioning
                 ? 'bg-black/40 backdrop-blur-sm'
                 : 'bg-transparent backdrop-blur-none pointer-events-none'
@@ -198,7 +198,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
           />
 
           <div
-            className={`fixed inset-y-0 right-0 w-[85vw] sm:w-80 md:w-[360px] z-[9999] border-y-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl overflow-hidden drawer-panel-transition flex flex-col ${
+            className={`fixed inset-y-0 right-0 w-[85vw] sm:w-80 md:w-[360px] z-[151] border-y-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl overflow-hidden drawer-panel-transition flex flex-col ${
               isTransitioning
                 ? 'translate-x-0 opacity-100'
                 : 'translate-x-full opacity-0'

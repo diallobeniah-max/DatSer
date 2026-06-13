@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback, memo, lazy, Suspense } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspense } from 'react'
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
@@ -12,14 +12,17 @@ import useHapticFeedback from '../hooks/useHapticFeedback'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { toast } from 'react-toastify'
 import MemberCard from './MemberCard'
+import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
+import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
+import MissingDataModal from './MissingDataModal'
 import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
+import lazyWithRetry from '../utils/lazyWithRetry'
 
 
 // Lazy load heavy modals for better initial load performance
-const EditMemberModal = lazy(() => import('./EditMemberModal'))
-const MemberModal = lazy(() => import('./MemberModal'))
-const MonthModal = lazy(() => import('./MonthModal'))
-const MissingDataModal = lazy(() => import('./MissingDataModal'))
+const EditMemberModal = lazyWithRetry(() => import('./EditMemberModal'))
+const MemberModal = lazyWithRetry(() => import('./MemberModal'))
+const MonthModal = lazyWithRetry(() => import('./MonthModal'))
 
 // Helper function to get month display name from table name
 const getMonthDisplayName = (tableName) => {
@@ -38,6 +41,353 @@ const getDateString = (date) => {
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+
+const isPreferenceEnabled = (value) => (
+  value === true ||
+  value === 'true' ||
+  value === 1 ||
+  value === '1'
+)
+
+const getStoredMemberCodesEnabled = () => {
+  if (typeof window === 'undefined') return null
+  const stored = window.localStorage.getItem('datser_member_codes_enabled')
+  return stored === null ? null : stored
+}
+
+const MEMBER_CODE_AUTO_CYCLE_INTERVALS = [15, 30, 60]
+
+const normalizeMemberCodeAutoCycleMinutes = (value) => {
+  const numericValue = Number(value)
+  return MEMBER_CODE_AUTO_CYCLE_INTERVALS.includes(numericValue) ? numericValue : 30
+}
+
+const normalizeDashboardColumns = (value) => {
+  const numericValue = Number(value)
+  return [1, 2, 3, 4].includes(numericValue) ? numericValue : 3
+}
+
+const DASHBOARD_COLUMN_CLASSES = {
+  1: 'grid-cols-1 md:grid-cols-1',
+  2: 'grid-cols-1 md:grid-cols-2',
+  3: 'grid-cols-1 md:grid-cols-3',
+  4: 'grid-cols-1 md:grid-cols-4'
+}
+
+const MEMBER_PASS_SHARE_THEMES = {
+  glass: { accent: '#ff6b6b', accent2: '#ff8a3d', bg1: '#2a171b', bg2: '#101114', badge: '#c84b35' },
+  premium: { accent: '#a855f7', accent2: '#ec4899', bg1: '#201129', bg2: '#0d0a12', badge: '#b935c3' },
+  neon: { accent: '#22c55e', accent2: '#9be870', bg1: '#082019', bg2: '#081116', badge: '#58a845' },
+  cosmic: { accent: '#eab308', accent2: '#fbbf24', bg1: '#151126', bg2: '#080914', badge: '#b97812' }
+}
+
+const wrapCanvasText = (ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) => {
+  const words = String(text).split(/\s+/).filter(Boolean)
+  const lines = []
+  let line = ''
+
+  words.forEach((word) => {
+    const testLine = line ? `${line} ${word}` : word
+    if (ctx.measureText(testLine).width > maxWidth && line) {
+      lines.push(line)
+      line = word
+    } else {
+      line = testLine
+    }
+  })
+  if (line) lines.push(line)
+
+  lines.slice(0, maxLines).forEach((lineText, index) => {
+    const finalText = index === maxLines - 1 && lines.length > maxLines ? `${lineText.replace(/\s+\S+$/, '')}...` : lineText
+    ctx.fillText(finalText, x, y + index * lineHeight)
+  })
+}
+
+const loadCanvasImage = (src) => new Promise((resolve) => {
+  if (!src) {
+    resolve(null)
+    return
+  }
+  const image = new Image()
+  image.crossOrigin = 'anonymous'
+  image.onload = () => resolve(image)
+  image.onerror = () => resolve(null)
+  image.src = src
+})
+
+const drawCanvasBadgePattern = (ctx, x, y, width, height, color = '#fff', alpha = 0.35) => {
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.strokeStyle = color
+  ctx.lineWidth = 3
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  ctx.moveTo(x + 36, y + 19)
+  ctx.lineTo(x + 36, y + height - 18)
+  ctx.moveTo(x + 18, y + 34)
+  ctx.lineTo(x + 56, y + 34)
+  ctx.moveTo(x + width - 50, y + 28)
+  ctx.bezierCurveTo(x + width - 60, y + 11, x + width - 84, y + 20, x + width - 78, y + 39)
+  ctx.bezierCurveTo(x + width - 70, y + 56, x + width - 50, y + 67, x + width - 50, y + 67)
+  ctx.bezierCurveTo(x + width - 50, y + 67, x + width - 30, y + 56, x + width - 22, y + 39)
+  ctx.bezierCurveTo(x + width - 16, y + 20, x + width - 40, y + 11, x + width - 50, y + 28)
+  ctx.stroke()
+  ctx.globalAlpha = alpha * 0.9
+  ;[[76, 18], [100, 30], [76, 58], [width - 96, 18], [width - 72, 58]].forEach(([dotX, dotY]) => {
+    ctx.beginPath()
+    ctx.moveTo(x + dotX, y + dotY - 7)
+    ctx.lineTo(x + dotX, y + dotY + 7)
+    ctx.moveTo(x + dotX - 7, y + dotY)
+    ctx.lineTo(x + dotX + 7, y + dotY)
+    ctx.stroke()
+  })
+  ctx.restore()
+}
+
+const drawCanvasQrDots = (ctx, centerX, centerY, radius, color) => {
+  ctx.save()
+  ctx.fillStyle = color
+  ctx.globalAlpha = 0.22
+  for (let row = -18; row <= 18; row += 1) {
+    for (let column = -18; column <= 18; column += 1) {
+      const x = centerX + column * 10
+      const y = centerY + row * 10
+      const distance = Math.hypot(x - centerX, y - centerY)
+      if (distance > radius * 0.75 && distance < radius * 1.28 && (row + column) % 2 === 0) {
+        ctx.beginPath()
+        ctx.arc(x, y, 1.25, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  }
+  ctx.restore()
+}
+
+const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, cardStyle, qrImageUrl, message, isDarkMode = true }) => {
+  const theme = MEMBER_PASS_SHARE_THEMES[cardStyle] || MEMBER_PASS_SHARE_THEMES.glass
+  const qrImage = await loadCanvasImage(qrImageUrl)
+  const darkCanvas = isDarkMode !== false
+  const foreground = darkCanvas ? '#ffffff' : '#172033'
+  const muted = darkCanvas ? 'rgba(255,255,255,0.64)' : 'rgba(23,32,51,0.64)'
+  const softPanel = darkCanvas ? 'rgba(0,0,0,0.22)' : 'rgba(255,255,255,0.72)'
+  const cardEdge = darkCanvas ? `${theme.accent}66` : `${theme.accent}80`
+  const canvas = document.createElement('canvas')
+  canvas.width = 1500
+  canvas.height = 1000
+  const ctx = canvas.getContext('2d')
+
+  const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
+  bg.addColorStop(0, darkCanvas ? theme.bg1 : '#fff7f2')
+  bg.addColorStop(1, darkCanvas ? theme.bg2 : '#eef6ff')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  const glowOne = ctx.createRadialGradient(290, 170, 10, 290, 170, 360)
+  glowOne.addColorStop(0, `${theme.accent}55`)
+  glowOne.addColorStop(1, 'transparent')
+  ctx.fillStyle = glowOne
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  const glowTwo = ctx.createRadialGradient(970, 650, 10, 970, 650, 340)
+  glowTwo.addColorStop(0, `${theme.accent2}40`)
+  glowTwo.addColorStop(1, 'transparent')
+  ctx.fillStyle = glowTwo
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  ctx.strokeStyle = `${theme.accent}88`
+  ctx.lineWidth = 4
+  ctx.beginPath()
+  ctx.roundRect(72, 72, 1356, 852, 56)
+  ctx.stroke()
+
+  const cardGlow = ctx.createLinearGradient(84, 86, 1116, 814)
+  cardGlow.addColorStop(0, darkCanvas ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.72)')
+  cardGlow.addColorStop(0.52, darkCanvas ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.44)')
+  cardGlow.addColorStop(1, `${theme.accent2}16`)
+  ctx.fillStyle = cardGlow
+  ctx.beginPath()
+  ctx.roundRect(100, 96, 1300, 808, 44)
+  ctx.fill()
+  ctx.strokeStyle = cardEdge
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  ctx.save()
+  ctx.globalAlpha = 0.16
+  ctx.translate(880, 575)
+  ctx.rotate(-0.12)
+  ctx.strokeStyle = theme.accent
+  ctx.lineWidth = 5
+  ctx.beginPath()
+  ctx.roundRect(0, 0, 230, 82, 24)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(42, 22)
+  ctx.lineTo(42, 62)
+  ctx.moveTo(24, 40)
+  ctx.lineTo(60, 40)
+  ctx.moveTo(170, 24)
+  ctx.lineTo(170, 36)
+  ctx.moveTo(164, 30)
+  ctx.lineTo(176, 30)
+  ctx.stroke()
+  ctx.restore()
+
+  ctx.fillStyle = darkCanvas ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.62)'
+  ctx.beginPath()
+  ctx.roundRect(170, 145, 132, 132, 32)
+  ctx.fill()
+  ctx.strokeStyle = `${theme.accent}88`
+  ctx.lineWidth = 3
+  ctx.stroke()
+  ctx.fillStyle = theme.accent
+  ctx.font = '900 68px Arial'
+  ctx.textAlign = 'center'
+  ctx.fillText('+', 236, 226)
+
+  ctx.fillStyle = foreground
+  ctx.font = '900 46px Arial'
+  ctx.textAlign = 'left'
+  ctx.fillText(churchName || 'DatSer Church', 348, 190)
+  ctx.fillStyle = muted
+  ctx.font = '500 30px Arial'
+  ctx.fillText('Growing Together in Faith', 348, 238)
+
+  const qrCenterX = 395
+  const qrCenterY = 560
+  const qrRadius = 190
+  drawCanvasQrDots(ctx, qrCenterX, qrCenterY, qrRadius + 40, theme.accent)
+  ;[qrRadius + 34, qrRadius + 20, qrRadius + 5].forEach((ringRadius, index) => {
+    ctx.strokeStyle = index === 0 ? `${theme.accent}3f` : `${theme.accent}${index === 1 ? 'cc' : '99'}`
+    ctx.lineWidth = index === 1 ? 8 : 4
+    ctx.beginPath()
+    ctx.arc(qrCenterX, qrCenterY, ringRadius, 0, Math.PI * 2)
+    ctx.stroke()
+  })
+  ctx.fillStyle = '#fff'
+  ctx.beginPath()
+  ctx.arc(qrCenterX, qrCenterY, qrRadius - 8, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(qrCenterX, qrCenterY, qrRadius - 18, 0, Math.PI * 2)
+  ctx.clip()
+  if (qrImage) {
+    ctx.drawImage(qrImage, qrCenterX - qrRadius + 18, qrCenterY - qrRadius + 18, (qrRadius - 18) * 2, (qrRadius - 18) * 2)
+  } else {
+    ctx.fillStyle = '#111827'
+    for (let row = 0; row < 25; row += 1) {
+      for (let column = 0; column < 25; column += 1) {
+        const seed = (row * 17 + column * 31 + String(code).length * 13) % 7
+        if (seed < 3 || row < 3 && column < 3 || row < 3 && column > 20 || row > 20 && column < 3) {
+          ctx.fillRect(qrCenterX - 120 + column * 10, qrCenterY - 120 + row * 10, 8, 8)
+        }
+      }
+    }
+  }
+  ctx.restore()
+  const initialGradient = ctx.createLinearGradient(qrCenterX - 38, qrCenterY - 38, qrCenterX + 38, qrCenterY + 38)
+  initialGradient.addColorStop(0, theme.accent)
+  initialGradient.addColorStop(1, theme.accent2)
+  ctx.fillStyle = initialGradient
+  ctx.beginPath()
+  ctx.arc(qrCenterX, qrCenterY, 42, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+  ctx.lineWidth = 7
+  ctx.stroke()
+  ctx.fillStyle = '#fff'
+  ctx.font = '900 38px Arial'
+  ctx.textAlign = 'center'
+  ctx.fillText(String(name || 'M').charAt(0).toUpperCase(), qrCenterX, qrCenterY + 14)
+
+  ctx.textAlign = 'left'
+  ctx.fillStyle = foreground
+  ctx.font = '900 62px Arial'
+  wrapCanvasText(ctx, name, 720, 330, 620, 66, 3)
+  ctx.fillStyle = muted
+  ctx.font = '600 32px Arial'
+  ctx.fillText(joinLabel, 760, 674)
+
+  const badge = ctx.createLinearGradient(720, 500, 1120, 622)
+  badge.addColorStop(0, theme.badge)
+  badge.addColorStop(1, theme.accent2)
+  ctx.fillStyle = badge
+  ctx.beginPath()
+  ctx.roundRect(720, 500, 410, 122, 32)
+  ctx.fill()
+  ctx.strokeStyle = `${theme.accent2}cc`
+  ctx.lineWidth = 3
+  ctx.stroke()
+  drawCanvasBadgePattern(ctx, 720, 500, 410, 122, '#fff', 0.32)
+  ctx.fillStyle = '#fff'
+  ctx.font = '900 70px Arial'
+  ctx.textAlign = 'center'
+  ctx.fillText(code, 925, 582)
+
+  const messageX = 690
+  const messageY = 718
+  const messageWidth = 640
+  const messageHeight = 168
+  ctx.fillStyle = softPanel
+  ctx.beginPath()
+  ctx.roundRect(messageX, messageY, messageWidth, messageHeight, 30)
+  ctx.fill()
+  ctx.strokeStyle = darkCanvas ? 'rgba(255,255,255,0.16)' : `${theme.accent}45`
+  ctx.lineWidth = 2
+  ctx.stroke()
+  ctx.save()
+  ctx.strokeStyle = theme.accent
+  ctx.lineWidth = 3
+  ctx.globalAlpha = 0.85
+  ctx.beginPath()
+  ctx.arc(messageX + 70, messageY + 84, 42, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(messageX + 55, messageY + 69)
+  ctx.bezierCurveTo(messageX + 40, messageY + 54, messageX + 18, messageY + 76, messageX + 43, messageY + 101)
+  ctx.bezierCurveTo(messageX + 58, messageY + 118, messageX + 70, messageY + 125, messageX + 70, messageY + 125)
+  ctx.bezierCurveTo(messageX + 70, messageY + 125, messageX + 82, messageY + 118, messageX + 97, messageY + 101)
+  ctx.bezierCurveTo(messageX + 122, messageY + 76, messageX + 100, messageY + 54, messageX + 85, messageY + 69)
+  ctx.stroke()
+  ctx.restore()
+  ctx.fillStyle = darkCanvas ? 'rgba(255,255,255,0.88)' : 'rgba(23,32,51,0.86)'
+  ctx.font = '800 24px Arial'
+  wrapCanvasText(ctx, message || 'Thanks for being a valued member.', messageX + 150, messageY + 54, 430, 32, 4)
+
+  try {
+    return canvas.toDataURL('image/png')
+  } catch (error) {
+    console.warn('Member pass QR image could not be exported, retrying without QR image:', error)
+    return createMemberPassShareImage({ name, code, joinLabel, churchName, cardStyle, qrImageUrl: '', message, isDarkMode })
+  }
+}
+
+const dataUrlToFile = async (dataUrl, fileName) => {
+  const response = await fetch(dataUrl)
+  const blob = await response.blob()
+  return new File([blob], fileName, { type: 'image/png' })
+}
+
+const createMemberCheckInUrl = ({ member, code, dateKey, tableName }) => {
+  if (typeof window === 'undefined' || !member?.id) return ''
+  const url = new URL(window.location.href)
+  url.search = ''
+  url.hash = ''
+  url.searchParams.set('member_checkin', '1')
+  url.searchParams.set('qr_mark', member.id)
+  if (code) url.searchParams.set('code', code)
+  if (dateKey) url.searchParams.set('date', dateKey)
+  if (tableName) url.searchParams.set('table', tableName)
+  return url.toString()
+}
+
+const createQrImageUrl = (value, size = 260) => (
+  value
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=12&ecc=H&data=${encodeURIComponent(value)}`
+    : ''
+)
 
 const getOrdinalSuffix = (day) => {
   const value = Number(day)
@@ -113,6 +463,9 @@ const Dashboard = ({ isAdmin = false }) => {
     setAttendanceData,
     currentTable,
     members,
+    membersTotalCount,
+    membersLoadedAll,
+    fetchMoreMembers,
     calculateMemberBadge,
 
     toggleMemberBadge,
@@ -149,7 +502,8 @@ const Dashboard = ({ isAdmin = false }) => {
   const [showMemberModal, setShowMemberModal] = useState(false)
   const [showMonthModal, setShowMonthModal] = useState(false)
   const [quickPassMember, setQuickPassMember] = useState(null)
-  const [profileMember, setProfileMember] = useState(null)
+  const [isQuickPassClosing, setIsQuickPassClosing] = useState(false)
+  const [memberPassSharePreview, setMemberPassSharePreview] = useState(null)
 
   // Pagination state
   const [displayLimit, setDisplayLimit] = useState(20) // Initial display limit
@@ -166,7 +520,10 @@ const Dashboard = ({ isAdmin = false }) => {
   const [visitorFilter, setVisitorFilter] = useState(null)
   const [showFilters, setShowFilters] = useState(false)
   const [isClosingFilters, setIsClosingFilters] = useState(false)
+  const [storedMemberCodesEnabled, setStoredMemberCodesEnabled] = useState(getStoredMemberCodesEnabled)
+  const [memberCodeBadgeCycleSlot, setMemberCodeBadgeCycleSlot] = useState(() => Math.floor(Date.now() / (30 * 60 * 1000)))
   const filterCloseTimeoutRef = useRef(null)
+  const quickPassCloseTimeoutRef = useRef(null)
   const [sortNewestFirst, setSortNewestFirst] = useState(true) // Toggle for Marked tab sort order
 
   // Tag filter state
@@ -214,6 +571,9 @@ const Dashboard = ({ isAdmin = false }) => {
     return () => {
       if (filterCloseTimeoutRef.current) {
         clearTimeout(filterCloseTimeoutRef.current)
+      }
+      if (quickPassCloseTimeoutRef.current) {
+        clearTimeout(quickPassCloseTimeoutRef.current)
       }
     }
   }, [])
@@ -275,12 +635,17 @@ const Dashboard = ({ isAdmin = false }) => {
   const missingDataPromptLockRef = useRef(null)
   const attendanceActionLocksRef = useRef(new Set())
 
-  const closeMissingDataModal = ({ suppressAll = false } = {}) => {
-    recentMissingDataCloseRef.current = {
-      memberId: pendingAttendanceAction?.memberId ?? missingDataMember?.id ?? null,
-      present: pendingAttendanceAction?.present ?? null,
-      at: Date.now(),
-      suppressAll
+  const closeMissingDataModal = ({ suppressAll = false, clearPromptLocks = false } = {}) => {
+    if (clearPromptLocks) {
+      recentMissingDataCloseRef.current = { memberId: null, present: null, at: 0, suppressAll: false }
+      missingDataPromptLockRef.current = null
+    } else {
+      recentMissingDataCloseRef.current = {
+        memberId: pendingAttendanceAction?.memberId ?? missingDataMember?.id ?? null,
+        present: pendingAttendanceAction?.present ?? null,
+        at: Date.now(),
+        suppressAll
+      }
     }
     setShowMissingDataModal(false)
     setMissingDataMember(null)
@@ -1541,52 +1906,199 @@ const Dashboard = ({ isAdmin = false }) => {
   )
 
   const getMemberJoinLabel = (member) => {
-    const rawDate = member?.inserted_at || member?.created_at
-    if (!rawDate) return 'Joined Jan 10'
-    const date = new Date(rawDate)
-    if (Number.isNaN(date.getTime())) return 'Joined Jan 10'
+    const joinDateFields = [
+      'joined_at',
+      'joined_date',
+      'join_date',
+      'date_joined',
+      'member_since',
+      'Joined',
+      'Joined Date',
+      'Date Joined',
+      'Join Date',
+      'Member Since',
+      'inserted_at',
+      'created_at',
+      'Created At',
+      'Timestamp'
+    ]
+    const rawDate = joinDateFields
+      .map((field) => member?.[field])
+      .find((value) => value !== undefined && value !== null && String(value).trim() !== '')
+
+    if (!rawDate) return 'Joined date unavailable'
+
+    const date = rawDate instanceof Date ? rawDate : new Date(rawDate)
+    if (Number.isNaN(date.getTime())) return 'Joined date unavailable'
+
     return `Joined ${date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
   }
 
-  const openMemberPass = useCallback((member) => {
-    if (!member || preferences?.member_codes_enabled !== true) return
-    selection()
-    if (preferences?.member_code_quick_pass_enabled === false) {
-      setProfileMember(member)
-      return
+  useEffect(() => {
+    const handleMemberCodesPreferenceChanged = (event) => {
+      setStoredMemberCodesEnabled(String(event.detail?.enabled === true))
     }
-    setQuickPassMember(member)
-  }, [preferences?.member_code_quick_pass_enabled, preferences?.member_codes_enabled, selection])
+    window.addEventListener('datser-member-codes-preference-changed', handleMemberCodesPreferenceChanged)
+    return () => window.removeEventListener('datser-member-codes-preference-changed', handleMemberCodesPreferenceChanged)
+  }, [])
 
-  const openMemberProfile = useCallback((member) => {
-    if (!member) return
+  const workspaceMemberCodesEnabled = preferences?.workspace_member_codes_enabled
+  const memberCodesEnabled = isPreferenceEnabled(storedMemberCodesEnabled ?? workspaceMemberCodesEnabled ?? preferences?.member_codes_enabled)
+
+  const openMemberPass = useCallback((member) => {
+    if (!member || !memberCodesEnabled) return
     selection()
-    setQuickPassMember(null)
-    setProfileMember(member)
-  }, [selection])
+    if (quickPassCloseTimeoutRef.current) {
+      window.clearTimeout(quickPassCloseTimeoutRef.current)
+      quickPassCloseTimeoutRef.current = null
+    }
+    setIsQuickPassClosing(false)
+    setQuickPassMember(member)
+  }, [memberCodesEnabled, selection])
+
+  const closeMemberPass = useCallback(() => {
+    if (!quickPassMember || isQuickPassClosing) return
+    selection()
+    setIsQuickPassClosing(true)
+    if (quickPassCloseTimeoutRef.current) window.clearTimeout(quickPassCloseTimeoutRef.current)
+    quickPassCloseTimeoutRef.current = window.setTimeout(() => {
+      setQuickPassMember(null)
+      setIsQuickPassClosing(false)
+      quickPassCloseTimeoutRef.current = null
+    }, 300)
+  }, [isQuickPassClosing, quickPassMember, selection])
 
   const pendingSearchTerm = localSearchTerm.trim()
   const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
-  const contactMember = useCallback(async (member, type) => {
+  const isShortSearchView = searchSuggestionView !== 'full'
+  const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
+  const isShortSearchActive = isShortSearchView && showSearchSuggestions
+  const isShortSearchDisplayActive = isShortSearchView && dashboardTab !== 'edited'
+  const showSearchTrayDelete = preferences?.member_search_tray_delete_enabled !== false
+  const memberFilterButtonEnabled = preferences?.member_filter_button_enabled === true
+  const dashboardMemberColumns = normalizeDashboardColumns(preferences?.dashboard_member_columns)
+  const dashboardMemberGridClass = DASHBOARD_COLUMN_CLASSES[dashboardMemberColumns] || DASHBOARD_COLUMN_CLASSES[3]
+  const dashboardShellClass = dashboardMemberColumns === 4
+    ? 'dashboard-shell-wide'
+    : 'max-w-7xl px-0 sm:px-4'
+  const memberCodeBadgeStyle = preferences?.member_code_badge_style || 'soft'
+  const memberCodeBadgeAutoCycleMinutes = normalizeMemberCodeAutoCycleMinutes(preferences?.member_code_auto_cycle_minutes)
+  const memberCodeCardStyle = normalizeMemberCodeCardStyleKey(preferences?.member_code_card_style)
+  const memberCodeCardStyleConfig = getMemberCodeCardStyle(memberCodeCardStyle)
+  const memberCodeChurchName = preferences?.member_code_church_name || 'DatSer Church'
+  const memberCodeShowLogo = preferences?.member_code_show_logo !== false
+  const memberCodeShowPhoto = preferences?.member_code_show_photo !== false
+  const memberCodeShowEmail = preferences?.member_code_show_email !== false
+  const memberCodePassBadgeStyle = memberCodeCardStyleConfig.badgeStyleKey
+  const quickPassCode = quickPassMember ? getMemberIndexCode(quickPassMember, memberIndexCodeMap) : ''
+  const quickPassDateKey = selectedAttendanceDate ? getDateString(selectedAttendanceDate) : getDateString(new Date())
+  const quickPassCheckInUrl = quickPassMember
+    ? createMemberCheckInUrl({
+      member: quickPassMember,
+      code: quickPassCode,
+      dateKey: quickPassDateKey,
+      tableName: currentTable
+    })
+    : ''
+  const quickPassQrImageUrl = createQrImageUrl(quickPassCheckInUrl)
+  const buildMemberPassSharePreview = useCallback(async (member, type) => {
     const phone = getMemberPhone(member).replace(/[^\d+]/g, '')
-    const email = getMemberEmail(member)
     const name = getMemberSearchName(member)
+    const code = getMemberIndexCode(member, memberIndexCodeMap)
+    const joinLabel = getMemberJoinLabel(member)
+    const message = `Hi ${name}, thank you for being part of ${memberCodeChurchName}. Your member pass code is ${code}.`
+
+    if ((type === 'whatsapp' || type === 'sms') && !phone) {
+      toast.info('No phone number')
+      return
+    }
+
+    const shareDateKey = selectedAttendanceDate ? getDateString(selectedAttendanceDate) : getDateString(new Date())
+    const shareCheckInUrl = createMemberCheckInUrl({
+      member,
+      code,
+      dateKey: shareDateKey,
+      tableName: currentTable
+    })
+    const imageUrl = await createMemberPassShareImage({
+      name,
+      code,
+      joinLabel,
+      churchName: memberCodeChurchName,
+      cardStyle: memberCodeCardStyle,
+      qrImageUrl: createQrImageUrl(shareCheckInUrl),
+      message,
+      isDarkMode
+    })
+
+    setMemberPassSharePreview({
+      type,
+      member,
+      phone,
+      name,
+      code,
+      joinLabel,
+      message,
+      checkInUrl: shareCheckInUrl,
+      imageUrl
+    })
+  }, [currentTable, isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberIndexCodeMap, selectedAttendanceDate])
+
+  const sendMemberPassShare = useCallback(async () => {
+    if (!memberPassSharePreview) return
+    const { type, phone, message, imageUrl, name, code } = memberPassSharePreview
+    const encodedMessage = encodeURIComponent(message)
+
+    try {
+      const file = await dataUrlToFile(imageUrl, `${name.replace(/[^\w-]+/g, '_') || 'member'}_${code}_pass.png`)
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          title: `${name} member pass`,
+          text: message,
+          files: [file]
+        })
+        setMemberPassSharePreview(null)
+        return
+      }
+    } catch (error) {
+      console.warn('Member pass image share unavailable:', error)
+    }
+
     if (type === 'whatsapp') {
-      if (!phone) {
-        toast.info('No phone number')
-        return
-      }
-      window.open(`https://wa.me/${phone.replace(/^\+/, '')}`, '_blank', 'noopener,noreferrer')
+      window.open(`https://wa.me/${phone.replace(/^\+/, '')}?text=${encodedMessage}`, '_blank', 'noopener,noreferrer')
+      toast.info('Image preview is ready. WhatsApp web may only receive the text on this device.')
+      setMemberPassSharePreview(null)
       return
     }
+
     if (type === 'sms') {
-      if (!phone) {
-        toast.info('No phone number')
-        return
-      }
-      window.location.href = `sms:${phone}`
+      window.location.href = `sms:${phone}?&body=${encodedMessage}`
+      toast.info('Image preview is ready. SMS may only receive the text on this device.')
+      setMemberPassSharePreview(null)
       return
     }
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `${name} member pass`, text: message })
+        setMemberPassSharePreview(null)
+        return
+      } catch (error) {
+        if (error?.name === 'AbortError') return
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${message}\n${name} - ${code}`)
+      toast.success('Member pass text copied')
+      setMemberPassSharePreview(null)
+    } catch {
+      toast.error('Share failed')
+    }
+  }, [memberPassSharePreview])
+
+  const contactMember = useCallback(async (member, type) => {
+    const email = getMemberEmail(member)
     if (type === 'email') {
       if (!email) {
         toast.info('No email address')
@@ -1595,14 +2107,22 @@ const Dashboard = ({ isAdmin = false }) => {
       window.location.href = `mailto:${email}`
       return
     }
-    const code = getMemberIndexCode(member, memberIndexCodeMap)
-    try {
-      await navigator.clipboard.writeText(`${name} - ${code}`)
-      toast.success('Member code copied')
-    } catch {
-      toast.error('Copy failed')
+
+    if (type === 'whatsapp' || type === 'sms' || type === 'copy') {
+      await buildMemberPassSharePreview(member, type)
+      return
     }
-  }, [memberIndexCodeMap])
+
+    const phone = getMemberPhone(member).replace(/[^\d+]/g, '')
+    if (type === 'phone') {
+      if (!phone) {
+        toast.info('No phone number')
+        return
+      }
+      window.location.href = `tel:${phone}`
+      return
+    }
+  }, [buildMemberPassSharePreview])
   const searchSuggestionMembers = pendingSearchTerm
     ? (() => {
         const lowerTerm = pendingSearchTerm.toLowerCase()
@@ -1634,18 +2154,6 @@ const Dashboard = ({ isAdmin = false }) => {
           .slice(0, 10)
       })()
     : []
-  const isShortSearchView = searchSuggestionView !== 'full'
-  const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
-  const isShortSearchActive = isShortSearchView && showSearchSuggestions
-  const isShortSearchDisplayActive = isShortSearchView && dashboardTab !== 'edited'
-  const showSearchTrayDelete = preferences?.member_search_tray_delete_enabled !== false
-  const memberFilterButtonEnabled = preferences?.member_filter_button_enabled === true
-  const memberCodesEnabled = preferences?.member_codes_enabled === true
-  const memberCodeBadgeStyle = preferences?.member_code_badge_style || 'soft'
-  const memberCodeShowLogo = preferences?.member_code_show_logo !== false
-  const memberCodeShowPhoto = preferences?.member_code_show_photo !== false
-  const memberCodeShowEmail = preferences?.member_code_show_email !== false
-
   useEffect(() => {
     if (memberFilterButtonEnabled) return
     if (showFilters || isClosingFilters) {
@@ -1665,6 +2173,18 @@ const Dashboard = ({ isAdmin = false }) => {
     visitorFilter,
     tagFilter
   ])
+
+  useEffect(() => {
+    if (memberCodeBadgeStyle !== 'auto') return undefined
+
+    const updateCycleSlot = () => {
+      setMemberCodeBadgeCycleSlot(Math.floor(Date.now() / (memberCodeBadgeAutoCycleMinutes * 60 * 1000)))
+    }
+
+    updateCycleSlot()
+    const interval = window.setInterval(updateCycleSlot, 60000)
+    return () => window.clearInterval(interval)
+  }, [memberCodeBadgeStyle, memberCodeBadgeAutoCycleMinutes])
 
   const applySearchSelection = (value) => {
     selection()
@@ -1693,6 +2213,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
                   onIndexClick={openMemberPass}
                   memberCodeBadgeStyle={memberCodeBadgeStyle}
+                  memberCodeBadgeCycleSlot={memberCodeBadgeCycleSlot}
                   isExpanded={isExpanded}
                   isSelected={isSelected}
                   selectionMode={selectionMode}
@@ -1730,14 +2251,14 @@ const Dashboard = ({ isAdmin = false }) => {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-0 sm:px-4 mt-8">
+      <div className={`${dashboardShellClass} mx-auto mt-8`}>
         <TableSkeleton />
       </div>
     )
   }
 
   return (
-    <div className="space-y-2 pb-24 md:pb-12 max-w-7xl mx-auto px-0 sm:px-4">
+    <div className={`space-y-2 pb-24 md:pb-12 ${dashboardShellClass} mx-auto`}>
       {/* Header removed; summary now shown in sticky Header */}
 
       {/* Desktop tab navigation removed; use mobile segmented control in Header */}
@@ -2135,11 +2656,17 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {/* Members List */}
       {!isShortSearchDisplayActive && (
-      <div className={`${longPressSelectedIds.size > 0 ? '' : 'mt-4 sm:mt-10'} grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${searchTerm ? '' : 'transition-colors duration-200'} grid-animate`}>
+      <div className={`${longPressSelectedIds.size > 0 ? '' : 'mt-3 sm:mt-4'} grid ${dashboardMemberGridClass} ${dashboardMemberColumns === 4 ? 'gap-3 xl:gap-4' : 'gap-3'} ${searchTerm ? '' : 'transition-colors duration-200'} grid-animate`}>
         {(() => {
           const tabFilteredMembers = getTabFilteredMembers()
           const membersToShow = searchTerm ? tabFilteredMembers : tabFilteredMembers.slice(0, displayLimit)
-          const hasMoreMembers = !searchTerm && tabFilteredMembers.length > displayLimit
+          const serverTotalMembers = !searchTerm && dashboardTab === 'all'
+            ? Math.max(membersTotalCount || 0, tabFilteredMembers.length)
+            : tabFilteredMembers.length
+          const hasMoreMembers = !searchTerm && (
+            tabFilteredMembers.length > displayLimit ||
+            (dashboardTab === 'all' && !membersLoadedAll && tabFilteredMembers.length >= displayLimit)
+          )
 
           return (
             <>
@@ -2153,6 +2680,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
                     onIndexClick={openMemberPass}
                     memberCodeBadgeStyle={memberCodeBadgeStyle}
+                    memberCodeBadgeCycleSlot={memberCodeBadgeCycleSlot}
                     isExpanded={isExpanded}
                     isSelected={isSelected}
                     selectionMode={selectionMode}
@@ -2183,17 +2711,21 @@ const Dashboard = ({ isAdmin = false }) => {
               })}
 
               {(hasMoreMembers || (!searchTerm && tabFilteredMembers.length > 0)) && (
-                <div className="lg:col-span-3 mt-4 mb-4 flex flex-col items-center justify-center space-y-2">
+                <div className="mt-4 mb-4 flex flex-col items-center justify-center space-y-2" style={{ gridColumn: '1 / -1' }}>
                   {/* Load More Button */}
                   {hasMoreMembers && (
                     <button
                       onClick={async () => {
                         selection()
                         setIsLoadingMore(true)
-                        // Simulate a small delay for better UX
-                        await new Promise(resolve => setTimeout(resolve, 300))
-                        setDisplayLimit(prev => prev + 20)
-                        setIsLoadingMore(false)
+                        try {
+                          if (dashboardTab === 'all' && tabFilteredMembers.length <= displayLimit && !membersLoadedAll) {
+                            await fetchMoreMembers?.()
+                          }
+                          setDisplayLimit(prev => prev + 20)
+                        } finally {
+                          setIsLoadingMore(false)
+                        }
                       }}
                       disabled={isLoadingMore}
                       className="px-6 py-3 bg-primary-600 hover:bg-primary-700 disabled:bg-primary-400 text-white rounded-lg font-medium transition-colors flex items-center space-x-2"
@@ -2206,7 +2738,7 @@ const Dashboard = ({ isAdmin = false }) => {
                       ) : (
                         <>
                           <UserPlus className="w-4 h-4" />
-                          <span>Load More ({Math.max(tabFilteredMembers.length - displayLimit, 0)} remaining)</span>
+                          <span>Load More ({Math.max(serverTotalMembers - Math.min(displayLimit, tabFilteredMembers.length), 0)} remaining)</span>
                         </>
                       )}
                     </button>
@@ -2215,7 +2747,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   {/* Members count info */}
                   {!searchTerm && tabFilteredMembers.length > 0 && (
                     <div className="text-sm md:text-base text-gray-600 dark:text-gray-400 text-center">
-                      Showing {Math.min(displayLimit, tabFilteredMembers.length)} of {tabFilteredMembers.length} members
+                      Showing {Math.min(displayLimit, tabFilteredMembers.length)} of {serverTotalMembers} members
                     </div>
                   )}
                 </div>
@@ -2342,7 +2874,7 @@ const Dashboard = ({ isAdmin = false }) => {
       {/* Delete Confirm Modal */}
       {isDeleteConfirmOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm"
+          className="app-modal-backdrop fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-[120] backdrop-blur-sm"
           onClick={() => { selection(); setIsDeleteConfirmOpen(false); setMemberToDelete(null) }}
           onKeyDown={(e) => e.key === 'Escape' && (setIsDeleteConfirmOpen(false), setMemberToDelete(null))}
         >
@@ -2474,7 +3006,7 @@ const Dashboard = ({ isAdmin = false }) => {
       {/* Bulk Transfer Modal */}
       {showTransferModal && selectedSundayDate && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm"
+          className="app-modal-backdrop fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-[120] backdrop-blur-sm"
           onClick={() => { selection(); setShowTransferModal(false); setTransferTargetDate(null); setSelectedTransferIds(new Set()) }}
           onKeyDown={(e) => e.key === 'Escape' && (setShowTransferModal(false), setTransferTargetDate(null), setSelectedTransferIds(new Set()))}
         >
@@ -2666,7 +3198,7 @@ const Dashboard = ({ isAdmin = false }) => {
             onSave={() => {
               // Keep the modal closed and avoid full-page refresh/jump after save.
               // updateMember and markAttendance already update local app state.
-              closeMissingDataModal({ suppressAll: true })
+              closeMissingDataModal({ clearPromptLocks: true })
             }}
           />
         </Suspense>
@@ -2831,90 +3363,188 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {quickPassMember && (
-        <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/65 backdrop-blur-md" onClick={() => { selection(); setQuickPassMember(null) }}>
+        <div
+          className={`app-modal-backdrop member-code-pass-modal fixed inset-0 z-[120] flex items-end justify-center bg-black/65 backdrop-blur-md md:items-center md:p-6 ${isQuickPassClosing ? 'member-code-pass-modal-closing' : ''}`}
+          onClick={closeMemberPass}
+        >
           <div
-            className="w-full max-w-md overflow-hidden rounded-t-[2rem] border border-white/10 bg-[#111313] text-white shadow-2xl md:mb-6 md:rounded-[2rem]"
+            className={`member-code-pass-stage w-full max-w-md overflow-hidden rounded-t-[2rem] border border-white/10 text-white shadow-2xl md:max-w-5xl md:rounded-[2.4rem] ${memberCodeCardStyleConfig.accentClass}`}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 pt-3">
+            <MemberCodePassCard styleKey={memberCodeCardStyle} className="member-code-pass-responsive mx-5 mb-5 mt-5 rounded-[1.75rem] border px-6 pb-7 pt-5 text-center md:m-0 md:rounded-[2rem] md:px-8 md:pb-8 md:pt-6 lg:px-10">
+              <div className="member-code-pass-topline">
+                <button
+                  type="button"
+                  onClick={closeMemberPass}
+                  className="member-code-pass-control"
+                  aria-label="Close member pass"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="member-code-pass-layout">
+                <div className="member-code-pass-visual">
+                  {memberCodeShowLogo && (
+                    <div className="member-code-pass-church">
+                      <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl border border-white/10 bg-white/[0.06] text-[var(--member-pass-accent)] shadow-[0_0_28px_var(--member-pass-soft)] md:h-20 md:w-20 md:rounded-3xl">
+                        <Church className="h-11 w-11 md:h-14 md:w-14" />
+                      </div>
+                      <p className="text-sm font-semibold text-white/70 md:text-base">{memberCodeChurchName}</p>
+                      <p className="text-xs text-white/45 md:text-sm">Growing Together in Faith</p>
+                    </div>
+                  )}
+
+                  {quickPassQrImageUrl ? (
+                    <div className="member-code-pass-qr-wrap">
+                      <div className="member-code-pass-qr-aura" aria-hidden="true" />
+                      <div className="member-code-pass-qr-card" aria-label={`QR check-in for ${getMemberSearchName(quickPassMember)}`}>
+                        <img
+                          src={quickPassQrImageUrl}
+                          alt={`Scan to mark ${getMemberSearchName(quickPassMember)} present`}
+                          className="member-code-pass-qr-image"
+                          draggable="false"
+                        />
+                        <span className="member-code-pass-qr-initial" aria-hidden="true">
+                          {getMemberSearchName(quickPassMember).charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="member-code-pass-joined-pill">
+                        <Calendar className="h-3.5 w-3.5 text-[var(--member-pass-accent)]" />
+                        <span>{getMemberJoinLabel(quickPassMember)}</span>
+                      </div>
+                    </div>
+                  ) : memberCodeShowPhoto && (
+                    <div className="relative mx-auto my-7 h-32 w-32 rounded-full border-4 border-[var(--member-pass-accent)] bg-gradient-to-br from-white/35 via-white/10 to-transparent p-1 shadow-[0_0_60px_var(--member-pass-soft)] md:my-0 md:h-44 md:w-44 md:border-[5px] lg:h-48 lg:w-48">
+                      <div className="grid h-full w-full place-items-center rounded-full bg-gradient-to-br from-[var(--member-pass-accent)] to-[var(--member-pass-accent-2)] text-5xl font-black text-white md:text-7xl">
+                        {getMemberSearchName(quickPassMember).charAt(0).toUpperCase()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="member-code-pass-details">
+                  <div>
+                    <div className="member-code-pass-identity flex flex-wrap items-center justify-center gap-3 md:justify-start md:gap-4">
+                      <h3 className="max-w-full break-words text-3xl font-black leading-tight md:text-left md:text-4xl lg:text-5xl">{getMemberSearchName(quickPassMember)}</h3>
+                      <MemberCodeBadge
+                        code={quickPassCode}
+                        styleKey={memberCodePassBadgeStyle}
+                        className="h-10 min-w-[5.75rem] px-5 text-sm md:h-12 md:min-w-[7rem] md:px-6 md:text-base"
+                      />
+                    </div>
+                    <p className="mt-2 text-sm text-white/55 md:text-left md:text-base">{getMemberJoinLabel(quickPassMember)}</p>
+                  </div>
+
+                  <div className="mt-7 grid grid-cols-2 gap-3 md:mt-8">
+                    <button
+                      type="button"
+                      onClick={() => contactMember(quickPassMember, 'whatsapp')}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 font-bold hover:bg-white/[0.10] md:min-h-[4rem] md:rounded-2xl md:text-lg"
+                    >
+                      <Phone className="h-5 w-5 text-green-400 md:h-6 md:w-6" />
+                      WhatsApp
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => contactMember(quickPassMember, 'sms')}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 font-bold hover:bg-white/[0.10] md:min-h-[4rem] md:rounded-2xl md:text-lg"
+                    >
+                      <MessageSquare className="h-5 w-5 md:h-6 md:w-6" />
+                      SMS
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => contactMember(quickPassMember, 'copy')}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/70 hover:bg-white/[0.08] md:min-h-[3.75rem] md:rounded-2xl md:text-base"
+                  >
+                    <Share2 className="h-4 w-4 md:h-5 md:w-5" />
+                    Share member pass and code
+                  </button>
+                </div>
+              </div>
+            </MemberCodePassCard>
+          </div>
+        </div>
+      )}
+
+      {memberPassSharePreview && (
+        <div
+          className={`app-modal-backdrop member-pass-share-modal fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-3 backdrop-blur-md md:p-6 ${memberCodeCardStyleConfig.accentClass}`}
+          onClick={() => setMemberPassSharePreview(null)}
+        >
+          <div
+            className="member-pass-share-panel w-full max-w-5xl overflow-hidden rounded-[1.75rem] border text-white shadow-2xl md:rounded-[2.2rem]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="member-pass-share-header flex items-center justify-between px-5 py-4 md:px-7 md:py-5">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-[var(--member-pass-accent)]">Preview</p>
+                <h3 className="text-xl font-black md:text-2xl">Member pass share</h3>
+              </div>
               <button
                 type="button"
-                onClick={() => { selection(); setQuickPassMember(null) }}
-                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                aria-label="Close member pass"
+                onClick={() => setMemberPassSharePreview(null)}
+                className="member-pass-share-close grid h-11 w-11 place-items-center rounded-full border"
+                aria-label="Close share preview"
               >
                 <X className="h-5 w-5" />
               </button>
-              <div className="h-1.5 w-14 rounded-full bg-white/25" />
-              <button
-                type="button"
-                onClick={() => openMemberProfile(quickPassMember)}
-                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                aria-label="Open member profile"
-              >
-                <MoreHorizontal className="h-5 w-5" />
-              </button>
             </div>
 
-            <div className="px-6 pb-7 pt-3 text-center">
-              {memberCodeShowLogo && (
-                <>
-                  <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl text-orange-400">
-                    <Church className="h-11 w-11" />
-                  </div>
-                  <p className="text-sm font-semibold text-white/70">DatSer Church</p>
-                  <p className="text-xs text-white/45">Growing Together in Faith</p>
-                </>
-              )}
-
-              {memberCodeShowPhoto && (
-                <div className="relative mx-auto my-7 h-32 w-32 rounded-full border-4 border-orange-500 bg-gradient-to-br from-orange-100 via-white to-orange-200 p-1 shadow-[0_0_60px_rgba(249,115,22,0.25)]">
-                  <div className="grid h-full w-full place-items-center rounded-full bg-gradient-to-br from-orange-500 to-purple-500 text-5xl font-black text-white">
-                    {getMemberSearchName(quickPassMember).charAt(0).toUpperCase()}
-                  </div>
+            <div className="member-pass-share-body grid gap-5 p-4 md:grid-cols-[minmax(0,1.18fr)_minmax(18rem,0.82fr)] md:p-6">
+              <div className="member-pass-share-art-wrap">
+                <img
+                  src={memberPassSharePreview.imageUrl}
+                  alt={`${memberPassSharePreview.name} member pass preview`}
+                  className="member-pass-share-art block h-auto w-full"
+                />
+                <div className="member-pass-share-art-note">
+                  Scan QR to open this member and mark present
                 </div>
-              )}
-
-              <div className="flex items-center justify-center gap-3">
-                <h3 className="text-3xl font-black">{getMemberSearchName(quickPassMember)}</h3>
-                <span className="rounded-lg border border-green-400/35 bg-green-500/15 px-3 py-1 text-sm font-black text-green-300">
-                  {getMemberIndexCode(quickPassMember, memberIndexCodeMap)}
-                </span>
               </div>
-              <p className="mt-2 text-sm text-white/55">{getMemberJoinLabel(quickPassMember)}</p>
 
-              <div className="mt-7 grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => contactMember(quickPassMember, 'whatsapp')}
-                  className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 font-bold hover:bg-white/[0.10]"
-                >
-                  <Phone className="h-5 w-5 text-green-400" />
-                  WhatsApp
-                </button>
-                <button
-                  type="button"
-                  onClick={() => contactMember(quickPassMember, 'sms')}
-                  className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 font-bold hover:bg-white/[0.10]"
-                >
-                  <MessageSquare className="h-5 w-5" />
-                  SMS
-                </button>
+              <div className="member-pass-share-side flex min-w-0 flex-col justify-between gap-4">
+                <div className="member-pass-share-message rounded-2xl border p-4 md:p-5">
+                  <div className="flex items-center gap-3">
+                    <div className="member-pass-share-initial grid h-11 w-11 shrink-0 place-items-center rounded-full text-sm font-black">
+                      {memberPassSharePreview.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-black">{memberPassSharePreview.name}</p>
+                      <p className="text-sm font-bold text-[var(--member-pass-accent)]">{memberPassSharePreview.code}</p>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-bold opacity-65">Message</p>
+                  <p className="mt-2 text-sm leading-6 md:text-base">{memberPassSharePreview.message}</p>
+                </div>
+
+                <div className="space-y-3">
+                  <a
+                    href={memberPassSharePreview.imageUrl}
+                    download={`${memberPassSharePreview.name.replace(/[^\w-]+/g, '_') || 'member'}_${memberPassSharePreview.code}_pass.png`}
+                    className="member-pass-share-save flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold"
+                  >
+                    Save image
+                  </a>
+                  <button
+                    type="button"
+                    onClick={sendMemberPassShare}
+                    className="member-pass-share-send flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 font-black text-white"
+                  >
+                    <Share2 className="h-5 w-5" />
+                    Send
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => contactMember(quickPassMember, 'copy')}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/70 hover:bg-white/[0.08]"
-              >
-                <Share2 className="h-4 w-4" />
-                Share member pass and code
-              </button>
             </div>
           </div>
         </div>
       )}
 
-      {profileMember && (
+      {false && (
         <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md" onClick={() => { selection(); setProfileMember(null) }}>
           <div
             className="relative w-full max-w-md overflow-hidden rounded-[2rem] border border-white/10 bg-[#111313] p-5 text-white shadow-2xl"
@@ -2948,9 +3578,17 @@ const Dashboard = ({ isAdmin = false }) => {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h3 className="truncate text-2xl font-black">{getMemberSearchName(profileMember)}</h3>
-                  <span className="rounded-lg border border-green-400/35 bg-green-500/15 px-2 py-1 text-xs font-black text-green-300">
-                    {getMemberIndexCode(profileMember, memberIndexCodeMap)}
-                  </span>
+                  <MemberCodeBadge
+                    code={getMemberIndexCode(profileMember, memberIndexCodeMap)}
+                    styleKey={memberCodeBadgeStyle === 'auto'
+                      ? getAutoBadgeStyleKey({
+                        member: profileMember,
+                        code: getMemberIndexCode(profileMember, memberIndexCodeMap),
+                        cycleSlot: memberCodeBadgeCycleSlot
+                      })
+                      : memberCodeBadgeStyle}
+                    className="h-7 min-w-[4rem] px-3 text-[10px]"
+                  />
                 </div>
                 {memberCodeShowEmail && (
                   <p className="mt-1 flex items-center gap-2 text-sm text-white/60">
@@ -3031,7 +3669,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {/* Bottom Search Bar */}
       <div className={`bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
-        <div className="mx-auto px-3 sm:px-4 py-1.5">
+        <div className="mx-auto px-3 sm:px-4 py-2 sm:py-2.5">
           <div className="flex items-center gap-2">
             {dashboardTab === 'edited' ? (
               /* Marked tab: Search bar that only searches within Present/Absent members */
@@ -3046,7 +3684,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`w-full rounded-lg pl-10 pr-10 py-1 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3073,7 +3711,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`w-full rounded-lg pl-10 pr-10 py-1 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3093,7 +3731,7 @@ const Dashboard = ({ isAdmin = false }) => {
               <button
                 type="button"
                 onClick={() => { selection(); setShowFilters(!showFilters) }}
-                className={`member-filter-toggle inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-1 transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
+                className={`member-filter-toggle inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-2 sm:py-2.5 transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
                   ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border border-primary-300 dark:border-primary-700'
                   : isShortSearchActive
                     ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600'
@@ -3111,7 +3749,7 @@ const Dashboard = ({ isAdmin = false }) => {
             {/* Add Member Button */}
             <button
               onClick={() => { selection(); setShowMemberModal(true) }}
-              className="flex items-center gap-2 px-3 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
+              className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
               title="Add New Member"
             >
               <UserPlus className="w-5 h-5" />
@@ -3123,7 +3761,7 @@ const Dashboard = ({ isAdmin = false }) => {
       </div>
 
       {/* Add padding to prevent content from being hidden behind bottom search bar */}
-      <div className="h-14 md:h-7" />
+      <div className="h-16 md:h-10" />
     </div>
   )
 }

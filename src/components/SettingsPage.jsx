@@ -55,32 +55,34 @@ import {
 import { getInstalledAppInfo } from '../utils/appUpdates.js'
 import ConfirmModal from './ConfirmModal'
 import useHapticFeedback from '../hooks/useHapticFeedback'
+import lazyWithRetry from '../utils/lazyWithRetry'
+import LiveFeaturePreview from './LiveFeaturePreview'
 
 // Modals and heavy components are lazy-loaded for performance
-const ShareAccessModal = React.lazy(() => import('./ShareAccessModal'))
-const WorkspaceSettingsModal = React.lazy(() => import('./WorkspaceSettingsModal'))
-const DeleteAccountModal = React.lazy(() => import('./DeleteAccountModal'))
-const ExportDataModal = React.lazy(() => import('./ExportDataModal'))
-const ProfilePhotoEditor = React.lazy(() => import('./ProfilePhotoEditor'))
-const HelpCenterPage = React.lazy(() => import('./HelpCenterPage'))
-const ActivityLogViewer = React.lazy(() => import('./ActivityLogViewer'))
-const ExportCenterPage = React.lazy(() => import('./ExportCenterPage'))
-const AdminControlsModal = React.lazy(() => import('./AdminControlsModal'))
-const ArchiveMonthModal = React.lazy(() => import('./ArchiveMonthModal'))
-const MonthPickerPopup = React.lazy(() => import('./MonthPickerPopup'))
-const CombinedDatePicker = React.lazy(() => import('./CombinedDatePicker'))
+const ShareAccessModal = lazyWithRetry(() => import('./ShareAccessModal'))
+const WorkspaceSettingsModal = lazyWithRetry(() => import('./WorkspaceSettingsModal'))
+const DeleteAccountModal = lazyWithRetry(() => import('./DeleteAccountModal'))
+const ExportDataModal = lazyWithRetry(() => import('./ExportDataModal'))
+const ProfilePhotoEditor = lazyWithRetry(() => import('./ProfilePhotoEditor'))
+const HelpCenterPage = lazyWithRetry(() => import('./HelpCenterPage'))
+const ActivityLogViewer = lazyWithRetry(() => import('./ActivityLogViewer'))
+const ExportCenterPage = lazyWithRetry(() => import('./ExportCenterPage'))
+const AdminControlsModal = lazyWithRetry(() => import('./AdminControlsModal'))
+const ArchiveMonthModal = lazyWithRetry(() => import('./ArchiveMonthModal'))
+const MonthPickerPopup = lazyWithRetry(() => import('./MonthPickerPopup'))
+const CombinedDatePicker = lazyWithRetry(() => import('./CombinedDatePicker'))
 
 // New extracted sections
-const AccountSettingsSection = React.lazy(() => import('./AccountSettingsSection'))
-const WorkspaceSettingsSection = React.lazy(() => import('./WorkspaceSettingsSection'))
-const TeamSettingsSection = React.lazy(() => import('./TeamSettingsSection'))
-const DataSettingsSection = React.lazy(() => import('./DataSettingsSection'))
-const AppearanceSettingsSection = React.lazy(() => import('./AppearanceSettingsSection'))
-const AccessibilitySettingsSection = React.lazy(() => import('./AccessibilitySettingsSection'))
-const MemberCodeSettingsSection = React.lazy(() => import('./MemberCodeSettingsSection'))
-const UpdatesSettingsSection = React.lazy(() => import('./UpdatesSettingsSection'))
-const DangerSettingsSection = React.lazy(() => import('./DangerSettingsSection'))
-const DeveloperToolsPanel = React.lazy(() => import('./DeveloperToolsPanel'))
+const AccountSettingsSection = lazyWithRetry(() => import('./AccountSettingsSection'))
+const WorkspaceSettingsSection = lazyWithRetry(() => import('./WorkspaceSettingsSection'))
+const TeamSettingsSection = lazyWithRetry(() => import('./TeamSettingsSection'))
+const DataSettingsSection = lazyWithRetry(() => import('./DataSettingsSection'))
+const AppearanceSettingsSection = lazyWithRetry(() => import('./AppearanceSettingsSection'))
+const AccessibilitySettingsSection = lazyWithRetry(() => import('./AccessibilitySettingsSection'))
+const MemberCodeSettingsSection = lazyWithRetry(() => import('./MemberCodeSettingsSection'))
+const UpdatesSettingsSection = lazyWithRetry(() => import('./UpdatesSettingsSection'))
+const DangerSettingsSection = lazyWithRetry(() => import('./DangerSettingsSection'))
+const DeveloperToolsPanel = lazyWithRetry(() => import('./DeveloperToolsPanel'))
 
 const PreviewInput = ({ children, compact = false }) => (
     <div className={`guided-preview-input ${compact ? 'guided-preview-input-compact' : ''}`}>
@@ -294,14 +296,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     })
     const [settingsRailTooltip, setSettingsRailTooltip] = useState(null)
     const [lastSettingsPath, setLastSettingsPath] = useState(null)
-    const [recentSettingsSearches, setRecentSettingsSearches] = useState(() => {
-        if (typeof window === 'undefined') return []
-        try {
-            return JSON.parse(window.localStorage.getItem('datser_recent_settings_searches') || '[]')
-        } catch {
-            return []
-        }
-    })
+    const settingsSearchScope = useMemo(() => dataOwnerId || user?.id || 'guest', [dataOwnerId, user?.id])
+    const settingsSearchStorageKey = useMemo(() => `datser_recent_settings_searches:${settingsSearchScope}`, [settingsSearchScope])
+    const [recentSettingsSearches, setRecentSettingsSearches] = useState([])
     const [highlightedSettingId, setHighlightedSettingId] = useState(null)
     const [quickSettingsSearchItem, setQuickSettingsSearchItem] = useState(null)
     const [optimisticPreferencePatch, setOptimisticPreferencePatch] = useState({})
@@ -317,6 +314,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const activeSectionRef = useRef(null)
     const showHelpCenterRef = useRef(false)
     const splitContainerRef = useRef(null)
+    const resizeCleanupRef = useRef(null)
     const [showHelpCenter, setShowHelpCenter] = useState(false)
     const [archiveMonth, setArchiveMonth] = useState(null) // table name to archive
     const scrollPositionsRef = useRef({ main: 0 })
@@ -340,6 +338,29 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         if (typeof window === 'undefined') return
         window.localStorage.setItem('datser_settings_sidebar_width', String(Math.round(settingsSidebarWidth)))
     }, [settingsSidebarWidth])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined
+
+        const clampSidebarWidth = () => {
+            const containerWidth = splitContainerRef.current?.getBoundingClientRect().width || window.innerWidth
+            const isTabletWidth = containerWidth < 1180
+            const minExpandedWidth = isTabletWidth ? 260 : 300
+            const maxWidth = isTabletWidth
+                ? Math.min(360, Math.max(minExpandedWidth, containerWidth * 0.36))
+                : Math.min(540, Math.max(320, containerWidth * 0.42))
+
+            setSettingsSidebarWidth((currentWidth) => {
+                if (currentWidth <= 120) return currentWidth
+                const nextWidth = Math.min(Math.max(currentWidth, minExpandedWidth), maxWidth)
+                return Math.abs(nextWidth - currentWidth) < 1 ? currentWidth : nextWidth
+            })
+        }
+
+        clampSidebarWidth()
+        window.addEventListener('resize', clampSidebarWidth)
+        return () => window.removeEventListener('resize', clampSidebarWidth)
+    }, [])
 
     useEffect(() => {
         if (settingsSidebarWidth > 120 && settingsRailTooltip) {
@@ -374,40 +395,83 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
     const beginSettingsResize = useCallback((event) => {
         event.preventDefault()
+        event.stopPropagation()
         hideSettingsRailTooltip()
         const container = splitContainerRef.current
         if (!container || typeof window === 'undefined') return
+        resizeCleanupRef.current?.()
 
         const updateWidth = (clientX) => {
             const rect = container.getBoundingClientRect()
             const rawWidth = clientX - rect.left
-            const maxWidth = Math.min(540, Math.max(300, rect.width * 0.48))
-            const nextWidth = rawWidth <= 140 ? 84 : Math.min(Math.max(rawWidth, 300), maxWidth)
+            const isTabletWidth = rect.width < 1180
+            const minExpandedWidth = isTabletWidth ? 260 : 300
+            const maxWidth = isTabletWidth
+                ? Math.min(360, Math.max(minExpandedWidth, rect.width * 0.36))
+                : Math.min(540, Math.max(320, rect.width * 0.42))
+            const nextWidth = rawWidth <= 132 ? 84 : Math.min(Math.max(rawWidth, minExpandedWidth), maxWidth)
             setSettingsSidebarWidth(nextWidth)
         }
 
         updateWidth(event.clientX)
 
         const handlePointerMove = (moveEvent) => {
+            moveEvent.preventDefault()
             updateWidth(moveEvent.clientX)
         }
-        const handlePointerUp = () => {
+        const handlePointerUp = (upEvent) => {
+            upEvent?.preventDefault?.()
+            resizeCleanupRef.current?.()
+        }
+        const cleanupResize = () => {
             document.body.style.cursor = ''
             document.body.style.userSelect = ''
             window.removeEventListener('pointermove', handlePointerMove)
             window.removeEventListener('pointerup', handlePointerUp)
+            window.removeEventListener('pointercancel', handlePointerUp)
+            window.removeEventListener('mouseup', handlePointerUp)
+            window.removeEventListener('blur', handlePointerUp)
+            document.removeEventListener('pointerup', handlePointerUp)
+            document.removeEventListener('pointercancel', handlePointerUp)
+            resizeCleanupRef.current = null
         }
 
         document.body.style.cursor = 'col-resize'
         document.body.style.userSelect = 'none'
+        resizeCleanupRef.current = cleanupResize
+        try {
+            event.currentTarget?.setPointerCapture?.(event.pointerId)
+        } catch {
+            // The global cleanup listeners below still release resize state.
+        }
         window.addEventListener('pointermove', handlePointerMove)
-        window.addEventListener('pointerup', handlePointerUp, { once: true })
+        window.addEventListener('pointerup', handlePointerUp)
+        window.addEventListener('pointercancel', handlePointerUp)
+        window.addEventListener('mouseup', handlePointerUp)
+        window.addEventListener('blur', handlePointerUp)
+        document.addEventListener('pointerup', handlePointerUp)
+        document.addEventListener('pointercancel', handlePointerUp)
     }, [hideSettingsRailTooltip])
+
+    useEffect(() => () => {
+        resizeCleanupRef.current?.()
+    }, [])
 
     useEffect(() => {
         if (typeof window === 'undefined') return
-        window.localStorage.setItem('datser_recent_settings_searches', JSON.stringify(recentSettingsSearches.slice(0, 8)))
-    }, [recentSettingsSearches])
+        try {
+            const scoped = window.localStorage.getItem(settingsSearchStorageKey)
+            const legacy = window.localStorage.getItem('datser_recent_settings_searches')
+            setRecentSettingsSearches(JSON.parse(scoped || legacy || '[]'))
+        } catch {
+            setRecentSettingsSearches([])
+        }
+    }, [settingsSearchStorageKey])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        window.localStorage.setItem(settingsSearchStorageKey, JSON.stringify(recentSettingsSearches.slice(0, 8)))
+    }, [recentSettingsSearches, settingsSearchStorageKey])
 
     const rememberSettingsSearch = useCallback((value = searchQuery) => {
         const trimmed = String(value || '').trim()
@@ -754,6 +818,16 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     })
     const updatePreferences = useCallback((nextPreferences) => {
         if (!nextPreferences || typeof nextPreferences !== 'object') return
+        if (
+            Object.prototype.hasOwnProperty.call(nextPreferences, 'member_codes_enabled') ||
+            Object.prototype.hasOwnProperty.call(nextPreferences, 'workspace_member_codes_enabled')
+        ) {
+            const enabled = (nextPreferences.workspace_member_codes_enabled ?? nextPreferences.member_codes_enabled) === true
+            window.localStorage.setItem('datser_member_codes_enabled', String(enabled))
+            window.dispatchEvent(new CustomEvent('datser-member-codes-preference-changed', {
+                detail: { enabled }
+            }))
+        }
         setOptimisticPreferencePatch((prev) => ({
             ...prev,
             ...nextPreferences
@@ -912,7 +986,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             try {
                 const { data, error } = await supabase
                     .from('collaborators')
-                    .select('*')
+                    .select('id,owner_id,collaborator_email,role,status,created_at,accepted_at,expires_at')
                     .eq('owner_id', user.id)
                     .order('created_at', { ascending: false })
 
@@ -937,7 +1011,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             try {
                 const { data } = await supabase
                     .from('collaborators')
-                    .select('*')
+                    .select('id,owner_id,collaborator_email,role,status,created_at,accepted_at,expires_at')
                     .eq('owner_id', user.id)
                     .order('created_at', { ascending: false })
                 if (data) setCollaborators(data)
@@ -1538,6 +1612,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         <MemberCodeSettingsSection
                             preferences={effectivePreferences}
                             updatePreferences={updatePreferences}
+                            isAdminAccess={hasAdminAccess}
                             getSettingTargetClass={getSettingTargetClass}
                         />
                     </React.Suspense>
@@ -2369,6 +2444,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     <div className={embedded ? '' : 'rounded-[1.35rem] border border-gray-200 bg-[#f7f7f5] p-2.5 shadow-xl shadow-black/8 dark:border-[#303030] dark:bg-[#1b1b1b] dark:shadow-black/30'}>
                         {renderContent(effectiveSection)}
                     </div>
+                    <div className={embedded ? 'mt-4 xl:hidden' : 'mt-4'}>
+                        <LiveFeaturePreview
+                            type={effectiveSection}
+                            section={currentSection}
+                            compact={embedded}
+                            collapsible={embedded}
+                        />
+                    </div>
                 </div>
             </div>
         )
@@ -2505,8 +2588,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 <div className="hidden h-[calc(100vh-var(--app-settings-main-top-offset,64px))] overflow-hidden px-4 py-4 md:flex md:flex-col">
                     <div
                         ref={splitContainerRef}
-                        className="grid min-h-0 flex-1"
-                        style={{ gridTemplateColumns: `${settingsSidebarWidth}px 18px minmax(0, 1fr)` }}
+                        className="settings-live-preview-grid grid min-h-0 flex-1"
+                        style={{ '--settings-sidebar-width': `${settingsSidebarWidth}px` }}
                     >
                     <aside className="h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl border border-gray-200 bg-white/90 shadow-sm backdrop-blur-xl transition-[width] duration-150 dark:!border-[#333] dark:!bg-[#121212]">
                         <div className={`sticky top-0 z-10 border-b border-gray-200 bg-white/95 py-4 backdrop-blur-xl dark:!border-[#333] dark:!bg-[#121212] ${isSidebarCollapsed ? 'px-2' : 'px-4'}`}>
@@ -2594,7 +2677,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         aria-label="Resize settings sidebar"
                         title="Drag to resize settings list. Double-click to reset."
                         onPointerDown={beginSettingsResize}
-                        onDoubleClick={() => setSettingsSidebarWidth(380)}
+                        onDoubleClick={() => setSettingsSidebarWidth(typeof window !== 'undefined' && window.innerWidth < 1180 ? 320 : 380)}
                         className="group flex h-full cursor-col-resize items-center justify-center"
                     >
                         <div className="h-20 w-1.5 rounded-full bg-gray-300/80 transition-all group-hover:h-28 group-hover:bg-orange-500 dark:bg-white/20 dark:group-hover:bg-orange-400" />
@@ -2602,6 +2685,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     <section className="h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl border border-gray-200 bg-[#f7f7f5] shadow-xl shadow-black/8 dark:!border-[#303030] dark:!bg-[#1b1b1b] dark:shadow-black/30">
                         {isSettingsSearchFocused ? renderSettingsSearchPanel() : renderDetailView({ embedded: true, sectionId: effectiveSection })}
                     </section>
+                    {!isSettingsSearchFocused && (
+                        <aside className="settings-live-preview-aside hidden h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl xl:block">
+                            <LiveFeaturePreview
+                                type={effectiveSection}
+                                section={sections.find(section => section.id === effectiveSection)}
+                            />
+                        </aside>
+                    )}
                     </div>
                     {isSidebarCollapsed && settingsRailTooltip && (
                         <div

@@ -1,6 +1,7 @@
 ﻿import React, { useState } from 'react'
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   CloudOff,
   Download,
@@ -34,10 +35,20 @@ const NotificationToast = ({
   defaultExpanded = false
 }) => {
   const [expanded, setExpanded] = useState(defaultExpanded)
+  const isClosingRef = React.useRef(false)
   const Icon = iconMap[type] || iconMap.default
   const hasExpandableContent = Boolean(details) || actions.length > 0
   const displayTitle = title || message
   const displayMessage = title ? message : details
+
+  const closeWithAnimation = (event) => {
+    event?.stopPropagation?.()
+    if (isClosingRef.current) return
+    isClosingRef.current = true
+    const toastElement = event?.currentTarget?.closest?.('.Toastify__toast')
+    toastElement?.classList?.add('datser-toast-manual-closing')
+    window.setTimeout(() => closeToast?.(), 280)
+  }
 
   return (
     <div
@@ -67,11 +78,14 @@ const NotificationToast = ({
                 key={action.label}
                 type="button"
                 className={`datser-notification-action ${action.variant === 'primary' ? 'is-primary' : ''}`}
-                onClick={async () => {
+                onClick={async (event) => {
                   await action.onClick?.()
-                  if (action.dismiss !== false) closeToast?.()
+                  if (action.dismiss !== false) closeWithAnimation(event)
                 }}
               >
+                <span className="datser-notification-action-icon" aria-hidden="true">
+                  {action.variant === 'primary' ? <Check /> : <X />}
+                </span>
                 {action.label}
               </button>
             ))}
@@ -82,10 +96,7 @@ const NotificationToast = ({
         type="button"
         className="datser-notification-close"
         aria-label="Dismiss notification"
-        onClick={(event) => {
-          event.stopPropagation()
-          closeToast?.()
-        }}
+        onClick={closeWithAnimation}
       >
         <X aria-hidden="true" />
       </button>

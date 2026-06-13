@@ -522,7 +522,7 @@ const MemberModal = ({ isOpen, onClose }) => {
       <div className="flex justify-center pt-3 pb-1 sm:hidden absolute left-0 right-0" style={{ top: 'calc(10vh)' }}>
       </div>
       <div
-        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[92vh] sm:max-h-[90vh] flex flex-col rounded-t-2xl rounded-b-none sm:rounded-xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${isOverrideMode
+        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[92vh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-2xl sm:rounded-2xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${isOverrideMode
         ? 'bg-orange-50/90 dark:bg-orange-900/40 backdrop-blur-md ring-orange-300 dark:ring-orange-700'
         : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
         }`}
@@ -607,8 +607,8 @@ const MemberModal = ({ isOpen, onClose }) => {
         </div>
 
         {/* Scrollable Form Area */}
-        <div ref={scrollContainerRef} className="overflow-y-auto no-scrollbar flex-1" >
-          <form onSubmit={handleSubmit} noValidate className="p-4 sm:p-6 pb-28 space-y-5 sm:space-y-6">
+        <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto no-scrollbar" >
+          <form id="add-member-form" onSubmit={handleSubmit} noValidate className="p-4 sm:p-5 pb-3 sm:pb-4 space-y-4 sm:space-y-5">
             {/* Section: Member Information */}
             <div className="space-y-4">
               <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
@@ -1100,32 +1100,31 @@ const MemberModal = ({ isOpen, onClose }) => {
                 />
               </GuidedField>
 
-              {/* Form Actions */}
-              <div className="sticky bottom-0 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-3 pb-4 bg-white/95 dark:bg-gray-800/95 backdrop-blur border-t border-gray-200 dark:border-gray-700 flex space-x-3">
-                <button
-                  type="button"
-                  onClick={() => closeWithAnimation()}
-                  className="flex-1 min-h-[48px] px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 transition-colors btn-press"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  data-testid="member-form-submit"
-                  className={`flex-1 min-h-[48px] px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-press ${isOverrideMode
-                    ? 'bg-orange-600 hover:bg-orange-700'
-                    : 'bg-primary-600 hover:bg-primary-700'
-                    }`}
-                >
-                  {loading ? 'Adding...' : (isOverrideMode ? 'Add (Override)' : 'Add Member')}
-                </button>
-              </div>
             </div>
           </form>
         </div>
 
-
+        <div className="flex flex-shrink-0 space-x-3 rounded-b-2xl border-t border-gray-200 bg-white/95 px-4 pb-4 pt-3 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 sm:px-5 sm:pb-5">
+          <button
+            type="button"
+            onClick={() => closeWithAnimation()}
+            className="flex-1 min-h-[44px] px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 transition-colors btn-press"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="add-member-form"
+            disabled={loading}
+            data-testid="member-form-submit"
+            className={`flex-1 min-h-[44px] px-4 py-2 text-white rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-press ${isOverrideMode
+              ? 'bg-orange-600 hover:bg-orange-700'
+              : 'bg-primary-600 hover:bg-primary-700'
+              }`}
+          >
+            {loading ? 'Adding...' : (isOverrideMode ? 'Add (Override)' : 'Add Member')}
+          </button>
+        </div>
 
       </div >
     </div >

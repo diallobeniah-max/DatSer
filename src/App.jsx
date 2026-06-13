@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense, memo } from 'react'
+import React, { useState, useEffect, Suspense, memo } from 'react'
 import { ToastContainer, Slide, toast } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 
@@ -12,24 +12,25 @@ import AppUpdatePrompt from './components/AppUpdatePrompt'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 import useHapticFeedback from './hooks/useHapticFeedback'
 import { Check, Minimize2, X } from 'lucide-react'
+import MissingDataModal from './components/MissingDataModal'
+import lazyWithRetry from './utils/lazyWithRetry'
 
 // Lazy-loaded components - loaded on demand for faster initial load
-const MemberModal = lazy(() => import('./components/MemberModal'))
-const EditMemberModal = lazy(() => import('./components/EditMemberModal'))
-const MissingDataModal = lazy(() => import('./components/MissingDataModal'))
-const AttendanceAnalytics = lazy(() => import('./components/AttendanceAnalytics'))
-const AdminPanel = lazy(() => import('./components/AdminPanel'))
-const WorkspaceSettingsModal = lazy(() => import('./components/WorkspaceSettingsModal'))
-const DeleteAccountModal = lazy(() => import('./components/DeleteAccountModal'))
-const ExportDataModal = lazy(() => import('./components/ExportDataModal'))
-const SettingsPage = lazy(() => import('./components/SettingsPage'))
-const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'))
-const AIChatAssistant = lazy(() => import('./components/AIChatAssistant'))
-const CommandPalette = lazy(() => import('./components/CommandPalette'))
-const ExecAttendancePage = lazy(() => import('./components/ExecAttendancePage'))
-const SetPasswordModal = lazy(() => import('./components/SetPasswordModal'))
-const ResetPasswordModal = lazy(() => import('./components/ResetPasswordModal'))
-const MonthModal = lazy(() => import('./components/MonthModal'))
+const MemberModal = lazyWithRetry(() => import('./components/MemberModal'))
+const EditMemberModal = lazyWithRetry(() => import('./components/EditMemberModal'))
+const AttendanceAnalytics = lazyWithRetry(() => import('./components/AttendanceAnalytics'))
+const AdminPanel = lazyWithRetry(() => import('./components/AdminPanel'))
+const WorkspaceSettingsModal = lazyWithRetry(() => import('./components/WorkspaceSettingsModal'))
+const DeleteAccountModal = lazyWithRetry(() => import('./components/DeleteAccountModal'))
+const ExportDataModal = lazyWithRetry(() => import('./components/ExportDataModal'))
+const SettingsPage = lazyWithRetry(() => import('./components/SettingsPage'))
+const OnboardingWizard = lazyWithRetry(() => import('./components/OnboardingWizard'))
+const AIChatAssistant = lazyWithRetry(() => import('./components/AIChatAssistant'))
+const CommandPalette = lazyWithRetry(() => import('./components/CommandPalette'))
+const ExecAttendancePage = lazyWithRetry(() => import('./components/ExecAttendancePage'))
+const SetPasswordModal = lazyWithRetry(() => import('./components/SetPasswordModal'))
+const ResetPasswordModal = lazyWithRetry(() => import('./components/ResetPasswordModal'))
+const MonthModal = lazyWithRetry(() => import('./components/MonthModal'))
 
 // Minimal loading fallback for lazy components
 const LazyFallback = memo(() => (

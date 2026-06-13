@@ -14,14 +14,14 @@ const toastByType = {
 }
 
 const defaultAutoCloseByType = {
-  success: 2600,
-  info: 4200,
-  online: 4200,
-  sync: 5200,
-  warning: 5600,
-  offline: 6500,
-  update: 9000,
-  error: 6500
+  success: 2200,
+  info: 3600,
+  online: 3200,
+  sync: 4200,
+  warning: 4600,
+  offline: 5000,
+  update: 6200,
+  error: 5200
 }
 
 const NOTIFICATION_DURATION_STORAGE_KEY = 'datser_notification_duration_ms'

@@ -32,6 +32,7 @@ import {
   ArrowLeft,
   Phone,
   MessageCircle,
+  Mail,
   Send,
   UserCheck,
   UserX
@@ -59,6 +60,7 @@ const normalizeSundayDate = (dateValue) => {
 
 const getMemberName = (member) => member?.full_name || member?.['Full Name'] || member?.name || 'Unknown'
 const getMemberPhone = (member) => member?.['Phone Number'] || member?.phone_number || member?.phone || member?.Phone || ''
+const getMemberEmail = (member) => member?.email || member?.Email || member?.email_address || member?.['Email Address'] || ''
 const cleanPhoneDigits = (phone) => String(phone || '').replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
 const getWhatsAppDigits = (phone) => {
   const cleaned = cleanPhoneDigits(phone).replace(/^\+/, '')
@@ -110,7 +112,27 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
   const [activeFollowUpTab, setActiveFollowUpTab] = useState('follow_up')
   const [followUpRecords, setFollowUpRecords] = useState([])
   const [isSavingFollowUp, setIsSavingFollowUp] = useState(false)
+  const [selectedFollowUpRecord, setSelectedFollowUpRecord] = useState(null)
+  const [followUpDraftMessage, setFollowUpDraftMessage] = useState('')
   const followUpOwnerId = dataOwnerId || user?.id
+  const followUpStorageKey = useMemo(
+    () => `datser_follow_up_records_${followUpOwnerId || 'local'}`,
+    [followUpOwnerId]
+  )
+
+  const readLocalFollowUpRecords = useCallback(() => {
+    try {
+      return JSON.parse(localStorage.getItem(followUpStorageKey) || '[]')
+    } catch {
+      return []
+    }
+  }, [followUpStorageKey])
+
+  const writeLocalFollowUpRecord = useCallback((entry) => {
+    const next = [entry, ...readLocalFollowUpRecords()].slice(0, 500)
+    localStorage.setItem(followUpStorageKey, JSON.stringify(next))
+    setFollowUpRecords(next)
+  }, [followUpStorageKey, readLocalFollowUpRecords])
 
   // Auto-lock timer - locks admin panel after inactivity
   useEffect(() => {
@@ -149,7 +171,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
 
   const loadFollowUpRecords = useCallback(async () => {
     if (!isAuthenticated || !followUpOwnerId || !isSupabaseConfigured() || !supabase) {
-      setFollowUpRecords([])
+      setFollowUpRecords(readLocalFollowUpRecords())
       return
     }
 
@@ -169,13 +191,13 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
         message.includes('follow_up_records')
 
       if (backendMissing) {
-        setFollowUpRecords([])
+        setFollowUpRecords(readLocalFollowUpRecords())
         return
       }
 
       console.warn('Failed to load follow-up records:', error)
     }
-  }, [followUpOwnerId, isAuthenticated, isSupabaseConfigured])
+  }, [followUpOwnerId, isAuthenticated, isSupabaseConfigured, readLocalFollowUpRecords])
 
   useEffect(() => {
     loadFollowUpRecords()
@@ -183,8 +205,23 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
 
   const saveFollowUpStage = async (record, stage, contactMethod = 'admin', response = '') => {
     if (!record?.id) return
+    const localEntry = {
+      id: `local-${record.id}-${Date.now()}`,
+      owner_id: followUpOwnerId || 'local',
+      member_id: record.id,
+      reason: record.followUpReason,
+      follow_up_status: stage,
+      message_sent: stage === 'message_sent',
+      contacted_by: user?.id || null,
+      contact_method: contactMethod,
+      response: response || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
     if (!followUpOwnerId || !isSupabaseConfigured() || !supabase) {
-      toast.info('Follow-up notes will save after Supabase is connected.')
+      writeLocalFollowUpRecord(localEntry)
+      toast.success('Follow-up saved on this device')
       return
     }
 
@@ -223,14 +260,19 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
             response: response || null
           })
 
-        if (insertError) throw insertError
+        if (insertError) {
+          writeLocalFollowUpRecord(localEntry)
+          toast.success('Follow-up saved on this device')
+          return
+        }
       }
 
       toast.success('Follow-up updated')
       await loadFollowUpRecords()
     } catch (error) {
       console.error('Failed to save follow-up record:', error)
-      toast.error('Failed to save follow-up update')
+      writeLocalFollowUpRecord(localEntry)
+      toast.success('Follow-up saved on this device')
     } finally {
       setIsSavingFollowUp(false)
     }
@@ -568,9 +610,59 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
 
   // Get month display name
   const monthDisplayName = currentTable ? currentTable.replace('_', ' ') : 'No Month Selected'
-  const buildFollowUpMessage = (record) => encodeURIComponent(
-    buildSuggestedMessage(followUpMessage, record).replaceAll('{month}', monthDisplayName)
-  )
+  const buildFollowUpPlainMessage = (record, template = followUpMessage) =>
+    buildSuggestedMessage(template, record).replaceAll('{month}', monthDisplayName)
+
+  const openFollowUpComposer = (record) => {
+    setSelectedFollowUpRecord(record)
+    setFollowUpDraftMessage(buildFollowUpPlainMessage(record))
+  }
+
+  const closeFollowUpComposer = () => {
+    setSelectedFollowUpRecord(null)
+    setFollowUpDraftMessage('')
+  }
+
+  const sendFollowUpMessage = async (method) => {
+    const record = selectedFollowUpRecord
+    if (!record) return
+
+    const message = followUpDraftMessage.trim() || buildFollowUpPlainMessage(record)
+    const phone = record.phone || getMemberPhone(record.member)
+    const phoneDigits = cleanPhoneDigits(phone)
+    const whatsappDigits = getWhatsAppDigits(phone)
+    const email = getMemberEmail(record.member)
+    const encoded = encodeURIComponent(message)
+
+    if (method === 'whatsapp') {
+      if (!whatsappDigits) {
+        toast.error('No WhatsApp number saved')
+        return
+      }
+      window.open(`https://wa.me/${whatsappDigits}?text=${encoded}`, '_blank', 'noopener,noreferrer')
+    } else if (method === 'sms') {
+      if (!phoneDigits) {
+        toast.error('No phone number saved')
+        return
+      }
+      window.location.href = `sms:${phoneDigits}?&body=${encoded}`
+    } else if (method === 'email') {
+      if (!email) {
+        toast.error('No email saved')
+        return
+      }
+      window.location.href = `mailto:${email}?subject=${encodeURIComponent('We missed you')}&body=${encoded}`
+    } else if (method === 'call') {
+      if (!phoneDigits) {
+        toast.error('No phone number saved')
+        return
+      }
+      window.location.href = `tel:${phoneDigits}`
+    }
+
+    await saveFollowUpStage(record, method === 'call' ? 'called' : 'message_sent', method, message)
+    closeFollowUpComposer()
+  }
 
   // Calculate quick stats
   const stats = useMemo(() => {
@@ -733,25 +825,62 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
   const priorityFollowUpCount = attendanceFollowUps.follow_up.length + attendanceFollowUps.inactive.length
   const canManageAppUpdates = isDeveloperBypass || !isCollaborator || isAdminCollaborator
 
+  useEffect(() => {
+    if (!isAuthenticated || priorityFollowUpCount <= 0) return
+
+    const key = `datser_follow_up_alert_${followUpOwnerId || 'local'}_${currentTable || 'month'}_${priorityFollowUpCount}`
+    if (localStorage.getItem(key) === 'seen') return
+
+    const firstRecord = attendanceFollowUps.follow_up[0] || attendanceFollowUps.inactive[0]
+    localStorage.setItem(key, 'seen')
+    toast.info(
+      <div className="space-y-2">
+        <p className="font-bold">Follow-up needed</p>
+        <p className="text-sm">
+          {priorityFollowUpCount} member{priorityFollowUpCount === 1 ? '' : 's'} missed recent Sundays.
+        </p>
+        {firstRecord && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveFollowUpTab(firstRecord.category === 'inactive' ? 'inactive' : 'follow_up')
+              openFollowUpComposer(firstRecord)
+              toast.dismiss()
+            }}
+            className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-bold text-white"
+          >
+            Review message
+          </button>
+        )}
+      </div>,
+      {
+        toastId: key,
+        autoClose: 9000,
+        closeOnClick: false
+      }
+    )
+  }, [attendanceFollowUps.follow_up, attendanceFollowUps.inactive, currentTable, followUpOwnerId, isAuthenticated, priorityFollowUpCount])
+
   // Password protection screen
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen flex items-start justify-center px-3 pb-3 pt-3 sm:px-4 sm:pb-4 sm:pt-3">
-        <div className="w-full max-w-2xl">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+      <div className="flex min-h-[calc(100vh-var(--app-dashboard-header-height,72px))] items-start justify-center px-3 pb-24 pt-4 sm:px-4 sm:pt-8 md:items-center md:pt-4">
+        <div className="w-full max-w-lg">
+          <div className="overflow-hidden rounded-3xl border border-orange-100 bg-white shadow-2xl shadow-black/10 dark:border-white/10 dark:bg-[#202121] dark:shadow-black/40">
             {/* Header */}
-            <div className="bg-gradient-to-br from-orange-600 to-orange-800 dark:from-orange-700 dark:to-orange-900 px-4 sm:px-6 py-4 sm:py-5 text-center">
-              <div className="w-12 h-12 sm:w-14 sm:h-14 bg-white/10 backdrop-blur rounded-2xl flex items-center justify-center mx-auto mb-2 sm:mb-3 border border-white/20">
-                <Shield className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
+            <div className="relative overflow-hidden bg-gradient-to-br from-orange-500 via-orange-600 to-orange-800 px-5 py-5 text-center dark:from-orange-700 dark:via-orange-800 dark:to-[#7c2508] sm:px-6 sm:py-6">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.25),transparent_42%)]" />
+              <div className="relative mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/25 bg-white/15 shadow-lg shadow-orange-950/20 backdrop-blur">
+                <Shield className="h-7 w-7 text-white" />
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold text-white">Admin Panel</h1>
-              <p className="text-orange-100 text-xs sm:text-sm mt-1">Secure Access Required</p>
+              <h1 className="relative text-2xl font-black tracking-tight text-white">Admin Panel</h1>
+              <p className="relative mt-1 text-sm font-medium text-orange-50">Secure access required</p>
             </div>
 
             {/* Form */}
-            <form onSubmit={handlePasswordSubmit} className="p-4 sm:p-6 space-y-4 sm:space-y-5">
+            <form onSubmit={handlePasswordSubmit} className="space-y-4 p-5 sm:p-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="mb-2 block text-sm font-bold text-gray-800 dark:text-gray-200">
                   Account Password
                 </label>
                 <input
@@ -759,15 +888,15 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="Enter your account password"
-                  className={`w-full px-4 py-3 rounded-xl border ${passwordError
-                    ? 'border-red-400 focus:ring-red-400 bg-red-50 dark:bg-red-900/20'
-                    : 'border-gray-200 dark:border-gray-600 focus:ring-orange-500 bg-gray-50 dark:bg-gray-700'
-                    } text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 transition-all`}
+                  className={`w-full rounded-2xl border px-4 py-3.5 text-base shadow-inner transition-all focus:outline-none focus:ring-2 ${passwordError
+                    ? 'border-red-400 bg-red-50 text-red-950 focus:ring-red-400 dark:bg-red-950/30 dark:text-white'
+                    : 'border-gray-200 bg-gray-50 text-gray-900 focus:border-orange-400 focus:ring-orange-500/30 dark:border-white/10 dark:bg-[#2f3030] dark:text-white'
+                    } placeholder:text-gray-400`}
                   autoFocus
                   disabled={isVerifying}
                 />
                 {passwordError && (
-                  <p className="mt-2 text-sm text-red-500 flex items-center gap-1">
+                  <p className="mt-2 flex items-center gap-1 text-sm font-medium text-red-500">
                     <X className="w-4 h-4" />
                     Incorrect password. Please try again.
                   </p>
@@ -775,7 +904,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
               </div>
 
               {/* Stay logged in checkbox */}
-              <label className="flex items-center gap-3 cursor-pointer group">
+              <label className="group flex cursor-pointer items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50/80 p-3 transition-colors hover:bg-gray-100 dark:border-white/10 dark:bg-[#262727] dark:hover:bg-[#2f3030]">
                 <div className="relative">
                   <input
                     type="checkbox"
@@ -783,12 +912,12 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                     onChange={(e) => setStayLoggedIn(e.target.checked)}
                     className="sr-only peer"
                   />
-                  <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 rounded peer-checked:border-orange-600 peer-checked:bg-orange-600 transition-all flex items-center justify-center">
-                    {stayLoggedIn && <Check className="w-3 h-3 text-white" />}
+                  <div className="flex h-6 w-6 items-center justify-center rounded-lg border-2 border-gray-300 transition-all peer-checked:border-orange-600 peer-checked:bg-orange-600 dark:border-gray-600">
+                    {stayLoggedIn && <Check className="h-3.5 w-3.5 text-white" />}
                   </div>
                 </div>
                 <div>
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Stay logged in</span>
+                  <span className="text-sm font-bold text-gray-800 dark:text-gray-200">Stay logged in</span>
                   <p className="text-xs text-gray-500 dark:text-gray-400">Keep admin access for 7 days</p>
                 </div>
               </label>
@@ -796,7 +925,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
               <button
                 type="submit"
                 disabled={isVerifying || !passwordInput}
-                className="w-full py-3 bg-gradient-to-r from-orange-600 to-orange-800 hover:from-orange-700 hover:to-orange-900 disabled:from-orange-300 disabled:to-orange-400 text-white font-semibold rounded-xl transition-all shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 to-orange-700 px-4 py-3 font-black text-white shadow-lg shadow-orange-900/20 transition-all hover:from-orange-600 hover:to-orange-800 disabled:cursor-not-allowed disabled:from-orange-300 disabled:to-orange-400 disabled:shadow-none dark:shadow-black/30"
               >
                 {isVerifying ? (
                   <>
@@ -811,16 +940,16 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                 )}
               </button>
 
-              <div className="bg-orange-50/70 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/60 rounded-xl p-4 space-y-3">
-                <p className="text-sm text-orange-700 dark:text-orange-200 flex items-start gap-2">
-                  <LogIn className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>One-tap Google SSO. We’ll verify your Google profile and unlock admin after the redirect.</span>
+              <div className="space-y-3 rounded-2xl border border-orange-200 bg-orange-50/80 p-3 dark:border-orange-800/60 dark:bg-orange-950/20">
+                <p className="flex items-start gap-2 text-sm font-medium text-orange-800 dark:text-orange-100">
+                  <LogIn className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span>Use Google SSO. We'll verify your profile after redirect.</span>
                 </p>
                 <button
                   type="button"
                   onClick={handleGoogleAdminAccess}
                   disabled={isGoogleAuthing}
-                  className="w-full py-3 border border-orange-200 dark:border-orange-700 bg-white dark:bg-orange-900/30 text-orange-700 dark:text-orange-200 font-semibold rounded-xl transition-all shadow-sm hover:bg-orange-50 dark:hover:bg-orange-900/40 disabled:opacity-70 flex items-center justify-center gap-2"
+                  className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl border border-orange-300 bg-white px-4 py-3 font-black text-orange-700 shadow-sm transition-all hover:bg-orange-50 disabled:opacity-70 dark:border-orange-700 dark:bg-orange-900/30 dark:text-orange-100 dark:hover:bg-orange-900/40"
                 >
                   {isGoogleAuthing ? (
                     <>
@@ -839,7 +968,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
               <button
                 type="button"
                 onClick={() => setCurrentView('dashboard')}
-                className="w-full py-3 text-gray-500 dark:text-gray-400 font-medium hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                className="flex min-h-[44px] w-full items-center justify-center rounded-2xl text-sm font-bold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100"
               >
                 ← Back to Dashboard
               </button>
@@ -854,7 +983,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
     <div className="min-h-screen pb-24">
       {/* Header */}
       <div className="sticky top-0 z-20 w-full py-1.5">
-        <div className="max-w-4xl mx-auto px-4 relative">
+        <div className="mx-auto max-w-[1600px] px-4 relative">
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-2.5 sm:px-5 sm:py-3 flex items-center justify-between shadow-sm">
             <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
               <div className="bg-slate-100 dark:bg-slate-700/50 p-2 sm:p-2.5 rounded-xl border border-slate-200 dark:border-slate-600 flex-shrink-0">
@@ -979,13 +1108,15 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-3 sm:px-4 py-3 sm:py-4 space-y-4 sm:space-y-5">
+      <div className="mx-auto grid max-w-[1600px] grid-cols-1 gap-4 px-3 py-3 sm:px-4 sm:py-4 xl:grid-cols-[minmax(340px,420px)_minmax(0,1fr)] xl:items-start xl:gap-5">
 
-        <AppUpdatesManager canManage={canManageAppUpdates} userId={user?.id || null} />
+        <div className="xl:col-span-2">
+          <AppUpdatesManager canManage={canManageAppUpdates} userId={user?.id || null} />
+        </div>
 
         {/* Badge Results */}
         {badgeResults && showBadgeResults && (
-          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-fade-in-up">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-fade-in-up xl:col-span-2">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
               <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                 <Trophy className="w-5 h-5 text-yellow-500" />
@@ -1079,7 +1210,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
         </div>
 
         {/* Attendance Follow-up */}
-        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-fade-in-up" style={{ animationDelay: '280ms' }}>
+        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-fade-in-up xl:row-span-3" style={{ animationDelay: '280ms' }}>
           <div className="p-4 border-b border-gray-200 dark:border-gray-700">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
@@ -1119,6 +1250,13 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
               placeholder="Message template"
             />
 
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm leading-6 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-100">
+              <p className="font-black">How follow-up works</p>
+              <p className="mt-1">
+                DatSer checks the latest marked Sundays. If someone misses 3 Sundays in a row or has no attendance in the last 4 marked Sundays, they appear in Follow Up. If they have been away longer, they move to Inactive. Use Review & send to edit the message, choose WhatsApp, SMS, email, or call, then DatSer records that contact stage.
+              </p>
+            </div>
+
             {attendanceFollowUps.totalSundays === 0 ? (
               <p className="text-center text-gray-400 py-4">No Sundays available for this month yet</p>
             ) : (
@@ -1145,13 +1283,10 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                 </div>
 
                 {activeFollowUpRecords.slice(0, 12).map((record) => {
-                  const encodedMessage = buildFollowUpMessage(record)
                   const message = buildSuggestedMessage(followUpMessage, record).replaceAll('{month}', monthDisplayName)
                   const phone = record.phone || getMemberPhone(record.member)
                   const phoneDigits = cleanPhoneDigits(phone)
-                  const whatsappDigits = getWhatsAppDigits(phone)
                   const phoneHref = phoneDigits ? `tel:${phoneDigits}` : undefined
-                  const whatsappHref = whatsappDigits ? `https://wa.me/${whatsappDigits}?text=${encodedMessage}` : undefined
                   return (
                     <div key={record.id} className="rounded-xl border border-gray-200 bg-gray-50/80 p-3 dark:border-gray-700 dark:bg-gray-900/30">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1211,6 +1346,14 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 sm:flex lg:flex-col lg:min-w-[150px]">
+                          <button
+                            type="button"
+                            onClick={() => openFollowUpComposer(record)}
+                            className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg bg-orange-600 px-3 py-2 text-xs font-bold text-white shadow-sm shadow-orange-900/20 hover:bg-orange-700 lg:col-span-1"
+                          >
+                            <Send className="h-4 w-4" />
+                            Review & send
+                          </button>
                           {phoneHref ? (
                             <a
                               href={phoneHref}
@@ -1224,23 +1367,6 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                           ) : (
                             <span className="inline-flex items-center justify-center rounded-lg bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-400 dark:bg-gray-800">
                               No phone
-                            </span>
-                          )}
-                          {whatsappHref ? (
-                            <a
-                              href={whatsappHref}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={() => saveFollowUpStage(record, 'message_sent', 'whatsapp')}
-                              className="inline-flex items-center justify-center gap-2 rounded-lg border border-green-200 bg-white px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-50 dark:border-green-900/50 dark:bg-gray-800 dark:text-green-300 dark:hover:bg-green-900/20"
-                              title="WhatsApp"
-                            >
-                              <Send className="h-4 w-4" />
-                              WhatsApp
-                            </a>
-                          ) : (
-                            <span className="inline-flex items-center justify-center rounded-lg bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-400 dark:bg-gray-800">
-                              No WhatsApp
                             </span>
                           )}
                           <button
@@ -1332,6 +1458,98 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
           </div>
         </div>
       </div>
+
+      {selectedFollowUpRecord && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/55 px-3 pb-3 backdrop-blur-sm sm:items-center sm:p-6">
+          <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl shadow-black/30 dark:border-white/10 dark:bg-[#202121]">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 p-4 dark:border-white/10">
+              <div className="min-w-0">
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-orange-600 dark:text-orange-300">Attendance follow-up</p>
+                <h3 className="mt-1 truncate text-xl font-black text-gray-950 dark:text-white">
+                  {selectedFollowUpRecord.name}
+                </h3>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {selectedFollowUpRecord.followUpReason}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeFollowUpComposer}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-900 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/15 dark:hover:text-white"
+                aria-label="Close follow-up message"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-4">
+              <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                <div className="rounded-2xl bg-gray-50 p-3 dark:bg-white/5">
+                  <p className="text-xs font-bold uppercase text-gray-400">Rate</p>
+                  <p className="mt-1 font-black text-gray-950 dark:text-white">{selectedFollowUpRecord.attendanceRate}%</p>
+                </div>
+                <div className="rounded-2xl bg-gray-50 p-3 dark:bg-white/5">
+                  <p className="text-xs font-bold uppercase text-gray-400">Missed</p>
+                  <p className="mt-1 font-black text-gray-950 dark:text-white">{selectedFollowUpRecord.consecutiveAbsences} row</p>
+                </div>
+                <div className="rounded-2xl bg-gray-50 p-3 dark:bg-white/5">
+                  <p className="text-xs font-bold uppercase text-gray-400">Phone</p>
+                  <p className="mt-1 truncate font-black text-gray-950 dark:text-white">{selectedFollowUpRecord.phone || 'None'}</p>
+                </div>
+                <div className="rounded-2xl bg-gray-50 p-3 dark:bg-white/5">
+                  <p className="text-xs font-bold uppercase text-gray-400">Stage</p>
+                  <p className="mt-1 truncate font-black text-gray-950 dark:text-white">{selectedFollowUpRecord.followUpStageLabel}</p>
+                </div>
+              </div>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-bold text-gray-800 dark:text-gray-200">Edit message before sending</span>
+                <textarea
+                  value={followUpDraftMessage}
+                  onChange={(event) => setFollowUpDraftMessage(event.target.value)}
+                  rows={5}
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-500/20 dark:border-white/10 dark:bg-[#2f3030] dark:text-white"
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <button
+                  type="button"
+                  onClick={() => sendFollowUpMessage('whatsapp')}
+                  className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl bg-green-600 px-3 py-2 text-sm font-black text-white hover:bg-green-700"
+                >
+                  <Send className="h-4 w-4" />
+                  WhatsApp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sendFollowUpMessage('sms')}
+                  className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl bg-blue-600 px-3 py-2 text-sm font-black text-white hover:bg-blue-700"
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  SMS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sendFollowUpMessage('email')}
+                  className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl bg-gray-900 px-3 py-2 text-sm font-black text-white hover:bg-black dark:bg-white/10 dark:hover:bg-white/15"
+                >
+                  <Mail className="h-4 w-4" />
+                  Email
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sendFollowUpMessage('call')}
+                  className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-800 hover:bg-gray-50 dark:border-white/10 dark:bg-white/5 dark:text-white dark:hover:bg-white/10"
+                >
+                  <Phone className="h-4 w-4" />
+                  Call
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

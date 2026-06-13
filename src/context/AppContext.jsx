@@ -56,11 +56,109 @@ const COLLAB_FALLBACK_TABLES = [DEFAULT_COLLAB_TABLE]
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 const NOTIFICATION_DURATION_STORAGE_KEY = 'datser_notification_duration_ms'
 const NOTIFICATION_DURATION_MIGRATION_KEY = 'datser_notification_duration_readable_default_v2'
-const DEFAULT_NOTIFICATION_DURATION_MS = 6500
+const NOTIFICATION_DURATION_COMPACT_MIGRATION_KEY = 'datser_notification_duration_compact_default_v1'
+const DEFAULT_NOTIFICATION_DURATION_MS = 4200
 const SEARCH_SUGGESTION_VIEW_STORAGE_KEY = 'datser_search_suggestion_view'
 const SEARCH_SUGGESTION_PROMPT_STORAGE_KEY = 'datser_search_suggestion_prompt_seen_v1'
 const SEARCH_SUGGESTION_VIEW_MODES = ['short', 'full']
 const DEFAULT_SEARCH_SUGGESTION_VIEW = 'full'
+const RECENT_MEMBER_EDITS_STORAGE_KEY = 'datser_recent_member_edits'
+const RECENT_MEMBER_EDITS_LIMIT = 80
+const MEMBER_PREVIEW_PAGE_SIZE = 20
+const MEMBER_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000
+const MEMBER_PREVIEW_CACHE_PREFIX = 'datser_member_preview_cache_v1'
+const MEMBER_PREVIEW_SELECT = [
+  'id',
+  '"Full Name"',
+  'full_name',
+  'name',
+  '"Name"',
+  '"Phone Number"',
+  'phone_number',
+  '"Gender"',
+  'gender',
+  '"Age"',
+  'age',
+  '"Current Level"',
+  'current_level',
+  'workspace',
+  'member_code',
+  '"Member"',
+  '"Regular"',
+  '"Newcomer"',
+  '"Manual Badge"',
+  '"Badge Type"',
+  '"Join Date"',
+  'inserted_at',
+  'created_at',
+  'updated_at',
+  'is_visitor'
+].join(',')
+const MEMBER_BADGE_SELECT = 'id,"Member","Regular","Newcomer","Manual Badge","Badge Type"'
+
+const getMemberDisplayNameForRecentEdit = (member) => (
+  member?.full_name ||
+  member?.['Full Name'] ||
+  member?.name ||
+  member?.Name ||
+  'Unknown member'
+)
+
+const getRecentMemberEditsStorageKey = (scope = 'guest') => `${RECENT_MEMBER_EDITS_STORAGE_KEY}:${scope || 'guest'}`
+
+const readStoredRecentMemberEdits = (scope = 'guest') => {
+  if (typeof window === 'undefined') return []
+  try {
+    const scoped = window.localStorage.getItem(getRecentMemberEditsStorageKey(scope))
+    const legacy = window.localStorage.getItem(RECENT_MEMBER_EDITS_STORAGE_KEY)
+    const parsed = JSON.parse(scoped || legacy || '[]')
+    return Array.isArray(parsed) ? parsed.filter((item) => item?.id && item?.edited_at) : []
+  } catch {
+    return []
+  }
+}
+
+const getMemberPreviewCacheKey = (scope = 'guest', tableName = 'default') => (
+  `${MEMBER_PREVIEW_CACHE_PREFIX}:${scope || 'guest'}:${tableName || 'default'}`
+)
+
+const readMemberPreviewCache = (scope, tableName) => {
+  if (typeof window === 'undefined') return null
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(getMemberPreviewCacheKey(scope, tableName)) || 'null')
+    if (!parsed || !Array.isArray(parsed.data) || !parsed.ts) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const writeMemberPreviewCache = (scope, tableName, payload) => {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(getMemberPreviewCacheKey(scope, tableName), JSON.stringify(payload))
+  } catch (error) {
+    console.warn('Unable to cache member preview data:', error)
+  }
+}
+
+const mergeMemberPreviewPages = (existing = [], incoming = []) => {
+  const byId = new Map()
+  existing.forEach((member) => {
+    if (member?.id) byId.set(member.id, member)
+  })
+  incoming.forEach((member) => {
+    if (member?.id) byId.set(member.id, { ...(byId.get(member.id) || {}), ...member })
+  })
+  return Array.from(byId.values())
+}
+
+const getWorkspaceCacheScope = ({ userId, dataOwnerId, isCollaborator }) => {
+  if (isCollaborator && dataOwnerId) return `owner-${dataOwnerId}`
+  if (dataOwnerId) return `owner-${dataOwnerId}`
+  if (userId) return `user-${userId}`
+  return 'guest'
+}
 
 
 const shouldLogAppContext = import.meta.env.MODE !== 'test'
@@ -326,14 +424,49 @@ export const useApp = () => {
   return context
 }
 
+const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
+  'workspace_member_codes_enabled',
+  'member_code_quick_pass_enabled',
+  'member_code_show_logo',
+  'member_code_show_photo',
+  'member_code_show_email',
+  'member_code_auto_profile_enabled',
+  'member_code_badge_style',
+  'member_code_card_style',
+  'member_code_church_name',
+  'member_code_auto_cycle_minutes'
+]
+
+const OWNER_STICKY_MEMBER_CODE_SELECT_KEYS = WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS
+  .filter((key) => key !== 'member_code_auto_cycle_minutes')
+
+const OWNER_STICKY_PREFERENCE_SELECT = [
+  'admin_sticky_month',
+  'admin_sticky_sundays',
+  'locked_default_date',
+  ...OWNER_STICKY_MEMBER_CODE_SELECT_KEYS
+].join(',')
+
+const pickWorkspaceMemberCodePreferences = (source = {}) => (
+  WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS.reduce((picked, key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      picked[key] = source[key]
+    }
+    return picked
+  }, {})
+)
+
 export const AppProvider = ({ children }) => {
   // Get user from auth context - may be null during initial load
   const authContext = useAuth()
   const user = authContext?.user
-  const preferences = authContext?.preferences || null
+  const personalPreferences = authContext?.preferences || null
   const authLoading = authContext?.loading
   const isDeveloperBypass = authContext?.isDeveloperBypass === true
   const [members, setMembers] = useState([])
+  const [membersTotalCount, setMembersTotalCount] = useState(0)
+  const [membersLoadedAll, setMembersLoadedAll] = useState(false)
+  const [recentMemberEdits, setRecentMemberEdits] = useState([])
   const [loading, setLoading] = useState(true)
 
   // Collaborator state - tracks if current user is viewing someone else's data
@@ -347,12 +480,63 @@ export const AppProvider = ({ children }) => {
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
   const membersCacheRef = useRef(new Map()) // tableName -> { data, ts }
+  const workspaceCacheScope = useMemo(() => getWorkspaceCacheScope({
+    userId: user?.id,
+    dataOwnerId,
+    isCollaborator
+  }), [dataOwnerId, isCollaborator, user?.id])
   const [attendanceData, setAttendanceData] = useState({})
   const [currentTable, setCurrentTable] = useState(getLatestTable())
+
+  useEffect(() => {
+    setRecentMemberEdits(readStoredRecentMemberEdits(workspaceCacheScope))
+  }, [workspaceCacheScope])
+
+  const recordRecentMemberEdit = useCallback((member, editedAt = new Date().toISOString(), meta = {}) => {
+    if (!member?.id) return
+    setRecentMemberEdits((prev) => {
+      const dateKey = meta.dateKey || meta.date_key || (meta.date instanceof Date ? getLocalDateString(meta.date) : null)
+      const nextEntry = {
+        id: member.id,
+        member_id: member.id,
+        name: getMemberDisplayNameForRecentEdit(member),
+        table: meta.table || currentTable,
+        date_key: dateKey,
+        action: meta.action || 'update',
+        summary: meta.summary || 'Updated member details',
+        changed_fields: Array.isArray(meta.changedFields) ? meta.changedFields : [],
+        edited_at: editedAt
+      }
+      const next = [
+        nextEntry,
+        ...prev.filter((item) => !(item?.id === member.id && item?.table === nextEntry.table && item?.action === nextEntry.action))
+      ].slice(0, RECENT_MEMBER_EDITS_LIMIT)
+
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(getRecentMemberEditsStorageKey(workspaceCacheScope), JSON.stringify(next))
+        } catch (error) {
+          console.warn('Unable to store recent member edits:', error)
+        }
+      }
+
+      return next
+    })
+  }, [currentTable, workspaceCacheScope])
 
   // Admin sticky defaults for collaborators
   const [ownerStickyMonth, setOwnerStickyMonth] = useState(null)
   const [ownerStickySundays, setOwnerStickySundays] = useState([])
+  const [ownerMemberCodePreferences, setOwnerMemberCodePreferences] = useState({})
+  const preferences = useMemo(() => {
+    if (!isCollaborator || !ownerMemberCodePreferences || Object.keys(ownerMemberCodePreferences).length === 0) {
+      return personalPreferences
+    }
+    return {
+      ...(personalPreferences || {}),
+      ...ownerMemberCodePreferences
+    }
+  }, [isCollaborator, ownerMemberCodePreferences, personalPreferences])
   const [adminSyncNotice, setAdminSyncNotice] = useState(null)
   const adminBroadcastRef = useRef({ month: null, date: null })
   const adminRealtimeChannelRef = useRef(null)
@@ -422,6 +606,16 @@ export const AppProvider = ({ children }) => {
     if (typeof window === 'undefined') return DEFAULT_NOTIFICATION_DURATION_MS
     const stored = Number(localStorage.getItem(NOTIFICATION_DURATION_STORAGE_KEY))
     const needsReadableDefault = localStorage.getItem(NOTIFICATION_DURATION_MIGRATION_KEY) !== 'true'
+    const needsCompactDefault = localStorage.getItem(NOTIFICATION_DURATION_COMPACT_MIGRATION_KEY) !== 'true'
+    if (needsCompactDefault && (!Number.isFinite(stored) || stored === 6500)) {
+      localStorage.setItem(NOTIFICATION_DURATION_STORAGE_KEY, String(DEFAULT_NOTIFICATION_DURATION_MS))
+      localStorage.setItem(NOTIFICATION_DURATION_MIGRATION_KEY, 'true')
+      localStorage.setItem(NOTIFICATION_DURATION_COMPACT_MIGRATION_KEY, 'true')
+      return DEFAULT_NOTIFICATION_DURATION_MS
+    }
+    if (needsCompactDefault) {
+      localStorage.setItem(NOTIFICATION_DURATION_COMPACT_MIGRATION_KEY, 'true')
+    }
     if (needsReadableDefault && (!Number.isFinite(stored) || stored < DEFAULT_NOTIFICATION_DURATION_MS)) {
       localStorage.setItem(NOTIFICATION_DURATION_STORAGE_KEY, String(DEFAULT_NOTIFICATION_DURATION_MS))
       localStorage.setItem(NOTIFICATION_DURATION_MIGRATION_KEY, 'true')
@@ -540,18 +734,19 @@ export const AppProvider = ({ children }) => {
       window.setTimeout(() => {
         notify.info('Try the new search tray?', {
           title: 'New search display',
-          details: 'Full list stays default. You can switch to the short tray now, or keep the full list.',
+          message: 'Try the short tray?',
+          details: 'Full list stays default. Switch now or keep it.',
           defaultExpanded: true,
-          autoClose: 12000,
+          autoClose: 7000,
           toastId: 'search-display-mode-prompt',
           actions: [
             {
-              label: '✓ Try tray',
               variant: 'primary',
+              label: 'Try tray',
               onClick: () => setSearchSuggestionView('short')
             },
             {
-              label: '× Keep full',
+              label: 'Keep full',
               onClick: () => setSearchSuggestionView('full')
             }
           ]
@@ -957,7 +1152,7 @@ export const AppProvider = ({ children }) => {
     try {
       const query = supabase
         .from('user_preferences')
-        .select('*')
+        .select(OWNER_STICKY_PREFERENCE_SELECT)
         .eq('user_id', ownerId)
 
       const { data, error } = await (
@@ -970,18 +1165,21 @@ export const AppProvider = ({ children }) => {
         setOwnerStickyMonth(data.admin_sticky_month || null)
         setOwnerStickySundays(Array.isArray(data.admin_sticky_sundays) ? data.admin_sticky_sundays : [])
         setLockedDefaultDate(data.locked_default_date || null)
+        setOwnerMemberCodePreferences(pickWorkspaceMemberCodePreferences(data))
         return data
       }
 
       setOwnerStickyMonth(null)
       setOwnerStickySundays([])
       setLockedDefaultDate(null)
+      setOwnerMemberCodePreferences({})
       return null
     } catch (err) {
       console.error('Error fetching owner sticky defaults:', err)
       setOwnerStickyMonth(null)
       setOwnerStickySundays([])
       setLockedDefaultDate(null)
+      setOwnerMemberCodePreferences({})
       return null
     }
   }, [isSupabaseConfigured])
@@ -1445,6 +1643,7 @@ export const AppProvider = ({ children }) => {
           setOwnerStickyMonth(nextStickyMonth)
           setOwnerStickySundays(nextStickySundays)
           setLockedDefaultDate(nextLockedDate)
+          setOwnerMemberCodePreferences(pickWorkspaceMemberCodePreferences(payload?.new || {}))
           updateAdminSyncNotice(nextStickyMonth, nextStickySundays)
         }
       )
@@ -1487,12 +1686,86 @@ export const AppProvider = ({ children }) => {
     }
   }, [user, isCollaborator, dataOwnerId])
 
+  const fetchMemberPreviewPage = async (tableName, offset = 0) => {
+    const from = Math.max(0, offset)
+    const to = from + MEMBER_PREVIEW_PAGE_SIZE - 1
+    let response = await supabase
+      .from(tableName)
+      .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
+      .range(from, to)
+
+    if (response.error) {
+      const message = response.error.message?.toLowerCase() || ''
+      const shouldFallback =
+        response.error.code === 'PGRST100' ||
+        response.error.code === '42703' ||
+        message.includes('failed to parse') ||
+        message.includes('does not exist') ||
+        message.includes('column')
+
+      if (shouldFallback) {
+        console.warn('[fetchMembers] Preview column select failed; falling back to one-page row select:', response.error)
+        response = await supabase
+          .from(tableName)
+          .select('*', { count: 'exact' })
+          .range(from, to)
+      }
+    }
+
+    return response
+  }
+
+  const applyMemberPreviewCache = (tableName, payload, { background = false } = {}) => {
+    const normalizedMembers = (payload?.data || []).map(normalizeMemberRecord)
+    const totalCount = Number.isFinite(payload?.totalCount) ? payload.totalCount : normalizedMembers.length
+    const loadedAll = Boolean(payload?.loadedAll) || normalizedMembers.length >= totalCount
+    const cachePayload = {
+      data: normalizedMembers,
+      ts: payload?.ts || Date.now(),
+      totalCount,
+      loadedAll
+    }
+
+    setMembers(normalizedMembers)
+    setMembersTotalCount(totalCount)
+    setMembersLoadedAll(loadedAll)
+    membersCacheRef.current.set(tableName || 'default', cachePayload)
+    writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+
+    if (!background) {
+      setLoading(false)
+    }
+
+    return normalizedMembers
+  }
+
+  const persistLoadedMemberPreview = (tableName, nextMembers, overrides = {}) => {
+    const cacheKey = tableName || 'default'
+    const normalizedMembers = (nextMembers || []).map(normalizeMemberRecord)
+    const totalCount = Number.isFinite(overrides.totalCount)
+      ? overrides.totalCount
+      : Math.max(membersTotalCount || 0, normalizedMembers.length)
+    const loadedAll = overrides.loadedAll ?? membersLoadedAll
+    const cachePayload = {
+      data: normalizedMembers,
+      ts: Date.now(),
+      totalCount,
+      loadedAll
+    }
+    membersCacheRef.current.set(cacheKey, cachePayload)
+    writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+    setMembersTotalCount(totalCount)
+    setMembersLoadedAll(loadedAll)
+  }
+
   // Fetch members from current monthly table or use mock data
   const fetchMembers = async (tableName = currentTable, options = {}) => {
-    const { forceRefresh = false, background = false, forceOnline = false } = options
+    const { forceRefresh = false, background = false, forceOnline = false, fullSnapshot = false } = options
     if (!tableName) {
       console.warn('fetchMembers called with null/undefined tableName, skipping')
       setMembers([])
+      setMembersTotalCount(0)
+      setMembersLoadedAll(true)
       return
     }
     try {
@@ -1526,6 +1799,8 @@ export const AppProvider = ({ children }) => {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         appContextLog('Using mock data - Supabase not configured')
         setMembers(mockMembers)
+        setMembersTotalCount(mockMembers.length)
+        setMembersLoadedAll(true)
         if (!background) {
           setLoading(false)
         }
@@ -1549,37 +1824,73 @@ export const AppProvider = ({ children }) => {
 
       // Serve from cache when fresh (reduces egress)
       const cacheKey = tableName || 'default'
-      const cached = membersCacheRef.current.get(cacheKey)
       const now = Date.now()
-      const TTL_MS = 5 * 60 * 1000 // 5 minutes
-      if (!forceRefresh && cached && (now - cached.ts) < TTL_MS) {
-        appContextLog('Using cached members for', cacheKey)
-        setMembers(cached.data)
-        if (!background) {
-          setLoading(false)
+
+      if (fullSnapshot) {
+        appContextLog(`Querying full offline snapshot from ${tableName}`)
+        const pageSize = 1000
+        let from = 0
+        let allData = []
+        let hasMore = true
+
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from(tableName)
+            .select('*')
+            .range(from, from + pageSize - 1)
+
+          if (error) {
+            console.error('Error fetching full offline member snapshot:', error)
+
+            const missingTable =
+              error.code === 'PGRST205' ||
+              error.code === 'PGRST116' ||
+              error.message?.toLowerCase().includes('does not exist') ||
+              error.message?.toLowerCase().includes('schema cache')
+
+            if (missingTable) {
+              await handleMissingTable(tableName)
+              setMembers([])
+              return []
+            }
+
+            throw error
+          }
+
+          const page = data || []
+          allData = allData.concat(page)
+          hasMore = page.length === pageSize
+          from += pageSize
         }
-        return
+
+        const normalizedMembers = allData.map(normalizeMemberRecord)
+        setMembers(normalizedMembers)
+        setMembersTotalCount(normalizedMembers.length)
+        setMembersLoadedAll(true)
+        membersCacheRef.current.set(cacheKey, {
+          data: normalizedMembers,
+          ts: now,
+          totalCount: normalizedMembers.length,
+          loadedAll: true
+        })
+        appContextLog(`Successfully loaded ${normalizedMembers.length} members for offline snapshot`)
+        return normalizedMembers
       }
 
-      // Fetch data - paginate to avoid Supabase default 1000-row cap
-      appContextLog(`Querying ${tableName} with session user: ${session.user?.id}`)
-
-      let data = []
-      let fetchOffset = 0
-      const FETCH_PAGE = 1000
-      let error = null
-      while (true) {
-        const { data: page, error: pageError } = await supabase
-          .from(tableName)
-          .select('*')
-          .range(fetchOffset, fetchOffset + FETCH_PAGE - 1)
-
-        if (pageError) { error = pageError; break }
-        if (!page || page.length === 0) break
-        data = data.concat(page)
-        if (page.length < FETCH_PAGE) break
-        fetchOffset += FETCH_PAGE
+      const cached = membersCacheRef.current.get(cacheKey)
+      if (!forceRefresh && cached && (now - cached.ts) < MEMBER_PREVIEW_CACHE_TTL_MS) {
+        appContextLog('Using cached members for', cacheKey)
+        return applyMemberPreviewCache(tableName, cached, { background })
       }
+
+      const persistedCache = readMemberPreviewCache(workspaceCacheScope, tableName)
+      if (!forceRefresh && persistedCache && (now - persistedCache.ts) < MEMBER_PREVIEW_CACHE_TTL_MS) {
+        appContextLog('Using persisted cached members for', cacheKey)
+        return applyMemberPreviewCache(tableName, persistedCache, { background })
+      }
+
+      appContextLog(`Querying first ${MEMBER_PREVIEW_PAGE_SIZE} members from ${tableName} with session user: ${session.user?.id}`)
+      const { data, error, count } = await fetchMemberPreviewPage(tableName, 0)
 
       appContextLog(`Query result: ${data?.length || 0} rows, error: ${error?.message || 'none'}`)
 
@@ -1615,8 +1926,14 @@ export const AppProvider = ({ children }) => {
         // Keep members even without names - don't filter them out as that could cause members to disappear
         // The normalizeMemberRecord function will handle setting a default name if needed
         const normalizedMembers = (data || []).map(normalizeMemberRecord)
+        const totalCount = count ?? normalizedMembers.length
+        const loadedAll = normalizedMembers.length >= totalCount || normalizedMembers.length < MEMBER_PREVIEW_PAGE_SIZE
+        const cachePayload = { data: normalizedMembers, ts: now, totalCount, loadedAll }
         setMembers(normalizedMembers)
-        membersCacheRef.current.set(cacheKey, { data: normalizedMembers, ts: now })
+        setMembersTotalCount(totalCount)
+        setMembersLoadedAll(loadedAll)
+        membersCacheRef.current.set(cacheKey, cachePayload)
+        writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
         appContextLog(`Successfully loaded ${normalizedMembers.length} members from ${tableName}`)
         appContextLog('First few members:', normalizedMembers.slice(0, 3))
         appContextLog('Sample member structure:', normalizedMembers[0])
@@ -1640,6 +1957,55 @@ export const AppProvider = ({ children }) => {
       if (!background) {
         setLoading(false)
       }
+    }
+  }
+
+  const fetchMoreMembers = async (tableName = currentTable, options = {}) => {
+    const { forceOnline = false } = options
+    if (!tableName || membersLoadedAll || shouldUseOfflineData || isDeveloperBypass || !isSupabaseConfigured()) {
+      return members
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        toast.error('Session expired. Please refresh and log in again.')
+        return members
+      }
+
+      const offset = members.length
+      const { data, error, count } = await fetchMemberPreviewPage(tableName, offset)
+      if (error) throw error
+
+      const normalizedPage = (data || []).map(normalizeMemberRecord)
+      const mergedMembers = mergeMemberPreviewPages(members, normalizedPage)
+      const totalCount = count ?? membersTotalCount ?? mergedMembers.length
+      const loadedAll =
+        mergedMembers.length >= totalCount ||
+        normalizedPage.length < MEMBER_PREVIEW_PAGE_SIZE
+      const cachePayload = {
+        data: mergedMembers,
+        ts: Date.now(),
+        totalCount,
+        loadedAll
+      }
+
+      setMembers(mergedMembers)
+      setMembersTotalCount(totalCount)
+      setMembersLoadedAll(loadedAll)
+      membersCacheRef.current.set(tableName || 'default', cachePayload)
+      writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+      return mergedMembers
+    } catch (error) {
+      console.error('Error loading more members:', error)
+      if (!forceOnline && (isTransientSupabaseError(error) || !isBrowserOnline())) {
+        const cached = readMemberPreviewCache(workspaceCacheScope, tableName)
+        if (cached) {
+          return applyMemberPreviewCache(tableName, cached, { background: true })
+        }
+      }
+      toast.error('Could not load more members right now.')
+      return members
     }
   }
 
@@ -1731,10 +2097,19 @@ export const AppProvider = ({ children }) => {
         throw new Error('Member was saved but no record was returned from Supabase')
       }
 
-      invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
-      setMembers(prev => [createdMember, ...prev.filter(existing => existing.id !== createdMember.id)])
-      fetchMembers(currentTable, { forceRefresh: true, background: true }).catch((refreshError) => {
-        console.warn('[addMember] Background refresh failed after save:', refreshError)
+      searchCacheRef.current.clear()
+      setMembers(prev => {
+        const nextMembers = [createdMember, ...prev.filter(existing => existing.id !== createdMember.id)]
+        persistLoadedMemberPreview(currentTable, nextMembers, {
+          totalCount: Math.max((membersTotalCount || prev.length) + 1, nextMembers.length),
+          loadedAll: membersLoadedAll
+        })
+        return nextMembers
+      })
+      recordRecentMemberEdit(createdMember, new Date().toISOString(), {
+        action: 'add',
+        summary: 'Added member',
+        table: currentTable
       })
       toast.success('Member added')
 
@@ -2462,8 +2837,6 @@ export const AppProvider = ({ children }) => {
         }
 
         attendanceColumn = result.columnName
-        // Refresh members to get the new column
-        await fetchMembers(currentTable)
       }
 
       await executeSupabaseWrite(
@@ -2481,7 +2854,14 @@ export const AppProvider = ({ children }) => {
       // Update local state for members and attendanceData (for real-time UI updates)
       applyLocalAttendanceState(memberId, effectiveDate, present, attendanceColumn)
 
-      invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+      searchCacheRef.current.clear()
+      const changedMember = members.find(m => m.id === memberId) || { id: memberId }
+      recordRecentMemberEdit(changedMember, new Date().toISOString(), {
+        action: 'attendance',
+        summary: `Marked ${present === null ? 'clear' : present ? 'present' : 'absent'}`,
+        dateKey: getLocalDateString(effectiveDate),
+        table: currentTable
+      })
 
       // Check if month is complete and process badges (guarded)
       if (badgeProcessingEnabled) {
@@ -2765,11 +3145,12 @@ export const AppProvider = ({ children }) => {
   // Options: { silent: boolean, allowLocalFallback: boolean, skipRefresh: boolean }
   const updateMember = async (id, updates, options = {}) => {
     const { silent = false, allowLocalFallback = false, skipRefresh = false } = options
+    const editTimestamp = new Date().toISOString()
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - update local state
         const baseMember = members.find(m => m.id === id) || {}
-        const updatedMember = { ...baseMember, ...updates }
+        const updatedMember = { ...baseMember, ...updates, updated_at: editTimestamp }
         const updatedNameDemo = (
           typeof updates.full_name === 'string' && updates.full_name.trim()
         ) ? updates.full_name : (typeof updates['Full Name'] === 'string' ? updates['Full Name'] : undefined)
@@ -2778,12 +3159,13 @@ export const AppProvider = ({ children }) => {
           updatedMember['Full Name'] = updatedNameDemo
         }
         setMembers(prev => prev.map(m => m.id === id ? updatedMember : m))
+        recordRecentMemberEdit(updatedMember, editTimestamp)
         if (!silent) toast.success('Member updated')
         return updatedMember
       }
 
       if (shouldUseOfflineData || !isBrowserOnline()) {
-        const createdAt = new Date().toISOString()
+        const createdAt = editTimestamp
         const existingMember = members.find(m => m.id === id) || {}
         const optimisticMember = normalizeMemberRecord({
           ...existingMember,
@@ -2817,6 +3199,9 @@ export const AppProvider = ({ children }) => {
 
       // Defensive copy so we can safely normalize values
       let normalized = { ...updates }
+      if (normalized.updated_at === undefined) {
+        normalized.updated_at = editTimestamp
+      }
 
       // Normalize name field using schema-aware detection
       const nameCol = await resolveNameColumn(currentTable)
@@ -2876,10 +3261,14 @@ export const AppProvider = ({ children }) => {
       // Get existing columns from the table to filter out non-existent fields
       let validColumns = null
       try {
-        const { data: sampleRow } = await supabase.from(currentTable).select('*').limit(1)
-        if (sampleRow && sampleRow.length > 0) {
-          validColumns = new Set(Object.keys(sampleRow[0]))
+        const { data: columnRows, error: columnError } = await supabase.rpc('get_table_columns', {
+          table_name: currentTable
+        })
+        if (!columnError && Array.isArray(columnRows) && columnRows.length > 0) {
+          validColumns = new Set(columnRows.map((column) => column.column_name).filter(Boolean))
           console.log('[updateMember] Valid columns in table:', Array.from(validColumns))
+        } else if (columnError) {
+          console.warn('Could not fetch table columns, proceeding with fallback mapping:', columnError)
         }
       } catch (e) {
         console.warn('Could not fetch table schema, proceeding with all fields:', e)
@@ -3011,7 +3400,7 @@ export const AppProvider = ({ children }) => {
         return members.find(m => m.id === id)
       }
 
-      const optimisticPatch = { ...updates, ...normalized }
+      const optimisticPatch = { ...updates, ...normalized, updated_at: editTimestamp }
 
       try {
         await executeSupabaseWrite(
@@ -3045,6 +3434,7 @@ export const AppProvider = ({ children }) => {
       }
 
       // Update members state with optimistic patch - preserve existing name if not being updated
+      let recentEditedMember = null
       setMembers(prev => {
         // Get the existing member to preserve their name
         const existingMember = prev.find(m => m.id === id)
@@ -3069,6 +3459,7 @@ export const AppProvider = ({ children }) => {
         const updatedMembers = prev.map(m => {
           if (m.id !== id) return m
           const merged = { ...m, ...optimisticPatch }
+          merged.updated_at = editTimestamp
           // Ensure name is preserved
           if (finalName !== undefined) {
             merged.full_name = finalName
@@ -3092,24 +3483,32 @@ export const AppProvider = ({ children }) => {
             merged.current_level = resolvedLevel
           }
           console.log('Merged member after update:', merged)
+          recentEditedMember = merged
           return merged
         })
         console.log('Updated members array:', updatedMembers)
         return updatedMembers
       })
+      const changedFields = Object.keys(updates || {}).filter((key) => updates[key] !== undefined)
+      recordRecentMemberEdit(recentEditedMember || { ...(members.find(m => m.id === id) || {}), ...optimisticPatch }, editTimestamp, {
+        action: 'update',
+        summary: changedFields.length ? `Updated ${changedFields.slice(0, 3).join(', ')}` : 'Updated member details',
+        changedFields,
+        table: currentTable
+      })
 
       // Update search term to trigger re-filtering
       refreshSearch()
 
-      // Invalidate stale caches. Some flows, like missing-info saves, should avoid
-      // forcing the whole dashboard into skeleton loading after optimistic state updates.
-      invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
-      if (!skipRefresh) {
-        try {
-          await fetchMembers(currentTable, { forceRefresh: true })
-        } catch (refreshErr) {
-          console.warn('[updateMember] Post-update refresh failed, using optimistic state:', refreshErr)
-        }
+      searchCacheRef.current.clear()
+      const cachedUpdateMember = recentEditedMember || { ...(members.find(m => m.id === id) || {}), ...optimisticPatch }
+      persistLoadedMemberPreview(
+        currentTable,
+        members.map((member) => member.id === id ? normalizeMemberRecord({ ...member, ...cachedUpdateMember }) : member),
+        { totalCount: membersTotalCount, loadedAll: membersLoadedAll }
+      )
+      if (skipRefresh) {
+        appContextLog('[updateMember] Kept optimistic member cache without post-save refetch.')
       }
 
       if (!silent) toast.success('Member updated')
@@ -3118,22 +3517,25 @@ export const AppProvider = ({ children }) => {
       const memberName = members.find(m => m.id === id)?.['full_name'] || members.find(m => m.id === id)?.['Full Name'] || 'Unknown'
       logActivity('UPDATE_MEMBER', `Updated member: ${memberName}`)
 
-      return members.find(m => m.id === id)
+      return { ...(members.find(m => m.id === id) || {}), ...optimisticPatch }
     } catch (error) {
       console.error('Error updating member:', error)
       if (allowLocalFallback) {
         const fallbackName = (
           typeof updates.full_name === 'string' && updates.full_name.trim()
         ) ? updates.full_name : (typeof updates['Full Name'] === 'string' ? updates['Full Name'] : undefined)
+        let fallbackEditedMember = null
         setMembers(prev => prev.map(m => {
           if (m.id !== id) return m
-          const merged = { ...m, ...updates }
+          const merged = { ...m, ...updates, updated_at: editTimestamp }
           if (fallbackName !== undefined) {
             merged['full_name'] = fallbackName
             merged['Full Name'] = fallbackName
           }
+          fallbackEditedMember = merged
           return merged
         }))
+        recordRecentMemberEdit(fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }, editTimestamp)
         refreshSearch()
         if (!silent) toast.info('Saved locally on this device')
         return members.find(m => m.id === id)
@@ -3271,10 +3673,16 @@ export const AppProvider = ({ children }) => {
 
       console.log(`[DELETE] VERIFIED - member ${memberId} successfully removed from ${currentTable}`)
 
+      const deletedMember = members.find(member => member.id === memberId) || { id: memberId }
+
       // Confirmed deleted - now update local state
       setMembers(prevMembers => {
         const updated = prevMembers.filter(member => member.id !== memberId)
         console.log(`[DELETE] Members state updated: ${prevMembers.length} -> ${updated.length}`)
+        persistLoadedMemberPreview(currentTable, updated, {
+          totalCount: Math.max(0, (membersTotalCount || prevMembers.length) - 1),
+          loadedAll: membersLoadedAll
+        })
         return updated
       })
 
@@ -3297,15 +3705,13 @@ export const AppProvider = ({ children }) => {
         return filtered.length > 0 ? filtered : null
       })
 
-      // Invalidate caches so refreshSearch / fetchMembers don't restore stale data
+      // Update caches/search without refetching the whole table.
       searchCacheRef.current.clear()
-      const cacheKey = currentTable || 'default'
-      membersCacheRef.current.delete(cacheKey)
-      try {
-        await fetchMembers(currentTable)
-      } catch (refreshErr) {
-        console.warn('[DELETE] Post-delete refresh failed, keeping optimistic UI state:', refreshErr)
-      }
+      recordRecentMemberEdit(deletedMember, new Date().toISOString(), {
+        action: 'delete',
+        summary: 'Deleted member',
+        table: currentTable
+      })
       console.log(`[DELETE] Member ${memberId} deleted successfully and UI updated`)
       toast.success('Member deleted')
       logActivity('DELETE_MEMBER', `Deleted member ID: ${memberId}`)
@@ -3854,8 +4260,10 @@ export const AppProvider = ({ children }) => {
     if (!isSupabaseConfigured()) return 'Full Name'
     let nameCol = 'Full Name'
     try {
-      // Use select('*') to avoid referencing columns that might not exist
-      const { data, error } = await supabase.from(tableName).select('*').limit(1)
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('"Full Name",full_name,name,"Name"')
+        .limit(1)
       if (!error && data && data.length) {
         const row = data[0]
         if (Object.prototype.hasOwnProperty.call(row, 'Full Name')) {
@@ -3904,30 +4312,68 @@ export const AppProvider = ({ children }) => {
       return
     }
 
-    const nameCol = await resolveNameColumn(currentTable)
     const isAge = /^\d{1,3}$/.test(trimmed)
-    const tokenized = trimmed.split(/\s+/).filter(Boolean)
-    if (tokenized.length > 1 && !isAge) {
-      setServerSearchResults(null)
-      return
-    }
-    let query = supabase.from(currentTable).select('*')
+    const safe = trimmed.replace(/%/g, '').replace(/_/g, '').replace(/\s+/g, ' ').trim()
+    let query = supabase.from(currentTable).select(MEMBER_PREVIEW_SELECT).limit(20)
     if (isAge) {
       query = query.eq('Age', parseInt(trimmed, 10))
     } else {
-      const safe = trimmed.replace(/%/g, '').replace(/_/g, '').replace(/\s+/g, ' ').trim()
-      const orExpr = `"${nameCol}".ilike.%${safe}%,"${nameCol}".ilike.${safe}%,"${nameCol}".ilike.% ${safe}%`
+      const orExpr = [
+        `"Full Name".ilike.%${safe}%`,
+        `full_name.ilike.%${safe}%`,
+        `name.ilike.%${safe}%`,
+        `"Name".ilike.%${safe}%`,
+        `member_code.ilike.%${safe}%`,
+        `"Phone Number".ilike.%${safe}%`,
+        `phone_number.ilike.%${safe}%`
+      ].join(',')
       query = query.or(orExpr)
     }
-    const { data, error } = await query
+    let { data, error } = await query
+    if (error && !isAge) {
+      const nameCol = await resolveNameColumn(currentTable)
+      const fallback = await supabase
+        .from(currentTable)
+        .select(MEMBER_PREVIEW_SELECT)
+        .ilike(nameCol, `%${safe}%`)
+        .limit(20)
+      data = fallback.data
+      error = fallback.error
+    }
+    if (error) {
+      const message = error.message?.toLowerCase() || ''
+      const missingColumn =
+        error.code === 'PGRST100' ||
+        error.code === '42703' ||
+        message.includes('failed to parse') ||
+        message.includes('does not exist') ||
+        message.includes('column')
+
+      if (missingColumn) {
+        const nameCol = await resolveNameColumn(currentTable)
+        const fallback = isAge
+          ? await supabase
+              .from(currentTable)
+              .select('*')
+              .eq('Age', parseInt(trimmed, 10))
+              .limit(20)
+          : await supabase
+              .from(currentTable)
+              .select('*')
+              .ilike(nameCol, `%${safe}%`)
+              .limit(20)
+        data = fallback.data
+        error = fallback.error
+      }
+    }
     if (error) {
       console.error('Server search error', error)
       setServerSearchResults(null)
       return
     }
-    const sorted = (data || []).slice().sort((a, b) => {
-      const an = (a[nameCol] || '').toString().toLowerCase()
-      const bn = (b[nameCol] || '').toString().toLowerCase()
+    const sorted = (data || []).map(normalizeMemberRecord).slice().sort((a, b) => {
+      const an = (getMemberDisplayNameForRecentEdit(a) || '').toString().toLowerCase()
+      const bn = (getMemberDisplayNameForRecentEdit(b) || '').toString().toLowerCase()
       if (an < bn) return -1
       if (an > bn) return 1
       return 0
@@ -3944,15 +4390,14 @@ export const AppProvider = ({ children }) => {
     const list = serverSearchResults && serverSearchResults.length > 0 ? serverSearchResults : filteredMembers
     const first = list && list.length ? list[0] : null
     if (!first) return
-    const statusBool = kw === 'present'
+      const statusBool = kw === 'present'
     try {
       const dateObj = selectedAttendanceDate ? new Date(selectedAttendanceDate) : new Date()
       await markAttendance(first.id, dateObj, statusBool)
-      await fetchMembers(currentTable)
     } catch (e) {
       console.error('Quick mark attendance failed', e)
     }
-  }, [serverSearchResults, filteredMembers, selectedAttendanceDate, markAttendance, fetchMembers, currentTable])
+  }, [serverSearchResults, filteredMembers, selectedAttendanceDate, markAttendance])
 
   // Function to refresh search results
   const refreshSearch = useCallback(() => {
@@ -3970,7 +4415,7 @@ export const AppProvider = ({ children }) => {
     toast.info('Refreshing member data...')
 
     try {
-      await fetchMembers(currentTable)
+      await fetchMembers(currentTable, { forceRefresh: true, forceOnline: true })
       toast.success('Member data refreshed successfully!')
       console.log('Members refreshed, new count:', members.length)
     } catch (error) {
@@ -3984,7 +4429,7 @@ export const AppProvider = ({ children }) => {
     console.log('Force refreshing members (silent) ...')
     try {
       // Force bypass cache to get fresh data from Supabase
-      await fetchMembers(currentTable, { forceRefresh: true })
+      await fetchMembers(currentTable, { forceRefresh: true, forceOnline: true })
       console.log('Members refreshed silently, new count:', members.length)
     } catch (error) {
       console.error('Error refreshing members (silent):', error)
@@ -4005,16 +4450,40 @@ export const AppProvider = ({ children }) => {
         console.log(`Checking table: ${tableName}`)
 
         if (isSupabaseConfigured()) {
-          const { data, error } = await supabase
+          const safe = searchTerm.replace(/%/g, '').replace(/_/g, '').trim()
+          let { data, error } = await supabase
             .from(tableName)
-            .select('*')
+            .select(MEMBER_PREVIEW_SELECT)
+            .or(`"Full Name".ilike.%${safe}%,full_name.ilike.%${safe}%,name.ilike.%${safe}%,"Name".ilike.%${safe}%,member_code.ilike.%${safe}%`)
+            .limit(20)
+
+          if (error) {
+            const message = error.message?.toLowerCase() || ''
+            const missingColumn =
+              error.code === 'PGRST100' ||
+              error.code === '42703' ||
+              message.includes('failed to parse') ||
+              message.includes('does not exist') ||
+              message.includes('column')
+
+            if (missingColumn) {
+              const nameCol = await resolveNameColumn(tableName)
+              const fallback = await supabase
+                .from(tableName)
+                .select('*')
+                .ilike(nameCol, `%${safe}%`)
+                .limit(20)
+              data = fallback.data
+              error = fallback.error
+            }
+          }
 
           if (error) {
             console.log(`Error accessing ${tableName}:`, error.message)
             continue
           }
 
-          const foundMembers = data?.filter(member => {
+          const foundMembers = data?.map(normalizeMemberRecord).filter(member => {
             const fullName = (
               (typeof member['full_name'] === 'string' ? member['full_name'] : '') ||
               (typeof member['Full Name'] === 'string' ? member['Full Name'] : '') ||
@@ -4050,7 +4519,7 @@ export const AppProvider = ({ children }) => {
     }
 
     return foundInTables
-  }, [monthlyTables, isSupabaseConfigured])
+  }, [monthlyTables, isSupabaseConfigured, resolveNameColumn])
 
   // Validate member data for missing fields
   const validateMemberData = useCallback((member) => {
@@ -4885,11 +5354,28 @@ export const AppProvider = ({ children }) => {
 
       appContextLog('Loading badge data from Supabase...')
 
-      // Select all columns to be safe, then process locally
-      // This avoids errors if specific badge columns don't exist
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from(currentTable)
-        .select('*')
+        .select(MEMBER_BADGE_SELECT)
+
+      if (error) {
+        const message = error.message?.toLowerCase() || ''
+        const missingColumn =
+          error.code === 'PGRST100' ||
+          error.code === '42703' ||
+          message.includes('failed to parse') ||
+          message.includes('does not exist') ||
+          message.includes('column')
+
+        if (missingColumn) {
+          console.warn('Badge columns not fully available; retrying with legacy badge columns:', error)
+          const fallback = await supabase
+            .from(currentTable)
+            .select('id,"Member","Regular","Newcomer"')
+          data = fallback.data
+          error = fallback.error
+        }
+      }
 
       if (error) {
         console.error('Error loading badge data:', error)
@@ -4942,7 +5428,12 @@ export const AppProvider = ({ children }) => {
       let snapshotAttendanceData = attendanceData
       if (currentTable) {
         const [freshMembers, freshAttendance] = await Promise.all([
-          fetchMembers(currentTable, { forceRefresh: true, background: true, forceOnline: true }).catch((error) => {
+          fetchMembers(currentTable, {
+            forceRefresh: true,
+            background: true,
+            forceOnline: true,
+            fullSnapshot: true
+          }).catch((error) => {
             console.warn('Offline preparation could not refresh members:', error)
             return null
           }),
@@ -5244,50 +5735,69 @@ export const AppProvider = ({ children }) => {
   }, [currentTable])
 
   // QR-based marking handler
-  // If the URL contains ?qr_mark=<memberId>&date=YYYY-MM-DD the app will attempt to mark that member present for the supplied date (or 30th of currentTable if no date)
+  // If the URL contains ?member_checkin=1&qr_mark=<memberId>&date=YYYY-MM-DD,
+  // mark that member present for the supplied Sunday without showing the missing-info prompt.
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
       const params = new URLSearchParams(window.location.search)
       const qrMark = params.get('qr_mark')
+      const isMemberCheckIn = params.get('member_checkin') === '1'
       const dateParam = params.get('date')
+      const codeParam = params.get('code')
+      const tableParam = params.get('table')
 
       if (!qrMark) return
+      if (!currentTable) return
+      if (tableParam && !currentTable) return
+      if (tableParam && currentTable && tableParam !== currentTable) return
 
         ; (async () => {
           try {
-            // Determine date to use: prefer provided date, otherwise the 30th of the current table month
+            const scannedMember = members.find((member) => String(member.id) === String(qrMark))
+            if (!scannedMember && members.length === 0) return
+
+            // Determine date to use: prefer QR date, then selected attendance Sunday, then current table default.
             let targetDate = null
             if (dateParam) {
               const d = new Date(dateParam)
               if (!isNaN(d.getTime())) targetDate = d
             }
+            if (!targetDate && selectedAttendanceDate) {
+              targetDate = new Date(selectedAttendanceDate)
+            }
             if (!targetDate && currentTable) {
-              try {
-                const [monthName, year] = currentTable.split('_')
-                const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-                const monthIndex = months.indexOf(monthName)
-                if (monthIndex !== -1) {
-                  targetDate = new Date(parseInt(year, 10), monthIndex, 30)
-                }
-              } catch (e) {
-                // fallback to today
-                targetDate = new Date()
-              }
+              targetDate = getSundayDefaultForTable(currentTable, new Date())
             }
             if (!targetDate) targetDate = new Date()
+            const normalizedTargetDate = normalizeDateToSundayForTable(targetDate, currentTable) || targetDate
+            const targetDateKey = getLocalDateString(normalizedTargetDate)
 
-            // Mark attendance as present
-            await markAttendance(qrMark, targetDate, true)
+            if (targetDateKey && currentTable) {
+              setAndSaveAttendanceDate(normalizedTargetDate, currentTable)
+            }
 
-            // Show a confirmation toast
-            try { toast.success('Attendance marked via QR') } catch { }
+            if (scannedMember) {
+              const memberName = scannedMember.full_name || scannedMember['Full Name'] || scannedMember.name || ''
+              setSearchTerm(memberName || codeParam || '')
+              setDashboardTab('all')
+            }
 
-            // Remove query params so repeated reloads do not re-trigger the action
+            const currentStatus = attendanceData[targetDateKey]?.[qrMark]
+            if (currentStatus === true) {
+              try { toast.info('Member already marked present for this Sunday') } catch { }
+            } else {
+              await markAttendance(qrMark, normalizedTargetDate, true)
+              try { toast.success(isMemberCheckIn ? 'QR check-in marked present' : 'Attendance marked via QR') } catch { }
+            }
+
             try {
               const url = new URL(window.location.href)
+              url.searchParams.delete('member_checkin')
               url.searchParams.delete('qr_mark')
               url.searchParams.delete('date')
+              url.searchParams.delete('code')
+              url.searchParams.delete('table')
               window.history.replaceState({}, document.title, url.toString())
             } catch (e) {
               // ignore
@@ -5299,7 +5809,7 @@ export const AppProvider = ({ children }) => {
     } catch (e) {
       console.error('Failed to parse QR params', e)
     }
-  }, [currentTable, markAttendance])
+  }, [attendanceData, currentTable, markAttendance, members, selectedAttendanceDate, setAndSaveAttendanceDate])
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -5393,8 +5903,13 @@ export const AppProvider = ({ children }) => {
     logActivity,
     updateWorkspaceForAllTables,
     members,
+    membersTotalCount,
+    membersLoadedAll,
+    recentMemberEdits,
+    recordRecentMemberEdit,
     filteredMembers,
     loading,
+    preferences,
     searchTerm,
     setSearchTerm,
     refreshSearch,
@@ -5406,6 +5921,7 @@ export const AppProvider = ({ children }) => {
     updateMember,
     deleteMember,
     fetchMembers,
+    fetchMoreMembers,
     attendanceData,
     setAttendanceData,
     markAttendance,
@@ -5496,13 +6012,13 @@ export const AppProvider = ({ children }) => {
     fetchLockedDefaultDate,
     sendAdminPeriodBroadcast
   }), [
-    members, filteredMembers, loading, searchTerm, serverSearchResults,
+    members, membersTotalCount, membersLoadedAll, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, searchTerm, serverSearchResults,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,
     refreshSearch, forceRefreshMembers, forceRefreshMembersSilent,
     searchMemberAcrossAllTables, addMember, updateMember, deleteMember,
-    fetchMembers, markAttendance, bulkAttendance, fetchAttendanceForDate, fetchAttendanceForDateInTable,
+    fetchMembers, fetchMoreMembers, markAttendance, bulkAttendance, fetchAttendanceForDate, fetchAttendanceForDateInTable,
     loadAllAttendanceData, loadAllBadgeData, changeCurrentTable, createNewMonth,
     deleteMonthTable, fetchMonthlyTables, getAttendanceColumns, getAvailableAttendanceDates,
     findAttendanceColumnForDate, calculateAttendanceRate, calculateMemberBadge,

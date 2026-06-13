@@ -1,5 +1,22 @@
-import React from 'react'
-import { BadgeCheck, CheckCircle, Church, Mail, ScanSearch, Sparkles, UserRound } from 'lucide-react'
+import React, { useState } from 'react'
+import { BadgeCheck, CheckCircle, Church, Edit3, Mail, ScanSearch, Shuffle, Sparkles, UserRound, X } from 'lucide-react'
+import MemberCodeBadge, { normalizeBadgeStyleKey } from './MemberCodeBadge'
+import MemberCodePassCard, {
+    MEMBER_CODE_CARD_STYLE_OPTIONS,
+    getMemberCodeCardStyle,
+    normalizeMemberCodeCardStyleKey
+} from './MemberCodePassCard'
+
+const AUTO_CYCLE_INTERVALS = [
+    { value: 15, label: '15 min' },
+    { value: 30, label: '30 min' },
+    { value: 60, label: '1 hour' }
+]
+
+const normalizeAutoCycleMinutes = (value) => {
+    const numericValue = Number(value)
+    return AUTO_CYCLE_INTERVALS.some((option) => option.value === numericValue) ? numericValue : 30
+}
 
 const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId, getSettingTargetClass }) => (
     <div
@@ -18,7 +35,10 @@ const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingI
         </div>
         <button
             type="button"
-            onClick={onChange}
+            onClick={(event) => {
+                event.stopPropagation()
+                onChange?.()
+            }}
             className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
                 checked ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
             }`}
@@ -34,47 +54,54 @@ const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingI
 )
 
 const optionClass = (active) => (
-    `relative rounded-2xl border p-3 text-left transition-all ${
+    `group relative min-w-0 rounded-2xl border p-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-300 ${
         active
             ? 'border-orange-500 bg-orange-50 text-orange-900 shadow-sm dark:bg-orange-500/15 dark:text-orange-100'
-            : 'border-gray-200 bg-white text-gray-700 hover:border-orange-300 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300'
+            : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300'
     }`
 )
 
-const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass }) => {
-    const enabled = preferences?.member_codes_enabled === true
+const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
+    const workspaceEnabled = preferences?.workspace_member_codes_enabled
+    const enabled = (workspaceEnabled ?? preferences?.member_codes_enabled) === true
     const quickPassEnabled = preferences?.member_code_quick_pass_enabled !== false
     const showLogo = preferences?.member_code_show_logo !== false
     const showPhoto = preferences?.member_code_show_photo !== false
     const showEmail = preferences?.member_code_show_email !== false
     const autoOpenProfile = preferences?.member_code_auto_profile_enabled === true
     const badgeStyle = preferences?.member_code_badge_style || 'soft'
-    const cardStyle = preferences?.member_code_card_style || 'wave'
-    const accentColor = preferences?.member_code_accent_color || 'orange'
+    const normalizedBadgeStyle = normalizeBadgeStyleKey(badgeStyle)
+    const cardStyle = normalizeMemberCodeCardStyleKey(preferences?.member_code_card_style)
+    const selectedCardStyle = getMemberCodeCardStyle(cardStyle)
+    const autoCycleMinutes = normalizeAutoCycleMinutes(preferences?.member_code_auto_cycle_minutes)
+    const churchName = preferences?.member_code_church_name || 'DatSer Church'
+    const [editingChurchName, setEditingChurchName] = useState(false)
+    const [draftChurchName, setDraftChurchName] = useState(churchName)
 
     const setPreference = (key, value) => updatePreferences?.({ [key]: value })
+    const setMemberCodesEnabled = (value) => {
+        updatePreferences?.({
+            member_codes_enabled: value,
+            ...(isAdminAccess ? { workspace_member_codes_enabled: value } : {})
+        })
+    }
+    const saveChurchName = () => {
+        const cleanName = draftChurchName.trim() || 'DatSer Church'
+        setPreference('member_code_church_name', cleanName)
+        setEditingChurchName(false)
+    }
 
     const badgeStyles = [
-        { id: 'soft', label: 'Soft' },
-        { id: 'outline', label: 'Outline' },
-        { id: 'solid', label: 'Solid' },
-        { id: 'circle', label: 'Circle' }
+        { id: 'coral', label: 'Coral Flame', description: 'Warm red-orange code badge' },
+        { id: 'green', label: 'Green Dove', description: 'Soft green badge with gentle glow' },
+        { id: 'crimson', label: 'Crimson', description: 'Dark red badge, clear outline' },
+        { id: 'magenta', label: 'Purple Worship', description: 'Bold purple and magenta badge' },
+        { id: 'amber', label: 'Golden Prayer', description: 'Amber worship pass badge' }
     ]
 
-    const cardStyles = [
-        { id: 'wave', label: 'Wave' },
-        { id: 'glass', label: 'Glass' },
-        { id: 'gradient', label: 'Gradient' },
-        { id: 'classic', label: 'Classic' }
-    ]
+    const cardStyles = MEMBER_CODE_CARD_STYLE_OPTIONS
 
-    const accents = [
-        { id: 'orange', className: 'bg-orange-500' },
-        { id: 'blue', className: 'bg-blue-500' },
-        { id: 'purple', className: 'bg-purple-500' },
-        { id: 'green', className: 'bg-emerald-500' },
-        { id: 'teal', className: 'bg-cyan-500' }
-    ]
+    const passBadgeStyle = selectedCardStyle.badgeStyleKey
 
     return (
         <div className="space-y-6">
@@ -85,7 +112,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                 </p>
             </div>
 
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+            <div className="grid gap-5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,32rem),1fr))]">
                 <div className="space-y-5">
                     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:divide-gray-700">
                         <ToggleRow
@@ -95,8 +122,19 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={enabled}
                             settingId="member_codes_enabled"
                             getSettingTargetClass={getSettingTargetClass}
-                            onChange={() => setPreference('member_codes_enabled', !enabled)}
+                            onChange={() => setMemberCodesEnabled(!enabled)}
                         />
+                        {isAdminAccess && (
+                            <ToggleRow
+                                icon={BadgeCheck}
+                                title="Workspace Member Codes"
+                                description="Admin control for the member-code display default across this workspace."
+                                checked={workspaceEnabled === true}
+                                settingId="workspace_member_codes_enabled"
+                                getSettingTargetClass={getSettingTargetClass}
+                                onChange={() => setPreference('workspace_member_codes_enabled', workspaceEnabled !== true)}
+                            />
+                        )}
                         <ToggleRow
                             icon={ScanSearch}
                             title="Quick Pass"
@@ -109,7 +147,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                         <ToggleRow
                             icon={Church}
                             title="Show Church Logo"
-                            description="Show the DatSer church mark on the pass."
+                            description="Show the church mark on the pass."
                             checked={showLogo}
                             settingId="member_code_logo"
                             getSettingTargetClass={getSettingTargetClass}
@@ -145,16 +183,57 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                     </div>
 
                     <div data-setting-id="member_code_badge_style" tabIndex={-1} className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_badge_style') || ''}`}>
-                        <h4 className="font-semibold text-gray-900 dark:text-white">Badge Style</h4>
-                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Choose the shape of the member code badge.</p>
-                        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <h4 className="font-semibold text-gray-900 dark:text-white">Badge Style</h4>
+                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Choose the shape and automatic mix for member code badges.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setPreference('member_code_badge_style', 'auto')}
+                                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition ${
+                                    badgeStyle === 'auto'
+                                        ? 'border-orange-500 bg-orange-600 text-white'
+                                        : 'border-orange-200 bg-orange-50 text-orange-700 hover:border-orange-400 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200'
+                                }`}
+                            >
+                                <Shuffle className="h-4 w-4" />
+                                Auto Mix
+                            </button>
+                        </div>
+                        {badgeStyle === 'auto' && (
+                            <div className="mt-4 rounded-xl border border-orange-500/30 bg-orange-500/10 p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <p className="text-sm font-bold text-orange-900 dark:text-orange-100">Rotate member colors</p>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">Auto Mix changes each member badge on your chosen schedule.</p>
+                                    </div>
+                                    <div className="flex rounded-xl border border-orange-500/30 bg-black/5 p-1 dark:bg-black/20">
+                                        {AUTO_CYCLE_INTERVALS.map((option) => (
+                                            <button
+                                                key={option.value}
+                                                type="button"
+                                                onClick={() => setPreference('member_code_auto_cycle_minutes', option.value)}
+                                                className={`rounded-lg px-3 py-1.5 text-xs font-black transition ${
+                                                    autoCycleMinutes === option.value
+                                                        ? 'bg-orange-600 text-white shadow-sm'
+                                                        : 'text-orange-800 hover:bg-orange-500/10 dark:text-orange-100'
+                                                }`}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        <div className="mt-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,9.25rem),1fr))]">
                             {badgeStyles.map((option) => (
-                                <button key={option.id} type="button" onClick={() => setPreference('member_code_badge_style', option.id)} className={optionClass(badgeStyle === option.id)}>
-                                    <span className={`${option.id === 'circle' ? 'rounded-full px-3 py-2' : 'rounded-lg px-3 py-2'} inline-flex border border-orange-400 bg-orange-500/15 text-xs font-black text-orange-700 dark:text-orange-200`}>
-                                        E79
-                                    </span>
-                                    <span className="mt-2 block text-sm font-semibold">{option.label}</span>
-                                    {badgeStyle === option.id && <CheckCircle className="absolute right-2 top-2 h-4 w-4 text-orange-500" />}
+                                <button key={option.id} type="button" onClick={() => setPreference('member_code_badge_style', option.id)} className={optionClass(normalizedBadgeStyle === option.id)}>
+                                    <MemberCodeBadge code="E79" styleKey={option.id} className="h-8 w-full max-w-[8.25rem] min-w-0 px-3 text-xs" />
+                                    <span className="mt-2 block break-words text-sm font-semibold leading-tight">{option.label}</span>
+                                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{option.description}</span>
+                                    {normalizedBadgeStyle === option.id && <CheckCircle className="absolute right-2 top-2 h-4 w-4 text-orange-500" />}
                                 </button>
                             ))}
                         </div>
@@ -162,63 +241,90 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
 
                     <div data-setting-id="member_code_card_style" tabIndex={-1} className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_card_style') || ''}`}>
                         <h4 className="font-semibold text-gray-900 dark:text-white">Card Style</h4>
-                        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Choose one premium member pass effect. Each option shows its motion live.</p>
+                        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                             {cardStyles.map((option) => (
                                 <button key={option.id} type="button" onClick={() => setPreference('member_code_card_style', option.id)} className={optionClass(cardStyle === option.id)}>
-                                    <span className="block h-12 rounded-xl bg-gradient-to-br from-gray-900 via-gray-800 to-orange-950 dark:from-gray-700 dark:to-orange-950" />
-                                    <span className="mt-2 block text-sm font-semibold">{option.label}</span>
+                                    <MemberCodePassCard styleKey={option.id} compact className="member-code-pass-card-preview h-20 rounded-xl border border-white/10 transition duration-200 group-hover:scale-[1.02]">
+                                        <div className="flex h-full items-center justify-center">
+                                            <MemberCodeBadge code="E79" styleKey={option.badgeStyleKey} className="h-8 min-w-[4.75rem] px-4 text-xs" />
+                                        </div>
+                                    </MemberCodePassCard>
+                                    <span className="mt-2 block text-sm font-semibold leading-tight">{option.label}</span>
+                                    <span className="mt-0.5 block text-xs font-semibold text-orange-700 dark:text-orange-200">{option.colorName}</span>
+                                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{option.description}</span>
                                     {cardStyle === option.id && <CheckCircle className="absolute right-2 top-2 h-4 w-4 text-orange-500" />}
                                 </button>
                             ))}
                         </div>
                     </div>
 
-                    <div data-setting-id="member_code_accent" tabIndex={-1} className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_accent') || ''}`}>
-                        <h4 className="font-semibold text-gray-900 dark:text-white">Accent Color</h4>
-                        <div className="mt-4 flex flex-wrap gap-3">
-                            {accents.map((option) => (
-                                <button
-                                    key={option.id}
-                                    type="button"
-                                    onClick={() => setPreference('member_code_accent_color', option.id)}
-                                    className={`grid h-10 w-10 place-items-center rounded-full border-2 ${accentColor === option.id ? 'border-orange-500' : 'border-transparent'}`}
-                                    aria-label={`Use ${option.id} accent`}
-                                >
-                                    <span className={`h-7 w-7 rounded-full ${option.className}`} />
-                                </button>
-                            ))}
-                        </div>
-                    </div>
                 </div>
 
-                <div className="rounded-3xl border border-gray-200 bg-gray-950 p-4 text-white shadow-xl dark:border-gray-700">
-                    <p className="text-xs font-black uppercase tracking-[0.16em] text-orange-300">Live Preview</p>
-                    <p className="mt-1 text-sm text-white/55">This is how members will see their pass and profile.</p>
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_50%_30%,rgba(249,115,22,0.35),transparent_45%),linear-gradient(180deg,#1c1f20,#101111)] p-5 text-center">
-                        {showLogo && <Church className="mx-auto h-10 w-10 text-orange-400" />}
-                        <p className="mt-2 text-sm font-semibold">DatSer Church</p>
+                <div className={`member-code-live-preview-panel rounded-3xl border p-4 shadow-xl ${selectedCardStyle.accentClass}`}>
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-orange-600 dark:text-orange-300">Live Preview</p>
+                    <p className="mt-1 text-sm text-gray-600 dark:text-white/55">This is how members will see their pass and profile.</p>
+                    <MemberCodePassCard styleKey={cardStyle} className="member-code-settings-pass-preview mt-4 rounded-2xl border p-5 text-center">
+                        {showLogo && (
+                            <div className="member-code-pass-icon-tile mx-auto">
+                                <Church className="h-10 w-10 text-[var(--member-pass-accent)]" />
+                            </div>
+                        )}
+                        <div className="mt-2 flex items-center justify-center gap-2 text-sm font-semibold">
+                            {editingChurchName ? (
+                                <div className="flex w-full items-center gap-2">
+                                    <input
+                                        value={draftChurchName}
+                                        onChange={(event) => setDraftChurchName(event.target.value)}
+                                        className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white/70 px-3 py-2 text-center text-gray-900 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-black/30 dark:text-white"
+                                        autoFocus
+                                    />
+                                    <button type="button" onClick={saveChurchName} className="rounded-xl bg-orange-600 px-3 py-2 text-xs font-bold text-white">Save</button>
+                                    <button type="button" onClick={() => { setDraftChurchName(churchName); setEditingChurchName(false) }} className="grid h-9 w-9 place-items-center rounded-xl bg-black/5 text-gray-600 dark:bg-white/10 dark:text-white/70">
+                                        <X className="h-4 w-4" />
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setDraftChurchName(churchName)
+                                            setEditingChurchName(true)
+                                        }}
+                                        className="inline-flex items-center gap-2 rounded-xl px-2 py-1 text-gray-800 transition hover:bg-black/5 dark:text-white dark:hover:bg-white/10"
+                                    >
+                                        <span>{churchName}</span>
+                                        <Edit3 className="h-3.5 w-3.5 text-gray-500 dark:text-white/45" />
+                                    </button>
+                                </>
+                            )}
+                        </div>
                         {showPhoto && (
-                            <div className="mx-auto my-5 grid h-24 w-24 place-items-center rounded-full border-4 border-orange-500 bg-gradient-to-br from-orange-500 to-purple-500 text-4xl font-black">
+                            <div className="mx-auto my-5 grid h-24 w-24 place-items-center rounded-full border-4 border-[var(--member-pass-accent)] bg-gradient-to-br from-[var(--member-pass-accent)] to-[var(--member-pass-accent-2)] text-4xl font-black text-white shadow-[0_0_42px_var(--member-pass-soft)]">
                                 E
                             </div>
                         )}
                         <div className="flex items-center justify-center gap-2">
-                            <h4 className="text-2xl font-black">Esther M</h4>
-                            <span className="rounded-lg border border-green-400/35 bg-green-500/15 px-2 py-1 text-xs font-black text-green-300">E79</span>
+                            <h4 className="text-2xl font-black text-gray-900 dark:text-white">Esther M</h4>
+                            <MemberCodeBadge code="E79" styleKey={passBadgeStyle} className="h-8 min-w-[4.75rem] px-4 text-xs" />
                         </div>
-                        <p className="mt-2 text-sm text-white/55">Joined January 10, 2026</p>
-                        {showEmail && <p className="mt-2 text-xs text-white/45">esther.m@example.com</p>}
-                    </div>
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.06] p-4">
-                        <div className="flex items-center gap-3">
-                            <div className="grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-orange-500 to-purple-500 font-black">E</div>
-                            <div>
-                                <p className="font-bold">Esther M <span className="ml-1 text-xs text-green-300">E79</span></p>
-                                <p className="text-xs text-white/45">+233 55 123 4567</p>
+                        <p className="mt-2 text-sm text-gray-600 dark:text-white/55">Joined January 10, 2026</p>
+                        {showEmail && <p className="mt-2 text-xs text-gray-500 dark:text-white/45">esther.m@example.com</p>}
+                    </MemberCodePassCard>
+                    <div className="member-code-preview-strip mt-4 rounded-2xl border p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[var(--member-pass-accent)] to-[var(--member-pass-accent-2)] font-black text-white">E</div>
+                                <div className="min-w-0">
+                                    <p className="truncate font-bold text-gray-900 dark:text-white">Esther M</p>
+                                    <p className="text-xs text-gray-500 dark:text-white/45">+233 55 123 4567</p>
+                                </div>
                             </div>
+                            <MemberCodeBadge code="E79" styleKey={passBadgeStyle} className="h-8 min-w-[4.75rem] px-4 text-xs" />
                         </div>
                     </div>
-                    <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.06] p-3 text-xs text-white/55">
+                    <p className="member-code-preview-note mt-4 rounded-2xl border p-3 text-xs">
                         Changes are saved automatically and reflected in the member cards.
                     </p>
                 </div>

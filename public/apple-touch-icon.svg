@@ -1,33 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" fill="none">
   <defs>
-    <!-- Brand background gradient -->
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2563EB" />
-      <stop offset="100%" stop-color="#7C3AED" />
+    <linearGradient id="bg" x1="20" y1="16" x2="160" y2="164" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF7A18"/>
+      <stop offset="1" stop-color="#EA3F05"/>
     </linearGradient>
-
-    <!-- Soft top gloss like iOS icons -->
-    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55" />
-      <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.20" />
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    <linearGradient id="shine" x1="45" y1="18" x2="135" y2="98" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
-
-    <!-- Subtle shadow for the logo letters -->
-    <filter id="textShadow" x="-50%" y="-50%" width="200%" height="200%">
-      <feDropShadow dx="0" dy="2.5" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.35" />
-    </filter>
   </defs>
-
-  <!-- Rounded square background -->
-  <rect x="0" y="0" width="180" height="180" rx="36" fill="url(#bgGrad)" />
-  <!-- Gloss layer -->
-  <rect x="0" y="0" width="180" height="90" rx="36" fill="url(#gloss)" />
-
-  <!-- DS monogram (Data + Service) -->
-  <g filter="url(#textShadow)">
-    <text x="90" y="110" text-anchor="middle" font-family="Inter, Segoe UI, Roboto, system-ui, -apple-system" font-size="72" font-weight="800" fill="#FFFFFF" letter-spacing="2">
-      DS
-    </text>
-  </g>
+  <rect width="180" height="180" rx="40" fill="url(#bg)"/>
+  <rect width="180" height="92" rx="40" fill="url(#shine)"/>
+  <ellipse cx="84" cy="61" rx="35" ry="16" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
+  <path d="M49 61v50c0 8.8 15.7 16 35 16s35-7.2 35-16V61" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
+  <path d="M49 86c0 8.8 15.7 16 35 16s35-7.2 35-16" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
+  <path d="M111 120l13 13 28-33" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

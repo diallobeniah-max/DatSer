@@ -9,6 +9,7 @@ import {
     StickyNote, 
     History 
 } from 'lucide-react'
+import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 
 const MemberCard = memo(({ 
     member, 
@@ -36,7 +37,8 @@ const MemberCard = memo(({
     getMonthDisplayName,
     showDeleteActions = true,
     onIndexClick,
-    memberCodeBadgeStyle = 'soft'
+    memberCodeBadgeStyle = 'soft',
+    memberCodeBadgeCycleSlot = 0
 }) => {
     const name = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || 'Unnamed member'
     const regDateRaw = member.inserted_at || member.created_at
@@ -54,29 +56,9 @@ const MemberCard = memo(({
 
     const isPresentSelected = attendanceStatus === true
     const isAbsentSelected = attendanceStatus === false
-    const indexLetter = memberIndexCode?.charAt(0) || ''
-    const indexHue = indexLetter && indexLetter !== '#'
-        ? ((indexLetter.charCodeAt(0) - 65) * 37) % 360
-        : 24
-    const indexStyle = {
-        borderColor: `hsl(${indexHue} 70% 46% / 0.72)`,
-        background: `hsl(${indexHue} 76% 46% / 0.16)`,
-        color: `hsl(${indexHue} 78% 38%)`
-    }
-    const indexBadgeClass = memberCodeBadgeStyle === 'solid'
-        ? 'member-index-badge inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider text-white shadow-sm'
-        : memberCodeBadgeStyle === 'outline'
-            ? 'member-index-badge inline-flex shrink-0 items-center rounded-full border bg-transparent px-2.5 py-1 text-[11px] font-black tracking-wider'
-            : memberCodeBadgeStyle === 'circle'
-                ? 'member-index-badge inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white'
-                : 'member-index-badge inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wider dark:bg-black/20 dark:text-white'
-    const resolvedIndexStyle = memberCodeBadgeStyle === 'solid'
-        ? {
-            borderColor: `hsl(${indexHue} 70% 42% / 0.92)`,
-            background: `hsl(${indexHue} 72% 42% / 0.92)`,
-            color: '#fff'
-        }
-        : indexStyle
+    const resolvedBadgeStyleKey = memberCodeBadgeStyle === 'auto'
+        ? getAutoBadgeStyleKey({ member, code: memberIndexCode, cycleSlot: memberCodeBadgeCycleSlot })
+        : (memberCodeBadgeStyle || 'soft')
 
     return (
         <div className={`member-card-shell relative transition-colors duration-200`}>
@@ -129,33 +111,31 @@ const MemberCard = memo(({
                                 {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                             </div>
                             <div className="flex-1 min-w-0">
-                                <div className="flex items-start gap-2">
-                                    <h3 className="member-card-name min-w-0 flex-1 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
-                                        {name}
-                                    </h3>
-                                    {memberIndexCode && (
-                                        <button
-                                            type="button"
-                                            onPointerDown={(event) => event.stopPropagation()}
-                                            onClick={(event) => {
-                                                event.stopPropagation()
-                                                onIndexClick?.(member)
-                                            }}
-                                            className={`${indexBadgeClass} transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500`}
-                                            style={resolvedIndexStyle}
-                                            title={`Member index ${memberIndexCode}`}
-                                            aria-label={`Open member pass for ${name}, code ${memberIndexCode}`}
-                                        >
-                                            {memberIndexCode}
-                                        </button>
-                                    )}
-                                </div>
+                                <h3 className="member-card-name min-w-0 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
+                                    {name}
+                                </h3>
                                 {regDateRaw && (
                                     <p className="member-card-meta text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
                                         Joined {getRelativeRegTime()}
                                     </p>
                                 )}
                             </div>
+                            {memberIndexCode && (
+                                <MemberCodeBadge
+                                    as="button"
+                                    type="button"
+                                    code={memberIndexCode}
+                                    styleKey={resolvedBadgeStyleKey}
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                        event.stopPropagation()
+                                        onIndexClick?.(member)
+                                    }}
+                                    className="member-index-badge h-8 min-w-[4.75rem] px-4 text-xs transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                    title={`Member index ${memberIndexCode}`}
+                                    aria-label={`Open member pass for ${name}, code ${memberIndexCode}`}
+                                />
+                            )}
                             <span className="hidden xs:inline text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0 ml-1">
                                 {isExpanded ? 'Hide details' : 'Details'}
                             </span>
@@ -325,7 +305,8 @@ const MemberCard = memo(({
         prev.attendanceData === next.attendanceData &&
         prev.memberTags === next.memberTags &&
         prev.currentTable === next.currentTable &&
-        prev.memberCodeBadgeStyle === next.memberCodeBadgeStyle
+        prev.memberCodeBadgeStyle === next.memberCodeBadgeStyle &&
+        prev.memberCodeBadgeCycleSlot === next.memberCodeBadgeCycleSlot
     )
 })
 

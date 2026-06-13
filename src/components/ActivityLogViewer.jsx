@@ -13,7 +13,7 @@ const ActivityLogViewer = () => {
         try {
             const { data, error } = await supabase
                 .from('activity_logs')
-                .select('*')
+                .select('id,actor_id,actor_email,action,details,target_owner_id,created_at')
                 .order('created_at', { ascending: false })
                 .limit(80)
 

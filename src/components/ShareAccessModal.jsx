@@ -35,7 +35,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
     try {
       const { data, error } = await supabase
         .from('collaborators')
-        .select('*')
+        .select('id,owner_id,collaborator_email,role,status,created_at,accepted_at,expires_at')
         .eq('owner_id', user.id)
         .order('created_at', { ascending: false })
 

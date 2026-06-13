@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, Eye, EyeOff, RefreshCw, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Download, Eye, EyeOff, RefreshCw, Upload } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import {
   APK_FILE_LIMIT_BYTES,
@@ -29,6 +29,7 @@ const AppUpdatesManager = ({ canManage = false, userId = null }) => {
   const [isSaving, setIsSaving] = useState(false)
   const [appInfo, setAppInfo] = useState(null)
   const [backendError, setBackendError] = useState('')
+  const [isOpen, setIsOpen] = useState(false)
 
   const fileError = useMemo(() => validateApkFile(form.file), [form.file])
   const canSubmit = canManage && supabase && form.versionName && form.versionCode && form.file && !fileError && !isSaving
@@ -102,30 +103,53 @@ const AppUpdatesManager = ({ canManage = false, userId = null }) => {
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-fade-in-up">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-              <Upload className="w-5 h-5 text-orange-500" />
-              App Updates
-            </h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Private APK releases for Android installs outside Google Play.
-            </p>
-          </div>
+      <div className="border-b border-gray-200 dark:border-gray-700">
+        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
-            onClick={loadReleases}
-            disabled={isLoading}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            onClick={() => setIsOpen(prev => !prev)}
+            className="group flex min-w-0 flex-1 items-center gap-3 text-left"
+            aria-expanded={isOpen}
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
+            <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+              <Upload className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="flex items-center gap-2 font-semibold text-gray-900 dark:text-white">
+                App Updates
+                <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform duration-200 group-hover:text-orange-500 ${isOpen ? 'rotate-180' : ''}`} />
+              </span>
+              <span className="mt-1 block text-sm text-gray-500 dark:text-gray-400">
+                Upload APK releases and review Android update history.
+              </span>
+            </span>
           </button>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-600 dark:bg-gray-900 dark:text-gray-300">
+              {appInfo ? `${appInfo.versionName} (${appInfo.versionCode || 'web'})` : 'Loading...'}
+            </span>
+            <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700 dark:bg-orange-500/10 dark:text-orange-200">
+              {appInfo?.runtimeMode || 'Website'}
+            </span>
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-600 dark:bg-gray-900 dark:text-gray-300">
+              {releases.length} release{releases.length === 1 ? '' : 's'}
+            </span>
+            <button
+              type="button"
+              onClick={loadReleases}
+              disabled={isLoading}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+              aria-label="Refresh app releases"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className={`grid transition-[grid-template-rows] duration-300 ease-out ${isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+        <div className="min-h-0 overflow-hidden">
+          <div className="p-4 space-y-4">
         {!canManage && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
             Only workspace owners, admin collaborators, and developer-mode users can upload APK releases.
@@ -319,6 +343,8 @@ const AppUpdatesManager = ({ canManage = false, userId = null }) => {
               </div>
             ))
           )}
+        </div>
+          </div>
         </div>
       </div>
     </div>

@@ -107,7 +107,7 @@ const AppearanceSettingsSection = ({
                 <ToggleRow
                     icon={LayoutDashboard}
                     title="Phone Dashboard Status Bar"
-                    description="Show Recent, date, total, month, and online status on the phone dashboard. Off keeps them inside Profile."
+                    description="Show Recent, date, total, month, and online status on phones. Desktop and tablet always keep this bar visible."
                     checked={mobileDashboardStatusEnabled}
                     settingId="mobile_dashboard_status"
                     onChange={() => updatePreferences?.({ mobile_dashboard_status_enabled: !mobileDashboardStatusEnabled })}

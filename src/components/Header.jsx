@@ -12,7 +12,8 @@ import {
   RefreshCw,
   History,
   X,
-  Database
+  Database,
+  LayoutGrid
 } from 'lucide-react'
 import MonthPickerPopup from './MonthPickerPopup'
 import { useApp } from '../context/AppContext'
@@ -25,10 +26,20 @@ const getMemberDisplayName = (member) => (
 )
 
 const getMemberRecentDate = (member) => {
-  const raw = member?.updated_at || member?.updatedAt || member?.last_updated || member?.modified_at || member?.created_at || member?.inserted_at || member?.joined_at
+  const raw = member?.updated_at || member?.updatedAt || member?.last_updated || member?.modified_at
   if (!raw) return null
   const date = new Date(raw)
-  return Number.isNaN(date.getTime()) ? null : date
+  if (Number.isNaN(date.getTime())) return null
+
+  const createdRaw = member?.created_at || member?.inserted_at || member?.joined_at
+  if (createdRaw) {
+    const created = new Date(createdRaw)
+    if (!Number.isNaN(created.getTime()) && Math.abs(date.getTime() - created.getTime()) < 2000) {
+      return null
+    }
+  }
+
+  return date
 }
 
 const formatRecentEditLabel = (date) => {
@@ -48,8 +59,23 @@ const formatRecentEditLabel = (date) => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+const formatDateKeyLabel = (dateKey) => {
+  if (!dateKey) return 'Date'
+  const [year, month, day] = String(dateKey).split('-').map(Number)
+  const parsed = Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+    ? new Date(year, month - 1, day)
+    : new Date(dateKey)
+  if (Number.isNaN(parsed.getTime())) return dateKey
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+const normalizeDashboardColumns = (value) => {
+  const numericValue = Number(value)
+  return [1, 2, 3, 4].includes(numericValue) ? numericValue : 3
+}
+
 const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember, onCreateMonth, onToggleAIChat }) => {
-  const { preferences } = useAuth()
+  const { preferences, updatePreference } = useAuth()
   const {
     searchTerm,
     setSearchTerm,
@@ -77,18 +103,24 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     offlineCacheMeta,
     prepareOfflineData,
     isPreparingOffline,
-    members
+    members,
+    membersTotalCount,
+    recentMemberEdits
   } = useApp()
   const { selection } = useHapticFeedback()
   const [showMonthPicker, setShowMonthPicker] = useState(false)
   const [showConnectionMenu, setShowConnectionMenu] = useState(false)
   const [showRecentMenu, setShowRecentMenu] = useState(false)
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false)
+  const [recentDateFilter, setRecentDateFilter] = useState('all')
   const [isPhoneViewport, setIsPhoneViewport] = useState(() => (
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false
   ))
   const monthButtonRef = useRef(null)
   const connectionButtonRef = useRef(null)
+  const columnsButtonRef = useRef(null)
   const recentMenuRef = useRef(null)
+  const columnsMenuRef = useRef(null)
   const [apkUpdateBadge, setApkUpdateBadge] = useState(() => (
     typeof window !== 'undefined' && window.localStorage.getItem('datser_apk_update_badge') === 'true'
   ))
@@ -149,6 +181,30 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [showRecentMenu])
+
+  useEffect(() => {
+    if (!showColumnsMenu) return undefined
+    const handlePointerDown = (event) => {
+      const target = event.target
+      if (
+        columnsMenuRef.current &&
+        !columnsMenuRef.current.contains(target) &&
+        columnsButtonRef.current &&
+        !columnsButtonRef.current.contains(target)
+      ) {
+        setShowColumnsMenu(false)
+      }
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setShowColumnsMenu(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showColumnsMenu])
 
   const generateSundayDates = (table) => {
     if (!table) return []
@@ -226,9 +282,10 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       if (!filteredMembers || filteredMembers.length === 0) return 0
 
       const hasSearch = !!(searchTerm && searchTerm.trim())
-      if (hasSearch || dashboardTab === 'all') {
+      if (hasSearch) {
         return filteredMembers.length
       }
+      if (dashboardTab === 'all') return Math.max(membersTotalCount || 0, filteredMembers.length)
 
       if (dashboardTab === 'edited' && visibleSelectedDateKey) {
         const map = attendanceData[visibleSelectedDateKey] || {}
@@ -243,7 +300,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     } catch {
       return filteredMembers?.length ?? 0
     }
-  }, [filteredMembers, dashboardTab, attendanceData, searchTerm, sundayDates, visibleSelectedDateKey])
+  }, [filteredMembers, dashboardTab, attendanceData, searchTerm, sundayDates, visibleSelectedDateKey, membersTotalCount])
 
   // Count of edited members (has attendance marked true/false for any date)
   const editedCount = useMemo(() => {
@@ -264,20 +321,65 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
   const recentEditedMembers = useMemo(() => {
     const source = Array.isArray(members) && members.length ? members : filteredMembers || []
-    return source
-      .map((member) => ({
+    const memberById = new Map(source.map((member) => [member.id, member]))
+    const rows = source.map((member) => {
+      const localEdit = recentMemberEdits?.find((item) => item.id === member.id)
+      return {
         member,
-        date: getMemberRecentDate(member),
-        name: getMemberDisplayName(member)
-      }))
+        date: localEdit?.edited_at ? new Date(localEdit.edited_at) : getMemberRecentDate(member),
+        name: localEdit?.name || getMemberDisplayName(member)
+      }
+    })
+
+    ;(recentMemberEdits || []).forEach((item) => {
+      if (!item?.id || memberById.has(item.id)) return
+      rows.push({
+        member: { id: item.id, full_name: item.name, updated_at: item.edited_at },
+        date: item.edited_at ? new Date(item.edited_at) : null,
+        name: item.name || 'Unknown member',
+        dateKey: item.date_key || null,
+        summary: item.summary || null,
+        action: item.action || 'update'
+      })
+    })
+
+    return rows
+      .filter((row) => row.date && !Number.isNaN(row.date.getTime()))
+      .map((row) => {
+        const editMeta = recentMemberEdits?.find((item) => item.id === row.member.id)
+        return {
+          ...row,
+          dateKey: row.dateKey || editMeta?.date_key || null,
+          summary: row.summary || editMeta?.summary || 'Updated member details',
+          action: row.action || editMeta?.action || 'update'
+        }
+      })
       .sort((a, b) => {
         const timeA = a.date?.getTime() || 0
         const timeB = b.date?.getTime() || 0
         if (timeA !== timeB) return timeB - timeA
         return a.name.localeCompare(b.name)
       })
-      .slice(0, 6)
-  }, [members, filteredMembers])
+      .slice(0, 24)
+  }, [members, filteredMembers, recentMemberEdits])
+
+  const recentDateOptions = useMemo(() => {
+    const keys = Array.from(new Set(
+      recentEditedMembers
+        .map((item) => item.dateKey)
+        .filter(Boolean)
+    ))
+    if (keys.length === 0 && sundayDates.length) {
+      return sundayDates.slice(0, 5)
+    }
+    return keys.slice(0, 8)
+  }, [recentEditedMembers, sundayDates])
+
+  const visibleRecentEditedMembers = useMemo(() => (
+    recentDateFilter === 'all'
+      ? recentEditedMembers.slice(0, 8)
+      : recentEditedMembers.filter((item) => item.dateKey === recentDateFilter).slice(0, 8)
+  ), [recentDateFilter, recentEditedMembers])
 
   const focusRecentMember = useCallback((member) => {
     const name = getMemberDisplayName(member)
@@ -298,7 +400,8 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       : 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30'
     : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
   const dashboardStatusPreference = preferences?.mobile_dashboard_status_enabled
-  const showDashboardStatusBar = dashboardStatusPreference === true
+  const showDashboardStatusBar = currentView === 'dashboard' && (!isPhoneViewport || dashboardStatusPreference === true)
+  const dashboardMemberColumns = normalizeDashboardColumns(preferences?.dashboard_member_columns)
   const visibleDateLabel = visibleSelectedDate
     ? visibleSelectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null
@@ -332,9 +435,9 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const root = document.documentElement
-    root.style.setProperty('--app-dashboard-header-height-mobile', showDashboardStatusBar ? '126px' : '64px')
+    root.style.setProperty('--app-dashboard-header-height', showDashboardStatusBar ? '126px' : '72px')
     return () => {
-      root.style.removeProperty('--app-dashboard-header-height-mobile')
+      root.style.removeProperty('--app-dashboard-header-height')
     }
   }, [showDashboardStatusBar])
 
@@ -552,6 +655,71 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                   : <WifiOff className="h-3.5 w-3.5 text-yellow-500" />}
                 <span>{connectionLabel}</span>
               </button>
+
+              <button
+                ref={columnsButtonRef}
+                type="button"
+                onClick={() => { selection(); setShowColumnsMenu(prev => !prev) }}
+                className={`relative hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10.5px] font-bold transition-all duration-200 hover:brightness-105 sm:text-xs md:inline-flex ${
+                  showColumnsMenu
+                    ? 'border-orange-300 bg-orange-50 text-orange-700 shadow-inner dark:border-orange-400/30 dark:bg-orange-400/10 dark:text-orange-200'
+                    : dashboardMemberColumns === 4
+                      ? 'border-orange-300/70 bg-orange-500/10 text-orange-700 shadow-sm dark:border-orange-400/30 dark:bg-orange-400/10 dark:text-orange-200'
+                      : 'border-gray-200 bg-white/70 text-gray-700 hover:border-orange-300 hover:text-orange-600 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 dark:hover:border-orange-400/30 dark:hover:text-orange-200'
+                }`}
+                title="Choose dashboard columns"
+                aria-expanded={showColumnsMenu}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+                <span>{dashboardMemberColumns} col</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showColumnsMenu && currentView === 'dashboard' && (
+        <div
+          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 px-4 py-8 backdrop-blur-sm animate-fade-in"
+          onClick={() => setShowColumnsMenu(false)}
+        >
+          <div
+            ref={columnsMenuRef}
+            className="relative w-[min(92vw,360px)] rounded-3xl border border-gray-200 bg-white/95 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in dark:border-white/10 dark:bg-[#202121]/95"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowColumnsMenu(false)}
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/10 dark:hover:text-white"
+              aria-label="Close column chooser"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="mb-4 px-8 text-center">
+              <p className="text-base font-bold text-gray-900 dark:text-white">Dashboard Columns</p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Choose how many member cards show per row on tablet and desktop.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[1, 2, 3, 4].map((count) => (
+                <button
+                  key={count}
+                  type="button"
+                  onClick={() => {
+                    selection()
+                    updatePreference?.('dashboard_member_columns', count)
+                    setShowColumnsMenu(false)
+                  }}
+                  className={`min-h-[48px] rounded-xl border text-sm font-bold transition-colors ${
+                    dashboardMemberColumns === count
+                      ? 'border-orange-500 bg-orange-600 text-white shadow-sm'
+                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-orange-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-200'
+                  }`}
+                >
+                  {count} column{count === 1 ? '' : 's'}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -559,7 +727,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
       {showRecentMenu && currentView === 'dashboard' && (
         <div
-          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/55 px-4 py-8 backdrop-blur-sm animate-fade-in"
+          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/55 px-4 py-8 backdrop-blur-sm animate-fade-in"
           onClick={() => setShowRecentMenu(false)}
         >
           <div
@@ -583,16 +751,44 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 </div>
                 <div>
                   <p className="text-base font-bold text-gray-900 dark:text-white">Recent Edits</p>
-                  <p className="mt-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">Latest names changed in this workspace</p>
+                  <p className="mt-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">Latest saved member updates in this workspace</p>
                 </div>
               </div>
             </div>
 
             <div className="max-h-[min(65vh,420px)] overflow-y-auto overscroll-contain p-2">
               {recentEditedMembers.length > 0 ? (
-                recentEditedMembers.map(({ member, date, name }) => (
+                <>
+                  <div className="mb-2 flex gap-2 overflow-x-auto px-2 pb-1">
+                    <button
+                      type="button"
+                      onClick={() => setRecentDateFilter('all')}
+                      className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-black transition-colors ${
+                        recentDateFilter === 'all'
+                          ? 'border-orange-500 bg-orange-600 text-white'
+                          : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-orange-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-300'
+                      }`}
+                    >
+                      All
+                    </button>
+                    {recentDateOptions.map((dateKey) => (
+                      <button
+                        key={dateKey}
+                        type="button"
+                        onClick={() => setRecentDateFilter(dateKey)}
+                        className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-black transition-colors ${
+                          recentDateFilter === dateKey
+                            ? 'border-orange-500 bg-orange-600 text-white'
+                            : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-orange-300 dark:border-white/10 dark:bg-white/5 dark:text-gray-300'
+                        }`}
+                      >
+                        {formatDateKeyLabel(dateKey)}
+                      </button>
+                    ))}
+                  </div>
+                  {visibleRecentEditedMembers.map(({ member, date, name, summary }) => (
                   <button
-                    key={member.id || name}
+                    key={`${member.id || name}-${date?.getTime?.() || summary}`}
                     type="button"
                     onClick={() => focusRecentMember(member)}
                     className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors hover:bg-gray-100/80 focus:bg-gray-100/80 focus:outline-none dark:hover:bg-white/10 dark:focus:bg-white/10"
@@ -602,11 +798,15 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-bold text-gray-900 dark:text-white">{name}</span>
-                      <span className="mt-0.5 block truncate text-xs text-gray-500 dark:text-gray-400">{formatRecentEditLabel(date)}</span>
+                      <span className="mt-0.5 block truncate text-xs text-gray-500 dark:text-gray-400">{summary} · {formatRecentEditLabel(date)}</span>
                     </span>
                     <ChevronRight className="h-5 w-5 shrink-0 text-gray-400 dark:text-gray-300" />
                   </button>
-                ))
+                  ))}
+                  {visibleRecentEditedMembers.length === 0 && (
+                    <div className="px-4 py-8 text-center text-sm font-medium text-gray-500 dark:text-gray-400">No edits for this date</div>
+                  )}
+                </>
               ) : (
                 <div className="px-4 py-8 text-center text-sm font-medium text-gray-500 dark:text-gray-400">No recent edits yet</div>
               )}
@@ -617,7 +817,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
       {showConnectionMenu && currentView === 'dashboard' && (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm animate-fade-in"
+          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm animate-fade-in"
           onClick={() => setShowConnectionMenu(false)}
         >
           <div

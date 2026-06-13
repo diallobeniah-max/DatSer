@@ -1,20 +1,21 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Type, MousePointer2, Command, BellRing, Clock3, Search, Share2, Copy, MessageCircle, Mail, QrCode, X, RefreshCw } from 'lucide-react'
+import { toast } from 'react-toastify'
 
 const AccessibilitySettingsSection = ({
     preferences,
     updatePreferences,
     offlineSaveNoticeThreshold = 10,
     setOfflineSaveNoticeThreshold,
-    notificationDurationMs = 6500,
+    notificationDurationMs = 4200,
     setNotificationDurationMs,
     searchSuggestionView = 'full',
     setSearchSuggestionView,
     getSettingTargetClass
 }) => {
     const [customSaveThreshold, setCustomSaveThreshold] = useState(String(offlineSaveNoticeThreshold || 10))
-    const [customDurationMs, setCustomDurationMs] = useState(String(notificationDurationMs || 6500))
+    const [customDurationMs, setCustomDurationMs] = useState(String(notificationDurationMs || 4200))
     const [isQrExpanded, setIsQrExpanded] = useState(false)
     const hapticFeedbackEnabled = preferences?.haptic_feedback_enabled !== false
     const hapticFeedbackStrength = Number(preferences?.haptic_feedback_strength || 1)
@@ -33,7 +34,7 @@ const AccessibilitySettingsSection = ({
     }, [offlineSaveNoticeThreshold])
 
     useEffect(() => {
-        setCustomDurationMs(String(notificationDurationMs || 6500))
+        setCustomDurationMs(String(notificationDurationMs || 4200))
     }, [notificationDurationMs])
 
     const handleToggleCmdMenu = () => {
@@ -58,7 +59,13 @@ const AccessibilitySettingsSection = ({
 
     const copyShareLink = async () => {
         if (!appShareUrl || typeof navigator === 'undefined') return
-        await navigator.clipboard?.writeText(appShareUrl)
+        try {
+            await navigator.clipboard?.writeText(appShareUrl)
+            toast.success('Copied website link')
+        } catch (error) {
+            console.error('Could not copy app link:', error)
+            toast.error('Could not copy website link')
+        }
     }
 
     const shareWebsite = async () => {
@@ -456,9 +463,9 @@ const AccessibilitySettingsSection = ({
                     </div>
                     <div className="flex flex-wrap gap-2">
                         {[
-                            { label: 'Normal', value: 6500 },
-                            { label: 'Long', value: 9000 },
-                            { label: 'Read slowly', value: 12000 }
+                            { label: 'Quick', value: 3200 },
+                            { label: 'Normal', value: 4200 },
+                            { label: 'Long', value: 6500 }
                         ].map((item) => (
                             <button
                                 key={item.value}
@@ -494,7 +501,7 @@ const AccessibilitySettingsSection = ({
                         </button>
                     </div>
                     <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                        Current setting: about {(Number(notificationDurationMs || 6500) / 1000).toFixed(1).replace('.0', '')} seconds.
+                        Current setting: about {(Number(notificationDurationMs || 4200) / 1000).toFixed(1).replace('.0', '')} seconds.
                     </p>
                 </div>
 

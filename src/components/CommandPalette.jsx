@@ -1,12 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { ArrowRight, CheckCircle2, Download, ExternalLink, LogOut, Maximize2, Moon, Search, Settings, SlidersHorizontal, Sparkles, Sun, UserPlus, Zap } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext'
 import { useAuth } from '../context/AuthContext'
+import { useApp } from '../context/AppContext'
+import MemberCodeSettingsSection from './MemberCodeSettingsSection'
 import {
     APP_VIEWS,
     SETTINGS_SECTIONS,
     getVisibleSettingsSearchItems,
-    searchSettingsIndex
+    searchSettingsIndex,
+    settingsSearchTextMatches
 } from '../config/navigation.js'
 
 const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNavigateToSettingsSection }) => {
@@ -14,6 +17,8 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
     const [query, setQuery] = useState('')
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [quickLookOverrideId, setQuickLookOverrideId] = useState(null)
+    const [optimisticPreferencePatch, setOptimisticPreferencePatch] = useState({})
+    const [recentCommandSearches, setRecentCommandSearches] = useState([])
     const [splitPercent, setSplitPercent] = useState(() => {
         if (typeof window === 'undefined') return 46
         const saved = Number(window.localStorage.getItem('datser_command_palette_split_percent'))
@@ -23,11 +28,47 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
     const inputRef = useRef(null)
 
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
-    const { signOut, preferences, saveUserPreferences } = useAuth()
+    const { signOut, preferences, saveUserPreferences, user } = useAuth()
+    const { isCollaborator, isAdminCollaborator } = useApp()
+    const recentCommandStorageKey = useMemo(() => `datser_recent_command_searches:${user?.id || 'guest'}`, [user?.id])
+    const hasAdminAccess = !isCollaborator || isAdminCollaborator
+    const effectivePreferences = useMemo(
+        () => ({
+            ...(preferences || {}),
+            ...optimisticPreferencePatch
+        }),
+        [optimisticPreferencePatch, preferences]
+    )
     const settingsPreviewEnabled = preferences?.settings_search_quick_actions_enabled !== false
     const autoScanSettingsEnabled = preferences?.command_palette_auto_scan_settings !== false
 
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        try {
+            const scoped = window.localStorage.getItem(recentCommandStorageKey)
+            const legacy = window.localStorage.getItem('datser_recent_command_searches')
+            setRecentCommandSearches(JSON.parse(scoped || legacy || '[]'))
+        } catch {
+            setRecentCommandSearches([])
+        }
+    }, [recentCommandStorageKey])
+
     const updatePreferences = (patch) => {
+        if (!patch || typeof patch !== 'object') return
+        if (
+            Object.prototype.hasOwnProperty.call(patch, 'member_codes_enabled') ||
+            Object.prototype.hasOwnProperty.call(patch, 'workspace_member_codes_enabled')
+        ) {
+            const enabled = (patch.workspace_member_codes_enabled ?? patch.member_codes_enabled) === true
+            window.localStorage.setItem('datser_member_codes_enabled', String(enabled))
+            window.dispatchEvent(new CustomEvent('datser-member-codes-preference-changed', {
+                detail: { enabled }
+            }))
+        }
+        setOptimisticPreferencePatch(prev => ({
+            ...prev,
+            ...patch
+        }))
         saveUserPreferences?.({
             ...(preferences || {}),
             ...patch
@@ -66,6 +107,26 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         if (typeof window === 'undefined') return
         window.localStorage.setItem('datser_command_palette_split_percent', String(Math.round(splitPercent)))
     }, [splitPercent])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        window.localStorage.setItem(recentCommandStorageKey, JSON.stringify(recentCommandSearches.slice(0, 8)))
+    }, [recentCommandSearches, recentCommandStorageKey])
+
+    const rememberCommandSearch = (value = query) => {
+        const term = String(value || '').trim()
+        if (!term) return
+        setRecentCommandSearches((current) => [
+            term,
+            ...current.filter((item) => item.toLowerCase() !== term.toLowerCase())
+        ].slice(0, 8))
+    }
+
+    const toggleQuickLookForAction = (action) => {
+        if (!action || action.category !== 'settings') return
+        rememberCommandSearch()
+        setQuickLookOverrideId(prev => prev === action.id ? null : action.id)
+    }
 
     const defaultActions = [
         {
@@ -180,16 +241,45 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
 
     const actions = [...navActions, ...settingsSectionActions, ...settingsItemActions, ...defaultActions]
 
+    const scoreCommandAction = (action, rawQuery) => {
+        const normalizedQuery = rawQuery.toLowerCase().trim()
+        const label = action.label.toLowerCase()
+        const sectionLabel = String(action.sectionLabel || '').toLowerCase()
+        const sectionId = String(action.sectionId || '').replace(/_/g, ' ').toLowerCase()
+        const target = [
+            action.label,
+            action.description,
+            action.aliases,
+            action.shortcut,
+            action.sectionLabel,
+            action.sectionId
+        ].filter(Boolean).join(' ').toLowerCase()
+
+        let score = 0
+        if (action.type === 'setting-item') score += 120
+        if (action.category === 'settings') score += 60
+        if (label === normalizedQuery || label.endsWith(`> ${normalizedQuery}`)) score += 260
+        if (label.includes(normalizedQuery)) score += 180
+        if (sectionLabel === normalizedQuery || sectionId === normalizedQuery) score += 150
+        if (sectionLabel.includes(normalizedQuery) || sectionId.includes(normalizedQuery)) score += 110
+        if (target.includes(normalizedQuery)) score += 60
+        if (action.category === 'navigation') score -= 40
+        if (action.category === 'actions') score -= 20
+        return score
+    }
+
     const filteredActions = query.trim()
         ? [
-            ...actions.filter(action => {
-                const target = (action.label + ' ' + (action.description || '') + ' ' + (action.aliases || '') + ' ' + (action.shortcut || '')).toLowerCase()
-                return query.toLowerCase().split(/\s+/).filter(Boolean).every(token => target.includes(token))
-            }),
             ...searchSettingsIndex(query, autoScanSettingsEnabled ? getVisibleSettingsSearchItems(import.meta.env.DEV) : [], settingsSections)
                 .map(item => actions.find(action => action.id === 'setting-item-' + item.id))
-                .filter(Boolean)
-        ].filter((action, index, list) => list.findIndex(candidate => candidate.id === action.id) === index)
+                .filter(Boolean),
+            ...actions.filter(action => {
+                const target = (action.label + ' ' + (action.description || '') + ' ' + (action.aliases || '') + ' ' + (action.shortcut || '')).toLowerCase()
+                return settingsSearchTextMatches(target, query.toLowerCase().split(/\s+/).filter(Boolean))
+            })
+        ]
+            .filter((action, index, list) => list.findIndex(candidate => candidate.id === action.id) === index)
+            .sort((a, b) => scoreCommandAction(b, query) - scoreCommandAction(a, query))
         : actions
 
     // Group actions by category
@@ -212,6 +302,7 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
 
     const openSettingAction = (action) => {
         if (!action) return
+        rememberCommandSearch()
         setCurrentView('settings')
         if (onNavigateToSettingsSection) {
             if (action.type === 'setting-item') {
@@ -224,20 +315,20 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
     }
 
     const handleSelect = (action) => {
+        rememberCommandSearch()
         action.action()
         setIsOpen(false)
     }
 
     const handleResultClick = (action, globalIndex) => {
         setSelectedIndex(globalIndex)
-        const canUsePreviewPane = typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches
-        if (settingsPreviewEnabled && canUsePreviewPane && action.category === 'settings') return
+        if (showSettingsPreview && action.category === 'settings') return
         handleSelect(action)
     }
 
     const selectedAction = filteredActions[selectedIndex] || filteredActions[0]
     const showSettingsPreview = selectedAction?.category === 'settings' && (
-        settingsPreviewEnabled || quickLookOverrideId === selectedAction.id
+        settingsPreviewEnabled && quickLookOverrideId !== null
     )
     const SelectedIcon = selectedAction?.icon || Settings
     const selectedSectionId = selectedAction?.sectionId || selectedAction?.id?.replace('settings-', '')
@@ -327,6 +418,20 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
             )
         }
 
+        if (selectedSectionId === 'member_codes') {
+            const targetSettingId = selectedAction.type === 'setting-item' ? selectedAction.settingId : null
+            return (
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                    <MemberCodeSettingsSection
+                        preferences={effectivePreferences}
+                        updatePreferences={updatePreferences}
+                        isAdminAccess={hasAdminAccess}
+                        getSettingTargetClass={(settingId) => settingId === targetSettingId ? 'ring-2 ring-orange-500/80 ring-offset-2 ring-offset-gray-950' : ''}
+                    />
+                </div>
+            )
+        }
+
         return (
             <div className="space-y-3">
                 {selectedSectionItems.length > 0 ? (
@@ -402,7 +507,7 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
             if (filteredActions[selectedIndex]) {
                 const action = filteredActions[selectedIndex]
                 if ((e.ctrlKey || e.metaKey) && action.category === 'settings') {
-                    setQuickLookOverrideId(action.id)
+                    toggleQuickLookForAction(action)
                     return
                 }
                 handleSelect(action)
@@ -412,6 +517,20 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
             }
         }
     }
+
+    useEffect(() => {
+        if (!isOpen) return undefined
+        const handleQuickLookShortcut = (event) => {
+            if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') return
+            const action = filteredActions[selectedIndex]
+            if (!action || action.category !== 'settings') return
+            event.preventDefault()
+            event.stopPropagation()
+            toggleQuickLookForAction(action)
+        }
+        window.addEventListener('keydown', handleQuickLookShortcut, true)
+        return () => window.removeEventListener('keydown', handleQuickLookShortcut, true)
+    }, [filteredActions, isOpen, selectedIndex])
 
     if (!isOpen) return null
 
@@ -436,6 +555,7 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                         onChange={e => {
                             setQuery(e.target.value)
                             setSelectedIndex(0)
+                            setQuickLookOverrideId(null)
                         }}
                         onKeyDown={handleInputKeyDown}
                     />
@@ -447,11 +567,33 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                     </button>
                 </div>
 
+                {(recentCommandSearches.length > 0 || query.trim()) && (
+                    <div className="border-b border-gray-100 bg-gray-50/90 px-4 py-2 dark:border-gray-700 dark:bg-gray-800/70">
+                        <div className="mx-auto flex max-w-3xl items-center justify-center gap-2 overflow-x-auto">
+                            <span className="shrink-0 text-[11px] font-black uppercase tracking-wide text-gray-400 dark:text-gray-500">Recent</span>
+                            {(recentCommandSearches.length ? recentCommandSearches : [query.trim()].filter(Boolean)).slice(0, 6).map((term) => (
+                                <button
+                                    key={term}
+                                    type="button"
+                                    onClick={() => {
+                                        setQuery(term)
+                                        setSelectedIndex(0)
+                                        setQuickLookOverrideId(null)
+                                    }}
+                                    className="shrink-0 rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-bold text-orange-700 shadow-sm transition-colors hover:bg-orange-50 dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20"
+                                >
+                                    {term}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 <div
-                    className={showSettingsPreview ? 'grid max-h-[64vh]' : ''}
+                    className={showSettingsPreview ? 'grid min-h-0 max-h-[64vh]' : ''}
                     style={showSettingsPreview ? { gridTemplateColumns: `${splitPercent}% 12px minmax(320px, 1fr)` } : undefined}
                 >
-                    <div className="datser-command-scroll max-h-[60vh] overflow-y-auto py-2">
+                    <div className="datser-command-scroll min-h-0 max-h-[60vh] overflow-y-auto py-2">
                         {filteredActions.length === 0 ? (
                             <div className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                                 No results found.
@@ -495,9 +637,18 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                                                                 </span>
                                                             )}
                                                             {action.category === 'settings' && (
-                                                                <span className="rounded-md border border-orange-400/30 bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-orange-300">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(event) => {
+                                                                        event.stopPropagation()
+                                                                        setSelectedIndex(globalIndex)
+                                                                        toggleQuickLookForAction(action)
+                                                                    }}
+                                                                    className="rounded-md border border-orange-300 bg-orange-50 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-orange-600 transition-colors hover:bg-orange-100 dark:border-orange-400/30 dark:bg-orange-500/10 dark:text-orange-300 dark:hover:bg-orange-500/20"
+                                                                    title="Toggle quick preview"
+                                                                >
                                                                     Ctrl Enter
-                                                                </span>
+                                                                </button>
                                                             )}
                                                         </div>
                                                     </button>
@@ -516,11 +667,11 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                             type="button"
                             aria-label="Resize command menu preview"
                             onPointerDown={beginDividerDrag}
-                            className="hidden cursor-col-resize border-x border-white/5 bg-gray-900/80 transition-colors hover:bg-orange-500/20 md:flex md:items-center md:justify-center"
+                            className="group hidden cursor-col-resize items-center justify-center bg-transparent transition-colors md:flex"
                         >
-                            <span className="h-16 w-1 rounded-full bg-white/20 shadow-inner" />
+                            <span className="h-20 w-1.5 rounded-full bg-gray-300/80 shadow-[0_0_20px_rgba(251,146,60,0.12)] transition-all group-hover:h-28 group-hover:bg-orange-500 dark:bg-white/20 dark:group-hover:bg-orange-400" />
                         </button>
-                        <aside className="datser-command-scroll hidden overflow-y-auto bg-gray-950 p-5 text-white md:block">
+                        <aside className="datser-command-preview-panel datser-command-scroll hidden h-full min-h-0 max-h-[65vh] overflow-y-auto overscroll-contain p-5 text-gray-900 dark:text-white md:block">
                             <div className="mb-5 flex items-start justify-between gap-3">
                                 <div className="flex min-w-0 items-center gap-3">
                                     <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-orange-500/15 text-orange-300 ring-1 ring-orange-400/30">
