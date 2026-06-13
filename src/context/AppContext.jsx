@@ -70,7 +70,9 @@ const RECENT_MEMBER_EDITS_STORAGE_KEY = 'datser_recent_member_edits'
 const RECENT_MEMBER_EDITS_LIMIT = 80
 const MEMBER_PREVIEW_PAGE_SIZE = 20
 const MEMBER_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000
+const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 6 * 60 * 60 * 1000
 const MEMBER_PREVIEW_CACHE_PREFIX = 'datser_member_preview_cache_v1'
+const MEMBER_PREVIEW_SYNC_META_PREFIX = 'datser_member_preview_sync_meta_v1'
 const MEMBER_PREVIEW_SELECT = [
   'id',
   '"Full Name"',
@@ -143,6 +145,52 @@ const writeMemberPreviewCache = (scope, tableName, payload) => {
     window.localStorage.setItem(getMemberPreviewCacheKey(scope, tableName), JSON.stringify(payload))
   } catch (error) {
     console.warn('Unable to cache member preview data:', error)
+  }
+}
+
+const getMemberPreviewSyncMetaKey = (scope = 'guest', tableName = 'default') => (
+  `${MEMBER_PREVIEW_SYNC_META_PREFIX}:${scope || 'guest'}:${tableName || 'default'}`
+)
+
+const readMemberPreviewSyncMeta = (scope, tableName) => {
+  if (typeof window === 'undefined') return null
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(getMemberPreviewSyncMetaKey(scope, tableName)) || 'null')
+    return parsed && Number.isFinite(parsed.syncedAt) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+const writeMemberPreviewSyncMeta = (scope, tableName, meta = {}) => {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(getMemberPreviewSyncMetaKey(scope, tableName), JSON.stringify({
+      ...meta,
+      syncedAt: Date.now()
+    }))
+  } catch (error) {
+    console.warn('Unable to save member preview sync metadata:', error)
+  }
+}
+
+const isMemberPreviewSyncStale = (scope, tableName, now = Date.now()) => {
+  const meta = readMemberPreviewSyncMeta(scope, tableName)
+  if (!meta) return true
+  return now - meta.syncedAt > MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS
+}
+
+const clearMemberPreviewLocalStorage = () => {
+  if (typeof window === 'undefined') return
+  try {
+    const prefixes = [`${MEMBER_PREVIEW_CACHE_PREFIX}:`, `${MEMBER_PREVIEW_SYNC_META_PREFIX}:`]
+    Object.keys(window.localStorage).forEach((key) => {
+      if (prefixes.some((prefix) => key.startsWith(prefix))) {
+        window.localStorage.removeItem(key)
+      }
+    })
+  } catch (error) {
+    console.warn('Unable to clear member preview local metadata:', error)
   }
 }
 
@@ -1830,6 +1878,14 @@ export const AppProvider = ({ children }) => {
   function startMemberPreviewBackgroundSync(tableName = currentTable, options = {}) {
     if (!tableName || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
     if (offlineMode === 'online' && !isOnline) return
+    if (!options.force && !isMemberPreviewSyncStale(workspaceCacheScope, tableName)) {
+      setMemberPreviewSyncStatus(prev => ({
+        ...prev,
+        source: options.source || 'fresh',
+        lastSyncedAt: readMemberPreviewSyncMeta(workspaceCacheScope, tableName)?.lastSyncedAt || prev.lastSyncedAt
+      }))
+      return
+    }
 
     const syncKey = `${workspaceCacheScope}::${tableName || 'default'}`
     if (memberPreviewSyncRef.current.get(syncKey)) return
@@ -1906,6 +1962,11 @@ export const AppProvider = ({ children }) => {
         totalCount: doneTotal,
         lastSyncedAt: new Date().toISOString(),
         source: 'indexeddb'
+      })
+      writeMemberPreviewSyncMeta(workspaceCacheScope, tableName, {
+        cachedCount: indexedMembers.length,
+        totalCount: doneTotal,
+        lastSyncedAt: new Date().toISOString()
       })
     })().catch((error) => {
       console.warn('Background member preview sync failed:', error)
@@ -2129,7 +2190,8 @@ export const AppProvider = ({ children }) => {
           startMemberPreviewBackgroundSync(tableName, {
             existingMembers: normalizedMembers,
             totalCount,
-            silent: true
+            silent: true,
+            force: forceRefresh
           })
         }
         appContextLog(`Successfully loaded ${normalizedMembers.length} members from ${tableName}`)
@@ -5743,6 +5805,7 @@ export const AppProvider = ({ children }) => {
     setIsPreparingOffline(true)
     try {
       await clearAllOfflineData()
+      clearMemberPreviewLocalStorage()
       await refreshOfflineStatus()
       setOfflineStatusMessage('Offline cache cleared.')
       toast.success('Offline cache cleared.')
