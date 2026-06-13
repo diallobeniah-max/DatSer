@@ -70,7 +70,7 @@ const RECENT_MEMBER_EDITS_STORAGE_KEY = 'datser_recent_member_edits'
 const RECENT_MEMBER_EDITS_LIMIT = 80
 const MEMBER_PREVIEW_PAGE_SIZE = 20
 const MEMBER_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000
-const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 3 * 60 * 1000
+const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 90 * 1000
 const MEMBER_PREVIEW_SYNC_OVERLAP_MS = 5000
 const MEMBER_PREVIEW_CACHE_PREFIX = 'datser_member_preview_cache_v1'
 const MEMBER_PREVIEW_SYNC_META_PREFIX = 'datser_member_preview_sync_meta_v1'
@@ -2489,6 +2489,7 @@ export const AppProvider = ({ children }) => {
           inserted_at: new Date().toISOString()
         }
         setMembers(prev => [newMember, ...prev])
+        searchCacheRef.current.clear()
         await persistMemberPreviewIndex(currentTable, [newMember], {
           cachedCount: members.length + 1,
           totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
@@ -2500,6 +2501,12 @@ export const AppProvider = ({ children }) => {
           source: 'add',
           lastSyncAt: new Date().toISOString()
         })
+        recordRecentMemberEdit(newMember, new Date().toISOString(), {
+          action: 'add',
+          summary: 'Added member',
+          table: currentTable
+        })
+        refreshSearch()
         toast.success('Member added')
         // Return the created member object directly for downstream usage
         return newMember
@@ -2544,6 +2551,12 @@ export const AppProvider = ({ children }) => {
           sync_status: 'pending'
         })
         await refreshOfflineStatus()
+        recordRecentMemberEdit(createdMember, createdAt, {
+          action: 'add',
+          summary: 'Added member offline',
+          table: currentTable
+        })
+        refreshSearch()
         setOfflineStatusMessage('Member saved offline and will sync automatically.')
         if (shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
           notify.sync('Member saved offline and will sync automatically.', {
@@ -2592,6 +2605,7 @@ export const AppProvider = ({ children }) => {
         summary: 'Added member',
         table: currentTable
       })
+      refreshSearch()
       toast.success('Member added')
 
       // Log the action
@@ -3723,6 +3737,7 @@ export const AppProvider = ({ children }) => {
           updatedMember['Full Name'] = updatedNameDemo
         }
         setMembers(prev => prev.map(m => m.id === id ? updatedMember : m))
+        searchCacheRef.current.clear()
         await persistMemberPreviewIndex(currentTable, [updatedMember], {
           cachedCount: members.length,
           totalCount: membersTotalCount,
@@ -3735,6 +3750,7 @@ export const AppProvider = ({ children }) => {
           lastSyncAt: editTimestamp
         })
         recordRecentMemberEdit(updatedMember, editTimestamp)
+        refreshSearch()
         if (!silent) toast.success('Member updated')
         return updatedMember
       }
@@ -3750,7 +3766,6 @@ export const AppProvider = ({ children }) => {
         })
 
         setMembers(prev => prev.map(m => (m.id === id ? optimisticMember : m)))
-        refreshSearch()
         invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
         await persistMemberPreviewIndex(currentTable, [optimisticMember], {
           cachedCount: members.length,
@@ -3768,6 +3783,12 @@ export const AppProvider = ({ children }) => {
           sync_status: 'pending'
         })
         await refreshOfflineStatus()
+        recordRecentMemberEdit(optimisticMember, createdAt, {
+          action: 'update',
+          summary: 'Updated member offline',
+          table: currentTable
+        })
+        refreshSearch()
         if (!silent && shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
           notify.sync('Member update saved offline and will sync automatically.', {
             title: 'Saved to pending sync',
@@ -4077,9 +4098,6 @@ export const AppProvider = ({ children }) => {
         table: currentTable
       })
 
-      // Update search term to trigger re-filtering
-      refreshSearch()
-
       searchCacheRef.current.clear()
       const cachedUpdateMember = recentEditedMember || { ...(members.find(m => m.id === id) || {}), ...optimisticPatch }
       persistLoadedMemberPreview(
@@ -4101,6 +4119,9 @@ export const AppProvider = ({ children }) => {
       if (skipRefresh) {
         appContextLog('[updateMember] Kept optimistic member cache without post-save refetch.')
       }
+
+      // Update search after the preview index and stale result cache have been patched.
+      refreshSearch()
 
       if (!silent) toast.success('Member updated')
 
@@ -4132,6 +4153,7 @@ export const AppProvider = ({ children }) => {
           totalCount: membersTotalCount,
           source: 'local-fallback-update'
         })
+        searchCacheRef.current.clear()
         markMemberPreviewSyncComplete(currentTable, {
           cachedCount: members.length,
           totalCount: membersTotalCount,

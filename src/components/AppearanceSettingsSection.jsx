@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Sun, Moon, Monitor, Sparkles, CheckCircle, VolumeX, LayoutDashboard, Minimize2, ScanSearch } from 'lucide-react'
 
 const AppearanceSettingsSection = ({
@@ -18,8 +18,37 @@ const AppearanceSettingsSection = ({
     const mobileDashboardStatusEnabled = preferences?.mobile_dashboard_status_enabled === true
     const compactUiEnabled = preferences?.compact_ui_enabled === true
     const smartCompactPromptEnabled = preferences?.smart_compact_prompt_enabled !== false
+    const [optimisticCompactUiEnabled, setOptimisticCompactUiEnabled] = useState(compactUiEnabled)
+    const [isSavingCompactUi, setIsSavingCompactUi] = useState(false)
 
-    const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId }) => (
+    useEffect(() => {
+        setOptimisticCompactUiEnabled(compactUiEnabled)
+    }, [compactUiEnabled])
+
+    const applyCompactUiClass = useCallback((enabled) => {
+        if (typeof document === 'undefined') return
+        document.documentElement.classList.toggle('compact-ui', enabled)
+        document.body.classList.toggle('compact-ui', enabled)
+        document.querySelector('.app-shell')?.classList?.toggle('compact-ui', enabled)
+    }, [])
+
+    const handleCompactUiToggle = useCallback(async () => {
+        const nextValue = !optimisticCompactUiEnabled
+        setOptimisticCompactUiEnabled(nextValue)
+        applyCompactUiClass(nextValue)
+        setIsSavingCompactUi(true)
+        try {
+            await updatePreferences?.({ compact_ui_enabled: nextValue })
+        } catch (error) {
+            console.error('Failed to save Compact UI preference:', error)
+            setOptimisticCompactUiEnabled(compactUiEnabled)
+            applyCompactUiClass(compactUiEnabled)
+        } finally {
+            setIsSavingCompactUi(false)
+        }
+    }, [applyCompactUiClass, compactUiEnabled, optimisticCompactUiEnabled, updatePreferences])
+
+    const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId, disabled = false }) => (
         <div
             data-setting-id={settingId}
             tabIndex={-1}
@@ -37,9 +66,10 @@ const AppearanceSettingsSection = ({
             <button
                 type="button"
                 onClick={onChange}
+                disabled={disabled}
                 className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
                     checked ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
-                }`}
+                } ${disabled ? 'cursor-wait opacity-75' : ''}`}
                 aria-pressed={checked}
             >
                 <span
@@ -116,9 +146,10 @@ const AppearanceSettingsSection = ({
                     icon={Minimize2}
                     title="Compact UI"
                     description="Tighten spacing across DatSer so more information fits on screen."
-                    checked={compactUiEnabled}
+                    checked={optimisticCompactUiEnabled}
                     settingId="compact_ui"
-                    onChange={() => updatePreferences?.({ compact_ui_enabled: !compactUiEnabled })}
+                    disabled={isSavingCompactUi}
+                    onChange={handleCompactUiToggle}
                 />
                 <ToggleRow
                     icon={ScanSearch}

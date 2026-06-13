@@ -1679,10 +1679,15 @@ details[open] summary~* {
 }
 
 @media (max-width: 640px) {
-  .Toastify__toast-container.datser-toast-stack {
-    width: min(calc(100vw - 48px), 330px) !important;
-    max-width: 330px !important;
+  .Toastify__toast-container.datser-toast-stack,
+  .Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
+    top: calc(env(safe-area-inset-top, 0px) + 12px) !important;
+    right: calc(env(safe-area-inset-right, 0px) + 12px) !important;
+    left: calc(env(safe-area-inset-left, 0px) + 12px) !important;
+    width: auto !important;
+    max-width: none !important;
     max-height: 70vh !important;
+    transform: none !important;
     overflow-y: auto !important;
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -1694,14 +1699,17 @@ details[open] summary~* {
 
   .datser-toast-stack .datser-toast,
   .datser-toast-stack .Toastify__toast {
+    max-width: 100% !important;
     min-height: 48px !important;
-    padding: 8px 12px 8px 14px !important;
+    padding: 8px 10px 8px 12px !important;
     border-radius: 999px !important; /* Keep pill shape on mobile */
   }
 
   .datser-toast-stack .datser-toast-body,
   .datser-toast-stack .Toastify__toast-body {
     font-size: 12.5px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
   }
 }
 

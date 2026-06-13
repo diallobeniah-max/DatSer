@@ -22,7 +22,8 @@ import {
   Sparkles,
   Copy,
   Wifi,
-  WifiOff
+  WifiOff,
+  RefreshCw
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
@@ -294,6 +295,21 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                       {compactStatus.foundCount} found
                     </div>
                   )}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      selection()
+                      await compactStatus.onRefresh?.()
+                    }}
+                    disabled={compactStatus.isSyncing}
+                    className={`col-span-2 rounded-2xl border px-3 py-2 text-left text-sm font-bold transition hover:brightness-105 disabled:cursor-wait disabled:opacity-75 ${compactStatus.syncToneClass || 'border-gray-200 bg-gray-50 text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100'}`}
+                  >
+                    <span className="mb-1 flex items-center gap-1 text-[10px] font-black uppercase opacity-80">
+                      <RefreshCw className={`h-3.5 w-3.5 ${compactStatus.isSyncing ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </span>
+                    <span className="block truncate">{compactStatus.isSyncing ? 'Syncing members...' : (compactStatus.syncLabel || 'Sync latest data')}</span>
+                  </button>
                 </div>
               </div>
             )}

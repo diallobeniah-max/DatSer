@@ -491,7 +491,8 @@ const Dashboard = ({ isAdmin = false }) => {
     user,
     isDeveloperBypass,
     searchSuggestionView,
-    preferences
+    preferences,
+    recentMemberEdits
   } = useApp()
   const { isDarkMode } = useTheme()
   const { selection, success, error: errorHaptic } = useHapticFeedback()
@@ -995,6 +996,38 @@ const Dashboard = ({ isAdmin = false }) => {
     return editedViaMaps
   }
 
+  const recentMemberEditById = useMemo(() => {
+    const map = new Map()
+    for (const edit of recentMemberEdits || []) {
+      const id = edit?.member_id || edit?.id
+      if (!id || edit?.action === 'delete') continue
+      if (edit?.table && edit.table !== currentTable) continue
+      const key = String(id)
+      const existing = map.get(key)
+      const existingTime = Date.parse(existing?.edited_at || '') || 0
+      const editTime = Date.parse(edit?.edited_at || '') || 0
+      if (!existing || editTime >= existingTime) {
+        map.set(key, edit)
+      }
+    }
+    return map
+  }, [currentTable, recentMemberEdits])
+
+  const isRecentlyChangedMember = (member, dateKey = null) => {
+    if (!member?.id) return false
+    const edit = recentMemberEditById.get(String(member.id))
+    if (!edit) return false
+    if (!dateKey) return true
+    return !edit.date_key || edit.date_key === dateKey
+  }
+
+  const getRecentMemberEditTime = (member) => {
+    if (!member?.id) return 0
+    const editedAt = recentMemberEditById.get(String(member.id))?.edited_at
+    const parsed = Date.parse(editedAt || '')
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
   // Get filtered members based on active tab
   const getTabFilteredMembers = () => {
     const badgeFilteredMembers = getFilteredMembersByBadge()
@@ -1047,7 +1080,7 @@ const Dashboard = ({ isAdmin = false }) => {
       const dateKey = selectedSundayDate || getDateString(selectedAttendanceDate)
       if (!dateKey) {
         const editedOnly = filteredMembers.filter(member => {
-          if (!isEditedMember(member)) return false
+          if (!isEditedMember(member) && !isRecentlyChangedMember(member)) return false
           // Apply name search only to members who have been edited (marked on any Sunday)
           if (searchTerm) {
             const lowerTerm = searchTerm.toLowerCase()
@@ -1057,6 +1090,8 @@ const Dashboard = ({ isAdmin = false }) => {
           return true
         })
         return editedOnly.sort((a, b) => {
+          const recentDiff = getRecentMemberEditTime(b) - getRecentMemberEditTime(a)
+          if (recentDiff !== 0) return recentDiff
           // Sort by join date (respecting sortNewestFirst toggle)
           const dateA = new Date(a.inserted_at || a.created_at || 0)
           const dateB = new Date(b.inserted_at || b.created_at || 0)
@@ -1078,7 +1113,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       let filteredByDate = filteredMembers.filter(m => {
         const val = getVal(m)
-        if (val === undefined) return false
+        if (val === undefined && !isRecentlyChangedMember(m, dateKey)) return false
         // Apply name search only to members who have been marked Present or Absent
         if (searchTerm) {
           const lowerTerm = searchTerm.toLowerCase()
@@ -1089,6 +1124,8 @@ const Dashboard = ({ isAdmin = false }) => {
       })
 
       return filteredByDate.sort((a, b) => {
+        const recentDiff = getRecentMemberEditTime(b) - getRecentMemberEditTime(a)
+        if (recentDiff !== 0) return recentDiff
         // Sort by join date (respecting sortNewestFirst toggle)
         const joinDateA = new Date(a.inserted_at || a.created_at || 0)
         const joinDateB = new Date(b.inserted_at || b.created_at || 0)
@@ -2127,7 +2164,7 @@ const Dashboard = ({ isAdmin = false }) => {
     ? (() => {
         const lowerTerm = pendingSearchTerm.toLowerCase()
         const sourceMembers = dashboardTab === 'edited'
-          ? members.filter(isEditedMember)
+          ? members.filter(member => isEditedMember(member) || isRecentlyChangedMember(member))
           : dashboardTab === 'duplicates'
             ? duplicateGroups.flatMap(group => group.members)
             : members

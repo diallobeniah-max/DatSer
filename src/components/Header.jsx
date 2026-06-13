@@ -638,6 +638,13 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                   connectionToneClass,
                   isSupabaseConfigured: isSupabaseConfigured(),
                   isConnectionLive,
+                  syncLabel: previewSyncStatus.label,
+                  syncToneClass: previewSyncStatus.tone,
+                  isSyncing: memberPreviewSyncStatus?.isSyncing === true,
+                  onRefresh: async () => {
+                    selection()
+                    await forceRefreshMembersSilent?.()
+                  },
                   onOpenMonthPicker: () => setShowMonthPicker(true),
                   onOpenConnectionMenu: () => setShowConnectionMenu(true)
                 } : null}
