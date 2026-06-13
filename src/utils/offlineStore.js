@@ -240,7 +240,7 @@ export const getMemberPreviewMembers = async (scope, tableName) => {
           record?.table_name === (tableName || 'default')
         ))
         .map((record) => record.member)
-        .filter(Boolean)
+        .filter((member) => Boolean(member) && !member?.deleted_at)
       resolve(filtered)
     }
     request.onerror = () => reject(request.error || new Error('Could not read member preview cache.'))

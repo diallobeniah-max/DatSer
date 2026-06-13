@@ -70,7 +70,8 @@ const RECENT_MEMBER_EDITS_STORAGE_KEY = 'datser_recent_member_edits'
 const RECENT_MEMBER_EDITS_LIMIT = 80
 const MEMBER_PREVIEW_PAGE_SIZE = 20
 const MEMBER_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000
-const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 6 * 60 * 60 * 1000
+const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 3 * 60 * 1000
+const MEMBER_PREVIEW_SYNC_OVERLAP_MS = 5000
 const MEMBER_PREVIEW_CACHE_PREFIX = 'datser_member_preview_cache_v1'
 const MEMBER_PREVIEW_SYNC_META_PREFIX = 'datser_member_preview_sync_meta_v1'
 const MEMBER_PREVIEW_SELECT = [
@@ -98,6 +99,7 @@ const MEMBER_PREVIEW_SELECT = [
   'inserted_at',
   'created_at',
   'updated_at',
+  'deleted_at',
   'is_visitor'
 ].join(',')
 const MEMBER_BADGE_SELECT = 'id,"Member","Regular","Newcomer","Manual Badge","Badge Type"'
@@ -156,7 +158,18 @@ const readMemberPreviewSyncMeta = (scope, tableName) => {
   if (typeof window === 'undefined') return null
   try {
     const parsed = JSON.parse(window.localStorage.getItem(getMemberPreviewSyncMetaKey(scope, tableName)) || 'null')
-    return parsed && Number.isFinite(parsed.syncedAt) ? parsed : null
+    if (!parsed) return null
+    const syncedAt = Number.isFinite(parsed.syncedAt)
+      ? parsed.syncedAt
+      : Number.isFinite(Date.parse(parsed.lastSyncAt || parsed.lastSyncedAt || ''))
+        ? Date.parse(parsed.lastSyncAt || parsed.lastSyncedAt)
+        : null
+    if (!Number.isFinite(syncedAt)) return null
+    return {
+      ...parsed,
+      syncedAt,
+      lastSyncAt: parsed.lastSyncAt || parsed.lastSyncedAt || new Date(syncedAt).toISOString()
+    }
   } catch {
     return null
   }
@@ -165,9 +178,11 @@ const readMemberPreviewSyncMeta = (scope, tableName) => {
 const writeMemberPreviewSyncMeta = (scope, tableName, meta = {}) => {
   if (typeof window === 'undefined') return
   try {
+    const lastSyncAt = meta.lastSyncAt || meta.lastSyncedAt || new Date().toISOString()
     window.localStorage.setItem(getMemberPreviewSyncMetaKey(scope, tableName), JSON.stringify({
       ...meta,
-      syncedAt: Date.now()
+      lastSyncAt,
+      syncedAt: Number.isFinite(meta.syncedAt) ? meta.syncedAt : Date.now()
     }))
   } catch (error) {
     console.warn('Unable to save member preview sync metadata:', error)
@@ -177,7 +192,7 @@ const writeMemberPreviewSyncMeta = (scope, tableName, meta = {}) => {
 const isMemberPreviewSyncStale = (scope, tableName, now = Date.now()) => {
   const meta = readMemberPreviewSyncMeta(scope, tableName)
   if (!meta) return true
-  return now - meta.syncedAt > MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS
+  return now - (meta.syncedAt || 0) > MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS
 }
 
 const clearMemberPreviewLocalStorage = () => {
@@ -239,6 +254,31 @@ const getAttendanceColumnNameForDate = (date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `attendance_${year}_${month}_${day}`
+}
+
+const resolveAttendanceDateKeyFromColumn = (columnName, tableName = '') => {
+  const normalized = String(columnName || '')
+  const lower = normalized.toLowerCase()
+  const newMatch = lower.match(/^attendance_(\d{4})_(\d{2})_(\d{2})$/)
+  if (newMatch) {
+    return `${newMatch[1]}-${newMatch[2]}-${newMatch[3]}`
+  }
+
+  const oldMatch = normalized.match(/[Aa]ttendance[_ ](\d+)(st|nd|rd|th)?/)
+  if (oldMatch && tableName) {
+    const [monthName, yearStr] = String(tableName).split('_')
+    const monthIndex = MONTHS_IN_YEAR.indexOf(monthName)
+    const year = parseInt(yearStr, 10)
+    const day = parseInt(oldMatch[1], 10)
+    if (monthIndex >= 0 && Number.isFinite(year) && Number.isFinite(day)) {
+      const date = new Date(year, monthIndex, day)
+      if (!Number.isNaN(date.getTime())) {
+        return getLocalDateString(date)
+      }
+    }
+  }
+
+  return null
 }
 
 const makeOfflineChangeId = () => {
@@ -523,6 +563,8 @@ export const AppProvider = ({ children }) => {
     cachedCount: 0,
     totalCount: 0,
     lastSyncedAt: null,
+    lastSyncAt: null,
+    lastRemoteUpdatedAt: null,
     source: 'idle'
   })
   const [recentMemberEdits, setRecentMemberEdits] = useState([])
@@ -540,6 +582,8 @@ export const AppProvider = ({ children }) => {
   const nameColumnCacheRef = useRef(new Map())
   const membersCacheRef = useRef(new Map()) // tableName -> { data, ts }
   const memberPreviewSyncRef = useRef(new Map())
+  const memberPreviewSchemaReadyRef = useRef(new Map())
+  const memberPreviewBackgroundSyncRunnerRef = useRef(null)
   const workspaceCacheScope = useMemo(() => getWorkspaceCacheScope({
     userId: user?.id,
     dataOwnerId,
@@ -1746,13 +1790,22 @@ export const AppProvider = ({ children }) => {
     }
   }, [user, isCollaborator, dataOwnerId])
 
+  const applyDeletedAtFilter = useCallback((query) => {
+    if (!query) return query
+    if (typeof query.is === 'function') return query.is('deleted_at', null)
+    if (typeof query.eq === 'function') return query.eq('deleted_at', null)
+    return query
+  }, [])
+
   const fetchMemberPreviewPage = async (tableName, offset = 0) => {
     const from = Math.max(0, offset)
     const to = from + MEMBER_PREVIEW_PAGE_SIZE - 1
-    let response = await supabase
-      .from(tableName)
-      .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
-      .range(from, to)
+    await ensureMemberPreviewSyncColumns(tableName)
+    let response = await applyDeletedAtFilter(
+      supabase
+        .from(tableName)
+        .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
+    ).range(from, to)
 
     if (response.error) {
       const message = response.error.message?.toLowerCase() || ''
@@ -1765,10 +1818,14 @@ export const AppProvider = ({ children }) => {
 
       if (shouldFallback) {
         console.warn('[fetchMembers] Preview column select failed; falling back to one-page row select:', response.error)
-        response = await supabase
+        const deletedColumnMissing = message.includes('deleted_at') || response.error.code === '42703'
+        let fallbackQuery = supabase
           .from(tableName)
           .select('*', { count: 'exact' })
-          .range(from, to)
+        if (!deletedColumnMissing) {
+          fallbackQuery = applyDeletedAtFilter(fallbackQuery)
+        }
+        response = await fallbackQuery.range(from, to)
       }
     }
 
@@ -1838,6 +1895,66 @@ export const AppProvider = ({ children }) => {
     }
   }, [workspaceCacheScope])
 
+  const markMemberPreviewSyncComplete = useCallback((tableName, overrides = {}) => {
+    if (!tableName) return null
+    const syncedAt = overrides.lastSyncAt || new Date().toISOString()
+    const cachedCount = Number.isFinite(overrides.cachedCount) ? overrides.cachedCount : 0
+    const totalCount = Number.isFinite(overrides.totalCount) ? overrides.totalCount : cachedCount
+    const meta = {
+      ...overrides,
+      cachedCount,
+      totalCount,
+      lastSyncAt: syncedAt,
+      lastRemoteUpdatedAt: overrides.lastRemoteUpdatedAt || syncedAt
+    }
+    writeMemberPreviewSyncMeta(workspaceCacheScope, tableName, meta)
+    setMemberPreviewSyncStatus(prev => ({
+      ...prev,
+      isSyncing: false,
+      cachedCount: Math.max(prev.cachedCount || 0, cachedCount),
+      totalCount: Math.max(prev.totalCount || 0, totalCount),
+      lastSyncedAt: syncedAt,
+      lastSyncAt: syncedAt,
+      lastRemoteUpdatedAt: meta.lastRemoteUpdatedAt,
+      source: overrides.source || prev.source || 'indexeddb'
+    }))
+    return meta
+  }, [workspaceCacheScope])
+
+  const getMemberPreviewSyncSince = useCallback((tableName) => {
+    const meta = readMemberPreviewSyncMeta(workspaceCacheScope, tableName)
+    const metaSync = meta?.lastSyncAt || meta?.lastSyncedAt
+    const cacheSync = readMemberPreviewCache(workspaceCacheScope, tableName)?.ts
+    const fallback = Number.isFinite(cacheSync) ? new Date(cacheSync).toISOString() : null
+    const syncSource = metaSync || fallback
+    if (!syncSource) return null
+    const metaDate = new Date(syncSource)
+    if (Number.isNaN(metaDate.getTime())) return null
+    const overlap = Math.max(0, MEMBER_PREVIEW_SYNC_OVERLAP_MS)
+    return new Date(Math.max(0, metaDate.getTime() - overlap)).toISOString()
+  }, [workspaceCacheScope])
+
+  const ensureMemberPreviewSyncColumns = useCallback(async (tableName) => {
+    if (!tableName || isDeveloperBypass || !isSupabaseConfigured()) return true
+    if (memberPreviewSchemaReadyRef.current.get(tableName)) return true
+    try {
+      const { error } = await supabase.rpc('ensure_month_member_sync_columns', {
+        target_table: tableName
+      })
+      if (error) throw error
+      memberPreviewSchemaReadyRef.current.set(tableName, true)
+      return true
+    } catch (error) {
+      const missingRpc = String(error?.message || '').toLowerCase().includes('function ensure_month_member_sync_columns')
+      if (missingRpc) {
+        console.warn('ensure_month_member_sync_columns RPC is missing; preview sync columns were not auto-created.')
+      } else {
+        console.warn(`Could not ensure preview sync columns for ${tableName}:`, error)
+      }
+      return false
+    }
+  }, [isDeveloperBypass, isSupabaseConfigured])
+
   const readMemberPreviewIndex = useCallback(async (tableName = currentTable) => {
     if (!tableName) return []
     if (!isOfflineStoreAvailable()) return []
@@ -1878,11 +1995,21 @@ export const AppProvider = ({ children }) => {
   function startMemberPreviewBackgroundSync(tableName = currentTable, options = {}) {
     if (!tableName || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
     if (offlineMode === 'online' && !isOnline) return
+    const syncSince = getMemberPreviewSyncSince(tableName)
     if (!options.force && !isMemberPreviewSyncStale(workspaceCacheScope, tableName)) {
       setMemberPreviewSyncStatus(prev => ({
         ...prev,
         source: options.source || 'fresh',
-        lastSyncedAt: readMemberPreviewSyncMeta(workspaceCacheScope, tableName)?.lastSyncedAt || prev.lastSyncedAt
+        lastSyncedAt: readMemberPreviewSyncMeta(workspaceCacheScope, tableName)?.lastSyncAt || prev.lastSyncedAt,
+        lastSyncAt: readMemberPreviewSyncMeta(workspaceCacheScope, tableName)?.lastSyncAt || prev.lastSyncAt
+      }))
+      return
+    }
+
+    if (!syncSince) {
+      setMemberPreviewSyncStatus(prev => ({
+        ...prev,
+        source: options.source || 'idle'
       }))
       return
     }
@@ -1898,75 +2025,96 @@ export const AppProvider = ({ children }) => {
     }))
 
     ;(async () => {
-      let offset = 0
-      let totalCount = options.totalCount || 0
-      let mergedMembers = []
-      let lastPageSize = MEMBER_PREVIEW_PAGE_SIZE
+      await ensureMemberPreviewSyncColumns(tableName)
 
-      while (lastPageSize === MEMBER_PREVIEW_PAGE_SIZE) {
-        const { data, error, count } = await fetchMemberPreviewPage(tableName, offset)
+      let offset = 0
+      let remoteRows = []
+      let latestRemoteUpdatedAt = syncSince || null
+      let pageSize = MEMBER_PREVIEW_PAGE_SIZE
+
+      while (pageSize === MEMBER_PREVIEW_PAGE_SIZE) {
+        let query = supabase
+          .from(tableName)
+          .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
+          .order('updated_at', { ascending: true })
+
+        if (syncSince) {
+          query = query.gt('updated_at', syncSince)
+        }
+
+        const { data, error, count } = await query.range(offset, offset + MEMBER_PREVIEW_PAGE_SIZE - 1)
         if (error) throw error
 
-        const pageMembers = (data || []).map(normalizeMemberRecord)
-        lastPageSize = pageMembers.length
-        if (Number.isFinite(count)) {
-          totalCount = count
-        }
-        if (pageMembers.length > 0) {
-          await persistMemberPreviewIndex(tableName, pageMembers, {
-            cachedCount: offset + pageMembers.length,
-            totalCount,
-            source: 'background'
-          })
-          mergedMembers = mergeMemberPreviewPages(mergedMembers, pageMembers)
-          if (tableName === currentTable) {
-            setMembers(prev => mergeMemberPreviewPages(prev, pageMembers))
-            setMembersTotalCount(totalCount || Math.max(membersTotalCount || 0, offset + pageMembers.length))
-            setMembersLoadedAll(Boolean(totalCount) && (offset + pageMembers.length) >= totalCount)
+        const pageRows = (data || []).map(normalizeMemberRecord)
+        pageSize = pageRows.length
+        if (pageRows.length > 0) {
+          remoteRows = remoteRows.concat(pageRows)
+          const pageLatest = pageRows.reduce((latest, row) => {
+            const updated = Date.parse(row.updated_at || row.updatedAt || row.inserted_at || row.created_at || '')
+            if (!Number.isFinite(updated)) return latest
+            return Math.max(latest, updated)
+          }, 0)
+          if (pageLatest > 0) {
+            latestRemoteUpdatedAt = new Date(Math.max(Date.parse(latestRemoteUpdatedAt || 0), pageLatest)).toISOString()
           }
         }
 
-        offset += MEMBER_PREVIEW_PAGE_SIZE
-        setMemberPreviewSyncStatus(prev => ({
-          ...prev,
-          isSyncing: true,
-          cachedCount: Math.max(prev.cachedCount || 0, Math.min(offset, totalCount || offset)),
-          totalCount: totalCount || prev.totalCount,
-          source: 'background'
-        }))
+        if (Number.isFinite(count) && count > 0) {
+          // count is the number of rows matching the incremental query, not the full table size.
+        }
 
-        if (totalCount && offset >= totalCount) break
-        if (pageMembers.length === 0) break
-        await sleep(80)
+        if (pageRows.length < MEMBER_PREVIEW_PAGE_SIZE) break
+        offset += MEMBER_PREVIEW_PAGE_SIZE
+        await sleep(60)
+      }
+
+      const deletedIds = remoteRows
+        .filter((row) => row?.deleted_at)
+        .map((row) => String(row.id))
+      const activeRows = remoteRows.filter((row) => !row?.deleted_at)
+
+      if (activeRows.length > 0) {
+        await saveMemberPreviewMembers(workspaceCacheScope, tableName, activeRows)
+        applyAttendanceColumnsFromMemberRows(activeRows, tableName)
+      }
+
+      if (deletedIds.length > 0) {
+        await Promise.all(deletedIds.map((memberId) => deleteMemberPreviewMember(workspaceCacheScope, tableName, memberId)))
+        deletedIds.forEach((memberId) => removeMemberFromAttendanceData(memberId))
       }
 
       const indexedMembers = await readMemberPreviewIndex(tableName)
-      const doneTotal = totalCount || indexedMembers.length
-      if (tableName === currentTable && indexedMembers.length > 0) {
-        const loadedAll = !doneTotal || indexedMembers.length >= doneTotal
-        const cachePayload = {
-          data: indexedMembers,
-          ts: Date.now(),
-          totalCount: doneTotal,
-          loadedAll
-        }
-        membersCacheRef.current.set(tableName || 'default', cachePayload)
-        writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
-        setMembers(indexedMembers)
-        setMembersTotalCount(doneTotal)
-        setMembersLoadedAll(loadedAll)
+      const filteredMembers = indexedMembers.filter((member) => !member?.deleted_at)
+      const cachePayload = {
+        data: filteredMembers,
+        ts: Date.now(),
+        totalCount: filteredMembers.length,
+        loadedAll: membersLoadedAll
       }
-      setMemberPreviewSyncStatus({
-        isSyncing: false,
-        cachedCount: indexedMembers.length,
-        totalCount: doneTotal,
-        lastSyncedAt: new Date().toISOString(),
-        source: 'indexeddb'
-      })
-      writeMemberPreviewSyncMeta(workspaceCacheScope, tableName, {
-        cachedCount: indexedMembers.length,
-        totalCount: doneTotal,
-        lastSyncedAt: new Date().toISOString()
+
+      membersCacheRef.current.set(tableName || 'default', cachePayload)
+      writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+
+      if (tableName === currentTable) {
+        setMembers((prev) => {
+          const next = mergeMemberPreviewPages(prev.filter((member) => !deletedIds.includes(String(member.id))), activeRows)
+          return next
+        })
+        setMembersTotalCount((prev) => Math.max(prev || 0, filteredMembers.length))
+      }
+
+      if (activeRows.length > 0 || deletedIds.length > 0) {
+        searchCacheRef.current.clear()
+        refreshSearch()
+      }
+
+      const now = new Date().toISOString()
+      markMemberPreviewSyncComplete(tableName, {
+        cachedCount: filteredMembers.length,
+        totalCount: filteredMembers.length,
+        source: 'background',
+        lastSyncAt: now,
+        lastRemoteUpdatedAt: latestRemoteUpdatedAt || now
       })
     })().catch((error) => {
       console.warn('Background member preview sync failed:', error)
@@ -1979,6 +2127,8 @@ export const AppProvider = ({ children }) => {
       memberPreviewSyncRef.current.delete(syncKey)
     })
   }
+
+  memberPreviewBackgroundSyncRunnerRef.current = startMemberPreviewBackgroundSync
 
   // Fetch members from current monthly table or use mock data
   const fetchMembers = async (tableName = currentTable, options = {}) => {
@@ -2095,6 +2245,23 @@ export const AppProvider = ({ children }) => {
           totalCount: normalizedMembers.length,
           loadedAll: true
         })
+        writeMemberPreviewCache(workspaceCacheScope, tableName, {
+          data: normalizedMembers,
+          ts: now,
+          totalCount: normalizedMembers.length,
+          loadedAll: true
+        })
+        markMemberPreviewSyncComplete(tableName, {
+          cachedCount: normalizedMembers.length,
+          totalCount: normalizedMembers.length,
+          source: 'full-snapshot',
+          lastSyncAt: new Date(now).toISOString(),
+          lastRemoteUpdatedAt: normalizedMembers.reduce((latest, member) => {
+            const updated = Date.parse(member.updated_at || member.updatedAt || member.inserted_at || member.created_at || '')
+            if (!Number.isFinite(updated)) return latest
+            return Math.max(latest, updated)
+          }, 0) || new Date(now).toISOString()
+        })
         appContextLog(`Successfully loaded ${normalizedMembers.length} members for offline snapshot`)
         return normalizedMembers
       }
@@ -2181,6 +2348,17 @@ export const AppProvider = ({ children }) => {
         setMembersLoadedAll(loadedAll)
         membersCacheRef.current.set(cacheKey, cachePayload)
         writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+        markMemberPreviewSyncComplete(tableName, {
+          cachedCount: normalizedMembers.length,
+          totalCount,
+          source: 'first-page',
+          lastSyncAt: new Date(now).toISOString(),
+          lastRemoteUpdatedAt: normalizedMembers.reduce((latest, member) => {
+            const updated = Date.parse(member.updated_at || member.updatedAt || member.inserted_at || member.created_at || '')
+            if (!Number.isFinite(updated)) return latest
+            return Math.max(latest, updated)
+          }, 0) || new Date(now).toISOString()
+        })
         persistMemberPreviewIndex(tableName, normalizedMembers, {
           cachedCount: normalizedMembers.length,
           totalCount,
@@ -2255,6 +2433,17 @@ export const AppProvider = ({ children }) => {
       setMembersLoadedAll(loadedAll)
       membersCacheRef.current.set(tableName || 'default', cachePayload)
       writeMemberPreviewCache(workspaceCacheScope, tableName, cachePayload)
+      markMemberPreviewSyncComplete(tableName, {
+        cachedCount: mergedMembers.length,
+        totalCount,
+        source: 'load-more',
+        lastSyncAt: new Date().toISOString(),
+        lastRemoteUpdatedAt: normalizedPage.reduce((latest, member) => {
+          const updated = Date.parse(member.updated_at || member.updatedAt || member.inserted_at || member.created_at || '')
+          if (!Number.isFinite(updated)) return latest
+          return Math.max(latest, updated)
+        }, 0) || new Date().toISOString()
+      })
       persistMemberPreviewIndex(tableName, normalizedPage, {
         cachedCount: mergedMembers.length,
         totalCount,
@@ -2304,6 +2493,12 @@ export const AppProvider = ({ children }) => {
           cachedCount: members.length + 1,
           totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
           source: 'add'
+        })
+        markMemberPreviewSyncComplete(currentTable, {
+          cachedCount: members.length + 1,
+          totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
+          source: 'add',
+          lastSyncAt: new Date().toISOString()
         })
         toast.success('Member added')
         // Return the created member object directly for downstream usage
@@ -2385,6 +2580,12 @@ export const AppProvider = ({ children }) => {
         cachedCount: members.length + 1,
         totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
         source: 'add'
+      })
+      markMemberPreviewSyncComplete(currentTable, {
+        cachedCount: members.length + 1,
+        totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
+        source: 'add',
+        lastSyncAt: new Date().toISOString()
       })
       recordRecentMemberEdit(createdMember, new Date().toISOString(), {
         action: 'add',
@@ -3048,6 +3249,51 @@ export const AppProvider = ({ children }) => {
     }))
   }, [])
 
+  const applyAttendanceColumnsFromMemberRows = useCallback((rows = [], tableName = currentTable) => {
+    if (!Array.isArray(rows) || rows.length === 0) return
+    setAttendanceData((prev) => {
+      const next = { ...prev }
+      rows.forEach((row) => {
+        if (!row?.id) return
+        Object.entries(row).forEach(([key, value]) => {
+          const dateKey = resolveAttendanceDateKeyFromColumn(key, tableName)
+          if (!dateKey) return
+          if (value === 'Present' || value === true) {
+            next[dateKey] = { ...(next[dateKey] || {}), [row.id]: true }
+          } else if (value === 'Absent' || value === false) {
+            next[dateKey] = { ...(next[dateKey] || {}), [row.id]: false }
+          } else if (next[dateKey]) {
+            const { [row.id]: _removed, ...rest } = next[dateKey]
+            next[dateKey] = rest
+          }
+        })
+      })
+      return next
+    })
+  }, [currentTable])
+
+  const removeMemberFromAttendanceData = useCallback((memberId) => {
+    if (!memberId) return
+    setAttendanceData((prev) => {
+      let changed = false
+      const next = {}
+      Object.entries(prev || {}).forEach(([dateKey, membersForDate]) => {
+        if (!membersForDate || typeof membersForDate !== 'object') {
+          next[dateKey] = membersForDate
+          return
+        }
+        if (!(memberId in membersForDate)) {
+          next[dateKey] = membersForDate
+          return
+        }
+        const { [memberId]: _removed, ...rest } = membersForDate
+        next[dateKey] = rest
+        changed = true
+      })
+      return changed ? next : prev
+    })
+  }, [])
+
   const queueOfflineAttendanceChanges = useCallback(async (memberIds, effectiveDate, present, actionType = 'attendance_mark') => {
     const ids = Array.isArray(memberIds) ? memberIds : [memberIds]
     const serviceDate = getLocalDateString(effectiveDate)
@@ -3133,6 +3379,25 @@ export const AppProvider = ({ children }) => {
 
       // Update local state for members and attendanceData (for real-time UI updates)
       applyLocalAttendanceState(memberId, effectiveDate, present, attendanceColumn)
+
+      const attendanceValue = present === null ? null : (present ? 'Present' : 'Absent')
+      const updatedAttendanceMember = normalizeMemberRecord({
+        ...(members.find(m => m.id === memberId) || { id: memberId }),
+        [attendanceColumn]: attendanceValue,
+        updated_at: new Date().toISOString()
+      })
+      applyAttendanceColumnsFromMemberRows([updatedAttendanceMember], currentTable)
+      await persistMemberPreviewIndex(currentTable, [updatedAttendanceMember], {
+        cachedCount: members.length,
+        totalCount: membersTotalCount,
+        source: 'attendance'
+      })
+      markMemberPreviewSyncComplete(currentTable, {
+        cachedCount: members.length,
+        totalCount: membersTotalCount,
+        source: 'attendance',
+        lastSyncAt: new Date().toISOString()
+      })
 
       searchCacheRef.current.clear()
       const changedMember = members.find(m => m.id === memberId) || { id: memberId }
@@ -3305,6 +3570,25 @@ export const AppProvider = ({ children }) => {
       // Update local state for members and attendanceData (for real-time UI updates)
       applyLocalAttendanceState(memberIds, effectiveDate, present, attendanceColumn)
 
+      const bulkAttendanceValue = present ? 'Present' : 'Absent'
+      const updatedBulkAttendanceMembers = memberIds.map((memberId) => normalizeMemberRecord({
+        ...(members.find((member) => member.id === memberId) || { id: memberId }),
+        [attendanceColumn]: bulkAttendanceValue,
+        updated_at: new Date().toISOString()
+      }))
+      applyAttendanceColumnsFromMemberRows(updatedBulkAttendanceMembers, currentTable)
+      await persistMemberPreviewIndex(currentTable, updatedBulkAttendanceMembers, {
+        cachedCount: members.length,
+        totalCount: membersTotalCount,
+        source: 'bulk-attendance'
+      })
+      markMemberPreviewSyncComplete(currentTable, {
+        cachedCount: members.length,
+        totalCount: membersTotalCount,
+        source: 'bulk-attendance',
+        lastSyncAt: new Date().toISOString()
+      })
+
       // Check if month is complete and process badges
       if (badgeProcessingEnabled) {
         setTimeout(() => processEndOfMonthBadges(), 500)
@@ -3443,6 +3727,12 @@ export const AppProvider = ({ children }) => {
           cachedCount: members.length,
           totalCount: membersTotalCount,
           source: 'update'
+        })
+        markMemberPreviewSyncComplete(currentTable, {
+          cachedCount: members.length,
+          totalCount: membersTotalCount,
+          source: 'update',
+          lastSyncAt: editTimestamp
         })
         recordRecentMemberEdit(updatedMember, editTimestamp)
         if (!silent) toast.success('Member updated')
@@ -3802,6 +4092,12 @@ export const AppProvider = ({ children }) => {
         totalCount: membersTotalCount,
         source: 'update'
       })
+      markMemberPreviewSyncComplete(currentTable, {
+        cachedCount: members.length,
+        totalCount: membersTotalCount,
+        source: 'update',
+        lastSyncAt: editTimestamp
+      })
       if (skipRefresh) {
         appContextLog('[updateMember] Kept optimistic member cache without post-save refetch.')
       }
@@ -3835,6 +4131,12 @@ export const AppProvider = ({ children }) => {
           cachedCount: members.length,
           totalCount: membersTotalCount,
           source: 'local-fallback-update'
+        })
+        markMemberPreviewSyncComplete(currentTable, {
+          cachedCount: members.length,
+          totalCount: membersTotalCount,
+          source: 'local-fallback-update',
+          lastSyncAt: editTimestamp
         })
         refreshSearch()
         if (!silent) toast.info('Saved locally on this device')
@@ -3916,64 +4218,85 @@ export const AppProvider = ({ children }) => {
 
     setLoading(true)
     try {
-      console.log(`[DELETE] Attempting Supabase delete from table: ${currentTable}, member ID: ${memberId}`)
+      await ensureMemberPreviewSyncColumns(currentTable)
+      console.log(`[DELETE] Attempting soft delete in table: ${currentTable}, member ID: ${memberId}`)
 
-      let deleted = false
+      const deletedAt = new Date().toISOString()
+      let softDeleted = false
 
-      // Attempt 1: Direct delete with .select() to verify rows were actually removed
-      const { data, error } = await supabase
-        .from(currentTable)
-        .delete()
-        .eq('id', memberId)
-        .select()
+      try {
+        const { data, error } = await supabase
+          .from(currentTable)
+          .update({
+            deleted_at: deletedAt,
+            updated_at: deletedAt
+          })
+          .eq('id', memberId)
+          .select('id, deleted_at, updated_at')
 
-      console.log(`[DELETE] Direct delete response - Error: ${error ? error.message : 'none'}, Rows deleted:`, data?.length || 0, data)
+        console.log(`[DELETE] Soft delete response - Error: ${error ? error.message : 'none'}, Rows updated:`, data?.length || 0, data)
 
-      if (error) {
-        console.warn(`[DELETE] Direct delete error (will try RPC fallback):`, error.message)
-      } else if (data && data.length > 0) {
-        deleted = true
-        console.log(`[DELETE] Direct delete succeeded - ${data.length} row(s) removed`)
+        if (!error && data && data.length > 0) {
+          softDeleted = true
+        } else if (error) {
+          const normalized = error.message?.toLowerCase() || ''
+          const isRlsError =
+            error.code === '42501' ||
+            normalized.includes('row-level security') ||
+            normalized.includes('permission denied')
+          if (!isRlsError) {
+            throw error
+          }
+        }
+      } catch (updateError) {
+        const normalized = updateError?.message?.toLowerCase() || ''
+        const isRlsError =
+          updateError?.code === '42501' ||
+          normalized.includes('row-level security') ||
+          normalized.includes('permission denied')
+        if (!isRlsError) throw updateError
       }
 
-      // Attempt 2: If direct delete returned 0 rows (RLS silently blocked), try RPC
-      if (!deleted) {
-        console.log(`[DELETE] Direct delete returned 0 rows (likely RLS blocking). Trying RPC fallback...`)
-        const { data: rpcResult, error: rpcError } = await supabase.rpc('delete_member_by_id', {
-          target_table: currentTable,
-          member_id: memberId
-        })
+      if (!softDeleted) {
+        console.log('[DELETE] Soft delete via table update did not confirm. Trying RPC fallback...')
+        try {
+          const { data: rpcResult, error: rpcError } = await supabase.rpc('soft_delete_member', {
+            target_table: currentTable,
+            member_id: memberId
+          })
 
-        console.log(`[DELETE] RPC response - Error: ${rpcError ? rpcError.message : 'none'}, Result:`, rpcResult)
-
-        if (!rpcError) {
-          deleted = true
-        } else {
-          console.warn(`[DELETE] RPC fallback failed:`, rpcError.message)
+          console.log(`[DELETE] Soft delete RPC response - Error: ${rpcError ? rpcError.message : 'none'}, Result:`, rpcResult)
+          if (!rpcError) {
+            softDeleted = Boolean(rpcResult || true)
+          }
+        } catch (rpcError) {
+          console.warn('[DELETE] soft_delete_member RPC failed, trying hard delete fallback:', rpcError)
         }
       }
 
-      // Attempt 3: Verify the row is actually gone from the database
+      if (!softDeleted) {
+        console.log('[DELETE] Soft delete fallback failed; attempting legacy hard delete...')
+        const { data, error } = await supabase
+          .from(currentTable)
+          .delete()
+          .eq('id', memberId)
+          .select('id')
+        if (error) throw error
+        softDeleted = Boolean(data?.length)
+      }
+
       const { data: verifyData } = await supabase
         .from(currentTable)
-        .select('id')
+        .select('id, deleted_at')
         .eq('id', memberId)
         .maybeSingle()
 
-      if (verifyData) {
-        console.error(`[DELETE] VERIFICATION FAILED - member ${memberId} still exists in ${currentTable}`)
-        console.error(`[DELETE] This means RLS policies are blocking DELETE. You need to add a DELETE policy in Supabase.`)
-        console.error(`[DELETE] Go to Supabase Dashboard > Authentication > Policies > ${currentTable} > Add policy:`)
-        console.error(`[DELETE]   Policy name: "Allow authenticated users to delete"`)
-        console.error(`[DELETE]   Operation: DELETE`)
-        console.error(`[DELETE]   Target roles: authenticated`)
-        console.error(`[DELETE]   USING expression: true`)
-        console.error(`[DELETE] Or run this SQL in the Supabase SQL Editor:`)
-        console.error(`[DELETE]   CREATE POLICY "Allow delete for authenticated" ON "${currentTable}" FOR DELETE TO authenticated USING (true);`)
-        throw new Error(`Delete blocked by database policy. Please add a DELETE policy for the "${currentTable}" table in Supabase. Check browser console for instructions.`)
+      if (verifyData && !verifyData.deleted_at) {
+        console.error(`[DELETE] VERIFICATION FAILED - member ${memberId} is still active in ${currentTable}`)
+        throw new Error(`Delete blocked by database policy. Please allow soft delete for the "${currentTable}" table in Supabase.`)
       }
 
-      console.log(`[DELETE] VERIFIED - member ${memberId} successfully removed from ${currentTable}`)
+      console.log(`[DELETE] VERIFIED - member ${memberId} successfully soft-deleted from ${currentTable}`)
 
       const deletedMember = members.find(member => member.id === memberId) || { id: memberId }
 
@@ -4010,6 +4333,12 @@ export const AppProvider = ({ children }) => {
       // Update caches/search without refetching the whole table.
       searchCacheRef.current.clear()
       await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
+      markMemberPreviewSyncComplete(currentTable, {
+        cachedCount: Math.max(0, members.length - 1),
+        totalCount: Math.max(0, (membersTotalCount || members.length) - 1),
+        source: 'delete',
+        lastSyncAt: deletedAt
+      })
       recordRecentMemberEdit(deletedMember, new Date().toISOString(), {
         action: 'delete',
         summary: 'Deleted member',
@@ -4628,7 +4957,8 @@ export const AppProvider = ({ children }) => {
 
     const isAge = /^\d{1,3}$/.test(trimmed)
     const safe = trimmed.replace(/%/g, '').replace(/_/g, '').replace(/\s+/g, ' ').trim()
-    let query = supabase.from(currentTable).select(MEMBER_PREVIEW_SELECT).limit(20)
+    await ensureMemberPreviewSyncColumns(currentTable)
+    let query = applyDeletedAtFilter(supabase.from(currentTable).select(MEMBER_PREVIEW_SELECT)).limit(20)
     if (isAge) {
       query = query.eq('Age', parseInt(trimmed, 10))
     } else {
@@ -4646,9 +4976,11 @@ export const AppProvider = ({ children }) => {
     let { data, error } = await query
     if (error && !isAge) {
       const nameCol = await resolveNameColumn(currentTable)
-      const fallback = await supabase
-        .from(currentTable)
-        .select(MEMBER_PREVIEW_SELECT)
+      const fallback = await applyDeletedAtFilter(
+        supabase
+          .from(currentTable)
+          .select(MEMBER_PREVIEW_SELECT)
+      )
         .ilike(nameCol, `%${safe}%`)
         .limit(20)
       data = fallback.data
@@ -4666,14 +4998,18 @@ export const AppProvider = ({ children }) => {
       if (missingColumn) {
         const nameCol = await resolveNameColumn(currentTable)
         const fallback = isAge
-          ? await supabase
-              .from(currentTable)
-              .select(MEMBER_PREVIEW_SELECT)
+          ? await applyDeletedAtFilter(
+              supabase
+                .from(currentTable)
+                .select(MEMBER_PREVIEW_SELECT)
+            )
               .eq('Age', parseInt(trimmed, 10))
               .limit(20)
-          : await supabase
-              .from(currentTable)
-              .select(MEMBER_PREVIEW_SELECT)
+          : await applyDeletedAtFilter(
+              supabase
+                .from(currentTable)
+                .select(MEMBER_PREVIEW_SELECT)
+            )
               .ilike(nameCol, `%${safe}%`)
               .limit(20)
         data = fallback.data
@@ -4770,9 +5106,12 @@ export const AppProvider = ({ children }) => {
 
         if (isSupabaseConfigured()) {
           const safe = searchTerm.replace(/%/g, '').replace(/_/g, '').trim()
-          let { data, error } = await supabase
-            .from(tableName)
-            .select(MEMBER_PREVIEW_SELECT)
+          await ensureMemberPreviewSyncColumns(tableName)
+          let { data, error } = await applyDeletedAtFilter(
+            supabase
+              .from(tableName)
+              .select(MEMBER_PREVIEW_SELECT)
+          )
             .or(`"Full Name".ilike.%${safe}%,full_name.ilike.%${safe}%,name.ilike.%${safe}%,"Name".ilike.%${safe}%,member_code.ilike.%${safe}%`)
             .limit(20)
 
@@ -4787,9 +5126,11 @@ export const AppProvider = ({ children }) => {
 
             if (missingColumn) {
               const nameCol = await resolveNameColumn(tableName)
-              const fallback = await supabase
-                .from(tableName)
-                .select(MEMBER_PREVIEW_SELECT)
+              const fallback = await applyDeletedAtFilter(
+                supabase
+                  .from(tableName)
+                  .select(MEMBER_PREVIEW_SELECT)
+              )
                 .ilike(nameCol, `%${safe}%`)
                 .limit(20)
               data = fallback.data
@@ -5830,6 +6171,7 @@ export const AppProvider = ({ children }) => {
     }
 
     setIsSyncingOffline(true)
+    let shouldPullPreviewSync = false
     try {
       const pendingChanges = await getPendingOfflineChanges()
       let synced = 0
@@ -6004,9 +6346,16 @@ export const AppProvider = ({ children }) => {
       setOfflineStatusMessage(conflicts || failed || waitingForMonth
         ? 'Sync failed - changes are still saved locally.'
         : (synced ? 'All offline changes synced.' : 'No offline changes to sync.'))
+      shouldPullPreviewSync = synced > 0
       return { success: conflicts === 0 && failed === 0, synced, conflicts, failed, waitingForMonth }
     } finally {
       setIsSyncingOffline(false)
+      if (shouldPullPreviewSync && currentTable) {
+        startMemberPreviewBackgroundSync(currentTable, {
+          force: true,
+          source: 'offline-flush'
+        })
+      }
     }
   }
   syncOfflineChangesRef.current = syncOfflineChanges
@@ -6045,6 +6394,39 @@ export const AppProvider = ({ children }) => {
       }
     }
   }, [isOnline, offlineMode, pendingSyncCount, offlinePendingChanges, isSyncingOffline])
+
+  useEffect(() => {
+    if (!currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
+
+    let disposed = false
+    const triggerPreviewSync = (source = 'auto') => {
+      if (disposed) return
+      memberPreviewBackgroundSyncRunnerRef.current?.(currentTable, { source })
+    }
+
+    triggerPreviewSync('app-load')
+
+    const intervalId = setInterval(() => {
+      triggerPreviewSync('interval')
+    }, MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS)
+
+    const handleOnline = () => triggerPreviewSync('online')
+    const handleVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        triggerPreviewSync('visible')
+      }
+    }
+
+    window.addEventListener('online', handleOnline)
+    document.addEventListener('visibilitychange', handleVisible)
+
+    return () => {
+      disposed = true
+      clearInterval(intervalId)
+      window.removeEventListener('online', handleOnline)
+      document.removeEventListener('visibilitychange', handleVisible)
+    }
+  }, [currentTable, isDeveloperBypass, isSupabaseConfigured, shouldUseOfflineData])
 
   // Load attendance and badge data when table changes
   useEffect(() => {
@@ -6148,6 +6530,18 @@ export const AppProvider = ({ children }) => {
 
           if (payload.eventType === 'INSERT') {
             const incoming = normalizeMemberRecord(payload.new)
+            if (incoming?.deleted_at) {
+              setMembers((prevMembers) => prevMembers.filter((member) => member.id !== incoming.id))
+              deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
+                .catch((error) => console.warn('Could not remove realtime deleted member from index:', error))
+              markMemberPreviewSyncComplete(currentTable, {
+                cachedCount: Math.max(0, membersTotalCount - 1),
+                totalCount: Math.max(0, membersTotalCount - 1),
+                source: 'realtime-delete',
+                lastSyncAt: incoming.updated_at || new Date().toISOString()
+              })
+              return
+            }
             setMembers((prevMembers) => {
               const exists = prevMembers.some(member => member.id === incoming.id)
               const nextMembers = exists
@@ -6159,10 +6553,33 @@ export const AppProvider = ({ children }) => {
                 totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
                 source: 'realtime-insert'
               }).catch((error) => console.warn('Could not index realtime member insert:', error))
+              applyAttendanceColumnsFromMemberRows([incoming], currentTable)
+              markMemberPreviewSyncComplete(currentTable, {
+                cachedCount: nextMembers.length,
+                totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
+                source: 'realtime-insert',
+                lastSyncAt: incoming.updated_at || new Date().toISOString()
+              })
               return nextMembers
             });
           } else if (payload.eventType === 'UPDATE') {
             const incoming = normalizeMemberRecord(payload.new)
+            if (incoming?.deleted_at) {
+              setMembers((prevMembers) => {
+                const nextMembers = prevMembers.filter((member) => member.id !== incoming.id)
+                membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+                return nextMembers
+              })
+              deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
+                .catch((error) => console.warn('Could not remove realtime soft-deleted member from index:', error))
+              markMemberPreviewSyncComplete(currentTable, {
+                cachedCount: Math.max(0, membersTotalCount - 1),
+                totalCount: Math.max(0, membersTotalCount - 1),
+                source: 'realtime-delete',
+                lastSyncAt: incoming.updated_at || new Date().toISOString()
+              })
+              return
+            }
             setMembers((prevMembers) => {
               const nextMembers = prevMembers.map((member) =>
                 member.id === incoming.id ? { ...member, ...incoming } : member
@@ -6173,6 +6590,13 @@ export const AppProvider = ({ children }) => {
                 totalCount: membersTotalCount || nextMembers.length,
                 source: 'realtime-update'
               }).catch((error) => console.warn('Could not index realtime member update:', error))
+              applyAttendanceColumnsFromMemberRows([incoming], currentTable)
+              markMemberPreviewSyncComplete(currentTable, {
+                cachedCount: nextMembers.length,
+                totalCount: membersTotalCount || nextMembers.length,
+                source: 'realtime-update',
+                lastSyncAt: incoming.updated_at || new Date().toISOString()
+              })
               return nextMembers
             });
           } else if (payload.eventType === 'DELETE') {
@@ -6183,6 +6607,13 @@ export const AppProvider = ({ children }) => {
             });
             deleteMemberPreviewMember(workspaceCacheScope, currentTable, payload.old.id)
               .catch((error) => console.warn('Could not remove realtime member from index:', error))
+            removeMemberFromAttendanceData(payload.old.id)
+            markMemberPreviewSyncComplete(currentTable, {
+              cachedCount: Math.max(0, membersTotalCount - 1),
+              totalCount: Math.max(0, membersTotalCount - 1),
+              source: 'realtime-delete',
+              lastSyncAt: new Date().toISOString()
+            })
           }
         }
       )
@@ -6191,7 +6622,7 @@ export const AppProvider = ({ children }) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentTable, membersTotalCount, persistMemberPreviewIndex, workspaceCacheScope]);
+  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, removeMemberFromAttendanceData, workspaceCacheScope]);
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)

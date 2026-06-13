@@ -11,6 +11,7 @@ import {
   Download,
   RefreshCw,
   History,
+  CheckCircle2,
   X,
   Database,
   LayoutGrid
@@ -81,6 +82,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     setSearchTerm,
     refreshSearch,
     forceRefreshMembers,
+    forceRefreshMembersSilent,
     loading,
     dashboardTab,
     setDashboardTab,
@@ -103,6 +105,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     offlineCacheMeta,
     prepareOfflineData,
     isPreparingOffline,
+    memberPreviewSyncStatus,
     members,
     membersTotalCount,
     recentMemberEdits
@@ -398,7 +401,46 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     ? isConnectionLive
       ? 'text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30'
       : 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30'
-    : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
+      : 'text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/30'
+  const previewSyncStatus = useMemo(() => {
+    const syncing = memberPreviewSyncStatus?.isSyncing
+    const syncError = memberPreviewSyncStatus?.source === 'error'
+    const offline = !isOnline || offlineModeStatus === 'offline' || offlineModeStatus === 'forced-offline' || offlineModeStatus === 'online-unavailable'
+    if (syncing) {
+      return {
+        label: 'Syncing',
+        tone: 'text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20',
+        Icon: RefreshCw,
+        spin: true,
+        retry: false
+      }
+    }
+    if (offline) {
+      return {
+        label: 'Offline',
+        tone: 'text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20',
+        Icon: WifiOff,
+        spin: false,
+        retry: false
+      }
+    }
+    if (syncError) {
+      return {
+        label: 'Sync failed',
+        tone: 'text-red-700 dark:text-red-300 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20',
+        Icon: CheckCircle2,
+        spin: false,
+        retry: true
+      }
+    }
+    return {
+      label: 'Synced',
+      tone: 'text-green-700 dark:text-green-300 border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20',
+      Icon: CheckCircle2,
+      spin: false,
+      retry: false
+    }
+  }, [isOnline, memberPreviewSyncStatus?.isSyncing, memberPreviewSyncStatus?.source, offlineModeStatus])
   const dashboardStatusPreference = preferences?.mobile_dashboard_status_enabled
   const showDashboardStatusBar = currentView === 'dashboard' && (!isPhoneViewport || dashboardStatusPreference === true)
   const dashboardMemberColumns = normalizeDashboardColumns(preferences?.dashboard_member_columns)
@@ -654,6 +696,21 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                     : <WifiOff className="h-3.5 w-3.5 animate-pulse" />
                   : <WifiOff className="h-3.5 w-3.5 text-yellow-500" />}
                 <span>{connectionLabel}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (previewSyncStatus.retry) {
+                    selection()
+                    forceRefreshMembersSilent?.()
+                  }
+                }}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10.5px] font-semibold whitespace-nowrap transition-colors hover:brightness-105 sm:text-xs ${previewSyncStatus.tone} ${previewSyncStatus.retry ? 'cursor-pointer' : 'cursor-default'}`}
+                title={previewSyncStatus.retry ? 'Tap to retry preview sync' : 'Member preview sync status'}
+              >
+                <previewSyncStatus.Icon className={`h-3.5 w-3.5 ${previewSyncStatus.spin ? 'animate-spin' : ''}`} />
+                <span>{previewSyncStatus.label}</span>
               </button>
 
               <button
