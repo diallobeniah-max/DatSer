@@ -14,7 +14,7 @@ import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
-  const { updateMember, markAttendance, refreshSearch, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit } = useApp()
+  const { updateMember, markAttendance, refreshSearch, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
@@ -557,9 +557,19 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         success()
         onClose()
 
-        // Perform side-effects in background
+        // Patch the updated row into the lightweight local preview/search index immediately.
         try {
-          await forceRefreshMembersSilent()
+          await refreshMemberPreviewById?.(latestMember.id, {
+            fallbackMember: {
+              ...currentSnapshot,
+              ...nextMemberPayload,
+              id: latestMember.id,
+              updated_at: editedAt
+            },
+            source: 'member-bundle-update',
+            action: 'update',
+            summary: 'Updated member details'
+          })
           await Promise.all([loadAllAttendanceData(), loadAllBadgeData()])
           // Only one refreshSearch is needed
           refreshSearch()

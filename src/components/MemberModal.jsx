@@ -14,7 +14,7 @@ import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 
 const MemberModal = ({ isOpen, onClose }) => {
-  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings } = useApp()
+  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success } = useHapticFeedback()
@@ -404,9 +404,18 @@ const MemberModal = ({ isOpen, onClose }) => {
         success()
         setIsOverrideMode(false)
 
-        // Perform refreshes in background
+        // Patch the saved row into the lightweight local preview/search index immediately.
         try {
-          await forceRefreshMembersSilent()
+          await refreshMemberPreviewById?.(savedMemberId, {
+            fallbackMember: {
+              ...memberPayload,
+              id: savedMemberId,
+              updated_at: new Date().toISOString()
+            },
+            source: 'member-bundle-add',
+            action: 'add',
+            summary: 'Added member'
+          })
           await Promise.all([loadAllAttendanceData(), loadAllBadgeData()])
           refreshSearch()
         } catch (refreshError) {
