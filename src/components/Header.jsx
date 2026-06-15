@@ -75,6 +75,59 @@ const normalizeDashboardColumns = (value) => {
   return [1, 2, 3, 4].includes(numericValue) ? numericValue : 3
 }
 
+const getOrdinalSuffix = (day) => {
+  if (day >= 11 && day <= 13) return 'th'
+  switch (day % 10) {
+    case 1:
+      return 'st'
+    case 2:
+      return 'nd'
+    case 3:
+      return 'rd'
+    default:
+      return 'th'
+  }
+}
+
+const normalizeAttendanceValue = (value) => {
+  if (value === true || value === false) return value
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'present') return true
+  if (normalized === 'absent') return false
+  return undefined
+}
+
+const getLegacyAttendanceColumnName = (dateKey) => {
+  if (!dateKey) return null
+  const day = Number(String(dateKey).split('-')[2])
+  if (!Number.isFinite(day)) return null
+  return `Attendance ${day}${getOrdinalSuffix(day)}`
+}
+
+const resolveHeaderMemberAttendanceForDate = (member, dateKey, attendanceMap = {}) => {
+  if (!member || !dateKey) return undefined
+
+  if (Object.prototype.hasOwnProperty.call(attendanceMap, member.id)) {
+    const mapValue = normalizeAttendanceValue(attendanceMap[member.id])
+    if (mapValue !== undefined) return mapValue
+  }
+
+  const normalizedDateKey = String(dateKey).replace(/-/g, '_')
+  const modernColumnName = `attendance_${normalizedDateKey}`
+  const legacyColumnName = getLegacyAttendanceColumnName(dateKey)
+
+  for (const key in member) {
+    const keyLower = key.toLowerCase()
+    if (keyLower === modernColumnName || key === legacyColumnName) {
+      const memberValue = normalizeAttendanceValue(member[key])
+      if (memberValue !== undefined) return memberValue
+    }
+  }
+
+  return undefined
+}
+
 const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember, onCreateMonth, onToggleAIChat }) => {
   const { preferences, updatePreference } = useAuth()
   const {
@@ -245,21 +298,10 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     : null
 
   const isEditedMember = (member) => {
-    // Check attendanceData map
     for (const dk of sundayDates) {
       const map = attendanceData[dk] || {}
-      const val = map[member.id]
+      const val = resolveHeaderMemberAttendanceForDate(member, dk, map)
       if (val === true || val === false) return true
-    }
-    // Fallback: check member record columns directly
-    for (const key in member) {
-      const keyLower = key.toLowerCase()
-      const isOldFormat = key.startsWith('Attendance ')
-      const isNewFormat = /^attendance_\d{4}_\d{2}_\d{2}$/.test(keyLower)
-      if (isOldFormat || isNewFormat) {
-        const val = member[key]
-        if (val === 'Present' || val === 'Absent' || val === true || val === false) return true
-      }
     }
     return false
   }
@@ -271,7 +313,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       const map = attendanceData[dateStr] || {}
       let p = 0
       for (const m of base) {
-        const v = map[m.id]
+        const v = resolveHeaderMemberAttendanceForDate(m, dateStr, map)
         if (v === true) p += 1
       }
       acc[dateStr] = p
@@ -293,7 +335,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       if (dashboardTab === 'edited' && visibleSelectedDateKey) {
         const map = attendanceData[visibleSelectedDateKey] || {}
         return filteredMembers.filter(member => {
-          const value = map[member.id]
+          const value = resolveHeaderMemberAttendanceForDate(member, visibleSelectedDateKey, map)
           return value === true || value === false
         }).length
       }
@@ -312,7 +354,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       if (visibleSelectedDateKey) {
         const map = attendanceData[visibleSelectedDateKey] || {}
         return filteredMembers.filter(member => {
-          const value = map[member.id]
+          const value = resolveHeaderMemberAttendanceForDate(member, visibleSelectedDateKey, map)
           return value === true || value === false
         }).length
       }

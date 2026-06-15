@@ -220,6 +220,96 @@ const mergeMemberPreviewPages = (existing = [], incoming = []) => {
   return Array.from(byId.values())
 }
 
+const getMemberFreshnessTime = (member = {}) => {
+  const raw = member.updated_at || member.updatedAt || member.modified_at || member.last_updated || member.inserted_at || member.created_at
+  const parsed = Date.parse(raw || '')
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const mergeMemberSnapshotSources = (...sources) => {
+  const byId = new Map()
+
+  sources.forEach((source) => {
+    if (!Array.isArray(source)) return
+    source.forEach((rawMember) => {
+      if (!rawMember?.id || rawMember.deleted_at) return
+      const member = normalizeMemberRecord(rawMember)
+      const key = String(member.id)
+      const existing = byId.get(key)
+
+      if (!existing) {
+        byId.set(key, member)
+        return
+      }
+
+      const existingTime = getMemberFreshnessTime(existing)
+      const memberTime = getMemberFreshnessTime(member)
+      byId.set(
+        key,
+        normalizeMemberRecord(memberTime >= existingTime
+          ? { ...existing, ...member }
+          : { ...member, ...existing })
+      )
+    })
+  })
+
+  return Array.from(byId.values())
+}
+
+const applyPendingChangesToMemberSnapshot = (snapshotMembers = [], pendingChanges = [], tableName = null) => {
+  const byId = new Map()
+  snapshotMembers.forEach((member) => {
+    if (member?.id) byId.set(String(member.id), normalizeMemberRecord(member))
+  })
+
+  ;(pendingChanges || []).forEach((change) => {
+    if (!change || (tableName && change.table_name && change.table_name !== tableName)) return
+    const memberId = change.member_id || change.member_data?.id
+    if (!memberId) return
+    const key = String(memberId)
+
+    if (change.action_type === 'member_delete') {
+      byId.delete(key)
+      return
+    }
+
+    if (change.action_type === 'member_add') {
+      byId.set(key, normalizeMemberRecord({
+        ...(byId.get(key) || {}),
+        ...(change.member_data || {}),
+        id: memberId,
+        updated_at: change.created_at || change.timestamp || new Date().toISOString()
+      }))
+      return
+    }
+
+    if (change.action_type === 'member_update') {
+      byId.set(key, normalizeMemberRecord({
+        ...(byId.get(key) || { id: memberId }),
+        ...(change.updates || {}),
+        updated_at: change.created_at || change.timestamp || new Date().toISOString()
+      }))
+    }
+  })
+
+  return Array.from(byId.values())
+}
+
+const mergeAttendanceSnapshots = (...sources) => {
+  const merged = {}
+  sources.forEach((source) => {
+    if (!source || typeof source !== 'object') return
+    Object.entries(source).forEach(([dateKey, values]) => {
+      if (!values || typeof values !== 'object') return
+      merged[dateKey] = {
+        ...(merged[dateKey] || {}),
+        ...values
+      }
+    })
+  })
+  return merged
+}
+
 const getWorkspaceCacheScope = ({ userId, dataOwnerId, isCollaborator }) => {
   if (isCollaborator && dataOwnerId) return `owner-${dataOwnerId}`
   if (dataOwnerId) return `owner-${dataOwnerId}`
@@ -526,7 +616,9 @@ const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
   'member_code_badge_style',
   'member_code_card_style',
   'member_code_church_name',
-  'member_code_auto_cycle_minutes'
+  'member_code_auto_cycle_minutes',
+  'member_code_lookup_enabled',
+  'member_code_share_message_template'
 ]
 
 const OWNER_STICKY_MEMBER_CODE_SELECT_KEYS = WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS
@@ -3379,11 +3471,15 @@ export const AppProvider = ({ children }) => {
         attendanceColumn = result.columnName
       }
 
+      const attendanceUpdatedAt = new Date().toISOString()
+      const canWritePreviewSyncColumns = await ensureMemberPreviewSyncColumns(currentTable)
+
       await executeSupabaseWrite(
         () => supabase
           .from(currentTable)
           .update({
-            [attendanceColumn]: present === null ? null : (present ? 'Present' : 'Absent')
+            [attendanceColumn]: present === null ? null : (present ? 'Present' : 'Absent'),
+            ...(canWritePreviewSyncColumns ? { updated_at: attendanceUpdatedAt } : {})
           })
           .eq('id', memberId),
         { action: `Save attendance in ${currentTable}` }
@@ -3398,7 +3494,7 @@ export const AppProvider = ({ children }) => {
       const updatedAttendanceMember = normalizeMemberRecord({
         ...(members.find(m => m.id === memberId) || { id: memberId }),
         [attendanceColumn]: attendanceValue,
-        updated_at: new Date().toISOString()
+        updated_at: attendanceUpdatedAt
       })
       applyAttendanceColumnsFromMemberRows([updatedAttendanceMember], currentTable)
       await persistMemberPreviewIndex(currentTable, [updatedAttendanceMember], {
@@ -3564,12 +3660,17 @@ export const AppProvider = ({ children }) => {
       }
 
       const attendanceValue = present ? 'Present' : 'Absent'
+      const bulkAttendanceUpdatedAt = new Date().toISOString()
+      const canWritePreviewSyncColumns = await ensureMemberPreviewSyncColumns(currentTable)
 
       // Update each member's attendance in the monthly table
       const updatePromises = memberIds.map(memberId =>
         supabase
           .from(currentTable)
-          .update({ [attendanceColumn]: attendanceValue })
+          .update({
+            [attendanceColumn]: attendanceValue,
+            ...(canWritePreviewSyncColumns ? { updated_at: bulkAttendanceUpdatedAt } : {})
+          })
           .eq('id', memberId)
       )
 
@@ -3588,7 +3689,7 @@ export const AppProvider = ({ children }) => {
       const updatedBulkAttendanceMembers = memberIds.map((memberId) => normalizeMemberRecord({
         ...(members.find((member) => member.id === memberId) || { id: memberId }),
         [attendanceColumn]: bulkAttendanceValue,
-        updated_at: new Date().toISOString()
+        updated_at: bulkAttendanceUpdatedAt
       }))
       applyAttendanceColumnsFromMemberRows(updatedBulkAttendanceMembers, currentTable)
       await persistMemberPreviewIndex(currentTable, updatedBulkAttendanceMembers, {
@@ -5170,12 +5271,16 @@ export const AppProvider = ({ children }) => {
     }
 
     const fallbackMember = options.fallbackMember || {}
+    const remoteTime = getMemberFreshnessTime(remoteMember || {})
+    const fallbackTime = getMemberFreshnessTime(fallbackMember || {})
+    const mergedMember = remoteMember && remoteTime >= fallbackTime
+      ? { ...fallbackMember, ...remoteMember }
+      : { ...(remoteMember || {}), ...fallbackMember }
     const patchedMember = normalizeMemberRecord({
-      ...fallbackMember,
-      ...(remoteMember || {}),
+      ...mergedMember,
       id: memberId,
-      updated_at: remoteMember?.updated_at || fallbackMember.updated_at || nowIso,
-      inserted_at: remoteMember?.inserted_at || fallbackMember.inserted_at || fallbackMember.created_at || nowIso
+      updated_at: mergedMember.updated_at || mergedMember.updatedAt || nowIso,
+      inserted_at: mergedMember.inserted_at || mergedMember.created_at || nowIso
     })
 
     if (!patchedMember?.id) return null
@@ -6265,7 +6370,12 @@ export const AppProvider = ({ children }) => {
 
     setIsPreparingOffline(true)
     try {
-      let snapshotMembers = members
+      const localMembersBeforeRefresh = (members || []).map(normalizeMemberRecord)
+      const indexedMembersBeforeRefresh = currentTable
+        ? await readMemberPreviewIndex(currentTable).catch(() => [])
+        : []
+      const pendingChangesBeforeRefresh = await getPendingOfflineChanges().catch(() => [])
+      let snapshotMembers = localMembersBeforeRefresh
       let snapshotAttendanceData = attendanceData
       if (currentTable) {
         const [freshMembers, freshAttendance] = await Promise.all([
@@ -6284,11 +6394,49 @@ export const AppProvider = ({ children }) => {
           })
         ])
         if (Array.isArray(freshMembers)) {
-          snapshotMembers = freshMembers
+          snapshotMembers = mergeMemberSnapshotSources(
+            freshMembers,
+            indexedMembersBeforeRefresh,
+            localMembersBeforeRefresh
+          )
         }
+        snapshotMembers = applyPendingChangesToMemberSnapshot(
+          snapshotMembers,
+          pendingChangesBeforeRefresh,
+          currentTable
+        )
         if (freshAttendance && typeof freshAttendance === 'object') {
-          snapshotAttendanceData = freshAttendance
+          snapshotAttendanceData = mergeAttendanceSnapshots(freshAttendance, attendanceData)
         }
+
+        const latestSnapshotUpdate = snapshotMembers.reduce((latest, member) => {
+          const updated = getMemberFreshnessTime(member)
+          return updated > latest ? updated : latest
+        }, 0)
+
+        setMembers(snapshotMembers)
+        setAttendanceData(snapshotAttendanceData)
+        setMembersTotalCount(snapshotMembers.length)
+        setMembersLoadedAll(true)
+        persistLoadedMemberPreview(currentTable, snapshotMembers, {
+          totalCount: snapshotMembers.length,
+          loadedAll: true
+        })
+        await persistMemberPreviewIndex(currentTable, snapshotMembers, {
+          cachedCount: snapshotMembers.length,
+          totalCount: snapshotMembers.length,
+          source: 'offline-prepare'
+        })
+        applyAttendanceColumnsFromMemberRows(snapshotMembers, currentTable)
+        markMemberPreviewSyncComplete(currentTable, {
+          cachedCount: snapshotMembers.length,
+          totalCount: snapshotMembers.length,
+          source: 'offline-prepare',
+          lastSyncAt: new Date().toISOString(),
+          lastRemoteUpdatedAt: latestSnapshotUpdate
+            ? new Date(latestSnapshotUpdate).toISOString()
+            : new Date().toISOString()
+        })
       }
 
       const cachedAt = await saveOfflineSnapshot({

@@ -57,7 +57,7 @@ const PREVIEW_COPY = {
 }
 
 export const PreviewFrame = ({ children, className = '' }) => (
-  <div className={`overflow-hidden rounded-[1.35rem] border border-gray-200 bg-white/85 shadow-sm shadow-black/5 backdrop-blur-xl dark:border-white/10 dark:bg-[#111313]/92 dark:shadow-black/30 ${className}`}>
+  <div className={`overflow-hidden rounded-[1.35rem] border border-gray-200 bg-white/90 shadow-sm shadow-black/5 backdrop-blur-xl dark:border-white/10 dark:bg-[#111313]/95 dark:shadow-black/30 ${className}`}>
     {children}
   </div>
 )
@@ -128,11 +128,11 @@ export const AutoScrollPreview = ({ children, className = '' }) => {
 }
 
 const MiniMemberCard = ({ name = 'Agnes Abena Agyei', code = 'A44' }) => (
-  <div className="rounded-2xl border border-white/10 bg-[#202121] p-3 shadow-lg shadow-black/20">
+  <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-lg shadow-black/5 dark:border-white/10 dark:bg-[#202121] dark:shadow-black/20">
     <div className="mb-3 flex items-start justify-between gap-3">
       <div className="min-w-0">
-        <p className="truncate text-sm font-black text-white">{name}</p>
-        <p className="text-xs text-gray-400">Joined Jan 10</p>
+        <p className="truncate text-sm font-black text-gray-900 dark:text-white">{name}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">Joined Jan 10</p>
       </div>
       <MemberCodeBadge code={code} styleKey="coral" />
     </div>
@@ -292,9 +292,9 @@ const renderPreviewBody = (type, section) => {
   }
 }
 
-const LiveFeaturePreview = ({ type = 'default', section = null, compact = false, collapsible = false, className = '' }) => {
+const LiveFeaturePreview = ({ type = 'default', section = null, compact = false, collapsible = true, defaultOpen = false, className = '' }) => {
   const copy = PREVIEW_COPY[type] || PREVIEW_COPY.default
-  const [isOpen, setIsOpen] = useState(!collapsible)
+  const [isOpen, setIsOpen] = useState(defaultOpen)
   const PreviewIcon = useMemo(() => {
     if (type === 'member_codes') return BadgeCheck
     if (type === 'accessibility') return Zap
@@ -303,13 +303,18 @@ const LiveFeaturePreview = ({ type = 'default', section = null, compact = false,
     return Sparkles
   }, [type])
 
+  useEffect(() => {
+    setIsOpen(defaultOpen)
+  }, [defaultOpen, type])
+
   return (
     <PreviewFrame className={`live-feature-preview ${compact ? 'live-feature-preview-compact' : ''} ${className}`}>
       <button
         type="button"
         onClick={() => collapsible && setIsOpen((value) => !value)}
-        className={`flex w-full items-center justify-between gap-3 border-b border-gray-200/70 px-4 py-4 text-left dark:border-white/10 ${collapsible ? 'cursor-pointer' : 'cursor-default'}`}
+        className={`flex w-full items-center justify-between gap-3 border-b border-gray-200/70 px-4 py-4 text-left transition hover:bg-orange-50/70 dark:border-white/10 dark:hover:bg-orange-500/10 ${collapsible ? 'cursor-pointer' : 'cursor-default'}`}
         aria-expanded={isOpen}
+        aria-label={`${isOpen ? 'Close' : 'Open'} ${copy.title}`}
       >
         <div className="flex min-w-0 items-center gap-3">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
@@ -320,7 +325,12 @@ const LiveFeaturePreview = ({ type = 'default', section = null, compact = false,
             <h3 className="truncate text-base font-black text-gray-900 dark:text-white">{copy.title}</h3>
           </div>
         </div>
-        {collapsible && <ChevronRight className={`h-5 w-5 text-gray-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />}
+        {collapsible && (
+          <span className="inline-flex shrink-0 items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-black text-orange-700 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200">
+            {isOpen ? 'Close' : 'Open'}
+            <ChevronRight className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+          </span>
+        )}
       </button>
 
       {isOpen && (

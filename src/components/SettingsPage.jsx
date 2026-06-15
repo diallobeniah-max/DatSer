@@ -400,8 +400,13 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         const container = splitContainerRef.current
         if (!container || typeof window === 'undefined') return
         resizeCleanupRef.current?.()
+        const pointerId = event.pointerId
+        const previousCursor = document.body.style.cursor
+        const previousUserSelect = document.body.style.userSelect
+        const previousTouchAction = document.body.style.touchAction
 
         const updateWidth = (clientX) => {
+            if (typeof clientX !== 'number') return
             const rect = container.getBoundingClientRect()
             const rawWidth = clientX - rect.left
             const isTabletWidth = rect.width < 1180
@@ -416,28 +421,40 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         updateWidth(event.clientX)
 
         const handlePointerMove = (moveEvent) => {
+            if (pointerId !== undefined && moveEvent.pointerId !== undefined && moveEvent.pointerId !== pointerId) return
             moveEvent.preventDefault()
             updateWidth(moveEvent.clientX)
+        }
+        const handleTouchMove = (moveEvent) => {
+            moveEvent.preventDefault()
+            const touch = moveEvent.touches?.[0] || moveEvent.changedTouches?.[0]
+            updateWidth(touch?.clientX)
         }
         const handlePointerUp = (upEvent) => {
             upEvent?.preventDefault?.()
             resizeCleanupRef.current?.()
         }
         const cleanupResize = () => {
-            document.body.style.cursor = ''
-            document.body.style.userSelect = ''
+            document.body.style.cursor = previousCursor
+            document.body.style.userSelect = previousUserSelect
+            document.body.style.touchAction = previousTouchAction
             window.removeEventListener('pointermove', handlePointerMove)
             window.removeEventListener('pointerup', handlePointerUp)
             window.removeEventListener('pointercancel', handlePointerUp)
             window.removeEventListener('mouseup', handlePointerUp)
             window.removeEventListener('blur', handlePointerUp)
+            document.removeEventListener('pointermove', handlePointerMove)
             document.removeEventListener('pointerup', handlePointerUp)
             document.removeEventListener('pointercancel', handlePointerUp)
+            document.removeEventListener('touchmove', handleTouchMove)
+            document.removeEventListener('touchend', handlePointerUp)
+            document.removeEventListener('touchcancel', handlePointerUp)
             resizeCleanupRef.current = null
         }
 
         document.body.style.cursor = 'col-resize'
         document.body.style.userSelect = 'none'
+        document.body.style.touchAction = 'none'
         resizeCleanupRef.current = cleanupResize
         try {
             event.currentTarget?.setPointerCapture?.(event.pointerId)
@@ -449,8 +466,12 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         window.addEventListener('pointercancel', handlePointerUp)
         window.addEventListener('mouseup', handlePointerUp)
         window.addEventListener('blur', handlePointerUp)
+        document.addEventListener('pointermove', handlePointerMove, { passive: false })
         document.addEventListener('pointerup', handlePointerUp)
         document.addEventListener('pointercancel', handlePointerUp)
+        document.addEventListener('touchmove', handleTouchMove, { passive: false })
+        document.addEventListener('touchend', handlePointerUp, { passive: false })
+        document.addEventListener('touchcancel', handlePointerUp, { passive: false })
     }, [hideSettingsRailTooltip])
 
     useEffect(() => () => {
@@ -2027,18 +2048,13 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const getSettingTargetClass = (settingId) =>
         highlightedSettingId === settingId ? 'settings-search-target-highlight' : ''
 
-    const settingsSearchQuickActionsEnabled = effectivePreferences?.settings_search_quick_actions_enabled !== false
-
     const handleSettingsSearchResultSelect = useCallback((item) => {
-        rememberSettingsSearch()
+        rememberSettingsSearch(searchQuery || item?.label)
         setLastSettingsPath(item)
-        if (settingsSearchQuickActionsEnabled) {
-            setQuickSettingsSearchItem(item)
-            return
-        }
-        item.action()
+        setQuickSettingsSearchItem(null)
+        item?.action?.()
         setIsSettingsSearchFocused(false)
-    }, [rememberSettingsSearch, settingsSearchQuickActionsEnabled])
+    }, [rememberSettingsSearch, searchQuery])
 
     const openQuickSettingsSearchItem = useCallback(() => {
         if (!quickSettingsSearchItem) return
@@ -2449,7 +2465,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             type={effectiveSection}
                             section={currentSection}
                             compact={embedded}
-                            collapsible={embedded}
+                            collapsible
+                            defaultOpen={false}
                         />
                     </div>
                 </div>
@@ -2678,7 +2695,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         title="Drag to resize settings list. Double-click to reset."
                         onPointerDown={beginSettingsResize}
                         onDoubleClick={() => setSettingsSidebarWidth(typeof window !== 'undefined' && window.innerWidth < 1180 ? 320 : 380)}
-                        className="group flex h-full cursor-col-resize items-center justify-center"
+                        className="group flex h-full cursor-col-resize touch-none select-none items-center justify-center"
                     >
                         <div className="h-20 w-1.5 rounded-full bg-gray-300/80 transition-all group-hover:h-28 group-hover:bg-orange-500 dark:bg-white/20 dark:group-hover:bg-orange-400" />
                     </div>
@@ -2690,6 +2707,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             <LiveFeaturePreview
                                 type={effectiveSection}
                                 section={sections.find(section => section.id === effectiveSection)}
+                                collapsible
+                                defaultOpen={false}
                             />
                         </aside>
                     )}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspense } from 'react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
 import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church } from 'lucide-react'
@@ -79,6 +80,23 @@ const MEMBER_PASS_SHARE_THEMES = {
   premium: { accent: '#a855f7', accent2: '#ec4899', bg1: '#201129', bg2: '#0d0a12', badge: '#b935c3' },
   neon: { accent: '#22c55e', accent2: '#9be870', bg1: '#082019', bg2: '#081116', badge: '#58a845' },
   cosmic: { accent: '#eab308', accent2: '#fbbf24', bg1: '#151126', bg2: '#080914', badge: '#b97812' }
+}
+
+const DEFAULT_MEMBER_PASS_SHARE_MESSAGE_TEMPLATE = 'Hi. Thank you for being part of {workspace}. Your member pass code is {code}.'
+
+const formatMemberPassShareMessage = (template, { name, code, churchName }) => {
+  const fallback = DEFAULT_MEMBER_PASS_SHARE_MESSAGE_TEMPLATE
+  const resolvedTemplate = String(template || fallback)
+  const formatted = resolvedTemplate
+    .replace(/\{name\}/gi, name || 'member')
+    .replace(/\{code\}/gi, code || '')
+    .replace(/\{workspace\}/gi, churchName || 'DatSer Church')
+    .replace(/\{church\}/gi, churchName || 'DatSer Church')
+    .trim()
+
+  return formatted || fallback
+    .replace(/\{code\}/gi, code || '')
+    .replace(/\{workspace\}/gi, churchName || 'DatSer Church')
 }
 
 const wrapCanvasText = (ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) => {
@@ -308,7 +326,7 @@ const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, c
   wrapCanvasText(ctx, name, 720, 330, 620, 66, 3)
   ctx.fillStyle = muted
   ctx.font = '600 32px Arial'
-  ctx.fillText(joinLabel, 760, 674)
+  ctx.fillText(joinLabel, 760, 662)
 
   const badge = ctx.createLinearGradient(720, 500, 1120, 622)
   badge.addColorStop(0, theme.badge)
@@ -326,10 +344,10 @@ const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, c
   ctx.textAlign = 'center'
   ctx.fillText(code, 925, 582)
 
-  const messageX = 690
-  const messageY = 718
+  const messageX = 700
+  const messageY = 704
   const messageWidth = 640
-  const messageHeight = 168
+  const messageHeight = 176
   ctx.fillStyle = softPanel
   ctx.beginPath()
   ctx.roundRect(messageX, messageY, messageWidth, messageHeight, 30)
@@ -342,19 +360,25 @@ const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, c
   ctx.lineWidth = 3
   ctx.globalAlpha = 0.85
   ctx.beginPath()
-  ctx.arc(messageX + 70, messageY + 84, 42, 0, Math.PI * 2)
+  ctx.arc(messageX + 66, messageY + 88, 42, 0, Math.PI * 2)
   ctx.stroke()
   ctx.beginPath()
-  ctx.moveTo(messageX + 55, messageY + 69)
-  ctx.bezierCurveTo(messageX + 40, messageY + 54, messageX + 18, messageY + 76, messageX + 43, messageY + 101)
-  ctx.bezierCurveTo(messageX + 58, messageY + 118, messageX + 70, messageY + 125, messageX + 70, messageY + 125)
-  ctx.bezierCurveTo(messageX + 70, messageY + 125, messageX + 82, messageY + 118, messageX + 97, messageY + 101)
-  ctx.bezierCurveTo(messageX + 122, messageY + 76, messageX + 100, messageY + 54, messageX + 85, messageY + 69)
+  ctx.moveTo(messageX + 51, messageY + 73)
+  ctx.bezierCurveTo(messageX + 36, messageY + 58, messageX + 20, messageY + 82, messageX + 43, messageY + 106)
+  ctx.bezierCurveTo(messageX + 58, messageY + 122, messageX + 66, messageY + 127, messageX + 66, messageY + 127)
+  ctx.bezierCurveTo(messageX + 66, messageY + 127, messageX + 74, messageY + 122, messageX + 89, messageY + 106)
+  ctx.bezierCurveTo(messageX + 112, messageY + 82, messageX + 96, messageY + 58, messageX + 81, messageY + 73)
   ctx.stroke()
   ctx.restore()
+  ctx.save()
+  ctx.beginPath()
+  ctx.roundRect(messageX + 128, messageY + 24, messageWidth - 158, messageHeight - 48, 18)
+  ctx.clip()
   ctx.fillStyle = darkCanvas ? 'rgba(255,255,255,0.88)' : 'rgba(23,32,51,0.86)'
   ctx.font = '800 24px Arial'
-  wrapCanvasText(ctx, message || 'Thanks for being a valued member.', messageX + 150, messageY + 54, 430, 32, 4)
+  ctx.textAlign = 'left'
+  wrapCanvasText(ctx, message || 'Thanks for being a valued member.', messageX + 148, messageY + 58, messageWidth - 190, 32, 4)
+  ctx.restore()
 
   try {
     return canvas.toDataURL('image/png')
@@ -494,6 +518,7 @@ const Dashboard = ({ isAdmin = false }) => {
     preferences,
     recentMemberEdits
   } = useApp()
+  const { updatePreference } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success, error: errorHaptic } = useHapticFeedback()
   const [editingMember, setEditingMember] = useState(null)
@@ -505,6 +530,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const [quickPassMember, setQuickPassMember] = useState(null)
   const [isQuickPassClosing, setIsQuickPassClosing] = useState(false)
   const [memberPassSharePreview, setMemberPassSharePreview] = useState(null)
+  const [memberPassShareImageUpdating, setMemberPassShareImageUpdating] = useState(false)
 
   // Pagination state
   const [displayLimit, setDisplayLimit] = useState(20) // Initial display limit
@@ -2023,6 +2049,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const memberCodeCardStyle = normalizeMemberCodeCardStyleKey(preferences?.member_code_card_style)
   const memberCodeCardStyleConfig = getMemberCodeCardStyle(memberCodeCardStyle)
   const memberCodeChurchName = preferences?.member_code_church_name || 'DatSer Church'
+  const memberCodeShareMessageTemplate = preferences?.member_code_share_message_template || DEFAULT_MEMBER_PASS_SHARE_MESSAGE_TEMPLATE
   const memberCodeShowLogo = preferences?.member_code_show_logo !== false
   const memberCodeShowPhoto = preferences?.member_code_show_photo !== false
   const memberCodeShowEmail = preferences?.member_code_show_email !== false
@@ -2043,7 +2070,11 @@ const Dashboard = ({ isAdmin = false }) => {
     const name = getMemberSearchName(member)
     const code = getMemberIndexCode(member, memberIndexCodeMap)
     const joinLabel = getMemberJoinLabel(member)
-    const message = `Hi ${name}, thank you for being part of ${memberCodeChurchName}. Your member pass code is ${code}.`
+    const message = formatMemberPassShareMessage(memberCodeShareMessageTemplate, {
+      name,
+      code,
+      churchName: memberCodeChurchName
+    })
 
     if ((type === 'whatsapp' || type === 'sms') && !phone) {
       toast.info('No phone number')
@@ -2077,9 +2108,68 @@ const Dashboard = ({ isAdmin = false }) => {
       joinLabel,
       message,
       checkInUrl: shareCheckInUrl,
+      qrImageUrl: createQrImageUrl(shareCheckInUrl),
+      cardStyle: memberCodeCardStyle,
+      churchName: memberCodeChurchName,
       imageUrl
     })
-  }, [currentTable, isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberIndexCodeMap, selectedAttendanceDate])
+  }, [currentTable, isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap, selectedAttendanceDate])
+
+  const updateMemberPassShareMessage = useCallback((message) => {
+    setMemberPassSharePreview((current) => current ? { ...current, message } : current)
+  }, [])
+
+  const saveMemberPassShareMessageTemplate = useCallback(async () => {
+    if (!memberPassSharePreview?.message) return
+    await updatePreference?.('member_code_share_message_template', memberPassSharePreview.message)
+  }, [memberPassSharePreview?.message, updatePreference])
+
+  useEffect(() => {
+    if (!memberPassSharePreview) return undefined
+    const {
+      name,
+      code,
+      joinLabel,
+      churchName,
+      cardStyle,
+      qrImageUrl,
+      message
+    } = memberPassSharePreview
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setMemberPassShareImageUpdating(true)
+      const nextImageUrl = await createMemberPassShareImage({
+        name,
+        code,
+        joinLabel,
+        churchName,
+        cardStyle,
+        qrImageUrl,
+        message,
+        isDarkMode
+      })
+      if (!cancelled) {
+        setMemberPassSharePreview((current) => current ? { ...current, imageUrl: nextImageUrl } : current)
+        setMemberPassShareImageUpdating(false)
+      }
+    }, 420)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      setMemberPassShareImageUpdating(false)
+    }
+  }, [
+    isDarkMode,
+    memberPassSharePreview?.cardStyle,
+    memberPassSharePreview?.churchName,
+    memberPassSharePreview?.code,
+    memberPassSharePreview?.joinLabel,
+    memberPassSharePreview?.message,
+    memberPassSharePreview?.name,
+    memberPassSharePreview?.qrImageUrl
+  ])
 
   const sendMemberPassShare = useCallback(async () => {
     if (!memberPassSharePreview) return
@@ -3538,6 +3628,11 @@ const Dashboard = ({ isAdmin = false }) => {
                   alt={`${memberPassSharePreview.name} member pass preview`}
                   className="member-pass-share-art block h-auto w-full"
                 />
+                {memberPassShareImageUpdating && (
+                  <div className="member-pass-share-updating">
+                    Updating preview...
+                  </div>
+                )}
                 <div className="member-pass-share-art-note">
                   Scan QR to open this member and mark present
                 </div>
@@ -3554,8 +3649,21 @@ const Dashboard = ({ isAdmin = false }) => {
                       <p className="text-sm font-bold text-[var(--member-pass-accent)]">{memberPassSharePreview.code}</p>
                     </div>
                   </div>
-                  <p className="mt-4 text-sm font-bold opacity-65">Message</p>
-                  <p className="mt-2 text-sm leading-6 md:text-base">{memberPassSharePreview.message}</p>
+                  <label htmlFor="member-pass-share-message" className="mt-4 block text-sm font-bold opacity-70">
+                    Message
+                  </label>
+                  <textarea
+                    id="member-pass-share-message"
+                    value={memberPassSharePreview.message}
+                    onChange={(event) => updateMemberPassShareMessage(event.target.value)}
+                    onBlur={saveMemberPassShareMessageTemplate}
+                    rows={6}
+                    className="member-pass-share-message-input mt-2 w-full resize-y rounded-2xl border px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:ring-2 focus:ring-[var(--member-pass-accent)] md:text-base"
+                    placeholder="Write the share message..."
+                  />
+                  <p className="mt-2 text-xs font-semibold opacity-55">
+                    The preview image updates after you stop typing. This message is saved for the next share.
+                  </p>
                 </div>
 
                 <div className="space-y-3">

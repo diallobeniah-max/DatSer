@@ -68,8 +68,8 @@ const CustomCloseButton = ({ closeToast }) => {
     toastElement?.classList?.add('datser-toast-manual-closing');
 
     closeTimerRef.current = setTimeout(() => {
-      dismiss?.(event);
-    }, 280);
+      dismiss?.();
+    }, 260);
   };
 
   const handleStart = (e) => {

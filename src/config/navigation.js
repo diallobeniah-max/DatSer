@@ -301,6 +301,38 @@ export const SETTINGS_SEARCH_INDEX = [
         icon: Palette
     },
     {
+        id: 'member_code_church_name',
+        section: 'member_codes',
+        label: 'Pass Organization Name',
+        description: 'Edit the name shown on member code passes',
+        keywords: 'church name organization workspace ministry pass name code member panel custom name',
+        icon: Building2
+    },
+    {
+        id: 'member_code_lookup',
+        section: 'member_codes',
+        label: 'Code Number Lookup',
+        description: 'Show the matching member name while typing a code',
+        keywords: 'code number lookup search exact match member name k56 p36 e79 quick lookup code field',
+        icon: Search
+    },
+    {
+        id: 'member_code_lookup_field',
+        section: 'member_codes',
+        label: 'Code Number Preview Field',
+        description: 'Test a code number and see the matching member name',
+        keywords: 'type code number preview field k56 member appears immediately lookup test',
+        icon: Search
+    },
+    {
+        id: 'member_code_share_message',
+        section: 'member_codes',
+        label: 'Member Pass Share Message',
+        description: 'Edit the message used when sharing a member pass',
+        keywords: 'share message member pass custom text whatsapp sms edit template',
+        icon: Mail
+    },
+    {
         id: 'member_code_accent',
         section: 'member_codes',
         label: 'Member Code Accent',

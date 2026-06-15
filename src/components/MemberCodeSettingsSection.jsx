@@ -1,5 +1,7 @@
-import React, { useState } from 'react'
-import { BadgeCheck, CheckCircle, Church, Edit3, Mail, ScanSearch, Shuffle, Sparkles, UserRound, X } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { BadgeCheck, CheckCircle, Church, Edit3, Mail, ScanSearch, Search, Shuffle, Sparkles, UserRound, X } from 'lucide-react'
+import { useApp } from '../context/AppContext'
+import { buildMemberIndexCodeMap, getMemberIndexCode } from '../utils/memberIndexCodes'
 import MemberCodeBadge, { normalizeBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, {
     MEMBER_CODE_CARD_STYLE_OPTIONS,
@@ -12,6 +14,8 @@ const AUTO_CYCLE_INTERVALS = [
     { value: 30, label: '30 min' },
     { value: 60, label: '1 hour' }
 ]
+
+const DEFAULT_SHARE_MESSAGE_TEMPLATE = 'Hi. Thank you for being part of {workspace}. Your member pass code is {code}.'
 
 const normalizeAutoCycleMinutes = (value) => {
     const numericValue = Number(value)
@@ -62,6 +66,7 @@ const optionClass = (active) => (
 )
 
 const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
+    const { members = [] } = useApp()
     const workspaceEnabled = preferences?.workspace_member_codes_enabled
     const enabled = (workspaceEnabled ?? preferences?.member_codes_enabled) === true
     const quickPassEnabled = preferences?.member_code_quick_pass_enabled !== false
@@ -75,8 +80,44 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const selectedCardStyle = getMemberCodeCardStyle(cardStyle)
     const autoCycleMinutes = normalizeAutoCycleMinutes(preferences?.member_code_auto_cycle_minutes)
     const churchName = preferences?.member_code_church_name || 'DatSer Church'
+    const codeLookupEnabled = preferences?.member_code_lookup_enabled !== false
+    const shareMessageTemplate = preferences?.member_code_share_message_template || DEFAULT_SHARE_MESSAGE_TEMPLATE
     const [editingChurchName, setEditingChurchName] = useState(false)
     const [draftChurchName, setDraftChurchName] = useState(churchName)
+    const [lookupCode, setLookupCode] = useState('')
+    const [draftShareMessage, setDraftShareMessage] = useState(shareMessageTemplate)
+
+    const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+    const lookupResult = useMemo(() => {
+        const normalizedCode = lookupCode.trim().toUpperCase()
+        if (!normalizedCode || !codeLookupEnabled) return null
+
+        return members.find((member) => {
+            const generatedCode = getMemberIndexCode(member, memberIndexCodeMap)
+            const candidateCodes = [
+                generatedCode,
+                member?.member_code,
+                member?.memberCode,
+                member?.code,
+                member?.Code,
+                member?.['Member Code']
+            ].filter(Boolean)
+
+            return candidateCodes.some((candidate) => String(candidate).trim().toUpperCase() === normalizedCode)
+        }) || null
+    }, [codeLookupEnabled, lookupCode, memberIndexCodeMap, members])
+
+    const lookupName = lookupResult?.full_name || lookupResult?.fullName || lookupResult?.['Full Name'] || lookupResult?.name || lookupResult?.Name || ''
+
+    useEffect(() => {
+        if (!editingChurchName) {
+            setDraftChurchName(churchName)
+        }
+    }, [churchName, editingChurchName])
+
+    useEffect(() => {
+        setDraftShareMessage(shareMessageTemplate)
+    }, [shareMessageTemplate])
 
     const setPreference = (key, value) => updatePreferences?.({ [key]: value })
     const setMemberCodesEnabled = (value) => {
@@ -89,6 +130,9 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
         const cleanName = draftChurchName.trim() || 'DatSer Church'
         setPreference('member_code_church_name', cleanName)
         setEditingChurchName(false)
+    }
+    const saveShareMessageTemplate = () => {
+        setPreference('member_code_share_message_template', draftShareMessage.trim() || DEFAULT_SHARE_MESSAGE_TEMPLATE)
     }
 
     const badgeStyles = [
@@ -180,6 +224,57 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             getSettingTargetClass={getSettingTargetClass}
                             onChange={() => setPreference('member_code_auto_profile_enabled', !autoOpenProfile)}
                         />
+                        <ToggleRow
+                            icon={Search}
+                            title="Code Number Lookup"
+                            description="Show the matching member name while typing a code number."
+                            checked={codeLookupEnabled}
+                            settingId="member_code_lookup"
+                            getSettingTargetClass={getSettingTargetClass}
+                            onChange={() => setPreference('member_code_lookup_enabled', !codeLookupEnabled)}
+                        />
+                        <div
+                            data-setting-id="member_code_lookup_field"
+                            tabIndex={-1}
+                            className={`bg-gray-50 p-4 dark:bg-gray-900/30 ${getSettingTargetClass?.('member_code_lookup_field') || ''}`}
+                        >
+                            <label htmlFor="member-code-lookup-input" className="text-sm font-semibold text-gray-900 dark:text-white">
+                                Code number preview
+                            </label>
+                            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                <div className="relative flex-1">
+                                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                                    <input
+                                        id="member-code-lookup-input"
+                                        value={lookupCode}
+                                        disabled={!codeLookupEnabled}
+                                        onChange={(event) => setLookupCode(event.target.value.toUpperCase())}
+                                        placeholder="Type a code like K56"
+                                        className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm font-bold uppercase tracking-wide text-gray-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-black/25 dark:text-white"
+                                    />
+                                </div>
+                                <div className="min-h-[2.75rem] rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-black/25 sm:min-w-[13rem]">
+                                    {lookupCode.trim() ? (
+                                        lookupResult ? (
+                                            <>
+                                                <p className="text-xs font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-300">Matched member</p>
+                                                <p className="truncate font-black text-gray-900 dark:text-white">{lookupName || 'Unnamed member'}</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">No match yet</p>
+                                                <p className="truncate font-semibold text-gray-600 dark:text-gray-300">Check the code or sync latest data.</p>
+                                            </>
+                                        )
+                                    ) : (
+                                        <>
+                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Ready</p>
+                                            <p className="truncate font-semibold text-gray-600 dark:text-gray-300">A name appears here.</p>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div data-setting-id="member_code_badge_style" tabIndex={-1} className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_badge_style') || ''}`}>
@@ -259,6 +354,38 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                         </div>
                     </div>
 
+                    <div
+                        data-setting-id="member_code_share_message"
+                        tabIndex={-1}
+                        className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_share_message') || ''}`}
+                    >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <h4 className="font-semibold text-gray-900 dark:text-white">Share Message</h4>
+                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                                    Customize the text used for WhatsApp, SMS, and shared member pass previews.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={saveShareMessageTemplate}
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-orange-700"
+                            >
+                                Save
+                            </button>
+                        </div>
+                        <textarea
+                            value={draftShareMessage}
+                            onChange={(event) => setDraftShareMessage(event.target.value)}
+                            onBlur={saveShareMessageTemplate}
+                            rows={4}
+                            className="mt-3 w-full resize-y rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold leading-6 text-gray-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-500/20 dark:border-white/10 dark:bg-black/25 dark:text-white"
+                        />
+                        <p className="mt-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                            Tokens: {'{name}'}, {'{code}'}, {'{workspace}'}.
+                        </p>
+                    </div>
+
                 </div>
 
                 <div className={`member-code-live-preview-panel rounded-3xl border p-4 shadow-xl ${selectedCardStyle.accentClass}`}>
@@ -270,7 +397,11 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                 <Church className="h-10 w-10 text-[var(--member-pass-accent)]" />
                             </div>
                         )}
-                        <div className="mt-2 flex items-center justify-center gap-2 text-sm font-semibold">
+                        <div
+                            data-setting-id="member_code_church_name"
+                            tabIndex={-1}
+                            className={`mt-2 flex items-center justify-center gap-2 text-sm font-semibold ${getSettingTargetClass?.('member_code_church_name') || ''}`}
+                        >
                             {editingChurchName ? (
                                 <div className="flex w-full items-center gap-2">
                                     <input
