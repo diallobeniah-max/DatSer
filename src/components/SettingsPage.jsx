@@ -278,22 +278,46 @@ const LazyPanelFallback = () => (
     </div>
 )
 
+const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = new Set([
+    'workspace_member_codes_enabled',
+    'member_code_quick_pass_enabled',
+    'member_code_show_logo',
+    'member_code_show_photo',
+    'member_code_show_email',
+    'member_code_auto_profile_enabled',
+    'member_code_badge_style',
+    'member_code_card_style',
+    'member_code_church_name',
+    'member_code_logo_url',
+    'member_code_auto_cycle_minutes',
+    'member_code_lookup_enabled',
+    'member_code_share_message_template',
+    'member_code_turbo_enabled',
+    'member_code_turbo_notification_enabled'
+])
+
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMember }) => {
     const { user, signOut, preferences, resetPassword, saveUserPreferences, updatePreference, isDeveloperBypass } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
     const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil, setPersonalCalendarMode, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
     const { selection } = useHapticFeedback()
     const isDeveloperToolsEnabled = import.meta.env.DEV
+    const hasAdminAccess = !isCollaborator || isAdminCollaborator
 
     const [activeSection, setActiveSection] = useState(null) // null = show main list
     const [searchQuery, setSearchQuery] = useState('')
     const [isSettingsSearchFocused, setIsSettingsSearchFocused] = useState(false)
     const [compactMode] = useState(true)
+    const [isLivePreviewOpen, setIsLivePreviewOpen] = useState(false)
     const [settingsSidebarWidth, setSettingsSidebarWidth] = useState(() => {
         if (typeof window === 'undefined') return 380
         const saved = Number(window.localStorage.getItem('datser_settings_sidebar_width'))
         return Number.isFinite(saved) && saved >= 84 ? saved : 380
     })
+
+    useEffect(() => {
+        setIsLivePreviewOpen(false)
+    }, [activeSection])
     const [settingsRailTooltip, setSettingsRailTooltip] = useState(null)
     const [lastSettingsPath, setLastSettingsPath] = useState(null)
     const settingsSearchScope = useMemo(() => dataOwnerId || user?.id || 'guest', [dataOwnerId, user?.id])
@@ -837,7 +861,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         controls: true,
         months: false
     })
-    const updatePreferences = useCallback((nextPreferences) => {
+    const updatePreferences = useCallback(async (nextPreferences) => {
         if (!nextPreferences || typeof nextPreferences !== 'object') return
         if (
             Object.prototype.hasOwnProperty.call(nextPreferences, 'member_codes_enabled') ||
@@ -853,14 +877,34 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             ...prev,
             ...nextPreferences
         }))
+        const workspacePatch = Object.fromEntries(
+            Object.entries(nextPreferences).filter(([key]) => WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS.has(key))
+        )
+        if (isCollaborator && isAdminCollaborator && dataOwnerId && Object.keys(workspacePatch).length > 0) {
+            try {
+                const { data } = await executeSupabaseWrite(
+                    () => supabase
+                        .from('user_preferences')
+                        .update({ ...workspacePatch, updated_at: new Date().toISOString() })
+                        .eq('user_id', dataOwnerId)
+                        .select()
+                        .single(),
+                    { action: 'Save workspace member-code preferences' }
+                )
+                return data
+            } catch (error) {
+                console.error('Could not save shared member-code preferences:', error)
+                toast.error('Could not save this workspace setting')
+                return null
+            }
+        }
         const entries = Object.entries(nextPreferences)
         if (entries.length === 1 && typeof updatePreference === 'function') {
             const [key, value] = entries[0]
-            updatePreference(key, value)
-            return
+            return updatePreference(key, value)
         }
-        saveUserPreferences?.(nextPreferences)
-    }, [saveUserPreferences, updatePreference])
+        return saveUserPreferences?.(nextPreferences)
+    }, [dataOwnerId, isAdminCollaborator, isCollaborator, saveUserPreferences, updatePreference])
 
     const toggleWorkspacePanel = useCallback((panelKey) => {
         selection()
@@ -1236,7 +1280,6 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
     const isOverrideActive = Boolean(lockedDefaultDate)
     const isAutoMode = !isOverrideActive
-    const hasAdminAccess = !isCollaborator || isAdminCollaborator
     const isPersonalAutoMode = !isPersonalManualMode
     const personalModeDisabled = isCollaborator && isOverrideActive
     const manualExpiryDate = useMemo(() => {
@@ -2454,20 +2497,25 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                 </div>
                                 <h1 className="truncate text-lg font-bold text-gray-900 dark:text-white sm:text-xl">{currentSection?.label || 'Settings'}</h1>
                             </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsLivePreviewOpen((value) => !value)}
+                                className={`inline-flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black transition-all duration-300 active:scale-95 ${isLivePreviewOpen
+                                    ? 'border-orange-500 bg-orange-600 text-white shadow-lg shadow-orange-500/20'
+                                    : 'border-orange-200 bg-orange-50 text-orange-700 hover:border-orange-400 hover:bg-orange-100 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/15'
+                                }`}
+                                aria-expanded={isLivePreviewOpen}
+                                aria-controls="settings-live-preview-drawer"
+                                aria-label="Live Preview"
+                            >
+                                <Sparkles className="h-4 w-4" />
+                                <span className="hidden sm:inline">Live Preview</span>
+                            </button>
                         </div>
                     </div>
 
                     <div className={embedded ? '' : 'rounded-[1.35rem] border border-gray-200 bg-[#f7f7f5] p-2.5 shadow-xl shadow-black/8 dark:border-[#303030] dark:bg-[#1b1b1b] dark:shadow-black/30'}>
                         {renderContent(effectiveSection)}
-                    </div>
-                    <div className={embedded ? 'mt-4 xl:hidden' : 'mt-4'}>
-                        <LiveFeaturePreview
-                            type={effectiveSection}
-                            section={currentSection}
-                            compact={embedded}
-                            collapsible
-                            defaultOpen={false}
-                        />
                     </div>
                 </div>
             </div>
@@ -2702,16 +2750,6 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     <section className="h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl border border-gray-200 bg-[#f7f7f5] shadow-xl shadow-black/8 dark:!border-[#303030] dark:!bg-[#1b1b1b] dark:shadow-black/30">
                         {isSettingsSearchFocused ? renderSettingsSearchPanel() : renderDetailView({ embedded: true, sectionId: effectiveSection })}
                     </section>
-                    {!isSettingsSearchFocused && (
-                        <aside className="settings-live-preview-aside hidden h-full overflow-y-auto overscroll-contain no-scrollbar rounded-2xl xl:block">
-                            <LiveFeaturePreview
-                                type={effectiveSection}
-                                section={sections.find(section => section.id === effectiveSection)}
-                                collapsible
-                                defaultOpen={false}
-                            />
-                        </aside>
-                    )}
                     </div>
                     {isSidebarCollapsed && settingsRailTooltip && (
                         <div
@@ -2736,6 +2774,49 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     return (
         <div>
             {compactMode ? renderSplitSettingsView() : (activeSection === null ? renderMainList() : renderDetailView())}
+
+            {isLivePreviewOpen && (
+                <div className="fixed inset-0 z-[145]" role="presentation">
+                    <button
+                        type="button"
+                        className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in"
+                        onClick={() => setIsLivePreviewOpen(false)}
+                        aria-label="Close Live Preview"
+                    />
+                    <aside
+                        id="settings-live-preview-drawer"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={`${sections.find((section) => section.id === (activeSection || 'account'))?.label || 'Settings'} Live Preview`}
+                        className="settings-live-preview-drawer absolute inset-y-0 right-0 flex w-[min(92vw,26rem)] flex-col border-l border-orange-200 bg-[#f7f7f5] shadow-[-24px_0_70px_rgba(0,0,0,0.28)] dark:border-orange-400/20 dark:bg-[#121212]"
+                    >
+                        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-4 dark:border-white/10">
+                            <div className="flex min-w-0 items-center gap-3">
+                                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                                    <Sparkles className="h-5 w-5" />
+                                </span>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-orange-600 dark:text-orange-300">Live Preview</p>
+                                    <p className="truncate font-black text-gray-900 dark:text-white">{sections.find((section) => section.id === (activeSection || 'account'))?.label || 'Settings'}</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={() => setIsLivePreviewOpen(false)} className="grid h-10 w-10 place-items-center rounded-full border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-100 dark:border-white/10 dark:bg-white/5 dark:text-gray-200 dark:hover:bg-white/10" aria-label="Close Live Preview">
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+                            <LiveFeaturePreview
+                                type={activeSection || 'account'}
+                                section={sections.find((section) => section.id === (activeSection || 'account'))}
+                                collapsible={false}
+                                defaultOpen
+                                showHeader={false}
+                                className="shadow-none"
+                            />
+                        </div>
+                    </aside>
+                </div>
+            )}
 
             {false && compactMode && isSettingsSearchFocused && (
                 <div className="fixed inset-0 z-[90] hidden bg-white/95 backdrop-blur-2xl dark:bg-black/95 md:grid md:grid-cols-[minmax(300px,42vw)_minmax(420px,1fr)]">

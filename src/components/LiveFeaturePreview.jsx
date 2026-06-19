@@ -292,7 +292,7 @@ const renderPreviewBody = (type, section) => {
   }
 }
 
-const LiveFeaturePreview = ({ type = 'default', section = null, compact = false, collapsible = true, defaultOpen = false, className = '' }) => {
+const LiveFeaturePreview = ({ type = 'default', section = null, compact = false, collapsible = true, defaultOpen = false, showHeader = true, className = '' }) => {
   const copy = PREVIEW_COPY[type] || PREVIEW_COPY.default
   const [isOpen, setIsOpen] = useState(defaultOpen)
   const PreviewIcon = useMemo(() => {
@@ -309,7 +309,7 @@ const LiveFeaturePreview = ({ type = 'default', section = null, compact = false,
 
   return (
     <PreviewFrame className={`live-feature-preview ${compact ? 'live-feature-preview-compact' : ''} ${className}`}>
-      <button
+      {showHeader && <button
         type="button"
         onClick={() => collapsible && setIsOpen((value) => !value)}
         className={`flex w-full items-center justify-between gap-3 border-b border-gray-200/70 px-4 py-4 text-left transition hover:bg-orange-50/70 dark:border-white/10 dark:hover:bg-orange-500/10 ${collapsible ? 'cursor-pointer' : 'cursor-default'}`}
@@ -331,7 +331,7 @@ const LiveFeaturePreview = ({ type = 'default', section = null, compact = false,
             <ChevronRight className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
           </span>
         )}
-      </button>
+      </button>}
 
       {isOpen && (
         <div className="space-y-4 p-4">

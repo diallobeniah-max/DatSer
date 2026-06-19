@@ -484,18 +484,39 @@
     background: color-mix(in srgb, #111313 92%, transparent);
   }
 
-  @media (min-width: 1280px) {
-    .settings-live-preview-grid {
-      grid-template-columns: var(--settings-sidebar-width, 380px) 18px minmax(0, 1fr) minmax(18rem, 24rem);
-      column-gap: 1rem;
-    }
+  .settings-live-preview-drawer {
+    animation: settings-preview-slide-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
-  @media (min-width: 1536px) {
-    .settings-live-preview-grid {
-      grid-template-columns: var(--settings-sidebar-width, 380px) 18px minmax(36rem, 1fr) minmax(20rem, 28rem);
-    }
+  @keyframes settings-preview-slide-in {
+    from { opacity: 0; transform: translateX(2.5rem); }
+    to { opacity: 1; transform: translateX(0); }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-live-preview-drawer { animation: none; }
+  }
+
+  .qr-scanner-corner {
+    position: absolute;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-color: #fb923c;
+    filter: drop-shadow(0 0 12px rgba(249, 115, 22, 0.5));
+  }
+  .qr-scanner-corner-tl { left: -2px; top: -2px; border-left: 4px solid #fb923c; border-top: 4px solid #fb923c; border-radius: 1.75rem 0 0; }
+  .qr-scanner-corner-tr { right: -2px; top: -2px; border-right: 4px solid #fb923c; border-top: 4px solid #fb923c; border-radius: 0 1.75rem 0 0; }
+  .qr-scanner-corner-bl { left: -2px; bottom: -2px; border-left: 4px solid #fb923c; border-bottom: 4px solid #fb923c; border-radius: 0 0 0 1.75rem; }
+  .qr-scanner-corner-br { right: -2px; bottom: -2px; border-right: 4px solid #fb923c; border-bottom: 4px solid #fb923c; border-radius: 0 0 1.75rem; }
+  .qr-scanner-line {
+    position: absolute;
+    left: 8%; right: 8%; top: 12%; height: 2px;
+    background: linear-gradient(90deg, transparent, #fb923c 18%, #fdba74 50%, #fb923c 82%, transparent);
+    box-shadow: 0 0 18px 4px rgba(249, 115, 22, 0.35);
+    animation: qr-scanner-sweep 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+  }
+  @keyframes qr-scanner-sweep { to { transform: translateY(14rem); } }
+  @media (prefers-reduced-motion: reduce) { .qr-scanner-line { animation: none; top: 50%; } }
 
   .live-feature-preview {
     isolation: isolate;

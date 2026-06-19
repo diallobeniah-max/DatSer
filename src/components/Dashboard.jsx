@@ -3,7 +3,8 @@ import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
-import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church } from 'lucide-react'
+import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine } from 'lucide-react'
+import QRCode from 'qrcode'
 import DateSelector from './DateSelector'
 import ConfirmModal from './ConfirmModal'
 import TableSkeleton from './TableSkeleton'
@@ -24,6 +25,7 @@ import lazyWithRetry from '../utils/lazyWithRetry'
 const EditMemberModal = lazyWithRetry(() => import('./EditMemberModal'))
 const MemberModal = lazyWithRetry(() => import('./MemberModal'))
 const MonthModal = lazyWithRetry(() => import('./MonthModal'))
+const QrScannerModal = lazyWithRetry(() => import('./QrScannerModal'))
 
 // Helper function to get month display name from table name
 const getMonthDisplayName = (tableName) => {
@@ -407,11 +409,9 @@ const createMemberCheckInUrl = ({ member, code, dateKey, tableName }) => {
   return url.toString()
 }
 
-const createQrImageUrl = (value, size = 260) => (
-  value
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=12&ecc=H&data=${encodeURIComponent(value)}`
-    : ''
-)
+const createQrImageUrl = async (value, size = 260) => value
+  ? QRCode.toDataURL(value, { width: size, margin: 2, errorCorrectionLevel: 'H' })
+  : ''
 
 const getOrdinalSuffix = (day) => {
   const value = Number(day)
@@ -526,11 +526,13 @@ const Dashboard = ({ isAdmin = false }) => {
   const [expandedMembers, setExpandedMembers] = useState({})
   const [memberTags, setMemberTags] = useState({}) // memberId -> tags array
   const [showMemberModal, setShowMemberModal] = useState(false)
+  const [showQrScanner, setShowQrScanner] = useState(false)
   const [showMonthModal, setShowMonthModal] = useState(false)
   const [quickPassMember, setQuickPassMember] = useState(null)
   const [isQuickPassClosing, setIsQuickPassClosing] = useState(false)
   const [memberPassSharePreview, setMemberPassSharePreview] = useState(null)
   const [memberPassShareImageUpdating, setMemberPassShareImageUpdating] = useState(false)
+  const turboCheckInRef = useRef({ key: '', running: false })
 
   // Pagination state
   const [displayLimit, setDisplayLimit] = useState(20) // Initial display limit
@@ -2049,6 +2051,9 @@ const Dashboard = ({ isAdmin = false }) => {
   const memberCodeCardStyle = normalizeMemberCodeCardStyleKey(preferences?.member_code_card_style)
   const memberCodeCardStyleConfig = getMemberCodeCardStyle(memberCodeCardStyle)
   const memberCodeChurchName = preferences?.member_code_church_name || 'DatSer Church'
+  const memberCodeLogoUrl = preferences?.member_code_logo_url || ''
+  const memberCodeTurboEnabled = preferences?.member_code_turbo_enabled === true
+  const memberCodeTurboNotificationEnabled = preferences?.member_code_turbo_notification_enabled !== false
   const memberCodeShareMessageTemplate = preferences?.member_code_share_message_template || DEFAULT_MEMBER_PASS_SHARE_MESSAGE_TEMPLATE
   const memberCodeShowLogo = preferences?.member_code_show_logo !== false
   const memberCodeShowPhoto = preferences?.member_code_show_photo !== false
@@ -2064,7 +2069,17 @@ const Dashboard = ({ isAdmin = false }) => {
       tableName: currentTable
     })
     : ''
-  const quickPassQrImageUrl = createQrImageUrl(quickPassCheckInUrl)
+  const [quickPassQrImageUrl, setQuickPassQrImageUrl] = useState('')
+  useEffect(() => {
+    let cancelled = false
+    createQrImageUrl(quickPassCheckInUrl).then((value) => {
+      if (!cancelled) setQuickPassQrImageUrl(value)
+    }).catch((error) => {
+      console.error('Could not create member QR code:', error)
+      if (!cancelled) setQuickPassQrImageUrl('')
+    })
+    return () => { cancelled = true }
+  }, [quickPassCheckInUrl])
   const buildMemberPassSharePreview = useCallback(async (member, type) => {
     const phone = getMemberPhone(member).replace(/[^\d+]/g, '')
     const name = getMemberSearchName(member)
@@ -2088,13 +2103,14 @@ const Dashboard = ({ isAdmin = false }) => {
       dateKey: shareDateKey,
       tableName: currentTable
     })
+    const qrImageUrl = await createQrImageUrl(shareCheckInUrl)
     const imageUrl = await createMemberPassShareImage({
       name,
       code,
       joinLabel,
       churchName: memberCodeChurchName,
       cardStyle: memberCodeCardStyle,
-      qrImageUrl: createQrImageUrl(shareCheckInUrl),
+      qrImageUrl,
       message,
       isDarkMode
     })
@@ -2108,7 +2124,7 @@ const Dashboard = ({ isAdmin = false }) => {
       joinLabel,
       message,
       checkInUrl: shareCheckInUrl,
-      qrImageUrl: createQrImageUrl(shareCheckInUrl),
+      qrImageUrl,
       cardStyle: memberCodeCardStyle,
       churchName: memberCodeChurchName,
       imageUrl
@@ -2281,6 +2297,52 @@ const Dashboard = ({ isAdmin = false }) => {
           .slice(0, 10)
       })()
     : []
+
+  useEffect(() => {
+    const normalizedCode = pendingSearchTerm.trim().toUpperCase()
+    if (!memberCodeTurboEnabled || !normalizedCode || normalizedCode.length < 2) {
+      turboCheckInRef.current.key = ''
+      return undefined
+    }
+
+    const exactMember = members.find((member) => {
+      const candidateCodes = [
+        getMemberIndexCode(member, memberIndexCodeMap),
+        member?.member_code,
+        member?.memberCode,
+        member?.code,
+        member?.Code,
+        member?.['Member Code']
+      ].filter(Boolean)
+      return candidateCodes.some((candidate) => String(candidate).trim().toUpperCase() === normalizedCode)
+    })
+    if (!exactMember) return undefined
+
+    const date = selectedAttendanceDate || new Date()
+    const dateKey = getDateString(date)
+    const runKey = `${currentTable || 'month'}:${dateKey}:${exactMember.id}:${normalizedCode}`
+    if (turboCheckInRef.current.key === runKey || turboCheckInRef.current.running) return undefined
+
+    const timer = window.setTimeout(async () => {
+      turboCheckInRef.current = { key: runKey, running: true }
+      try {
+        const result = await markAttendance(exactMember.id, date, true)
+        if (result?.success === false) throw result.error || new Error('Check-in failed')
+        success()
+        if (memberCodeTurboNotificationEnabled) {
+          toast.success(`${getMemberSearchName(exactMember)} marked present`)
+        }
+      } catch (error) {
+        turboCheckInRef.current.key = ''
+        console.error('Turbo code check-in failed:', error)
+        if (memberCodeTurboNotificationEnabled) toast.error('Could not complete turbo check-in')
+      } finally {
+        turboCheckInRef.current.running = false
+      }
+    }, 380)
+
+    return () => window.clearTimeout(timer)
+  }, [currentTable, markAttendance, memberCodeTurboEnabled, memberCodeTurboNotificationEnabled, memberIndexCodeMap, members, pendingSearchTerm, selectedAttendanceDate, success])
   useEffect(() => {
     if (memberFilterButtonEnabled) return
     if (showFilters || isClosingFilters) {
@@ -3489,6 +3551,17 @@ const Dashboard = ({ isAdmin = false }) => {
         </div>
       )}
 
+      <Suspense fallback={null}>
+        <QrScannerModal
+          isOpen={showQrScanner}
+          onClose={() => setShowQrScanner(false)}
+          onScan={(value) => {
+            setShowQrScanner(false)
+            window.location.assign(value)
+          }}
+        />
+      </Suspense>
+
       {quickPassMember && (
         <div
           className={`app-modal-backdrop member-code-pass-modal fixed inset-0 z-[120] flex items-end justify-center bg-black/65 backdrop-blur-md md:items-center md:p-6 ${isQuickPassClosing ? 'member-code-pass-modal-closing' : ''}`}
@@ -3515,7 +3588,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   {memberCodeShowLogo && (
                     <div className="member-code-pass-church">
                       <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl border border-white/10 bg-white/[0.06] text-[var(--member-pass-accent)] shadow-[0_0_28px_var(--member-pass-soft)] md:h-20 md:w-20 md:rounded-3xl">
-                        <Church className="h-11 w-11 md:h-14 md:w-14" />
+                        {memberCodeLogoUrl ? <img src={memberCodeLogoUrl} alt="" className="h-full w-full object-contain p-2" /> : <Church className="h-11 w-11 md:h-14 md:w-14" />}
                       </div>
                       <p className="text-sm font-semibold text-white/70 md:text-base">{memberCodeChurchName}</p>
                       <p className="text-xs text-white/45 md:text-sm">Growing Together in Faith</p>
@@ -3892,6 +3965,15 @@ const Dashboard = ({ isAdmin = false }) => {
               </button>
             )}
             {/* Add Member Button */}
+            <button
+              type="button"
+              onClick={() => { selection(); setShowQrScanner(true) }}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-orange-400/40 bg-orange-500/10 text-orange-600 shadow-sm transition hover:bg-orange-500/20 active:scale-95 dark:text-orange-300 sm:h-11 sm:w-11"
+              title="Scan member QR code"
+              aria-label="Scan member QR code"
+            >
+              <ScanLine className="h-5 w-5" />
+            </button>
             <button
               onClick={() => { selection(); setShowMemberModal(true) }}
               className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"

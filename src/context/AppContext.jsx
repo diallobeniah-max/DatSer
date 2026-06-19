@@ -616,6 +616,9 @@ const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
   'member_code_badge_style',
   'member_code_card_style',
   'member_code_church_name',
+  'member_code_logo_url',
+  'member_code_turbo_enabled',
+  'member_code_turbo_notification_enabled',
   'member_code_auto_cycle_minutes',
   'member_code_lookup_enabled',
   'member_code_share_message_template'
@@ -6780,13 +6783,23 @@ export const AppProvider = ({ children }) => {
 
       if (!qrMark) return
       if (!currentTable) return
-      if (tableParam && !currentTable) return
-      if (tableParam && currentTable && tableParam !== currentTable) return
+      const knownQrTable = !tableParam || monthlyTables.some((table) => table?.table_name === tableParam)
+      if (tableParam && knownQrTable && tableParam !== currentTable) {
+        setCurrentTable(tableParam)
+        return
+      }
 
         ; (async () => {
           try {
-            const scannedMember = members.find((member) => String(member.id) === String(qrMark))
-            if (!scannedMember && members.length === 0) return
+            const scannedMember = members.find((member) => String(member.id) === String(qrMark)) || await refreshMemberPreviewById(qrMark, {
+              tableName: currentTable,
+              source: 'qr-check-in',
+              skipBackgroundSync: true
+            })
+            if (!scannedMember) {
+              try { toast.error('Member pass could not be found in this workspace') } catch { }
+              return
+            }
 
             // Determine date to use: prefer QR date, then selected attendance Sunday, then current table default.
             let targetDate = null
@@ -6840,7 +6853,7 @@ export const AppProvider = ({ children }) => {
     } catch (e) {
       console.error('Failed to parse QR params', e)
     }
-  }, [attendanceData, currentTable, markAttendance, members, selectedAttendanceDate, setAndSaveAttendanceDate])
+  }, [attendanceData, currentTable, markAttendance, members, monthlyTables, refreshMemberPreviewById, selectedAttendanceDate, setAndSaveAttendanceDate])
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;

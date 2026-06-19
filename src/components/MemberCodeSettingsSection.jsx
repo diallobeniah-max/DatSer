@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { BadgeCheck, CheckCircle, Church, Edit3, Mail, ScanSearch, Search, Shuffle, Sparkles, UserRound, X } from 'lucide-react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { BadgeCheck, BellRing, CheckCircle, Church, Edit3, ImagePlus, Mail, ScanSearch, Search, Shuffle, Sparkles, UserRound, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { supabase } from '../lib/supabase'
+import { toast } from 'react-toastify'
 import { buildMemberIndexCodeMap, getMemberIndexCode } from '../utils/memberIndexCodes'
 import MemberCodeBadge, { normalizeBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, {
@@ -66,7 +68,7 @@ const optionClass = (active) => (
 )
 
 const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
-    const { members = [] } = useApp()
+    const { members = [], dataOwnerId, user } = useApp()
     const workspaceEnabled = preferences?.workspace_member_codes_enabled
     const enabled = (workspaceEnabled ?? preferences?.member_codes_enabled) === true
     const quickPassEnabled = preferences?.member_code_quick_pass_enabled !== false
@@ -80,12 +82,17 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const selectedCardStyle = getMemberCodeCardStyle(cardStyle)
     const autoCycleMinutes = normalizeAutoCycleMinutes(preferences?.member_code_auto_cycle_minutes)
     const churchName = preferences?.member_code_church_name || 'DatSer Church'
+    const churchLogoUrl = preferences?.member_code_logo_url || ''
+    const turboCheckInEnabled = preferences?.member_code_turbo_enabled === true
+    const turboNotificationEnabled = preferences?.member_code_turbo_notification_enabled !== false
     const codeLookupEnabled = preferences?.member_code_lookup_enabled !== false
     const shareMessageTemplate = preferences?.member_code_share_message_template || DEFAULT_SHARE_MESSAGE_TEMPLATE
     const [editingChurchName, setEditingChurchName] = useState(false)
     const [draftChurchName, setDraftChurchName] = useState(churchName)
     const [lookupCode, setLookupCode] = useState('')
     const [draftShareMessage, setDraftShareMessage] = useState(shareMessageTemplate)
+    const [isUploadingLogo, setIsUploadingLogo] = useState(false)
+    const logoInputRef = useRef(null)
 
     const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
     const lookupResult = useMemo(() => {
@@ -133,6 +140,44 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     }
     const saveShareMessageTemplate = () => {
         setPreference('member_code_share_message_template', draftShareMessage.trim() || DEFAULT_SHARE_MESSAGE_TEMPLATE)
+    }
+    const uploadChurchLogo = async (event) => {
+        const file = event.target.files?.[0]
+        event.target.value = ''
+        if (!file) return
+        if (!['image/png', 'image/jpeg'].includes(file.type)) {
+            toast.error('Choose a PNG or JPEG image')
+            return
+        }
+        if (file.size > 3 * 1024 * 1024) {
+            toast.error('Logo must be smaller than 3 MB')
+            return
+        }
+        const ownerId = dataOwnerId || user?.id
+        if (!ownerId || !isAdminAccess) {
+            toast.error('Only an admin can change the workspace logo')
+            return
+        }
+        setIsUploadingLogo(true)
+        try {
+            const extension = file.type === 'image/png' ? 'png' : 'jpg'
+            const filePath = `${ownerId}/workspace-logo.${extension}`
+            const { error } = await supabase.storage.from('member-code-branding').upload(filePath, file, {
+                upsert: true,
+                contentType: file.type,
+                cacheControl: '3600'
+            })
+            if (error) throw error
+            const { data } = supabase.storage.from('member-code-branding').getPublicUrl(filePath)
+            const publicUrl = `${data.publicUrl}?v=${Date.now()}`
+            await updatePreferences?.({ member_code_logo_url: publicUrl })
+            toast.success('Workspace icon updated for everyone')
+        } catch (error) {
+            console.error('Workspace icon upload failed:', error)
+            toast.error(error?.message || 'Could not upload the workspace icon')
+        } finally {
+            setIsUploadingLogo(false)
+        }
     }
 
     const badgeStyles = [
@@ -197,6 +242,24 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             getSettingTargetClass={getSettingTargetClass}
                             onChange={() => setPreference('member_code_show_logo', !showLogo)}
                         />
+                        {isAdminAccess && (
+                            <div data-setting-id="member_code_logo_upload" className="flex flex-wrap items-center justify-between gap-3 bg-gray-50 p-4 dark:bg-gray-900/30">
+                                <div className="flex min-w-0 items-center gap-3">
+                                    <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-orange-200 bg-white dark:border-orange-400/20 dark:bg-black/25">
+                                        {churchLogoUrl ? <img src={churchLogoUrl} alt="Workspace icon" className="h-full w-full object-contain p-1" /> : <Church className="h-6 w-6 text-orange-500" />}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="font-semibold text-gray-900 dark:text-white">Workspace icon</p>
+                                        <p className="text-sm text-gray-500 dark:text-gray-400">PNG or JPEG, shared with every workspace member.</p>
+                                    </div>
+                                </div>
+                                <input ref={logoInputRef} type="file" accept="image/png,image/jpeg" onChange={uploadChurchLogo} className="hidden" />
+                                <button type="button" onClick={() => logoInputRef.current?.click()} disabled={isUploadingLogo} className="inline-flex items-center gap-2 rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-sm font-black text-orange-700 transition hover:bg-orange-100 disabled:opacity-50 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200">
+                                    <ImagePlus className="h-4 w-4" />
+                                    {isUploadingLogo ? 'Uploading...' : 'Upload icon'}
+                                </button>
+                            </div>
+                        )}
                         <ToggleRow
                             icon={UserRound}
                             title="Show Member Photo"
@@ -233,6 +296,28 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             getSettingTargetClass={getSettingTargetClass}
                             onChange={() => setPreference('member_code_lookup_enabled', !codeLookupEnabled)}
                         />
+                        {isAdminAccess && (
+                            <>
+                                <ToggleRow
+                                    icon={Sparkles}
+                                    title="Turbo Code Check-In"
+                                    description="An exact typed code marks that member present immediately and bypasses the missing-info prompt."
+                                    checked={turboCheckInEnabled}
+                                    settingId="member_code_turbo"
+                                    getSettingTargetClass={getSettingTargetClass}
+                                    onChange={() => setPreference('member_code_turbo_enabled', !turboCheckInEnabled)}
+                                />
+                                <ToggleRow
+                                    icon={BellRing}
+                                    title="Turbo Check-In Notification"
+                                    description="Show a confirmation popup after an exact code marks a member present."
+                                    checked={turboNotificationEnabled}
+                                    settingId="member_code_turbo_notification"
+                                    getSettingTargetClass={getSettingTargetClass}
+                                    onChange={() => setPreference('member_code_turbo_notification_enabled', !turboNotificationEnabled)}
+                                />
+                            </>
+                        )}
                         <div
                             data-setting-id="member_code_lookup_field"
                             tabIndex={-1}
@@ -394,7 +479,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                     <MemberCodePassCard styleKey={cardStyle} className="member-code-settings-pass-preview mt-4 rounded-2xl border p-5 text-center">
                         {showLogo && (
                             <div className="member-code-pass-icon-tile mx-auto">
-                                <Church className="h-10 w-10 text-[var(--member-pass-accent)]" />
+                                {churchLogoUrl ? <img src={churchLogoUrl} alt="" className="h-full w-full object-contain p-2" /> : <Church className="h-10 w-10 text-[var(--member-pass-accent)]" />}
                             </div>
                         )}
                         <div
