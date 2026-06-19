@@ -274,54 +274,37 @@ const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, c
   ctx.font = '500 30px Arial'
   ctx.fillText('Growing Together in Faith', 348, 238)
 
-  const qrCenterX = 395
-  const qrCenterY = 560
-  const qrRadius = 190
-  drawCanvasQrDots(ctx, qrCenterX, qrCenterY, qrRadius + 40, theme.accent)
-  ;[qrRadius + 34, qrRadius + 20, qrRadius + 5].forEach((ringRadius, index) => {
-    ctx.strokeStyle = index === 0 ? `${theme.accent}3f` : `${theme.accent}${index === 1 ? 'cc' : '99'}`
-    ctx.lineWidth = index === 1 ? 8 : 4
-    ctx.beginPath()
-    ctx.arc(qrCenterX, qrCenterY, ringRadius, 0, Math.PI * 2)
-    ctx.stroke()
-  })
+  const qrPanelX = 175
+  const qrPanelY = 340
+  const qrPanelSize = 440
+  const qrInset = 28
+  drawCanvasQrDots(ctx, 395, 560, 248, theme.accent)
   ctx.fillStyle = '#fff'
   ctx.beginPath()
-  ctx.arc(qrCenterX, qrCenterY, qrRadius - 8, 0, Math.PI * 2)
+  ctx.roundRect(qrPanelX, qrPanelY, qrPanelSize, qrPanelSize, 34)
   ctx.fill()
-  ctx.save()
-  ctx.beginPath()
-  ctx.arc(qrCenterX, qrCenterY, qrRadius - 18, 0, Math.PI * 2)
-  ctx.clip()
+  ctx.strokeStyle = `${theme.accent}cc`
+  ctx.lineWidth = 8
+  ctx.stroke()
   if (qrImage) {
-    ctx.drawImage(qrImage, qrCenterX - qrRadius + 18, qrCenterY - qrRadius + 18, (qrRadius - 18) * 2, (qrRadius - 18) * 2)
+    ctx.drawImage(
+      qrImage,
+      qrPanelX + qrInset,
+      qrPanelY + qrInset,
+      qrPanelSize - qrInset * 2,
+      qrPanelSize - qrInset * 2
+    )
   } else {
     ctx.fillStyle = '#111827'
     for (let row = 0; row < 25; row += 1) {
       for (let column = 0; column < 25; column += 1) {
         const seed = (row * 17 + column * 31 + String(code).length * 13) % 7
         if (seed < 3 || row < 3 && column < 3 || row < 3 && column > 20 || row > 20 && column < 3) {
-          ctx.fillRect(qrCenterX - 120 + column * 10, qrCenterY - 120 + row * 10, 8, 8)
+          ctx.fillRect(qrPanelX + 95 + column * 10, qrPanelY + 95 + row * 10, 8, 8)
         }
       }
     }
   }
-  ctx.restore()
-  const initialGradient = ctx.createLinearGradient(qrCenterX - 38, qrCenterY - 38, qrCenterX + 38, qrCenterY + 38)
-  initialGradient.addColorStop(0, theme.accent)
-  initialGradient.addColorStop(1, theme.accent2)
-  ctx.fillStyle = initialGradient
-  ctx.beginPath()
-  ctx.arc(qrCenterX, qrCenterY, 42, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(255,255,255,0.95)'
-  ctx.lineWidth = 7
-  ctx.stroke()
-  ctx.fillStyle = '#fff'
-  ctx.font = '900 38px Arial'
-  ctx.textAlign = 'center'
-  ctx.fillText(String(name || 'M').charAt(0).toUpperCase(), qrCenterX, qrCenterY + 14)
-
   ctx.textAlign = 'left'
   ctx.fillStyle = foreground
   ctx.font = '900 62px Arial'
@@ -410,7 +393,7 @@ const createMemberCheckInUrl = ({ member, code, dateKey, tableName }) => {
 }
 
 const createQrImageUrl = async (value, size = 260) => value
-  ? QRCode.toDataURL(value, { width: size, margin: 2, errorCorrectionLevel: 'H' })
+  ? QRCode.toDataURL(value, { width: size, margin: 4, errorCorrectionLevel: 'H' })
   : ''
 
 const getOrdinalSuffix = (day) => {
@@ -3605,9 +3588,6 @@ const Dashboard = ({ isAdmin = false }) => {
                           className="member-code-pass-qr-image"
                           draggable="false"
                         />
-                        <span className="member-code-pass-qr-initial" aria-hidden="true">
-                          {getMemberSearchName(quickPassMember).charAt(0).toUpperCase()}
-                        </span>
                       </div>
                       <div className="member-code-pass-joined-pill">
                         <Calendar className="h-3.5 w-3.5 text-[var(--member-pass-accent)]" />
