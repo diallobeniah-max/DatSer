@@ -508,6 +508,12 @@
   .qr-scanner-corner-tr { right: -2px; top: -2px; border-right: 4px solid #fb923c; border-top: 4px solid #fb923c; border-radius: 0 1.75rem 0 0; }
   .qr-scanner-corner-bl { left: -2px; bottom: -2px; border-left: 4px solid #fb923c; border-bottom: 4px solid #fb923c; border-radius: 0 0 0 1.75rem; }
   .qr-scanner-corner-br { right: -2px; bottom: -2px; border-right: 4px solid #fb923c; border-bottom: 4px solid #fb923c; border-radius: 0 0 1.75rem; }
+  .qr-scanner-frame { border-color: rgba(251, 146, 60, 0.32); transition: border-color 180ms ease, box-shadow 180ms ease; }
+  .qr-scanner-frame-scanning { box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.2), 0 0 36px rgba(249, 115, 22, 0.15); }
+  .qr-scanner-frame-found { border-color: rgba(52, 211, 153, 0.85); box-shadow: 0 0 42px rgba(16, 185, 129, 0.34); }
+  .qr-scanner-frame-found .qr-scanner-corner { border-color: #34d399; filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.7)); }
+  .qr-scanner-frame-invalid { border-color: rgba(248, 113, 113, 0.82); box-shadow: 0 0 36px rgba(239, 68, 68, 0.25); }
+  .qr-scanner-frame-invalid .qr-scanner-corner { border-color: #f87171; filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6)); }
   .qr-scanner-line {
     position: absolute;
     left: 8%; right: 8%; top: 12%; height: 2px;
@@ -839,6 +845,59 @@
 .compact-ui .app-shell .member-filter-toggle {
   min-height: 2.25rem !important;
   padding-inline: 0.65rem !important;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .member-code-pass-stage {
+    width: min(92vw, 46rem) !important;
+    max-width: 46rem !important;
+  }
+
+  .member-code-pass-responsive {
+    min-height: 25rem !important;
+    padding: 1.2rem 1.5rem 1.4rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-topline {
+    margin-bottom: 0.8rem;
+  }
+
+  .member-code-pass-responsive .member-code-pass-layout {
+    grid-template-columns: minmax(12rem, 0.8fr) minmax(0, 1.2fr);
+    gap: 1.5rem;
+  }
+
+  .member-code-pass-responsive .member-code-pass-visual {
+    gap: 1rem;
+  }
+
+  .member-code-pass-responsive .member-code-pass-qr-card {
+    width: 11.25rem;
+  }
+
+  .member-code-pass-responsive .member-code-pass-qr-aura {
+    width: 14rem;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details {
+    min-height: auto !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details h3 {
+    font-size: 2rem !important;
+    line-height: 1.1 !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details .member-code-designed-badge {
+    height: 2.5rem !important;
+    min-width: 6rem !important;
+    font-size: 0.95rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details button {
+    min-height: 3rem;
+    padding-block: 0.65rem !important;
+  }
 }
 
 @media (min-width: 768px) {
@@ -3515,7 +3574,7 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
     min-height: auto;
     margin: 0 !important;
     border-radius: 1.2rem !important;
-    padding: 1rem 1rem 1.1rem !important;
+    padding: 0.75rem 0.85rem 0.9rem !important;
   }
 
   .member-code-pass-responsive .member-code-pass-content {
@@ -3540,25 +3599,25 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
 
   .member-code-pass-responsive .member-code-pass-layout {
     display: grid;
-    gap: 0.9rem;
+    gap: 0.6rem;
   }
 
   .member-code-pass-responsive .member-code-pass-visual {
     display: grid;
-    gap: 0.75rem;
+    gap: 0.5rem;
     justify-items: center;
   }
 
   .member-code-pass-responsive .member-code-pass-church > div {
-    width: 3.15rem !important;
-    height: 3.15rem !important;
-    margin-bottom: 0.6rem !important;
+    width: 2.65rem !important;
+    height: 2.65rem !important;
+    margin-bottom: 0.4rem !important;
     border-radius: 1rem !important;
   }
 
   .member-code-pass-responsive .member-code-pass-church svg {
-    width: 2rem !important;
-    height: 2rem !important;
+    width: 1.65rem !important;
+    height: 1.65rem !important;
   }
 
   .member-code-pass-responsive .member-code-pass-church p:first-of-type {
@@ -3587,24 +3646,25 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
   }
 
   .member-code-pass-responsive .member-code-pass-qr-wrap {
-    margin-top: 0.65rem;
-    gap: 1rem;
+    margin-top: 0.4rem;
+    gap: 0.65rem;
   }
 
   .member-code-pass-responsive .member-code-pass-qr-card {
-    width: clamp(11rem, 58vw, 13rem);
+    width: clamp(8.75rem, 44vw, 10.25rem);
     border-width: 3px;
+    padding: 0.48rem;
   }
 
   .member-code-pass-responsive .member-code-pass-qr-aura {
-    width: clamp(14rem, 76vw, 17rem);
+    width: clamp(11rem, 58vw, 13rem);
     top: 42%;
     opacity: 0.36;
   }
 
   .member-code-pass-responsive .member-code-pass-joined-pill {
-    padding: 0.48rem 0.75rem;
-    font-size: 0.78rem;
+    padding: 0.4rem 0.65rem;
+    font-size: 0.72rem;
   }
 
   .member-code-pass-responsive .member-code-pass-identity {
@@ -3614,44 +3674,44 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
   }
 
   .member-code-pass-responsive .member-code-pass-details h3 {
-    max-width: 20rem;
+    max-width: 18rem;
     margin-inline: auto;
-    font-size: clamp(1.55rem, 6.4vw, 1.95rem) !important;
+    font-size: clamp(1.35rem, 5.5vw, 1.7rem) !important;
     line-height: 1.12 !important;
     letter-spacing: 0 !important;
   }
 
   .member-code-pass-responsive .member-code-pass-details .member-code-designed-badge {
-    height: 2.18rem !important;
-    min-width: 5.25rem !important;
-    padding-inline: 1.05rem !important;
-    font-size: 0.95rem !important;
+    height: 2rem !important;
+    min-width: 4.8rem !important;
+    padding-inline: 0.85rem !important;
+    font-size: 0.88rem !important;
   }
 
   .member-code-pass-responsive .member-code-pass-details p {
-    margin-top: 0.55rem !important;
-    font-size: 0.86rem !important;
+    margin-top: 0.4rem !important;
+    font-size: 0.8rem !important;
   }
 
   .member-code-pass-responsive .member-code-pass-details .grid {
-    margin-top: 1.15rem !important;
+    margin-top: 0.8rem !important;
     gap: 0.65rem !important;
   }
 
   .member-code-pass-responsive .member-code-pass-details button {
-    min-height: 3.05rem;
+    min-height: 2.75rem;
     border-radius: 0.95rem !important;
-    padding: 0.72rem 0.85rem !important;
-    font-size: 0.96rem;
+    padding: 0.62rem 0.75rem !important;
+    font-size: 0.9rem;
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.68),
       0 8px 22px rgba(15, 23, 42, 0.08);
   }
 
   .member-code-pass-responsive .member-code-pass-details > button {
-    margin-top: 0.65rem !important;
-    min-height: 3rem;
-    font-size: 0.9rem;
+    margin-top: 0.5rem !important;
+    min-height: 2.75rem;
+    font-size: 0.84rem;
   }
 
   .member-code-pass-responsive .member-code-pass-corner-pattern {
