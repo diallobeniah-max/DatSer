@@ -3904,6 +3904,32 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
   }
 }
 
+/* Bottom-sheet slide used on mobile (max-width: 640px) */
+@keyframes memberCodePassStageSlideIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 100%, 0);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes memberCodePassStageSlideOut {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 100%, 0);
+  }
+}
+
 @keyframes memberCodeQrAuraDrift {
   0% {
     background-position: 0 0, 5px 6px;
@@ -4104,18 +4130,34 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
 
 @media (max-width: 640px) {
   .member-code-pass-modal {
-    align-items: flex-start !important;
+    align-items: flex-end !important;
     justify-content: center !important;
-    padding: max(0.55rem, env(safe-area-inset-top, 0px)) 0.25rem max(0.55rem, env(safe-area-inset-bottom, 0px)) !important;
+    padding: 0 0 max(0.5rem, env(safe-area-inset-bottom, 0px)) !important;
     overflow: hidden;
   }
 
   .member-code-pass-stage {
-    max-height: calc(100dvh - max(1.1rem, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 90dvh !important;
     overflow-x: hidden !important;
     overflow-y: auto !important;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .member-code-pass-stage::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Bottom-sheet slide animation overrides for mobile */
+  .member-code-pass-modal .member-code-pass-stage {
+    animation: memberCodePassStageSlideIn 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .member-code-pass-modal-closing .member-code-pass-stage {
+    animation: memberCodePassStageSlideOut 320ms cubic-bezier(0.4, 0, 1, 1) both;
   }
 }
 
@@ -4135,6 +4177,11 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
     padding: 0.7rem !important;
     border-radius: 1.65rem !important;
     contain: layout paint;
+    scrollbar-width: none;
+  }
+
+  .member-code-pass-stage::-webkit-scrollbar {
+    display: none;
   }
 
   .member-code-pass-responsive {
