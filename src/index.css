@@ -4020,3 +4020,182 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
     transform: translateY(1.75rem);
   }
 }
+
+/* Final responsive guards for real mobile browsers and coarse-pointer tablets. */
+@supports (content-visibility: auto) {
+  .member-card-shell {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 11rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .Toastify__toast-container.datser-toast-stack,
+  .Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
+    left: 50% !important;
+    right: auto !important;
+    width: min(360px, calc(100vw - 24px)) !important;
+    max-width: calc(100vw - 24px) !important;
+    transform: translateX(-50%) !important;
+  }
+
+  .datser-toast-stack .datser-toast,
+  .datser-toast-stack .Toastify__toast {
+    width: 100% !important;
+    margin-inline: auto !important;
+  }
+
+  .member-pass-share-modal {
+    align-items: flex-start !important;
+    padding: max(0.6rem, env(safe-area-inset-top, 0px)) 0.55rem max(0.6rem, env(safe-area-inset-bottom, 0px)) !important;
+    overflow: hidden;
+  }
+
+  .member-pass-share-panel {
+    width: 100% !important;
+    max-height: calc(100dvh - max(1.2rem, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    border-radius: 1.25rem !important;
+  }
+
+  .member-pass-share-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 0.8rem 0.9rem !important;
+    background: rgba(12, 14, 16, 0.94);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+
+  .member-pass-share-header h3 {
+    font-size: 1.15rem !important;
+    line-height: 1.2 !important;
+  }
+
+  html:not(.dark) .member-pass-share-header {
+    background: rgba(255, 255, 255, 0.95);
+  }
+
+  .member-pass-share-close {
+    position: relative;
+    z-index: 21;
+    width: 2.6rem !important;
+    height: 2.6rem !important;
+    flex: 0 0 2.6rem;
+  }
+
+  .member-code-pass-stage {
+    width: min(100%, calc(100vw - 0.45rem)) !important;
+    max-width: calc(100vw - 0.45rem) !important;
+    margin: 0.225rem !important;
+  }
+
+  .member-code-pass-responsive {
+    padding: 0.9rem 1rem 1rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-qr-card {
+    width: clamp(9.75rem, 46vw, 11.25rem) !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .member-code-pass-modal {
+    align-items: flex-start !important;
+    justify-content: center !important;
+    padding: max(0.55rem, env(safe-area-inset-top, 0px)) 0.25rem max(0.55rem, env(safe-area-inset-bottom, 0px)) !important;
+    overflow: hidden;
+  }
+
+  .member-code-pass-stage {
+    max-height: calc(100dvh - max(1.1rem, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px),
+  (min-width: 1024px) and (max-width: 1366px) and (pointer: coarse) {
+  .member-code-pass-modal {
+    padding: 0.8rem !important;
+    -webkit-backdrop-filter: blur(7px) !important;
+    backdrop-filter: blur(7px) !important;
+  }
+
+  .member-code-pass-stage {
+    width: min(88vw, 52rem) !important;
+    max-width: 52rem !important;
+    max-height: calc(100dvh - 1.6rem) !important;
+    overflow-y: auto !important;
+    padding: 0.7rem !important;
+    border-radius: 1.65rem !important;
+    contain: layout paint;
+  }
+
+  .member-code-pass-responsive {
+    min-height: 22rem !important;
+    padding: 1rem 1.2rem 1.15rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-topline {
+    margin-bottom: 0.65rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-layout {
+    grid-template-columns: minmax(11rem, 0.82fr) minmax(0, 1.18fr) !important;
+    gap: 1.25rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-visual {
+    gap: 0.8rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-church > div {
+    width: 3.2rem !important;
+    height: 3.2rem !important;
+    margin-bottom: 0.45rem !important;
+    border-radius: 1rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-church svg {
+    width: 2rem !important;
+    height: 2rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-qr-card {
+    width: 10rem !important;
+    padding: 0.5rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-qr-aura {
+    width: 12.5rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details {
+    min-height: auto !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details h3 {
+    font-size: clamp(1.65rem, 3vw, 2.1rem) !important;
+    line-height: 1.08 !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details .grid {
+    margin-top: 0.8rem !important;
+    gap: 0.6rem !important;
+  }
+
+  .member-code-pass-responsive .member-code-pass-details button {
+    min-height: 2.8rem !important;
+    padding-block: 0.6rem !important;
+  }
+
+  .member-code-pass-card .member-code-pass-blob {
+    filter: blur(48px);
+  }
+}

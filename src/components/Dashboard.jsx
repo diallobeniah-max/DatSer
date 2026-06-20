@@ -18,6 +18,7 @@ import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
 import MissingDataModal from './MissingDataModal'
 import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
+import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import lazyWithRetry from '../utils/lazyWithRetry'
 
 
@@ -377,19 +378,6 @@ const dataUrlToFile = async (dataUrl, fileName) => {
   const response = await fetch(dataUrl)
   const blob = await response.blob()
   return new File([blob], fileName, { type: 'image/png' })
-}
-
-const createMemberCheckInUrl = ({ member, code, dateKey, tableName }) => {
-  if (typeof window === 'undefined' || !member?.id) return ''
-  const url = new URL(window.location.href)
-  url.search = ''
-  url.hash = ''
-  url.searchParams.set('member_checkin', '1')
-  url.searchParams.set('qr_mark', member.id)
-  if (code) url.searchParams.set('code', code)
-  if (dateKey) url.searchParams.set('date', dateKey)
-  if (tableName) url.searchParams.set('table', tableName)
-  return url.toString()
 }
 
 const createQrImageUrl = async (value, size = 260) => value
@@ -1526,12 +1514,14 @@ const Dashboard = ({ isAdmin = false }) => {
 
       // Toggle functionality: if clicking the same status, deselect it (set to null)
       if (currentStatus === present) {
-        await markAttendance(memberId, new Date(targetDate), null)
+        const result = await markAttendance(memberId, new Date(targetDate), null)
+        if (result?.success === false) return
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
         selection()
       } else {
-        await markAttendance(memberId, new Date(targetDate), present)
+        const result = await markAttendance(memberId, new Date(targetDate), present)
+        if (result?.success === false) return
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
         if (present) success()
@@ -1563,12 +1553,14 @@ const Dashboard = ({ isAdmin = false }) => {
 
       // Toggle functionality: if clicking the same status, deselect it (set to null)
       if (currentStatus === present) {
-        await markAttendance(memberId, new Date(specificDate), null)
+        const result = await markAttendance(memberId, new Date(specificDate), null)
+        if (result?.success === false) return
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
         selection()
       } else {
-        await markAttendance(memberId, new Date(specificDate), present)
+        const result = await markAttendance(memberId, new Date(specificDate), present)
+        if (result?.success === false) return
         // Record action timestamp for chronological sorting
         actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
         if (present) success()
@@ -2043,13 +2035,10 @@ const Dashboard = ({ isAdmin = false }) => {
   const memberCodeShowEmail = preferences?.member_code_show_email !== false
   const memberCodePassBadgeStyle = memberCodeCardStyleConfig.badgeStyleKey
   const quickPassCode = quickPassMember ? getMemberIndexCode(quickPassMember, memberIndexCodeMap) : ''
-  const quickPassDateKey = selectedAttendanceDate ? getDateString(selectedAttendanceDate) : getDateString(new Date())
   const quickPassCheckInUrl = quickPassMember
-    ? createMemberCheckInUrl({
-      member: quickPassMember,
-      code: quickPassCode,
-      dateKey: quickPassDateKey,
-      tableName: currentTable
+    ? buildMemberCheckInUrl({
+      memberId: quickPassMember.id,
+      code: quickPassCode
     })
     : ''
   const [quickPassQrImageUrl, setQuickPassQrImageUrl] = useState('')
@@ -2064,7 +2053,7 @@ const Dashboard = ({ isAdmin = false }) => {
     return () => { cancelled = true }
   }, [quickPassCheckInUrl])
   const buildMemberPassSharePreview = useCallback(async (member, type) => {
-    const phone = getMemberPhone(member).replace(/[^\d+]/g, '')
+    const phone = String(getMemberPhone(member) || '').replace(/[^\d+]/g, '')
     const name = getMemberSearchName(member)
     const code = getMemberIndexCode(member, memberIndexCodeMap)
     const joinLabel = getMemberJoinLabel(member)
@@ -2079,12 +2068,9 @@ const Dashboard = ({ isAdmin = false }) => {
       return
     }
 
-    const shareDateKey = selectedAttendanceDate ? getDateString(selectedAttendanceDate) : getDateString(new Date())
-    const shareCheckInUrl = createMemberCheckInUrl({
-      member,
-      code,
-      dateKey: shareDateKey,
-      tableName: currentTable
+    const shareCheckInUrl = buildMemberCheckInUrl({
+      memberId: member.id,
+      code
     })
     const qrImageUrl = await createQrImageUrl(shareCheckInUrl)
     const imageUrl = await createMemberPassShareImage({
@@ -2112,7 +2098,7 @@ const Dashboard = ({ isAdmin = false }) => {
       churchName: memberCodeChurchName,
       imageUrl
     })
-  }, [currentTable, isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap, selectedAttendanceDate])
+  }, [isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap])
 
   const updateMemberPassShareMessage = useCallback((message) => {
     setMemberPassSharePreview((current) => current ? { ...current, message } : current)
@@ -2239,7 +2225,7 @@ const Dashboard = ({ isAdmin = false }) => {
       return
     }
 
-    const phone = getMemberPhone(member).replace(/[^\d+]/g, '')
+    const phone = String(getMemberPhone(member) || '').replace(/[^\d+]/g, '')
     if (type === 'phone') {
       if (!phone) {
         toast.info('No phone number')
@@ -2316,9 +2302,7 @@ const Dashboard = ({ isAdmin = false }) => {
           toast.success(`${getMemberSearchName(exactMember)} marked present`)
         }
       } catch (error) {
-        turboCheckInRef.current.key = ''
         console.error('Turbo code check-in failed:', error)
-        if (memberCodeTurboNotificationEnabled) toast.error('Could not complete turbo check-in')
       } finally {
         turboCheckInRef.current.running = false
       }

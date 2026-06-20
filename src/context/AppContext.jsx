@@ -5,6 +5,7 @@ import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabas
 import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
 import { buildMemberIndexCodeMap, memberMatchesIndexCode } from '../utils/memberIndexCodes'
+import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import {
   clearAllOfflineData,
@@ -679,6 +680,7 @@ export const AppProvider = ({ children }) => {
   const memberPreviewSyncRef = useRef(new Map())
   const memberPreviewSchemaReadyRef = useRef(new Map())
   const memberPreviewBackgroundSyncRunnerRef = useRef(null)
+  const qrCheckInRunRef = useRef({ key: '', running: false })
   const workspaceCacheScope = useMemo(() => getWorkspaceCacheScope({
     userId: user?.id,
     dataOwnerId,
@@ -3251,7 +3253,9 @@ export const AppProvider = ({ children }) => {
         console.error('Error creating attendance column:', error)
         // If the RPC doesn't exist, provide helpful error message
         if (error.message?.includes('function') || error.code === '42883') {
-          toast.error('Please create the add_attendance_column function in Supabase. See documentation.')
+          toast.error('Please create the add_attendance_column function in Supabase. See documentation.', {
+            toastId: `attendance-column-${currentTable}-${columnName}`
+          })
         }
         throw error
       }
@@ -3467,7 +3471,9 @@ export const AppProvider = ({ children }) => {
         const result = await createAttendanceColumn(effectiveDate)
 
         if (!result.success) {
-          toast.error('Failed to create attendance column for this date')
+          toast.error('Failed to create attendance column for this date', {
+            toastId: `attendance-column-${currentTable}-${getLocalDateString(effectiveDate)}`
+          })
           return { success: false, error: 'Failed to create column' }
         }
 
@@ -6699,7 +6705,9 @@ export const AppProvider = ({ children }) => {
     if (syncableChanges.length === 0) return undefined
 
     const signature = syncableChanges
-      .map((change) => `${change.local_change_id}:${change.sync_status}:${change.updated_at || change.created_at || ''}`)
+      // Retry bookkeeping updates `updated_at`; including it here made every
+      // failed attempt look like a new change and bypassed the cooldown.
+      .map((change) => `${change.local_change_id}:${change.sync_status}`)
       .sort()
       .join('|')
     const now = Date.now()
@@ -6768,26 +6776,21 @@ export const AppProvider = ({ children }) => {
     }
   }, [currentTable])
 
-  // QR-based marking handler
-  // If the URL contains ?member_checkin=1&qr_mark=<memberId>&date=YYYY-MM-DD,
-  // mark that member present for the supplied Sunday without showing the missing-info prompt.
+  // QR-based member lookup. Passes are evergreen: the active table and Sunday
+  // come from the scanner's current workspace, never from an old shared image.
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
-      const params = new URLSearchParams(window.location.search)
-      const qrMark = params.get('qr_mark')
-      const isMemberCheckIn = params.get('member_checkin') === '1'
-      const dateParam = params.get('date')
-      const codeParam = params.get('code')
-      const tableParam = params.get('table')
-
-      if (!qrMark) return
+      const consumed = consumeMemberCheckInUrl(window.location.href)
+      if (!consumed) return
       if (!currentTable) return
-      const knownQrTable = !tableParam || monthlyTables.some((table) => table?.table_name === tableParam)
-      if (tableParam && knownQrTable && tableParam !== currentTable) {
-        setCurrentTable(tableParam)
-        return
-      }
+      const { memberId: qrMark, code: codeParam } = consumed.request
+      const runKey = `${currentTable}:${qrMark}:${codeParam}`
+      if (qrCheckInRunRef.current.running || qrCheckInRunRef.current.key === runKey) return
+      qrCheckInRunRef.current = { key: runKey, running: true }
+
+      // Claim the URL before any async state update can retrigger this effect.
+      window.history.replaceState({}, document.title, consumed.cleanUrl)
 
         ; (async () => {
           try {
@@ -6797,19 +6800,11 @@ export const AppProvider = ({ children }) => {
               skipBackgroundSync: true
             })
             if (!scannedMember) {
-              try { toast.error('Member pass could not be found in this workspace') } catch { }
+              try { toast.error('Member pass could not be found in this workspace', { toastId: `qr-member-missing-${qrMark}` }) } catch { }
               return
             }
 
-            // Determine date to use: prefer QR date, then selected attendance Sunday, then current table default.
-            let targetDate = null
-            if (dateParam) {
-              const d = new Date(dateParam)
-              if (!isNaN(d.getTime())) targetDate = d
-            }
-            if (!targetDate && selectedAttendanceDate) {
-              targetDate = new Date(selectedAttendanceDate)
-            }
+            let targetDate = selectedAttendanceDate ? new Date(selectedAttendanceDate) : null
             if (!targetDate && currentTable) {
               targetDate = getSundayDefaultForTable(currentTable, new Date())
             }
@@ -6821,39 +6816,36 @@ export const AppProvider = ({ children }) => {
               setAndSaveAttendanceDate(normalizedTargetDate, currentTable)
             }
 
-            if (scannedMember) {
-              const memberName = scannedMember.full_name || scannedMember['Full Name'] || scannedMember.name || ''
-              setSearchTerm(memberName || codeParam || '')
-              setDashboardTab('all')
+            const memberName = scannedMember.full_name || scannedMember['Full Name'] || scannedMember.name || scannedMember.Name || codeParam || 'Member'
+            setSearchTerm(memberName)
+            setDashboardTab('all')
+
+            const turboCheckInEnabled = preferences?.member_code_turbo_enabled === true
+            if (!turboCheckInEnabled) {
+              toast.info(`${memberName} ready — choose Present or Absent`, {
+                toastId: `qr-member-ready-${qrMark}`
+              })
+              return
             }
 
             const currentStatus = attendanceData[targetDateKey]?.[qrMark]
             if (currentStatus === true) {
-              try { toast.info('Member already marked present for this Sunday') } catch { }
+              try { toast.info(`${memberName} is already present for this Sunday`, { toastId: `qr-already-present-${qrMark}-${targetDateKey}` }) } catch { }
             } else {
-              await markAttendance(qrMark, normalizedTargetDate, true)
-              try { toast.success(isMemberCheckIn ? 'QR check-in marked present' : 'Attendance marked via QR') } catch { }
-            }
-
-            try {
-              const url = new URL(window.location.href)
-              url.searchParams.delete('member_checkin')
-              url.searchParams.delete('qr_mark')
-              url.searchParams.delete('date')
-              url.searchParams.delete('code')
-              url.searchParams.delete('table')
-              window.history.replaceState({}, document.title, url.toString())
-            } catch (e) {
-              // ignore
+              const result = await markAttendance(qrMark, normalizedTargetDate, true)
+              if (result?.success === false) return
+              try { toast.success(`${memberName} marked present`, { toastId: `qr-present-${qrMark}-${targetDateKey}` }) } catch { }
             }
           } catch (err) {
             console.error('QR mark processing failed', err)
+          } finally {
+            qrCheckInRunRef.current.running = false
           }
         })()
     } catch (e) {
       console.error('Failed to parse QR params', e)
     }
-  }, [attendanceData, currentTable, markAttendance, members, monthlyTables, refreshMemberPreviewById, selectedAttendanceDate, setAndSaveAttendanceDate])
+  }, [attendanceData, currentTable, markAttendance, members, preferences?.member_code_turbo_enabled, refreshMemberPreviewById, selectedAttendanceDate, setAndSaveAttendanceDate])
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
