@@ -96,17 +96,41 @@ const AccessibilitySettingsSection = ({
 
     return (
         <>
-        <div className="space-y-6">
-            <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Accessibility</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Make DatSer work better for your needs</p>
+        <div className="accessibility-settings-shell space-y-5">
+            <div className="accessibility-settings-hero overflow-hidden rounded-3xl border border-orange-100 bg-gradient-to-br from-white via-orange-50/70 to-amber-50 p-5 shadow-sm dark:border-orange-400/15 dark:from-[#202121] dark:via-orange-950/20 dark:to-gray-950 sm:p-6">
+                <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-600 dark:text-orange-300">Accessibility studio</p>
+                        <h3 className="mt-2 text-2xl font-black tracking-tight text-gray-950 dark:text-white sm:text-3xl">Make DatSer easier to use in the room you are in.</h3>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">
+                            Tune touch feedback, search behavior, notifications, and sharing so phone, tablet, and desktop workflows stay readable and quick.
+                        </p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/70 bg-white/70 p-2 text-center shadow-inner dark:border-white/10 dark:bg-black/20">
+                        <div className="rounded-xl bg-orange-50 px-3 py-2 dark:bg-orange-500/10">
+                            <p className="text-lg font-black text-orange-700 dark:text-orange-200">{hapticFeedbackEnabled ? 'On' : 'Off'}</p>
+                            <p className="text-[10px] font-bold uppercase text-orange-500/80">Touch</p>
+                        </div>
+                        <div className="rounded-xl bg-gray-50 px-3 py-2 dark:bg-white/5">
+                            <p className="text-lg font-black text-gray-900 dark:text-white">{searchSuggestionView === 'full' ? 'Full' : 'Tray'}</p>
+                            <p className="text-[10px] font-bold uppercase text-gray-500">Search</p>
+                        </div>
+                        <div className="rounded-xl bg-gray-50 px-3 py-2 dark:bg-white/5">
+                            <p className="text-lg font-black text-gray-900 dark:text-white">{Math.round(Number(notificationDurationMs || 4200) / 1000)}s</p>
+                            <p className="text-[10px] font-bold uppercase text-gray-500">Toasts</p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div
                 data-setting-id="command_menu_button"
                 tabIndex={-1}
-                className={`bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700 ${getSettingTargetClass('command_menu_button')}`}
+                className={`accessibility-control-card overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm divide-y divide-gray-100 dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass('command_menu_button')}`}
             >
+                <div className="bg-gray-50/80 px-4 py-3 dark:bg-gray-900/40">
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">Controls and feedback</p>
+                </div>
                 <div className="p-4">
                     <div className="mb-4 flex items-center justify-between gap-4">
                         <div className="flex min-w-0 items-center gap-3">

@@ -4421,3 +4421,108 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
     animation: none !important;
   }
 }
+
+.accessibility-settings-shell {
+  container-type: inline-size;
+}
+
+.accessibility-settings-hero {
+  position: relative;
+}
+
+.accessibility-settings-hero::after {
+  content: '';
+  position: absolute;
+  inset: auto -8rem -9rem auto;
+  width: 18rem;
+  height: 18rem;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(249, 115, 22, 0.18), transparent 68%);
+  pointer-events: none;
+}
+
+.accessibility-control-card > div {
+  scroll-margin-top: 7rem;
+}
+
+.profile-settings-gear-button svg {
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.profile-settings-gear-button:active svg,
+.profile-settings-motion-active .profile-settings-gear-button svg {
+  transform: rotate(28deg) scale(1.08);
+}
+
+.settings-profile-arrival {
+  animation: settingsProfileArrival 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: top right;
+}
+
+@keyframes settingsProfileArrival {
+  0% {
+    opacity: 0.72;
+    transform: translate3d(0, -0.45rem, 0) scale(0.992);
+    filter: saturate(0.94);
+  }
+  66% {
+    opacity: 1;
+    transform: translate3d(0, 0.08rem, 0) scale(1.002);
+    filter: saturate(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: saturate(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .accessibility-settings-hero {
+    border-radius: 1.35rem;
+    padding: 1rem !important;
+  }
+
+  .accessibility-settings-hero h3 {
+    font-size: 1.45rem;
+    line-height: 1.08;
+  }
+
+  .accessibility-control-card {
+    border-radius: 1.35rem;
+  }
+
+  .accessibility-control-card .p-4 {
+    padding: 0.9rem !important;
+  }
+
+  .accessibility-control-card .flex.items-center.justify-between,
+  .accessibility-control-card .flex.items-start.justify-between {
+    align-items: flex-start;
+    gap: 0.85rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-settings-gear-button svg {
+    transition: none !important;
+  }
+
+  .profile-settings-gear-button:active svg,
+  .profile-settings-motion-active .profile-settings-gear-button svg {
+    transform: none !important;
+  }
+
+  .settings-profile-arrival {
+    animation: settingsProfileArrivalReduced 120ms ease-out both !important;
+  }
+}
+
+@keyframes settingsProfileArrivalReduced {
+  from {
+    opacity: 0.88;
+  }
+  to {
+    opacity: 1;
+  }
+}

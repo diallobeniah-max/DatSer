@@ -120,6 +120,7 @@ const DeveloperToolsPanel = ({
     const [notificationQaDevice, setNotificationQaDevice] = useState('phone')
     const [isNotificationQaOpen, setIsNotificationQaOpen] = useState(false)
     const [notificationQaItems, setNotificationQaItems] = useState([])
+    const qaPlaceholderToolsEnabled = false
 
     const membersRef = useRef(members)
     const devQaQueueScrollRef = useRef(null)
@@ -620,22 +621,22 @@ const DeveloperToolsPanel = ({
     const runBatchMemberQa = useCallback(async () => {
         selection()
         if (devQaStatus === 'running') return
-        // Batch QA implementation...
-        toast.info('Batch QA started')
+        toast.info('Batch QA is coming soon')
+        setDevQaReport('Batch QA is a placeholder. Use Quick QA or Deep QA for implemented checks.')
     }, [selection, devQaStatus])
 
     const runExistingMemberEditQa = useCallback(async () => {
         selection()
         if (devQaStatus === 'running') return
-        // Existing member QA implementation...
-        toast.info('Existing member QA started')
+        toast.info('Existing Member Edit QA is coming soon')
+        setDevQaReport('Existing Member Edit QA is a placeholder. Use Quick QA or Deep QA for implemented checks.')
     }, [selection, devQaStatus])
 
     const runBadgeTagQa = useCallback(async () => {
         selection()
         if (devQaStatus === 'running') return
-        // Badge + Tag QA implementation...
-        toast.info('Badge + Tag QA started')
+        toast.info('Badge + Tag QA is coming soon')
+        setDevQaReport('Badge + Tag QA is a placeholder. Use Quick QA or Deep QA for implemented checks.')
     }, [selection, devQaStatus])
 
     const clearNotificationQaTimers = useCallback(() => {
@@ -759,9 +760,10 @@ const DeveloperToolsPanel = ({
                                 <h5 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                                     <Database className="w-4 h-4 text-emerald-500" />
                                     Batch Insertion Stress Test
+                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">Coming soon</span>
                                 </h5>
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
-                                    Bypasses UI to directly insert bulk data. Provides combined SQL to verify.
+                                    Placeholder only. Use Quick QA or Deep QA until this stress runner is implemented.
                                 </p>
                             </div>
                             <div className="mt-auto pt-2 border-t border-gray-200/50 dark:border-gray-700/50 flex items-center gap-3">
@@ -773,18 +775,18 @@ const DeveloperToolsPanel = ({
                                         max="10"
                                         value={devQaBatchCount}
                                         onChange={(e) => setDevQaBatchCount(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
-                                        disabled={devQaStatus === 'running'}
+                                        disabled={devQaStatus === 'running' || !qaPlaceholderToolsEnabled}
                                         className="w-16 h-9 px-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm font-medium text-center text-gray-900 dark:text-white focus:ring-2 disabled:opacity-50"
                                     />
                                 </div>
                                 <button
                                     type="button"
                                     onClick={runBatchMemberQa}
-                                    disabled={devQaStatus === 'running' || !currentTable}
+                                    disabled={devQaStatus === 'running' || !currentTable || !qaPlaceholderToolsEnabled}
                                     className="flex-1 h-9 px-3 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm font-medium hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm flex items-center justify-center gap-2"
                                 >
                                     {devQaStatus === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                                    Run Batch QA
+                                    Batch QA coming soon
                                 </button>
                             </div>
                         </div>
@@ -796,9 +798,10 @@ const DeveloperToolsPanel = ({
                                 <h5 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                                     <Pencil className="w-4 h-4 text-cyan-500" />
                                     Existing Member QA
+                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">Partial</span>
                                 </h5>
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    Pick one real member and run a focused editability test or a separate badge and tag test.
+                                    Pick a target for future focused checks. Existing-member and badge/tag runners are clearly marked until implemented.
                                 </p>
                             </div>
                             <div className="relative w-full lg:max-w-sm" ref={devMemberDropdownRef}>
@@ -842,20 +845,20 @@ const DeveloperToolsPanel = ({
                             <button
                                 type="button"
                                 onClick={runExistingMemberEditQa}
-                                disabled={devQaStatus === 'running' || !devQaSelectedMemberId}
+                                disabled={devQaStatus === 'running' || !devQaSelectedMemberId || !qaPlaceholderToolsEnabled}
                                 className="px-3 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-400 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
                             >
                                 {devQaStatus === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pencil className="w-4 h-4" />}
-                                Existing Member Edit QA
+                                Existing Edit QA coming soon
                             </button>
                             <button
                                 type="button"
                                 onClick={runBadgeTagQa}
-                                disabled={devQaStatus === 'running' || !devQaSelectedMemberId}
+                                disabled={devQaStatus === 'running' || !devQaSelectedMemberId || !qaPlaceholderToolsEnabled}
                                 className="px-3 py-2.5 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-700 disabled:bg-fuchsia-400 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
                             >
                                 {devQaStatus === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
-                                Badge + Tag QA
+                                Badge + Tag QA coming soon
                             </button>
                         </div>
                     </div>

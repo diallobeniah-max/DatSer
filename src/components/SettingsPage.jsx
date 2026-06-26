@@ -296,6 +296,11 @@ const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = new Set([
     'member_code_turbo_notification_enabled'
 ])
 
+const areMemberCodesVisible = (preferences = {}) => (
+    preferences.workspace_member_codes_enabled !== false &&
+    preferences.member_codes_enabled !== false
+)
+
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMember }) => {
     const { user, signOut, preferences, resetPassword, saveUserPreferences, updatePreference, isDeveloperBypass } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
@@ -325,6 +330,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const [recentSettingsSearches, setRecentSettingsSearches] = useState([])
     const [highlightedSettingId, setHighlightedSettingId] = useState(null)
     const [quickSettingsSearchItem, setQuickSettingsSearchItem] = useState(null)
+    const [profileSettingsArriving, setProfileSettingsArriving] = useState(false)
     const [optimisticPreferencePatch, setOptimisticPreferencePatch] = useState({})
     const effectivePreferences = useMemo(
         () => ({
@@ -356,6 +362,16 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             root.style.overflow = previousRootOverflow
             body.style.overflow = previousBodyOverflow
         }
+    }, [])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined
+        const marker = window.sessionStorage?.getItem('datser_profile_settings_motion')
+        if (!marker) return undefined
+        window.sessionStorage?.removeItem('datser_profile_settings_motion')
+        setProfileSettingsArriving(true)
+        const timer = window.setTimeout(() => setProfileSettingsArriving(false), 360)
+        return () => window.clearTimeout(timer)
     }, [])
 
     useEffect(() => {
@@ -863,11 +879,15 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     })
     const updatePreferences = useCallback(async (nextPreferences) => {
         if (!nextPreferences || typeof nextPreferences !== 'object') return
+        const mergedPreferences = {
+            ...effectivePreferences,
+            ...nextPreferences
+        }
         if (
             Object.prototype.hasOwnProperty.call(nextPreferences, 'member_codes_enabled') ||
             Object.prototype.hasOwnProperty.call(nextPreferences, 'workspace_member_codes_enabled')
         ) {
-            const enabled = (nextPreferences.workspace_member_codes_enabled ?? nextPreferences.member_codes_enabled) === true
+            const enabled = areMemberCodesVisible(mergedPreferences)
             window.localStorage.setItem('datser_member_codes_enabled', String(enabled))
             window.dispatchEvent(new CustomEvent('datser-member-codes-preference-changed', {
                 detail: { enabled }
@@ -909,7 +929,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             return updatePreference(key, value)
         }
         return saveUserPreferences?.(nextPreferences)
-    }, [dataOwnerId, isAdminCollaborator, isCollaborator, saveUserPreferences, updatePreference])
+    }, [dataOwnerId, effectivePreferences, isAdminCollaborator, isCollaborator, saveUserPreferences, updatePreference])
 
     const toggleWorkspacePanel = useCallback((panelKey) => {
         selection()
@@ -2789,7 +2809,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
     // Main render
     return (
-        <div>
+        <div className={profileSettingsArriving ? 'settings-profile-arrival' : ''}>
             {compactMode ? renderSplitSettingsView() : (activeSection === null ? renderMainList() : renderDetailView())}
 
             {isLivePreviewOpen && (

@@ -58,6 +58,11 @@ const getStoredMemberCodesEnabled = () => {
   return stored === null ? null : stored
 }
 
+const areMemberCodesVisible = (preferences = {}) => (
+  preferences.workspace_member_codes_enabled !== false &&
+  preferences.member_codes_enabled !== false
+)
+
 const MEMBER_CODE_AUTO_CYCLE_INTERVALS = [15, 30, 60]
 
 const normalizeMemberCodeAutoCycleMinutes = (value) => {
@@ -1982,8 +1987,20 @@ const Dashboard = ({ isAdmin = false }) => {
     return () => window.removeEventListener('datser-member-codes-preference-changed', handleMemberCodesPreferenceChanged)
   }, [])
 
-  const workspaceMemberCodesEnabled = preferences?.workspace_member_codes_enabled
-  const memberCodesEnabled = isPreferenceEnabled(storedMemberCodesEnabled ?? workspaceMemberCodesEnabled ?? preferences?.member_codes_enabled)
+  useEffect(() => {
+    const enabled = areMemberCodesVisible(preferences || {})
+    const serialized = String(enabled)
+    setStoredMemberCodesEnabled(serialized)
+    try {
+      window.localStorage.setItem('datser_member_codes_enabled', serialized)
+    } catch {
+      // Keep rendering from preferences if localStorage is unavailable.
+    }
+  }, [preferences?.member_codes_enabled, preferences?.workspace_member_codes_enabled])
+
+  const memberCodesEnabled = storedMemberCodesEnabled === null
+    ? areMemberCodesVisible(preferences || {})
+    : isPreferenceEnabled(storedMemberCodesEnabled)
 
   const openMemberPass = useCallback((member) => {
     if (!member || !memberCodesEnabled) return
@@ -3503,8 +3520,9 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {quickPassMember && (
         <div
-          className={`app-modal-backdrop member-code-pass-modal fixed inset-0 z-[120] flex items-end justify-center bg-black/65 backdrop-blur-md md:items-center md:p-6 ${isQuickPassClosing ? 'member-code-pass-modal-closing' : ''}`}
+          className={`app-modal-backdrop member-code-pass-modal fixed inset-0 z-[120] flex items-end justify-center bg-black/65 backdrop-blur-md md:items-center md:p-6 ${memberPassSharePreview ? 'pointer-events-none' : ''} ${isQuickPassClosing ? 'member-code-pass-modal-closing' : ''}`}
           onClick={closeMemberPass}
+          aria-hidden={memberPassSharePreview ? 'true' : undefined}
         >
           <div
             className={`member-code-pass-stage w-full max-w-md overflow-hidden rounded-t-[2rem] border border-white/10 text-white shadow-2xl md:max-w-5xl md:rounded-[2.4rem] ${memberCodeCardStyleConfig.accentClass}`}
@@ -3627,8 +3645,11 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {memberPassSharePreview && (
         <div
-          className={`app-modal-backdrop member-pass-share-modal fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-3 backdrop-blur-md md:p-6 ${memberCodeCardStyleConfig.accentClass}`}
+          className={`app-modal-backdrop member-pass-share-modal fixed inset-0 z-[140] flex items-center justify-center bg-black/70 p-3 backdrop-blur-md md:p-6 ${memberCodeCardStyleConfig.accentClass}`}
           onClick={() => setMemberPassSharePreview(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Member pass share preview"
         >
           <div
             className="member-pass-share-panel w-full max-w-5xl overflow-hidden rounded-[1.75rem] border text-white shadow-2xl md:rounded-[2.2rem]"

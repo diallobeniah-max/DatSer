@@ -7,12 +7,6 @@ import {
   Moon,
   Sun,
   Settings,
-  Building2,
-  Download,
-  Trash2,
-  HelpCircle,
-  Lock,
-  Bell,
   Shield,
   X,
   Users,
@@ -113,6 +107,19 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
       console.error('Sign out error:', error)
     }
   }, [selection, signOut])
+
+  const openSettingsFromProfile = useCallback(() => {
+    selection()
+    try {
+      window.sessionStorage?.setItem('datser_profile_settings_motion', String(Date.now()))
+      document.documentElement.classList.add('profile-settings-motion-active')
+      window.setTimeout(() => {
+        document.documentElement.classList.remove('profile-settings-motion-active')
+      }, 360)
+    } catch { }
+    setShowDropdown(false)
+    if (window.openSettings) window.openSettings()
+  }, [selection])
 
   if (loading) {
     return (
@@ -244,12 +251,8 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    selection()
-                    setShowDropdown(false)
-                    if (window.openSettings) window.openSettings()
-                  }}
-                  className="relative inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-2xl border border-orange-200 bg-white/80 px-3 text-sm font-bold text-orange-700 shadow-sm transition hover:bg-orange-50 dark:border-orange-400/25 dark:bg-white/10 dark:text-orange-200 dark:hover:bg-white/15"
+                  onClick={openSettingsFromProfile}
+                  className="profile-settings-gear-button relative inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-2xl border border-orange-200 bg-white/80 px-3 text-sm font-bold text-orange-700 shadow-sm transition hover:bg-orange-50 dark:border-orange-400/25 dark:bg-white/10 dark:text-orange-200 dark:hover:bg-white/15"
                   aria-label="Open Settings"
                 >
                   <Settings className="h-5 w-5" />
@@ -403,23 +406,6 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                   <div className={`w-11 h-6 md:w-9 md:h-5 rounded-full transition-colors ${isDarkMode ? 'bg-primary-500' : 'bg-gray-300'}`}>
                     <div className={`w-5 h-5 md:w-4 md:h-4 rounded-full bg-white shadow-sm transform transition-transform mt-0.5 ${isDarkMode ? 'translate-x-5 md:translate-x-4 ml-0.5' : 'translate-x-0.5'}`} />
                   </div>
-                </button>
-                                <button
-                  onClick={() => {
-                    selection()
-                    setShowDropdown(false)
-                    if (window.openSettings) window.openSettings()
-                  }}
-                  className="w-full flex items-center gap-3 px-4 md:px-3 py-3 md:py-2.5 rounded-lg text-base md:text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                >
-                  <Building2 className="w-5 h-5 md:w-4 md:h-4" />
-                  <span>Settings</span>
-                  {window.__needsPasswordSetup && (
-                    <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full bg-red-500 text-white text-xs font-bold">
-                      1
-                    </span>
-                  )}
-                  <span className="text-sm md:text-xs text-gray-400">Account, Team, Data</span>
                 </button>
               </div>
             </div>

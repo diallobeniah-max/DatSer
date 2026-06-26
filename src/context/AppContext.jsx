@@ -646,6 +646,12 @@ const pickWorkspaceMemberCodePreferences = (source = {}) => (
   }, {})
 )
 
+const isDeveloperBypassStorageEnabled = () => (
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  window.localStorage.getItem('datser_dev_bypass') === 'true'
+)
+
 export const AppProvider = ({ children }) => {
   // Get user from auth context - may be null during initial load
   const authContext = useAuth()
@@ -653,6 +659,7 @@ export const AppProvider = ({ children }) => {
   const personalPreferences = authContext?.preferences || null
   const authLoading = authContext?.loading
   const isDeveloperBypass = authContext?.isDeveloperBypass === true
+  const isDeveloperBypassActive = isDeveloperBypass || isDeveloperBypassStorageEnabled()
   const [members, setMembers] = useState([])
   const [membersTotalCount, setMembersTotalCount] = useState(0)
   const [membersLoadedAll, setMembersLoadedAll] = useState(false)
@@ -2278,7 +2285,7 @@ export const AppProvider = ({ children }) => {
         toast.warn('Online mode selected, but internet is unavailable.')
       }
 
-      if (isDeveloperBypass || !isSupabaseConfigured()) {
+      if (isDeveloperBypassActive || isDeveloperBypassStorageEnabled() || !isSupabaseConfigured()) {
         appContextLog('Using mock data - Supabase not configured')
         setMembers(mockMembers)
         setMembersTotalCount(mockMembers.length)
@@ -2293,6 +2300,24 @@ export const AppProvider = ({ children }) => {
       const { data: { session } } = await supabase.auth.getSession()
       appContextLog('Current session:', session ? `authenticated as ${session.user?.id}` : 'not authenticated')
       if (!session) {
+        if (isDeveloperBypassStorageEnabled()) {
+          appContextLog('Developer bypass became active during member fetch; using mock data')
+          setMembers(mockMembers)
+          setMembersTotalCount(mockMembers.length)
+          setMembersLoadedAll(true)
+          if (!background) {
+            setLoading(false)
+          }
+          return mockMembers
+        }
+        if (!user?.id) {
+          appContextLog('No active session yet; waiting for login before loading members')
+          setMembers([])
+          if (!background) {
+            setLoading(false)
+          }
+          return []
+        }
         console.warn('No active session - user may need to log in again')
         if (!background) {
           toast.error('Session expired. Please refresh and log in again.')
@@ -2510,13 +2535,19 @@ export const AppProvider = ({ children }) => {
 
   const fetchMoreMembers = async (tableName = currentTable, options = {}) => {
     const { forceOnline = false } = options
-    if (!tableName || membersLoadedAll || shouldUseOfflineData || isDeveloperBypass || !isSupabaseConfigured()) {
+    if (!tableName || membersLoadedAll || shouldUseOfflineData || isDeveloperBypassActive || isDeveloperBypassStorageEnabled() || !isSupabaseConfigured()) {
       return members
     }
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
+        if (isDeveloperBypassStorageEnabled()) {
+          return members
+        }
+        if (!user?.id) {
+          return members
+        }
         toast.error('Session expired. Please refresh and log in again.')
         return members
       }

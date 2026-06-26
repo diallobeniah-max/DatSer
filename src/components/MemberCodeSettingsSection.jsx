@@ -70,8 +70,9 @@ const optionClass = (active) => (
 
 const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
     const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator } = useApp()
-    const workspaceEnabled = preferences?.workspace_member_codes_enabled
-    const enabled = (workspaceEnabled ?? preferences?.member_codes_enabled) === true
+    const workspaceEnabled = preferences?.workspace_member_codes_enabled !== false
+    const memberCodesEnabled = preferences?.member_codes_enabled !== false
+    const enabled = workspaceEnabled && memberCodesEnabled
     const quickPassEnabled = preferences?.member_code_quick_pass_enabled !== false
     const showLogo = preferences?.member_code_show_logo !== false
     const showPhoto = preferences?.member_code_show_photo !== false
@@ -159,10 +160,9 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
         setSaveStatus(null)
         try {
             const result = await updatePreferences?.({
-            member_codes_enabled: value,
-                ...(isAdminAccess ? { workspace_member_codes_enabled: value } : {})
+                member_codes_enabled: value
             })
-            setSaveStatus({ type: 'success', message: value ? 'Member codes enabled for the workspace.' : 'Member codes hidden for the workspace.' })
+            setSaveStatus({ type: 'success', message: value ? 'Member codes enabled for this profile.' : 'Member codes hidden for this profile.' })
             return result
         } catch (error) {
             console.error('Member code enable save failed:', error)
@@ -178,8 +178,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
         setSaveStatus(null)
         try {
             const result = await updatePreferences?.({
-                workspace_member_codes_enabled: value,
-                member_codes_enabled: value
+                workspace_member_codes_enabled: value
             })
             setSaveStatus({ type: 'success', message: value ? 'Workspace Member Codes enabled for connected members.' : 'Workspace Member Codes disabled for connected members.' })
             return result
@@ -301,22 +300,22 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             icon={BadgeCheck}
                             title="Enable Member Codes"
                             description="Show member codes on each card for quick check-in and lookup."
-                            checked={enabled}
+                            checked={memberCodesEnabled}
                             settingId="member_codes_enabled"
                             getSettingTargetClass={getSettingTargetClass}
                             disabled={savingKey === 'member_codes_enabled'}
-                            onChange={() => setMemberCodesEnabled(!enabled)}
+                            onChange={() => setMemberCodesEnabled(!memberCodesEnabled)}
                         />
                         {isAdminAccess && (
                             <ToggleRow
                                 icon={BadgeCheck}
                                 title="Workspace Member Codes"
                                 description="Admin control for the member-code display default across this workspace."
-                                checked={workspaceEnabled === true}
+                                checked={workspaceEnabled}
                                 settingId="workspace_member_codes_enabled"
                                 getSettingTargetClass={getSettingTargetClass}
                                 disabled={savingKey === 'workspace_member_codes_enabled'}
-                                onChange={() => setWorkspaceMemberCodesEnabled(workspaceEnabled !== true)}
+                                onChange={() => setWorkspaceMemberCodesEnabled(!workspaceEnabled)}
                             />
                         )}
                         <ToggleRow

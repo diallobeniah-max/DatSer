@@ -25,8 +25,16 @@ const DEV_BYPASS_USER = {
 }
 const DEV_BYPASS_PREFERENCES = {
   workspace_name: 'Developer Workspace',
-  role: 'owner'
+  role: 'owner',
+  member_codes_enabled: true,
+  workspace_member_codes_enabled: true
 }
+
+const isDeveloperBypassStorageEnabled = () => (
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  window.localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
+)
 
 const readDeveloperBypassPreferenceCache = () => {
   if (typeof window === 'undefined') return {}
@@ -140,7 +148,7 @@ export const AuthProvider = ({ children }) => {
   // when the tab closes, so a genuine new login still shows it.
   const WELCOME_TOAST_SESSION_KEY = 'datser_welcome_toast_shown'
   const offlineLoginToastShownRef = useRef(false)
-  const isDeveloperBypassEnabled = import.meta.env.DEV && localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
+  const isDeveloperBypassEnabled = isDeveloperBypassStorageEnabled()
 
   useEffect(() => {
     preferencesRef.current = preferences
@@ -317,6 +325,10 @@ export const AuthProvider = ({ children }) => {
         if (supabase) {
           const { data: { session }, error } = await supabase.auth.getSession()
 
+          if (isDeveloperBypassStorageEnabled()) {
+            return
+          }
+
           if (error) {
             console.error('Error getting session:', error)
           }
@@ -350,6 +362,7 @@ export const AuthProvider = ({ children }) => {
         console.log('Auth state changed:', event, session?.user?.email)
 
         if (!mounted) return
+        if (isDeveloperBypassStorageEnabled()) return
 
         // Update user state immediately
         setUser(session?.user ?? null)

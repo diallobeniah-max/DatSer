@@ -39,6 +39,7 @@ import {
 } from 'lucide-react'
 import TagManager from './TagManager'
 import AppUpdatesManager from './AppUpdatesManager'
+import ApkBuildManager from './ApkBuildManager'
 import {
   DEFAULT_FOLLOW_UP_TEMPLATE,
   FOLLOW_UP_STAGES,
@@ -47,6 +48,13 @@ import {
   calculateAttendanceFollowUps
 } from '../utils/attendanceFollowUp'
 
+const DEV_BYPASS_STORAGE_KEY = 'datser_developer_bypass'
+
+const isLocalDeveloperBypassActive = () => (
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  window.localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
+)
 
 const normalizeSundayDate = (dateValue) => {
   if (dateValue instanceof Date) {
@@ -84,6 +92,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
   } = useApp()
   const { isDarkMode } = useTheme()
   const { user, signInWithGoogle } = useAuth()
+  const hasDeveloperAdminBypass = isDeveloperBypass || isLocalDeveloperBypassActive()
 
   // Admin password protection - uses the same password as user's account
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -100,7 +109,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
     }
     return sessionStorage.getItem('adminAuthenticated') === 'true'
   })
-  const [passwordInput, setPasswordInput] = useState('')
+  const [passwordInput, setPasswordInput] = useState(() => hasDeveloperAdminBypass ? 'Load me in' : '')
   const [passwordError, setPasswordError] = useState(false)
   const [isVerifying, setIsVerifying] = useState(false)
   const [stayLoggedIn, setStayLoggedIn] = useState(false)
@@ -119,6 +128,12 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
     () => `datser_follow_up_records_${followUpOwnerId || 'local'}`,
     [followUpOwnerId]
   )
+
+  useEffect(() => {
+    if (hasDeveloperAdminBypass && !isAuthenticated) {
+      setPasswordInput('Load me in')
+    }
+  }, [hasDeveloperAdminBypass, isAuthenticated])
 
   const readLocalFollowUpRecords = useCallback(() => {
     try {
@@ -292,6 +307,14 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
     setPasswordError(false)
 
     try {
+      if (hasDeveloperAdminBypass && passwordInput.trim() === 'Load me in') {
+        setIsAuthenticated(true)
+        setLastActivity(Date.now())
+        sessionStorage.setItem('adminAuthenticated', 'true')
+        toast.success('Developer admin access granted')
+        return
+      }
+
       // Verify password by attempting to sign in with Supabase
       const { error } = await supabase.auth.signInWithPassword({
         email: user.email,
@@ -824,6 +847,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
   const activeFollowUpRecords = attendanceFollowUps.buckets?.[activeFollowUpTab] || []
   const priorityFollowUpCount = attendanceFollowUps.follow_up.length + attendanceFollowUps.inactive.length
   const canManageAppUpdates = isDeveloperBypass || !isCollaborator || isAdminCollaborator
+  const canUseLocalApkBuilder = import.meta.env.DEV && hasDeveloperAdminBypass
 
   useEffect(() => {
     if (!isAuthenticated || priorityFollowUpCount <= 0) return
@@ -1109,6 +1133,16 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
       </div>
 
       <div className="mx-auto grid max-w-[1600px] grid-cols-1 gap-4 px-3 py-3 sm:px-4 sm:py-4 xl:grid-cols-[minmax(340px,420px)_minmax(0,1fr)] xl:items-start xl:gap-5">
+
+        {canUseLocalApkBuilder && (
+          <div className="xl:col-span-2">
+            <ApkBuildManager
+              canAccess={canUseLocalApkBuilder}
+              canUpload={canManageAppUpdates}
+              userId={user?.id || null}
+            />
+          </div>
+        )}
 
         <div className="xl:col-span-2">
           <AppUpdatesManager canManage={canManageAppUpdates} userId={user?.id || null} />
