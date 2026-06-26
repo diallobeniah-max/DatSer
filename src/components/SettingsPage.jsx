@@ -692,7 +692,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         highlightTimerRef.current = window.setTimeout(() => {
             setHighlightedSettingId(null)
             highlightTimerRef.current = null
-        }, 1800)
+        }, 180000)
     }, [])
 
     const navigateToSetting = useCallback((section, settingId = null) => {
@@ -885,8 +885,13 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 const { data } = await executeSupabaseWrite(
                     () => supabase
                         .from('user_preferences')
-                        .update({ ...workspacePatch, updated_at: new Date().toISOString() })
-                        .eq('user_id', dataOwnerId)
+                        .upsert({
+                            user_id: dataOwnerId,
+                            ...workspacePatch,
+                            updated_at: new Date().toISOString()
+                        }, {
+                            onConflict: 'user_id'
+                        })
                         .select()
                         .single(),
                     { action: 'Save workspace member-code preferences' }
@@ -2091,13 +2096,25 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const getSettingTargetClass = (settingId) =>
         highlightedSettingId === settingId ? 'settings-search-target-highlight' : ''
 
-    const handleSettingsSearchResultSelect = useCallback((item) => {
-        rememberSettingsSearch(searchQuery || item?.label)
+    const handleSettingsSearchResultSelect = useCallback((item, rememberedTerm = searchQuery || item?.label) => {
+        rememberSettingsSearch(rememberedTerm)
         setLastSettingsPath(item)
         setQuickSettingsSearchItem(null)
         item?.action?.()
         setIsSettingsSearchFocused(false)
     }, [rememberSettingsSearch, searchQuery])
+
+    const reopenRecentSettingsSearch = useCallback((term) => {
+        const rememberedTerm = String(term || '').trim()
+        if (!rememberedTerm) return
+        const first = searchSettingsIndex(rememberedTerm, allSearchableItems, sections)[0]
+        if (first) {
+            handleSettingsSearchResultSelect(first, rememberedTerm)
+            return
+        }
+        setSearchQuery(rememberedTerm)
+        setIsSettingsSearchFocused(true)
+    }, [allSearchableItems, handleSettingsSearchResultSelect, sections])
 
     const openQuickSettingsSearchItem = useCallback(() => {
         if (!quickSettingsSearchItem) return
@@ -2351,7 +2368,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                         <button
                                             key={term}
                                             type="button"
-                                            onClick={() => setSearchQuery(term)}
+                                            onClick={() => reopenRecentSettingsSearch(term)}
                                             className="inline-flex items-center gap-2 rounded-full bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-300 dark:bg-[#303030] dark:text-gray-200 dark:hover:bg-[#3a3a3a]"
                                         >
                                             {term}
@@ -2558,7 +2575,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                 <button
                                     key={term}
                                     type="button"
-                                    onClick={() => setSearchQuery(term)}
+                                    onClick={() => reopenRecentSettingsSearch(term)}
                                     className="inline-flex items-center gap-2 rounded-full bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-300 dark:bg-[#303030] dark:text-gray-200 dark:hover:bg-[#3a3a3a]"
                                 >
                                     {term}
@@ -2851,7 +2868,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                         <button
                                             key={term}
                                             type="button"
-                                            onClick={() => setSearchQuery(term)}
+                                            onClick={() => reopenRecentSettingsSearch(term)}
                                             className="inline-flex items-center gap-2 rounded-full bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-300 dark:bg-[#303030] dark:text-gray-200 dark:hover:bg-[#3a3a3a]"
                                         >
                                             {term}

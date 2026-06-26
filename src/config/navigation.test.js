@@ -18,6 +18,11 @@ describe('settings search index', () => {
         ['notifications', 'notifications'],
         ['keyboard shortcuts', 'command_menu'],
         ['Ctrl K', 'command_menu'],
+        ['workspace member codes', 'workspace_member_codes_enabled'],
+        ['workspase member cods', 'workspace_member_codes_enabled'],
+        ['android phone qr camera blurry', 'member_code_qr_scanner'],
+        ['where do I turn on code lookup', 'member_code_lookup'],
+        ['share member pass message', 'member_code_share_message'],
         ['settings', 'help_center']
     ])('finds %s', (query, expectedId) => {
         const results = searchSettingsIndex(query, getVisibleSettingsSearchItems(true), SETTINGS_SECTIONS)

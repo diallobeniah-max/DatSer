@@ -3170,6 +3170,7 @@ html:not(.dark) .member-code-designed-badge > span {
 }
 
 .member-code-pass-qr-card {
+  appearance: none;
   position: relative;
   display: grid;
   width: clamp(11.5rem, 22vw, 16.25rem);
@@ -3186,6 +3187,12 @@ html:not(.dark) .member-code-designed-badge > span {
   overflow: hidden;
   padding: 0.65rem;
   z-index: 2;
+  cursor: zoom-in;
+  transition:
+    width 260ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-radius 220ms ease,
+    box-shadow 220ms ease,
+    transform 220ms ease;
 }
 
 .member-code-pass-qr-card::before {
@@ -3194,6 +3201,33 @@ html:not(.dark) .member-code-designed-badge > span {
 
 .member-code-pass-qr-card::after {
   content: none;
+}
+
+.member-code-pass-qr-card:focus-visible,
+.member-code-pass-expand-qr:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--member-pass-accent), white 24%);
+  outline-offset: 4px;
+}
+
+.member-code-pass-qr-card:hover {
+  transform: translateY(-2px) scale(1.015);
+}
+
+.member-code-pass-qr-scanline {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 8%;
+  height: 0.28rem;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--member-pass-accent), white 28%), transparent),
+    rgba(255, 255, 255, 0.72);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--member-pass-accent), transparent 24%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0);
+  z-index: 3;
 }
 
 .member-code-pass-qr-image {
@@ -3206,6 +3240,62 @@ html:not(.dark) .member-code-designed-badge > span {
   background: #fff;
   image-rendering: pixelated;
   z-index: 1;
+}
+
+.member-code-pass-expand-qr {
+  position: relative;
+  z-index: 3;
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--member-pass-accent), transparent 56%);
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--member-pass-accent), transparent 82%), rgba(255, 255, 255, 0.08)),
+    rgba(0, 0, 0, 0.18);
+  color: rgba(255, 255, 255, 0.88);
+  padding: 0.72rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 16px 36px color-mix(in srgb, var(--member-pass-accent), transparent 82%);
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.member-code-pass-expand-qr:hover {
+  border-color: color-mix(in srgb, var(--member-pass-accent), transparent 34%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--member-pass-accent), transparent 72%), rgba(255, 255, 255, 0.12)),
+    rgba(0, 0, 0, 0.22);
+  transform: translateY(-1px);
+}
+
+.member-code-pass-qr-expanded .member-code-pass-qr-card {
+  width: clamp(18rem, 42vw, 28rem);
+  border-radius: 1.95rem;
+  cursor: zoom-out;
+  padding: clamp(0.8rem, 1.4vw, 1.15rem);
+  box-shadow:
+    0 0 0 0.62rem rgba(255, 255, 255, 0.72),
+    0 0 0 1rem color-mix(in srgb, var(--member-pass-accent), transparent 78%),
+    0 32px 86px color-mix(in srgb, var(--member-pass-accent), transparent 58%);
+}
+
+.member-code-pass-qr-expanded .member-code-pass-qr-aura {
+  width: clamp(20rem, 48vw, 31rem);
+  opacity: 0.62;
+}
+
+.member-code-pass-qr-pulse .member-code-pass-qr-card {
+  animation: memberCodeQrFocusFlash 720ms ease both;
+}
+
+.member-code-pass-qr-pulse .member-code-pass-qr-scanline {
+  animation: memberCodeQrScanSweep 720ms ease both;
 }
 
 .member-code-pass-joined-pill {
@@ -3288,20 +3378,6 @@ html:not(.dark) .member-code-designed-badge > span {
   object-fit: contain;
 }
 
-.member-pass-share-updating {
-  position: absolute;
-  right: 1rem;
-  top: 1rem;
-  border: 1px solid color-mix(in srgb, var(--member-pass-accent), transparent 48%);
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.56);
-  color: rgba(255, 255, 255, 0.86);
-  padding: 0.45rem 0.8rem;
-  font-size: 0.76rem;
-  font-weight: 900;
-  backdrop-filter: blur(12px);
-}
-
 .datser-command-preview-panel {
   background:
     radial-gradient(circle at 16% 8%, rgba(249, 115, 22, 0.08), transparent 34%),
@@ -3359,17 +3435,11 @@ html:not(.dark) .datser-command-preview-panel .border-white\/10 {
   color: rgba(255, 255, 255, 0.88);
 }
 
-.member-pass-share-message-input {
-  min-height: 10.5rem;
-  max-height: 18rem;
+.member-pass-share-readonly-message {
   border-color: rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.22);
   color: rgba(255, 255, 255, 0.92);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.member-pass-share-message-input::placeholder {
-  color: rgba(255, 255, 255, 0.45);
 }
 
 .member-pass-share-initial {
@@ -3427,20 +3497,11 @@ html:not(.dark) .member-pass-share-message {
   color: #1f2937;
 }
 
-html:not(.dark) .member-pass-share-message-input {
+html:not(.dark) .member-pass-share-readonly-message {
   border-color: rgba(15, 23, 42, 0.12);
   background: rgba(255, 255, 255, 0.82);
   color: #172033;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
-}
-
-html:not(.dark) .member-pass-share-message-input::placeholder {
-  color: rgba(23, 32, 51, 0.44);
-}
-
-html:not(.dark) .member-pass-share-updating {
-  background: rgba(255, 255, 255, 0.84);
-  color: #172033;
 }
 
 .dark .member-code-pass-joined-pill {
@@ -3552,6 +3613,20 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
   border-color: rgba(15, 23, 42, 0.12);
   background: rgba(255, 255, 255, 0.62);
   color: #1f2937;
+}
+
+html:not(.dark) .member-code-pass-responsive .member-code-pass-qr-card {
+  border-color: color-mix(in srgb, var(--member-pass-accent), white 12%);
+  background: #fff;
+  color: inherit;
+}
+
+html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
+  border-color: color-mix(in srgb, var(--member-pass-accent), transparent 50%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--member-pass-accent), transparent 84%), rgba(255, 255, 255, 0.86)),
+    rgba(255, 255, 255, 0.9);
+  color: #9a3412;
 }
 
 @media (max-width: 767px) {
@@ -3955,6 +4030,39 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
   }
 }
 
+@keyframes memberCodeQrFocusFlash {
+  0% {
+    transform: scale(0.985);
+    filter: brightness(1);
+  }
+  34% {
+    transform: scale(1.025);
+    filter: brightness(1.12) contrast(1.04);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes memberCodeQrScanSweep {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  16% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 0.95;
+    transform: translateY(920%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(980%);
+  }
+}
+
 @keyframes memberPassShareBackdropIn {
   0% {
     opacity: 0;
@@ -4244,5 +4352,72 @@ html:not(.dark) .member-code-pass-responsive button:not(.member-code-pass-contro
 
   .member-code-pass-card .member-code-pass-blob {
     filter: blur(48px);
+  }
+}
+
+@media (max-width: 767px) {
+  .member-code-pass-responsive.member-code-pass-qr-expanded {
+    padding-inline: 0.7rem !important;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-layout {
+    gap: 0.72rem !important;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-church {
+    display: none;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-qr-card {
+    width: min(78vw, 21.5rem) !important;
+    max-width: calc(100vw - 3rem) !important;
+    border-width: 4px !important;
+    border-radius: 1.55rem !important;
+    padding: 0.7rem !important;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-qr-aura {
+    width: min(88vw, 24rem) !important;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-joined-pill {
+    font-size: 0.76rem;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-details .grid,
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-details > button {
+    display: none;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-details h3 {
+    font-size: clamp(1.18rem, 5vw, 1.45rem) !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px),
+  (min-width: 1024px) and (max-width: 1366px) and (pointer: coarse) {
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-layout {
+    grid-template-columns: minmax(18rem, 1fr) minmax(0, 0.9fr) !important;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-qr-card {
+    width: min(42vw, 22.5rem) !important;
+    padding: 0.75rem !important;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-qr-aura {
+    width: min(50vw, 26rem) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .member-code-pass-qr-card,
+  .member-code-pass-expand-qr {
+    transition: none !important;
+  }
+
+  .member-code-pass-qr-pulse .member-code-pass-qr-card,
+  .member-code-pass-qr-pulse .member-code-pass-qr-scanline {
+    animation: none !important;
   }
 }

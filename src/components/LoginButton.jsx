@@ -218,16 +218,16 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
             </div>
 
             {/* User Profile Section */}
-            <div className="px-4 py-6 md:py-4 bg-gradient-to-r from-primary-50 to-orange-50 dark:from-gray-800 dark:to-gray-750 border-b border-gray-200 dark:border-gray-700">
+            <div className="px-4 py-4 bg-gradient-to-r from-primary-50 to-orange-50 dark:from-gray-800 dark:to-gray-750 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-3">
                 {userPhoto ? (
                   <img
                     src={userPhoto}
                     alt={userName}
-                    className="w-16 h-16 md:w-12 md:h-12 rounded-full object-cover aspect-square border-2 border-white shadow-sm"
+                    className="w-14 h-14 md:w-12 md:h-12 rounded-full object-cover aspect-square border-2 border-white shadow-sm"
                   />
                 ) : (
-                  <div className="w-16 h-16 md:w-12 md:h-12 rounded-full aspect-square bg-primary-500 flex items-center justify-center text-white font-bold text-xl md:text-lg shadow-sm">
+                  <div className="w-14 h-14 md:w-12 md:h-12 rounded-full aspect-square bg-primary-500 flex items-center justify-center text-white font-bold text-xl md:text-lg shadow-sm">
                     {userName?.charAt(0)?.toUpperCase() || 'U'}
                   </div>
                 )}
@@ -242,16 +242,51 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                     {workspaceName}
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    selection()
+                    setShowDropdown(false)
+                    if (window.openSettings) window.openSettings()
+                  }}
+                  className="relative inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-2xl border border-orange-200 bg-white/80 px-3 text-sm font-bold text-orange-700 shadow-sm transition hover:bg-orange-50 dark:border-orange-400/25 dark:bg-white/10 dark:text-orange-200 dark:hover:bg-white/15"
+                  aria-label="Open Settings"
+                >
+                  <Settings className="h-5 w-5" />
+                  <span className="hidden sm:inline">Settings</span>
+                  {window.__needsPasswordSetup && (
+                    <span className="absolute -mr-9 -mt-8 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs font-bold text-white">
+                      1
+                    </span>
+                  )}
+                </button>
               </div>
             </div>
 
             {compactStatus && (
               <div className="border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
-                <div className="mb-2">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Dashboard Snapshot</p>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Month, total, and connection live here when the top status bar is off.</p>
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Live dashboard</p>
+                    <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
+                      {compactStatus.monthLabel}
+                      {compactStatus.foundCount !== null ? ` • ${compactStatus.foundCount} found` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      selection()
+                      await compactStatus.onRefresh?.()
+                    }}
+                    disabled={compactStatus.isSyncing}
+                    className={`inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-black transition hover:brightness-105 disabled:cursor-wait disabled:opacity-75 ${compactStatus.syncToneClass || 'border-gray-200 bg-gray-50 text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100'}`}
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${compactStatus.isSyncing ? 'animate-spin' : ''}`} />
+                    {compactStatus.isSyncing ? 'Syncing' : (compactStatus.syncLabel || 'Refresh')}
+                  </button>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <button
                     type="button"
                     onClick={() => {
@@ -259,7 +294,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                       setShowDropdown(false)
                       compactStatus.onOpenMonthPicker?.()
                     }}
-                    className="rounded-2xl border border-orange-200 bg-orange-50/80 px-3 py-2 text-left text-sm font-bold text-orange-700 transition hover:bg-orange-100 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200"
+                    className="rounded-2xl border border-orange-200 bg-orange-50/80 px-3 py-2 text-left text-xs font-bold text-orange-700 transition hover:bg-orange-100 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200"
                   >
                     <span className="block text-[10px] font-black uppercase text-orange-500/80 dark:text-orange-300/80">Month</span>
                     <span className="block truncate">{compactStatus.monthLabel}</span>
@@ -271,7 +306,7 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                       setShowDropdown(false)
                       compactStatus.onOpenConnectionMenu?.()
                     }}
-                    className={`rounded-2xl border px-3 py-2 text-left text-sm font-bold transition hover:brightness-105 ${compactStatus.connectionToneClass}`}
+                    className={`rounded-2xl border px-3 py-2 text-left text-xs font-bold transition hover:brightness-105 ${compactStatus.connectionToneClass}`}
                   >
                     <span className="mb-1 flex items-center gap-1 text-[10px] font-black uppercase opacity-80">
                       {compactStatus.isSupabaseConfigured
@@ -284,32 +319,17 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
                     <span className="block truncate">{compactStatus.connectionLabel}</span>
                   </button>
                   {compactStatus.dateLabel && (
-                    <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100">
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-bold text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100">
                       <span className="block text-[10px] font-black uppercase text-gray-500 dark:text-gray-400">Date</span>
                       {compactStatus.dateLabel}
                     </div>
                   )}
                   {compactStatus.foundCount !== null && (
-                    <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100">
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-bold text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100">
                       <span className="block text-[10px] font-black uppercase text-gray-500 dark:text-gray-400">Total</span>
                       {compactStatus.foundCount} found
                     </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      selection()
-                      await compactStatus.onRefresh?.()
-                    }}
-                    disabled={compactStatus.isSyncing}
-                    className={`col-span-2 rounded-2xl border px-3 py-2 text-left text-sm font-bold transition hover:brightness-105 disabled:cursor-wait disabled:opacity-75 ${compactStatus.syncToneClass || 'border-gray-200 bg-gray-50 text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-100'}`}
-                  >
-                    <span className="mb-1 flex items-center gap-1 text-[10px] font-black uppercase opacity-80">
-                      <RefreshCw className={`h-3.5 w-3.5 ${compactStatus.isSyncing ? 'animate-spin' : ''}`} />
-                      Refresh
-                    </span>
-                    <span className="block truncate">{compactStatus.isSyncing ? 'Syncing members...' : (compactStatus.syncLabel || 'Sync latest data')}</span>
-                  </button>
                 </div>
               </div>
             )}

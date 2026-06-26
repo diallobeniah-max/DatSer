@@ -133,6 +133,12 @@ export const AuthProvider = ({ children }) => {
   const [preferences, setPreferences] = useState(null)
   const preferencesRef = useRef(null)
   const welcomeToastShownRef = useRef(false) // Prevent duplicate welcome toasts
+  // Durable guard so the welcome toast never repeats within a single browser
+  // session. React refs reset on remount (StrictMode double-mount, route
+  // changes), and Supabase re-emits SIGNED_IN on token refresh/reconnect —
+  // both would otherwise re-fire the welcome toast. sessionStorage is cleared
+  // when the tab closes, so a genuine new login still shows it.
+  const WELCOME_TOAST_SESSION_KEY = 'datser_welcome_toast_shown'
   const offlineLoginToastShownRef = useRef(false)
   const isDeveloperBypassEnabled = import.meta.env.DEV && localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
 
@@ -256,6 +262,11 @@ export const AuthProvider = ({ children }) => {
     if (hadExistingSession) {
       welcomeToastShownRef.current = true // Prevent welcome toast on page refresh
     }
+    // If the durable welcome flag is set for the current session, treat it as
+    // already shown too — covers remount after a refresh where the ref resets.
+    if (typeof window !== 'undefined' && window.sessionStorage?.getItem(WELCOME_TOAST_SESSION_KEY)) {
+      welcomeToastShownRef.current = true
+    }
 
     // Get initial session
     const getInitialSession = async () => {
@@ -350,9 +361,16 @@ export const AuthProvider = ({ children }) => {
           loadUserPreferencesBackground(session.user.id)
           // Auto-accept collaborator invite if user was invited
           autoAcceptInvite(session.user.email)
-          // Show welcome toast only on fresh login (not refresh)
-          if (!welcomeToastShownRef.current) {
+          // Show welcome toast only on fresh login (not refresh, remount, or
+          // Supabase token-refresh re-emitting SIGNED_IN).
+          const welcomeAlreadyShown =
+            welcomeToastShownRef.current ||
+            (typeof window !== 'undefined' && window.sessionStorage?.getItem(WELCOME_TOAST_SESSION_KEY) === session.user.id)
+          if (!welcomeAlreadyShown) {
             welcomeToastShownRef.current = true
+            try {
+              window.sessionStorage?.setItem(WELCOME_TOAST_SESSION_KEY, session.user.id)
+            } catch { /* sessionStorage unavailable */ }
             const isInvitedUser = session.user.user_metadata?.role === 'collaborator'
             const invitedBy = session.user.user_metadata?.invited_by
             if (isInvitedUser && invitedBy) {
@@ -364,6 +382,7 @@ export const AuthProvider = ({ children }) => {
         } else if (event === 'SIGNED_OUT') {
           setPreferences(null)
           welcomeToastShownRef.current = false // Reset for next login
+          try { window.sessionStorage?.removeItem(WELCOME_TOAST_SESSION_KEY) } catch { /* ignore */ }
           toast.info('Signed out successfully')
         }
       })
@@ -785,6 +804,7 @@ export const AuthProvider = ({ children }) => {
       setUser(null)
       setPreferences(null)
       welcomeToastShownRef.current = false
+      try { window.sessionStorage?.removeItem(WELCOME_TOAST_SESSION_KEY) } catch { /* ignore */ }
 
       if (import.meta.env.DEV) {
         localStorage.removeItem(DEV_BYPASS_STORAGE_KEY)

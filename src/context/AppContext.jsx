@@ -65,6 +65,7 @@ const NOTIFICATION_DURATION_COMPACT_MIGRATION_KEY = 'datser_notification_duratio
 const DEFAULT_NOTIFICATION_DURATION_MS = 4200
 const SEARCH_SUGGESTION_VIEW_STORAGE_KEY = 'datser_search_suggestion_view'
 const SEARCH_SUGGESTION_PROMPT_STORAGE_KEY = 'datser_search_suggestion_prompt_seen_v1'
+const SEARCH_SUGGESTION_PROMPT_TOAST_ID = 'search-display-mode-prompt'
 const SEARCH_SUGGESTION_VIEW_MODES = ['short', 'full']
 const DEFAULT_SEARCH_SUGGESTION_VIEW = 'full'
 const RECENT_MEMBER_EDITS_STORAGE_KEY = 'datser_recent_member_edits'
@@ -609,6 +610,7 @@ export const useApp = () => {
 
 const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
   'workspace_member_codes_enabled',
+  'member_codes_enabled',
   'member_code_quick_pass_enabled',
   'member_code_show_logo',
   'member_code_show_photo',
@@ -920,6 +922,17 @@ export const AppProvider = ({ children }) => {
     }
   }, [])
 
+  const resolveSearchSuggestionPrompt = useCallback((value) => {
+    const nextValue = SEARCH_SUGGESTION_VIEW_MODES.includes(value) ? value : DEFAULT_SEARCH_SUGGESTION_VIEW
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SEARCH_SUGGESTION_PROMPT_STORAGE_KEY, 'true')
+    }
+    searchDisplayPromptQueuedRef.current = false
+    setSearchSuggestionView(nextValue)
+    toast.dismiss(SEARCH_SUGGESTION_PROMPT_TOAST_ID)
+    toast.clearWaitingQueue()
+  }, [setSearchSuggestionView])
+
   useEffect(() => {
     if (!user || authLoading || typeof window === 'undefined') return
     if (localStorage.getItem(SEARCH_SUGGESTION_PROMPT_STORAGE_KEY) === 'true') return
@@ -939,16 +952,16 @@ export const AppProvider = ({ children }) => {
           details: 'Full list stays default. Switch now or keep it.',
           defaultExpanded: true,
           autoClose: 7000,
-          toastId: 'search-display-mode-prompt',
+          toastId: SEARCH_SUGGESTION_PROMPT_TOAST_ID,
           actions: [
             {
               variant: 'primary',
               label: 'Try tray',
-              onClick: () => setSearchSuggestionView('short')
+              onClick: () => resolveSearchSuggestionPrompt('short')
             },
             {
               label: 'Keep full',
-              onClick: () => setSearchSuggestionView('full')
+              onClick: () => resolveSearchSuggestionPrompt('full')
             }
           ]
         })
@@ -959,7 +972,7 @@ export const AppProvider = ({ children }) => {
       window.clearTimeout(timer)
       searchDisplayPromptQueuedRef.current = false
     }
-  }, [authLoading, setSearchSuggestionView, user])
+  }, [authLoading, resolveSearchSuggestionPrompt, setSearchSuggestionView, user])
 
   const shouldUseOfflineData = offlineMode === 'offline' || (offlineMode === 'auto' && !isOnline)
   const isOfflineModeActive = shouldUseOfflineData && Boolean(offlineCacheMeta)

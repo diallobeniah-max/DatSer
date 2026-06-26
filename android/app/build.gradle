@@ -2,6 +2,20 @@ import java.util.Properties
 
 apply plugin: 'com.android.application'
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+def releaseStoreFile = keystoreProperties['storeFile'] ?: System.getenv('DATSER_ANDROID_KEYSTORE_FILE')
+def releaseStorePassword = keystoreProperties['storePassword'] ?: System.getenv('DATSER_ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = keystoreProperties['keyAlias'] ?: System.getenv('DATSER_ANDROID_KEY_ALIAS')
+def releaseKeyPassword = keystoreProperties['keyPassword'] ?: System.getenv('DATSER_ANDROID_KEY_PASSWORD')
+def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every {
+    it != null && it.toString().trim()
+}
+
 android {
     namespace = "com.datser.app"
     compileSdk rootProject.ext.compileSdkVersion
@@ -31,31 +45,13 @@ android {
         }
     }
     buildTypes {
-            // Signing configuration will be set if keystore.properties exists
+        release {
+            minifyEnabled false
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
-    }
-}
-
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('keystore.properties')
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
-
-def releaseStoreFile = keystoreProperties['storeFile'] ?: System.getenv('DATSER_ANDROID_KEYSTORE_FILE')
-def releaseStorePassword = keystoreProperties['storePassword'] ?: System.getenv('DATSER_ANDROID_KEYSTORE_PASSWORD')
-def releaseKeyAlias = keystoreProperties['keyAlias'] ?: System.getenv('DATSER_ANDROID_KEY_ALIAS')
-def releaseKeyPassword = keystoreProperties['keyPassword'] ?: System.getenv('DATSER_ANDROID_KEY_PASSWORD')
-def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every {
-    it != null && it.toString().trim()
-}
-
-    release {
-        minifyEnabled false
-        if (hasReleaseSigning) {
-            signingConfig signingConfigs.release
-        }
-        proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
     }
 }
 

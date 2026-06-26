@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { BadgeCheck, BellRing, CheckCircle, Church, Edit3, ImagePlus, Mail, ScanSearch, Search, Shuffle, Sparkles, UserRound, X } from 'lucide-react'
+import { AlertCircle, BadgeCheck, BellRing, CheckCircle, Church, Edit3, ImagePlus, Mail, Save, ScanSearch, Search, ShieldCheck, Shuffle, Sparkles, UserRound, Users, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
@@ -24,7 +24,7 @@ const normalizeAutoCycleMinutes = (value) => {
     return AUTO_CYCLE_INTERVALS.some((option) => option.value === numericValue) ? numericValue : 30
 }
 
-const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId, getSettingTargetClass }) => (
+const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId, getSettingTargetClass, disabled = false }) => (
     <div
         data-setting-id={settingId}
         tabIndex={-1}
@@ -41,11 +41,12 @@ const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingI
         </div>
         <button
             type="button"
+            disabled={disabled}
             onClick={(event) => {
                 event.stopPropagation()
                 onChange?.()
             }}
-            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 disabled:cursor-wait disabled:opacity-60 dark:focus:ring-offset-gray-900 ${
                 checked ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
             }`}
             aria-pressed={checked}
@@ -68,7 +69,7 @@ const optionClass = (active) => (
 )
 
 const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
-    const { members = [], dataOwnerId, user } = useApp()
+    const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator } = useApp()
     const workspaceEnabled = preferences?.workspace_member_codes_enabled
     const enabled = (workspaceEnabled ?? preferences?.member_codes_enabled) === true
     const quickPassEnabled = preferences?.member_code_quick_pass_enabled !== false
@@ -92,6 +93,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const [lookupCode, setLookupCode] = useState('')
     const [draftShareMessage, setDraftShareMessage] = useState(shareMessageTemplate)
     const [isUploadingLogo, setIsUploadingLogo] = useState(false)
+    const [savingKey, setSavingKey] = useState('')
+    const [saveStatus, setSaveStatus] = useState(null)
     const logoInputRef = useRef(null)
 
     const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
@@ -126,20 +129,75 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
         setDraftShareMessage(shareMessageTemplate)
     }, [shareMessageTemplate])
 
-    const setPreference = (key, value) => updatePreferences?.({ [key]: value })
-    const setMemberCodesEnabled = (value) => {
-        updatePreferences?.({
+    const affectedMemberCount = members.length
+    const adminStatusLabel = isCollaborator
+        ? (isAdminCollaborator ? 'Admin collaborator' : 'Collaborator')
+        : 'Workspace owner'
+    const workspaceTargetLabel = isCollaborator && dataOwnerId
+        ? 'Owner workspace'
+        : 'Your workspace'
+
+    const setPreference = async (key, value, label = 'Member Codes setting') => {
+        if (!updatePreferences) return null
+        setSavingKey(key)
+        setSaveStatus(null)
+        try {
+            const result = await updatePreferences({ [key]: value })
+            setSaveStatus({ type: 'success', message: `${label} saved.` })
+            return result
+        } catch (error) {
+            console.error('Member code preference save failed:', error)
+            setSaveStatus({ type: 'error', message: `${label} could not be saved.` })
+            return null
+        } finally {
+            setSavingKey('')
+        }
+    }
+    const setMemberCodesEnabled = async (value) => {
+        if (!updatePreferences) return null
+        setSavingKey('member_codes_enabled')
+        setSaveStatus(null)
+        try {
+            const result = await updatePreferences?.({
             member_codes_enabled: value,
-            ...(isAdminAccess ? { workspace_member_codes_enabled: value } : {})
-        })
+                ...(isAdminAccess ? { workspace_member_codes_enabled: value } : {})
+            })
+            setSaveStatus({ type: 'success', message: value ? 'Member codes enabled for the workspace.' : 'Member codes hidden for the workspace.' })
+            return result
+        } catch (error) {
+            console.error('Member code enable save failed:', error)
+            setSaveStatus({ type: 'error', message: 'Member code visibility could not be saved.' })
+            return null
+        } finally {
+            setSavingKey('')
+        }
+    }
+    const setWorkspaceMemberCodesEnabled = async (value) => {
+        if (!updatePreferences) return null
+        setSavingKey('workspace_member_codes_enabled')
+        setSaveStatus(null)
+        try {
+            const result = await updatePreferences?.({
+                workspace_member_codes_enabled: value,
+                member_codes_enabled: value
+            })
+            setSaveStatus({ type: 'success', message: value ? 'Workspace Member Codes enabled for connected members.' : 'Workspace Member Codes disabled for connected members.' })
+            return result
+        } catch (error) {
+            console.error('Workspace member code save failed:', error)
+            setSaveStatus({ type: 'error', message: 'Workspace Member Codes could not be saved.' })
+            return null
+        } finally {
+            setSavingKey('')
+        }
     }
     const saveChurchName = () => {
         const cleanName = draftChurchName.trim() || 'DatSer Church'
-        setPreference('member_code_church_name', cleanName)
+        setPreference('member_code_church_name', cleanName, 'Pass organization name')
         setEditingChurchName(false)
     }
     const saveShareMessageTemplate = () => {
-        setPreference('member_code_share_message_template', draftShareMessage.trim() || DEFAULT_SHARE_MESSAGE_TEMPLATE)
+        setPreference('member_code_share_message_template', draftShareMessage.trim() || DEFAULT_SHARE_MESSAGE_TEMPLATE, 'Share message')
     }
     const uploadChurchLogo = async (event) => {
         const file = event.target.files?.[0]
@@ -194,11 +252,46 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
 
     return (
         <div className="space-y-6">
-            <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Member Codes</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Configure index badges, member passes, and quick profile previews.
-                </p>
+            <div className="overflow-hidden rounded-[1.75rem] border border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50 p-5 shadow-sm dark:border-orange-500/20 dark:from-[#201208] dark:via-gray-900 dark:to-[#130f0a]">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="max-w-2xl">
+                        <p className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-white/80 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-orange-700 dark:border-orange-400/20 dark:bg-white/5 dark:text-orange-200">
+                            <BadgeCheck className="h-3.5 w-3.5" />
+                            Member Codes control room
+                        </p>
+                        <h3 className="mt-3 text-2xl font-black tracking-tight text-gray-950 dark:text-white">Make every pass scannable, searchable, and shared from one place.</h3>
+                        <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
+                            Configure the code name, workspace-wide visibility, QR pass behavior, and the exact members affected before saving.
+                        </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[28rem]">
+                        <div className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
+                            <Users className="h-4 w-4 text-orange-600 dark:text-orange-300" />
+                            <p className="mt-2 text-2xl font-black text-gray-950 dark:text-white">{affectedMemberCount}</p>
+                            <p className="text-xs font-bold text-gray-500 dark:text-gray-400">connected members affected</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
+                            <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
+                            <p className="mt-2 text-sm font-black text-gray-950 dark:text-white">{adminStatusLabel}</p>
+                            <p className="text-xs font-bold text-gray-500 dark:text-gray-400">{workspaceTargetLabel}</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
+                            <Save className="h-4 w-4 text-orange-600 dark:text-orange-300" />
+                            <p className={`mt-2 text-sm font-black ${enabled ? 'text-emerald-700 dark:text-emerald-200' : 'text-gray-950 dark:text-white'}`}>{enabled ? 'Codes active' : 'Codes hidden'}</p>
+                            <p className="text-xs font-bold text-gray-500 dark:text-gray-400">{savingKey ? 'Saving changes...' : 'Auto-saved controls'}</p>
+                        </div>
+                    </div>
+                </div>
+                {saveStatus && (
+                    <div className={`mt-4 flex items-start gap-2 rounded-2xl border px-4 py-3 text-sm font-bold ${
+                        saveStatus.type === 'error'
+                            ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100'
+                            : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100'
+                    }`}>
+                        {saveStatus.type === 'error' ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+                        <span>{saveStatus.message}</span>
+                    </div>
+                )}
             </div>
 
             <div className="grid gap-5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,32rem),1fr))]">
@@ -211,6 +304,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={enabled}
                             settingId="member_codes_enabled"
                             getSettingTargetClass={getSettingTargetClass}
+                            disabled={savingKey === 'member_codes_enabled'}
                             onChange={() => setMemberCodesEnabled(!enabled)}
                         />
                         {isAdminAccess && (
@@ -221,7 +315,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                 checked={workspaceEnabled === true}
                                 settingId="workspace_member_codes_enabled"
                                 getSettingTargetClass={getSettingTargetClass}
-                                onChange={() => setPreference('workspace_member_codes_enabled', workspaceEnabled !== true)}
+                                disabled={savingKey === 'workspace_member_codes_enabled'}
+                                onChange={() => setWorkspaceMemberCodesEnabled(workspaceEnabled !== true)}
                             />
                         )}
                         <ToggleRow
@@ -231,7 +326,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={quickPassEnabled}
                             settingId="member_code_quick_pass"
                             getSettingTargetClass={getSettingTargetClass}
-                            onChange={() => setPreference('member_code_quick_pass_enabled', !quickPassEnabled)}
+                            disabled={savingKey === 'member_code_quick_pass_enabled'}
+                            onChange={() => setPreference('member_code_quick_pass_enabled', !quickPassEnabled, 'Quick Pass')}
                         />
                         <ToggleRow
                             icon={Church}
@@ -240,7 +336,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={showLogo}
                             settingId="member_code_logo"
                             getSettingTargetClass={getSettingTargetClass}
-                            onChange={() => setPreference('member_code_show_logo', !showLogo)}
+                            disabled={savingKey === 'member_code_show_logo'}
+                            onChange={() => setPreference('member_code_show_logo', !showLogo, 'Logo visibility')}
                         />
                         {isAdminAccess && (
                             <div data-setting-id="member_code_logo_upload" className="flex flex-wrap items-center justify-between gap-3 bg-gray-50 p-4 dark:bg-gray-900/30">
@@ -267,7 +364,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={showPhoto}
                             settingId="member_code_photo"
                             getSettingTargetClass={getSettingTargetClass}
-                            onChange={() => setPreference('member_code_show_photo', !showPhoto)}
+                            disabled={savingKey === 'member_code_show_photo'}
+                            onChange={() => setPreference('member_code_show_photo', !showPhoto, 'Member photo visibility')}
                         />
                         <ToggleRow
                             icon={Mail}
@@ -276,7 +374,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={showEmail}
                             settingId="member_code_email"
                             getSettingTargetClass={getSettingTargetClass}
-                            onChange={() => setPreference('member_code_show_email', !showEmail)}
+                            disabled={savingKey === 'member_code_show_email'}
+                            onChange={() => setPreference('member_code_show_email', !showEmail, 'Email visibility')}
                         />
                         <ToggleRow
                             icon={Sparkles}
@@ -285,7 +384,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={autoOpenProfile}
                             settingId="member_code_auto_open"
                             getSettingTargetClass={getSettingTargetClass}
-                            onChange={() => setPreference('member_code_auto_profile_enabled', !autoOpenProfile)}
+                            disabled={savingKey === 'member_code_auto_profile_enabled'}
+                            onChange={() => setPreference('member_code_auto_profile_enabled', !autoOpenProfile, 'Auto-open exact match')}
                         />
                         <ToggleRow
                             icon={Search}
@@ -294,7 +394,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             checked={codeLookupEnabled}
                             settingId="member_code_lookup"
                             getSettingTargetClass={getSettingTargetClass}
-                            onChange={() => setPreference('member_code_lookup_enabled', !codeLookupEnabled)}
+                            disabled={savingKey === 'member_code_lookup_enabled'}
+                            onChange={() => setPreference('member_code_lookup_enabled', !codeLookupEnabled, 'Code Number Lookup')}
                         />
                         {isAdminAccess && (
                             <>
@@ -305,7 +406,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                     checked={turboCheckInEnabled}
                                     settingId="member_code_turbo"
                                     getSettingTargetClass={getSettingTargetClass}
-                                    onChange={() => setPreference('member_code_turbo_enabled', !turboCheckInEnabled)}
+                                    disabled={savingKey === 'member_code_turbo_enabled'}
+                                    onChange={() => setPreference('member_code_turbo_enabled', !turboCheckInEnabled, 'Turbo Code Check-In')}
                                 />
                                 <ToggleRow
                                     icon={BellRing}
@@ -314,7 +416,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                     checked={turboNotificationEnabled}
                                     settingId="member_code_turbo_notification"
                                     getSettingTargetClass={getSettingTargetClass}
-                                    onChange={() => setPreference('member_code_turbo_notification_enabled', !turboNotificationEnabled)}
+                                    disabled={savingKey === 'member_code_turbo_notification_enabled'}
+                                    onChange={() => setPreference('member_code_turbo_notification_enabled', !turboNotificationEnabled, 'Turbo notification')}
                                 />
                             </>
                         )}

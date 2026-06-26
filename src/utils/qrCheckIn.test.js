@@ -3,6 +3,7 @@ import {
   buildMemberCheckInUrl,
   consumeMemberCheckInUrl,
   getLocalQrCheckInTarget,
+  getQrCameraConstraintCandidates,
   getPreferredQrCameraConstraints
 } from './qrCheckIn'
 
@@ -50,5 +51,16 @@ describe('QR check-in helpers', () => {
     expect(constraints.video.facingMode).toEqual({ ideal: 'environment' })
     expect(constraints.video.width.ideal).toBe(1920)
     expect(constraints.video.height.ideal).toBe(1080)
+  })
+
+  it('prefers normal rear cameras before ultra-wide or front cameras when available', () => {
+    const candidates = getQrCameraConstraintCandidates([
+      { kind: 'videoinput', deviceId: 'front-1', label: 'Front camera' },
+      { kind: 'videoinput', deviceId: 'ultra-1', label: 'Back ultra wide camera' },
+      { kind: 'videoinput', deviceId: 'back-1', label: 'Back camera' }
+    ])
+
+    expect(candidates[0].video.deviceId.exact).toBe('back-1')
+    expect(candidates.some(candidate => candidate.video === true)).toBe(true)
   })
 })

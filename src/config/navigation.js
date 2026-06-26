@@ -108,8 +108,8 @@ export const SETTINGS_SECTIONS = [
         label: 'Member Codes',
         icon: BadgeCheck,
         color: 'orange',
-        content: 'Configure member index codes, quick pass bottom sheet, badge style, member profile previews, and exact-match code lookup.',
-        keywords: 'member codes index badge quick pass profile preview check in lookup attendance code number id qr pass share'
+        content: 'Configure member index codes, workspace member codes, QR pass scanning, quick pass bottom sheet, badge style, member profile previews, and exact-match code lookup.',
+        keywords: 'member codes workspace member codes index badge quick pass profile preview check in lookup attendance code number id qr pass share scanner camera scan code name'
     },
     {
         id: 'accessibility',
@@ -273,7 +273,15 @@ export const SETTINGS_SEARCH_INDEX = [
         section: 'member_codes',
         label: 'Member Codes',
         description: 'Show index codes on member cards',
-        keywords: 'member codes index badge card quick check in id number code number display codes show hide',
+        keywords: 'member codes workspace member codes enable member codes index badge card quick check in id number code number display codes show hide connected members',
+        icon: BadgeCheck
+    },
+    {
+        id: 'workspace_member_codes_enabled',
+        section: 'member_codes',
+        label: 'Workspace Member Codes',
+        description: 'Apply member codes to connected members across the workspace',
+        keywords: 'workspace member codes toggle apply everyone connected members all members collaborators admin owner sync supabase save update',
         icon: BadgeCheck
     },
     {
@@ -313,7 +321,7 @@ export const SETTINGS_SEARCH_INDEX = [
         section: 'member_codes',
         label: 'Code Number Lookup',
         description: 'Show the matching member name while typing a code',
-        keywords: 'code number lookup search exact match member name k56 p36 e79 quick lookup code field',
+        keywords: 'code number lookup search exact match member name k56 p36 e79 quick lookup code field code name find member',
         icon: Search
     },
     {
@@ -331,6 +339,14 @@ export const SETTINGS_SEARCH_INDEX = [
         description: 'Edit the message used when sharing a member pass',
         keywords: 'share message member pass custom text whatsapp sms edit template',
         icon: Mail
+    },
+    {
+        id: 'member_code_qr_scanner',
+        section: 'member_codes',
+        label: 'QR Scanner Camera',
+        description: 'Scan member pass QR codes and mark attendance from phones or tablets',
+        keywords: 'qr scanner camera scan member pass phone android samsung blurry blue focus rear camera tablet check in present',
+        icon: Search
     },
     {
         id: 'member_code_accent',
@@ -550,8 +566,13 @@ export const buildSettingsSearchText = (item, sections = SETTINGS_SECTIONS) => {
 
 const SEARCH_TOKEN_ALIASES = {
     tray: ['tray', 'search', 'suggestion', 'short'],
+    workspace: ['workspace', 'owner', 'shared', 'connected', 'all'],
     code: ['code', 'codes', 'member', 'number'],
     codes: ['code', 'codes', 'member', 'number'],
+    pass: ['pass', 'qr', 'share', 'scan'],
+    qr: ['qr', 'scan', 'scanner', 'camera', 'code'],
+    scanner: ['scanner', 'scan', 'camera', 'qr'],
+    camera: ['camera', 'scanner', 'scan', 'qr'],
     number: ['number', 'code', 'codes'],
     recent: ['recent', 'edits', 'activity', 'history'],
     edits: ['edits', 'changes', 'recent', 'activity'],
@@ -565,8 +586,22 @@ const SEARCH_TOKEN_ALIASES = {
     badge: ['badge', 'style', 'code'],
     preve: ['preview'],
     preview: ['preview', 'live'],
-    live: ['live', 'preview']
+    live: ['live', 'preview'],
+    toggle: ['toggle', 'enable', 'switch', 'turn'],
+    turn: ['turn', 'enable', 'toggle', 'switch'],
+    enable: ['enable', 'show', 'display', 'turn'],
+    android: ['android', 'phone', 'mobile', 'samsung'],
+    fone: ['phone'],
+    colaborator: ['collaborator'],
+    collaborator: ['collaborator', 'team', 'admin'],
+    admin: ['admin', 'owner', 'permission', 'collaborator'],
+    supabase: ['supabase', 'sync', 'save', 'database']
 }
+
+const SEARCH_STOP_WORDS = new Set([
+    'a', 'an', 'and', 'are', 'can', 'do', 'for', 'from', 'go', 'how', 'i', 'in', 'is', 'me', 'my',
+    'of', 'on', 'open', 'please', 'show', 'take', 'the', 'this', 'to', 'turn', 'up', 'where', 'with'
+])
 
 const getSearchTokenVariants = (token) => {
     const variants = [token, ...(SEARCH_TOKEN_ALIASES[token] || [])]
@@ -576,15 +611,93 @@ const getSearchTokenVariants = (token) => {
 }
 
 export const settingsSearchTextMatches = (searchText, tokens = []) => (
-    tokens.every(token => getSearchTokenVariants(token).some(variant => searchText.includes(variant)))
+    tokens.every(token => getSearchTokenVariants(token).some(variant => tokenMatchesSearchText(variant, searchText)))
 )
+
+const normalizeSearchText = (value = '') => String(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+const getSearchTokens = (query = '') => (
+    normalizeSearchText(query)
+        .split(/\s+/)
+        .filter(token => token && !SEARCH_STOP_WORDS.has(token))
+)
+
+const levenshteinDistance = (a = '', b = '') => {
+    if (a === b) return 0
+    if (!a) return b.length
+    if (!b) return a.length
+    const previous = Array.from({ length: b.length + 1 }, (_, index) => index)
+    const current = new Array(b.length + 1)
+    for (let i = 1; i <= a.length; i += 1) {
+        current[0] = i
+        for (let j = 1; j <= b.length; j += 1) {
+            current[j] = Math.min(
+                previous[j] + 1,
+                current[j - 1] + 1,
+                previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+            )
+        }
+        previous.splice(0, previous.length, ...current)
+    }
+    return previous[b.length]
+}
+
+const tokenMatchesWord = (token, word) => {
+    if (!token || !word) return false
+    if (word.includes(token) || token.includes(word)) return true
+    if (token.length < 4 || word.length < 4) return false
+    const distance = levenshteinDistance(token, word)
+    return distance <= (token.length > 6 ? 2 : 1)
+}
+
+const tokenMatchesSearchText = (token, searchText) => {
+    const normalizedText = normalizeSearchText(searchText)
+    if (normalizedText.includes(token)) return true
+    return normalizedText.split(/\s+/).some(word => tokenMatchesWord(token, word))
+}
+
+const scoreSettingsItem = (item, query, sections = SETTINGS_SECTIONS) => {
+    const normalizedQuery = normalizeSearchText(query)
+    const tokens = getSearchTokens(query)
+    const section = sections.find(candidate => candidate.id === item.section)
+    const label = normalizeSearchText(item.label)
+    const sectionLabel = normalizeSearchText(section?.label)
+    const searchText = buildSettingsSearchText(item, sections)
+    const normalizedSearchText = normalizeSearchText(searchText)
+    let score = 0
+
+    if (label === normalizedQuery) score += 400
+    if (sectionLabel === normalizedQuery) score += 260
+    if (label.includes(normalizedQuery)) score += 220
+    if (sectionLabel.includes(normalizedQuery)) score += 160
+    if (normalizedSearchText.includes(normalizedQuery)) score += 90
+
+    tokens.forEach((token) => {
+        const variants = getSearchTokenVariants(token)
+        const bestVariantScore = variants.reduce((best, variant) => {
+            if (label.split(/\s+/).some(word => tokenMatchesWord(variant, word))) return Math.max(best, 80)
+            if (sectionLabel.split(/\s+/).some(word => tokenMatchesWord(variant, word))) return Math.max(best, 55)
+            if (tokenMatchesSearchText(variant, normalizedSearchText)) return Math.max(best, 30)
+            return best
+        }, 0)
+        score += bestVariantScore
+    })
+
+    if (item.section === 'member_codes' && /member|code|qr|scan|pass|workspace/.test(normalizedQuery)) score += 45
+    return score
+}
 
 export const searchSettingsIndex = (query, items = SETTINGS_SEARCH_INDEX, sections = SETTINGS_SECTIONS) => {
     const normalizedQuery = String(query || '').trim().toLowerCase()
     if (!normalizedQuery) return items
-    const tokens = normalizedQuery.split(/\s+/).filter(Boolean)
-    return items.filter(item => {
-        const searchText = buildSettingsSearchText(item, sections)
-        return settingsSearchTextMatches(searchText, tokens)
-    })
+    const tokens = getSearchTokens(query)
+    return items
+        .map(item => ({
+            item,
+            score: scoreSettingsItem(item, query, sections),
+            matchesAllTokens: tokens.every(token => getSearchTokenVariants(token).some(variant => tokenMatchesSearchText(variant, buildSettingsSearchText(item, sections))))
+        }))
+        .filter(result => result.score >= 55 || result.matchesAllTokens)
+        .sort((a, b) => b.score - a.score)
+        .map(result => result.item)
 }

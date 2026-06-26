@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspense } from 'react'
 import { useApp } from '../context/AppContext'
-import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
 import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine } from 'lucide-react'
@@ -489,7 +488,6 @@ const Dashboard = ({ isAdmin = false }) => {
     preferences,
     recentMemberEdits
   } = useApp()
-  const { updatePreference } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success, error: errorHaptic } = useHapticFeedback()
   const [editingMember, setEditingMember] = useState(null)
@@ -501,8 +499,9 @@ const Dashboard = ({ isAdmin = false }) => {
   const [showMonthModal, setShowMonthModal] = useState(false)
   const [quickPassMember, setQuickPassMember] = useState(null)
   const [isQuickPassClosing, setIsQuickPassClosing] = useState(false)
+  const [isQuickPassQrExpanded, setIsQuickPassQrExpanded] = useState(false)
+  const [isQuickPassQrAnimating, setIsQuickPassQrAnimating] = useState(false)
   const [memberPassSharePreview, setMemberPassSharePreview] = useState(null)
-  const [memberPassShareImageUpdating, setMemberPassShareImageUpdating] = useState(false)
   const turboCheckInRef = useRef({ key: '', running: false })
 
   // Pagination state
@@ -524,6 +523,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const [memberCodeBadgeCycleSlot, setMemberCodeBadgeCycleSlot] = useState(() => Math.floor(Date.now() / (30 * 60 * 1000)))
   const filterCloseTimeoutRef = useRef(null)
   const quickPassCloseTimeoutRef = useRef(null)
+  const quickPassQrAnimationTimeoutRef = useRef(null)
   const [sortNewestFirst, setSortNewestFirst] = useState(true) // Toggle for Marked tab sort order
 
   // Tag filter state
@@ -1992,7 +1992,13 @@ const Dashboard = ({ isAdmin = false }) => {
       window.clearTimeout(quickPassCloseTimeoutRef.current)
       quickPassCloseTimeoutRef.current = null
     }
+    if (quickPassQrAnimationTimeoutRef.current) {
+      window.clearTimeout(quickPassQrAnimationTimeoutRef.current)
+      quickPassQrAnimationTimeoutRef.current = null
+    }
     setIsQuickPassClosing(false)
+    setIsQuickPassQrExpanded(false)
+    setIsQuickPassQrAnimating(false)
     setQuickPassMember(member)
   }, [memberCodesEnabled, selection])
 
@@ -2000,6 +2006,12 @@ const Dashboard = ({ isAdmin = false }) => {
     if (!quickPassMember || isQuickPassClosing) return
     selection()
     setIsQuickPassClosing(true)
+    setIsQuickPassQrExpanded(false)
+    setIsQuickPassQrAnimating(false)
+    if (quickPassQrAnimationTimeoutRef.current) {
+      window.clearTimeout(quickPassQrAnimationTimeoutRef.current)
+      quickPassQrAnimationTimeoutRef.current = null
+    }
     if (quickPassCloseTimeoutRef.current) window.clearTimeout(quickPassCloseTimeoutRef.current)
     quickPassCloseTimeoutRef.current = window.setTimeout(() => {
       setQuickPassMember(null)
@@ -2007,6 +2019,10 @@ const Dashboard = ({ isAdmin = false }) => {
       quickPassCloseTimeoutRef.current = null
     }, 300)
   }, [isQuickPassClosing, quickPassMember, selection])
+
+  useEffect(() => () => {
+    if (quickPassQrAnimationTimeoutRef.current) window.clearTimeout(quickPassQrAnimationTimeoutRef.current)
+  }, [])
 
   const pendingSearchTerm = localSearchTerm.trim()
   const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
@@ -2052,6 +2068,18 @@ const Dashboard = ({ isAdmin = false }) => {
     })
     return () => { cancelled = true }
   }, [quickPassCheckInUrl])
+  const toggleQuickPassQrExpanded = useCallback(() => {
+    if (!quickPassQrImageUrl) return
+    selection()
+    setIsQuickPassQrExpanded((current) => !current)
+    setIsQuickPassQrAnimating(true)
+    if (quickPassQrAnimationTimeoutRef.current) window.clearTimeout(quickPassQrAnimationTimeoutRef.current)
+    quickPassQrAnimationTimeoutRef.current = window.setTimeout(() => {
+      setIsQuickPassQrAnimating(false)
+      quickPassQrAnimationTimeoutRef.current = null
+    }, 720)
+  }, [quickPassQrImageUrl, selection])
+
   const buildMemberPassSharePreview = useCallback(async (member, type) => {
     const phone = String(getMemberPhone(member) || '').replace(/[^\d+]/g, '')
     const name = getMemberSearchName(member)
@@ -2099,62 +2127,6 @@ const Dashboard = ({ isAdmin = false }) => {
       imageUrl
     })
   }, [isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap])
-
-  const updateMemberPassShareMessage = useCallback((message) => {
-    setMemberPassSharePreview((current) => current ? { ...current, message } : current)
-  }, [])
-
-  const saveMemberPassShareMessageTemplate = useCallback(async () => {
-    if (!memberPassSharePreview?.message) return
-    await updatePreference?.('member_code_share_message_template', memberPassSharePreview.message)
-  }, [memberPassSharePreview?.message, updatePreference])
-
-  useEffect(() => {
-    if (!memberPassSharePreview) return undefined
-    const {
-      name,
-      code,
-      joinLabel,
-      churchName,
-      cardStyle,
-      qrImageUrl,
-      message
-    } = memberPassSharePreview
-
-    let cancelled = false
-    const timer = window.setTimeout(async () => {
-      setMemberPassShareImageUpdating(true)
-      const nextImageUrl = await createMemberPassShareImage({
-        name,
-        code,
-        joinLabel,
-        churchName,
-        cardStyle,
-        qrImageUrl,
-        message,
-        isDarkMode
-      })
-      if (!cancelled) {
-        setMemberPassSharePreview((current) => current ? { ...current, imageUrl: nextImageUrl } : current)
-        setMemberPassShareImageUpdating(false)
-      }
-    }, 420)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-      setMemberPassShareImageUpdating(false)
-    }
-  }, [
-    isDarkMode,
-    memberPassSharePreview?.cardStyle,
-    memberPassSharePreview?.churchName,
-    memberPassSharePreview?.code,
-    memberPassSharePreview?.joinLabel,
-    memberPassSharePreview?.message,
-    memberPassSharePreview?.name,
-    memberPassSharePreview?.qrImageUrl
-  ])
 
   const sendMemberPassShare = useCallback(async () => {
     if (!memberPassSharePreview) return
@@ -3538,7 +3510,10 @@ const Dashboard = ({ isAdmin = false }) => {
             className={`member-code-pass-stage w-full max-w-md overflow-hidden rounded-t-[2rem] border border-white/10 text-white shadow-2xl md:max-w-5xl md:rounded-[2.4rem] ${memberCodeCardStyleConfig.accentClass}`}
             onClick={(event) => event.stopPropagation()}
           >
-            <MemberCodePassCard styleKey={memberCodeCardStyle} className="member-code-pass-responsive mx-5 mb-5 mt-5 rounded-[1.75rem] border px-6 pb-7 pt-5 text-center md:m-0 md:rounded-[2rem] md:px-8 md:pb-8 md:pt-6 lg:px-10">
+            <MemberCodePassCard
+              styleKey={memberCodeCardStyle}
+              className={`member-code-pass-responsive mx-5 mb-5 mt-5 rounded-[1.75rem] border px-6 pb-7 pt-5 text-center md:m-0 md:rounded-[2rem] md:px-8 md:pb-8 md:pt-6 lg:px-10 ${isQuickPassQrExpanded ? 'member-code-pass-qr-expanded' : ''} ${isQuickPassQrAnimating ? 'member-code-pass-qr-pulse' : ''}`}
+            >
               <div className="member-code-pass-topline">
                 <button
                   type="button"
@@ -3565,14 +3540,30 @@ const Dashboard = ({ isAdmin = false }) => {
                   {quickPassQrImageUrl ? (
                     <div className="member-code-pass-qr-wrap">
                       <div className="member-code-pass-qr-aura" aria-hidden="true" />
-                      <div className="member-code-pass-qr-card" aria-label={`QR check-in for ${getMemberSearchName(quickPassMember)}`}>
+                      <button
+                        type="button"
+                        onClick={toggleQuickPassQrExpanded}
+                        className="member-code-pass-qr-card"
+                        aria-expanded={isQuickPassQrExpanded}
+                        aria-label={isQuickPassQrExpanded ? `Collapse QR check-in code for ${getMemberSearchName(quickPassMember)}` : `Expand QR check-in code for ${getMemberSearchName(quickPassMember)}`}
+                      >
+                        <span className="member-code-pass-qr-scanline" aria-hidden="true" />
                         <img
                           src={quickPassQrImageUrl}
                           alt={`Scan to mark ${getMemberSearchName(quickPassMember)} present`}
                           className="member-code-pass-qr-image"
                           draggable="false"
                         />
-                      </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={toggleQuickPassQrExpanded}
+                        className="member-code-pass-expand-qr"
+                        aria-expanded={isQuickPassQrExpanded}
+                      >
+                        <ScanLine className="h-4 w-4" />
+                        <span>{isQuickPassQrExpanded ? 'Collapse QR code' : 'Tap to expand QR code'}</span>
+                      </button>
                       <div className="member-code-pass-joined-pill">
                         <Calendar className="h-3.5 w-3.5 text-[var(--member-pass-accent)]" />
                         <span>{getMemberJoinLabel(quickPassMember)}</span>
@@ -3665,11 +3656,6 @@ const Dashboard = ({ isAdmin = false }) => {
                   alt={`${memberPassSharePreview.name} member pass preview`}
                   className="member-pass-share-art block h-auto w-full"
                 />
-                {memberPassShareImageUpdating && (
-                  <div className="member-pass-share-updating">
-                    Updating preview...
-                  </div>
-                )}
                 <div className="member-pass-share-art-note">
                   Scan QR to open this member and mark present
                 </div>
@@ -3686,20 +3672,12 @@ const Dashboard = ({ isAdmin = false }) => {
                       <p className="text-sm font-bold text-[var(--member-pass-accent)]">{memberPassSharePreview.code}</p>
                     </div>
                   </div>
-                  <label htmlFor="member-pass-share-message" className="mt-4 block text-sm font-bold opacity-70">
-                    Message
-                  </label>
-                  <textarea
-                    id="member-pass-share-message"
-                    value={memberPassSharePreview.message}
-                    onChange={(event) => updateMemberPassShareMessage(event.target.value)}
-                    onBlur={saveMemberPassShareMessageTemplate}
-                    rows={6}
-                    className="member-pass-share-message-input mt-2 w-full resize-y rounded-2xl border px-4 py-3 text-sm font-semibold leading-6 outline-none transition focus:ring-2 focus:ring-[var(--member-pass-accent)] md:text-base"
-                    placeholder="Write the share message..."
-                  />
+                  <div className="member-pass-share-readonly-message mt-4 rounded-2xl border px-4 py-3">
+                    <p className="text-xs font-black uppercase tracking-[0.16em] opacity-60">Final message</p>
+                    <p className="mt-2 text-sm font-semibold leading-6 md:text-base">{memberPassSharePreview.message}</p>
+                  </div>
                   <p className="mt-2 text-xs font-semibold opacity-55">
-                    The preview image updates after you stop typing. This message is saved for the next share.
+                    To change this message, edit the Member Codes share message in Settings.
                   </p>
                 </div>
 

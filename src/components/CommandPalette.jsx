@@ -268,19 +268,23 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         return score
     }
 
-    const filteredActions = query.trim()
-        ? [
-            ...searchSettingsIndex(query, autoScanSettingsEnabled ? getVisibleSettingsSearchItems(import.meta.env.DEV) : [], settingsSections)
+    const getFilteredActionsForQuery = (rawQuery = '') => {
+        const searchValue = String(rawQuery || '')
+        if (!searchValue.trim()) return actions
+        return [
+            ...searchSettingsIndex(searchValue, autoScanSettingsEnabled ? getVisibleSettingsSearchItems(import.meta.env.DEV) : [], settingsSections)
                 .map(item => actions.find(action => action.id === 'setting-item-' + item.id))
                 .filter(Boolean),
             ...actions.filter(action => {
                 const target = (action.label + ' ' + (action.description || '') + ' ' + (action.aliases || '') + ' ' + (action.shortcut || '')).toLowerCase()
-                return settingsSearchTextMatches(target, query.toLowerCase().split(/\s+/).filter(Boolean))
+                return settingsSearchTextMatches(target, searchValue.toLowerCase().split(/\s+/).filter(Boolean))
             })
         ]
             .filter((action, index, list) => list.findIndex(candidate => candidate.id === action.id) === index)
-            .sort((a, b) => scoreCommandAction(b, query) - scoreCommandAction(a, query))
-        : actions
+            .sort((a, b) => scoreCommandAction(b, searchValue) - scoreCommandAction(a, searchValue))
+    }
+
+    const filteredActions = getFilteredActionsForQuery(query)
 
     // Group actions by category
     const groupedActions = filteredActions.reduce((groups, action) => {
@@ -320,9 +324,27 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
         setIsOpen(false)
     }
 
+    const reopenRecentCommandSearch = (term) => {
+        const rememberedTerm = String(term || '').trim()
+        if (!rememberedTerm) return
+        const first = getFilteredActionsForQuery(rememberedTerm)[0]
+        if (first) {
+            rememberCommandSearch(rememberedTerm)
+            first.action()
+            setIsOpen(false)
+            return
+        }
+        setQuery(rememberedTerm)
+        setSelectedIndex(0)
+        setQuickLookOverrideId(null)
+    }
+
     const handleResultClick = (action, globalIndex) => {
         setSelectedIndex(globalIndex)
-        if (showSettingsPreview && action.category === 'settings') return
+        if (action.category === 'settings') {
+            handleSelect(action)
+            return
+        }
         handleSelect(action)
     }
 
@@ -575,11 +597,7 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                                 <button
                                     key={term}
                                     type="button"
-                                    onClick={() => {
-                                        setQuery(term)
-                                        setSelectedIndex(0)
-                                        setQuickLookOverrideId(null)
-                                    }}
+                                    onClick={() => reopenRecentCommandSearch(term)}
                                     className="shrink-0 rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-bold text-orange-700 shadow-sm transition-colors hover:bg-orange-50 dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20"
                                 >
                                     {term}
@@ -596,7 +614,8 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                     <div className="datser-command-scroll min-h-0 max-h-[60vh] overflow-y-auto py-2">
                         {filteredActions.length === 0 ? (
                             <div className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                                No results found.
+                                <p className="font-bold text-gray-700 dark:text-gray-200">No strong match yet.</p>
+                                <p className="mt-2 text-sm">Try “member codes”, “QR scanner”, “workspace codes”, “offline sync”, or “notifications”.</p>
                             </div>
                         ) : (
                             <div className="px-2">
@@ -613,9 +632,16 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                                             {categoryActions.map((action, index) => {
                                                 const globalIndex = categoryStartIndex + index
                                                 return (
-                                                    <button
+                                                    <div
                                                         key={action.id}
+                                                        role="button"
+                                                        tabIndex={0}
                                                         onClick={() => handleResultClick(action, globalIndex)}
+                                                        onKeyDown={(event) => {
+                                                            if (event.key !== 'Enter' && event.key !== ' ') return
+                                                            event.preventDefault()
+                                                            handleResultClick(action, globalIndex)
+                                                        }}
                                                         className={`w-full flex items-center justify-between px-3 py-3 rounded-lg transition-colors text-left
                             ${globalIndex === selectedIndex
                                                                 ? 'bg-primary-50 dark:bg-orange-900/30 text-primary-700 dark:text-orange-200'
@@ -651,7 +677,7 @@ const CommandPalette = ({ setCurrentView, onAddMember, isExecutive = false, onNa
                                                                 </button>
                                                             )}
                                                         </div>
-                                                    </button>
+                                                    </div>
                                                 )
                                             })}
                                         </div>

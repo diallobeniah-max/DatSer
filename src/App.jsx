@@ -194,6 +194,7 @@ function AppContent({ isMobile }) {
   // Tutorial prompt bar instead of auto-popup
   const [showTutorialPrompt, setShowTutorialPrompt] = useState(false)
   const [showCompactSuggestion, setShowCompactSuggestion] = useState(false)
+  const [isCompactSuggestionClosing, setIsCompactSuggestionClosing] = useState(false)
 
   // Handle navigation from onboarding wizard
   const handleOnboardingNavigate = (view, options) => {
@@ -301,6 +302,28 @@ function AppContent({ isMobile }) {
     window.addEventListener('resize', checkCrowdedScreen)
     return () => window.removeEventListener('resize', checkCrowdedScreen)
   }, [compactUiEnabled, smartCompactPromptEnabled])
+
+  const resolveCompactSuggestion = React.useCallback(async (applyCompact) => {
+    if (isCompactSuggestionClosing) return
+    setIsCompactSuggestionClosing(true)
+    try {
+      window.localStorage.setItem('datser_compact_suggestion_dismissed', 'true')
+    } catch { }
+
+    if (applyCompact) {
+      document.documentElement.classList.add('compact-ui')
+      document.body?.classList?.add('compact-ui')
+      document.querySelector('.app-shell')?.classList?.add('compact-ui')
+      updatePreference?.('compact_ui_enabled', true).catch((error) => {
+        console.error('Could not enable compact UI:', error)
+      })
+    }
+
+    window.setTimeout(() => {
+      setShowCompactSuggestion(false)
+      setIsCompactSuggestionClosing(false)
+    }, 180)
+  }, [isCompactSuggestionClosing, updatePreference])
 
   const handleGlobalInteractionFeedback = React.useCallback((event) => {
     if (event.defaultPrevented) return
@@ -489,7 +512,7 @@ function AppContent({ isMobile }) {
       className={`min-app-vh app-shell ios-overscroll-none transition-colors duration-200 ${motionAndSoundsEnabled ? '' : 'animations-disabled'} ${compactUiEnabled ? 'compact-ui' : ''}`}
     >
       {showCompactSuggestion && (
-        <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top,0px)+72px)] z-[1000000] mx-auto max-w-sm rounded-2xl border border-orange-300/70 bg-white/95 p-3 shadow-2xl shadow-black/20 backdrop-blur-xl dark:border-orange-400/25 dark:bg-[#202121]/95">
+        <div className={`fixed left-3 right-3 top-[calc(env(safe-area-inset-top,0px)+72px)] z-[1000000] mx-auto max-w-sm rounded-2xl border border-orange-300/70 bg-white/95 p-3 shadow-2xl shadow-black/20 backdrop-blur-xl transition-all duration-200 dark:border-orange-400/25 dark:bg-[#202121]/95 ${isCompactSuggestionClosing ? 'pointer-events-none -translate-y-2 opacity-0' : 'translate-y-0 opacity-100'}`}>
           <div className="flex items-start gap-3">
             <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
               <Minimize2 className="h-5 w-5" />
@@ -500,10 +523,8 @@ function AppContent({ isMobile }) {
             </div>
             <button
               type="button"
-              onClick={async () => {
-                await updatePreference?.('compact_ui_enabled', true)
-                setShowCompactSuggestion(false)
-              }}
+              onClick={() => resolveCompactSuggestion(true)}
+              disabled={isCompactSuggestionClosing}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-orange-600 text-white"
               aria-label="Enable compact UI"
             >
@@ -511,10 +532,8 @@ function AppContent({ isMobile }) {
             </button>
             <button
               type="button"
-              onClick={() => {
-                window.localStorage.setItem('datser_compact_suggestion_dismissed', 'true')
-                setShowCompactSuggestion(false)
-              }}
+              onClick={() => resolveCompactSuggestion(false)}
+              disabled={isCompactSuggestionClosing}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-200"
               aria-label="Dismiss compact UI suggestion"
             >

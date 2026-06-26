@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { BrowserQRCodeReader } from '@zxing/browser'
-import { Camera, Check, Loader2, ScanLine, ShieldCheck, X, Zap } from 'lucide-react'
-import { getLocalQrCheckInTarget, getPreferredQrCameraConstraints } from '../utils/qrCheckIn'
+import { Camera, Check, Loader2, RefreshCw, ScanLine, ShieldCheck, X, Zap } from 'lucide-react'
+import { getLocalQrCheckInTarget, getQrCameraConstraintCandidates, rankQrCameraDevices } from '../utils/qrCheckIn'
 
 const enableContinuousCameraFocus = async (videoElement) => {
   const track = videoElement?.srcObject?.getVideoTracks?.()[0]
@@ -30,12 +30,16 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
   const trackRef = useRef(null)
   const completedRef = useRef(false)
   const invalidResetRef = useRef(null)
+  const slowScanRef = useRef(null)
+  const cameraCountRef = useRef(1)
   const onScanRef = useRef(onScan)
   const [status, setStatus] = useState('Starting camera...')
   const [error, setError] = useState('')
   const [scanState, setScanState] = useState('starting')
   const [torchAvailable, setTorchAvailable] = useState(false)
   const [torchOn, setTorchOn] = useState(false)
+  const [cameraIndex, setCameraIndex] = useState(0)
+  const [activeCameraLabel, setActiveCameraLabel] = useState('')
 
   useEffect(() => {
     onScanRef.current = onScan
@@ -50,6 +54,7 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
     setScanState('starting')
     setTorchAvailable(false)
     setTorchOn(false)
+    setActiveCameraLabel('')
 
     const start = async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -57,9 +62,22 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
         return
       }
       try {
+        controlsRef.current?.stop()
+        controlsRef.current = null
+        trackRef.current = null
+        const videoDevices = navigator.mediaDevices?.enumerateDevices
+          ? (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput')
+          : []
+        const rankedDevices = rankQrCameraDevices(videoDevices)
+        const nextCameraCount = Math.max(videoDevices.length, 1)
+        cameraCountRef.current = nextCameraCount
+        const constraints = getQrCameraConstraintCandidates(videoDevices)[cameraIndex] || getQrCameraConstraintCandidates(videoDevices)[0]
+        const exactDeviceId = constraints?.video?.deviceId?.exact
+        const activeDevice = rankedDevices.find(device => device.deviceId === exactDeviceId)
+        setActiveCameraLabel(activeDevice?.label || (exactDeviceId ? 'Selected camera' : 'Rear camera'))
         const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 100 })
         const controls = await reader.decodeFromConstraints(
-          getPreferredQrCameraConstraints(),
+          constraints,
           videoRef.current,
           (result, scanError, activeControls) => {
             if (disposed || completedRef.current) return
@@ -102,12 +120,24 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
         if (!completedRef.current) {
           setScanState('scanning')
           setStatus('Hold steady and fit the whole QR code inside the frame')
+          window.clearTimeout(slowScanRef.current)
+          slowScanRef.current = window.setTimeout(() => {
+            if (!completedRef.current && !disposed) {
+              setStatus('Still scanning — clean the lens, move closer, or switch camera if the image looks blurry.')
+            }
+          }, 8500)
         }
       } catch (cameraError) {
         console.error('Could not start QR scanner:', cameraError)
+        const canRetry = cameraIndex < Math.max(cameraCountRef.current, 1) + 2
+        if (cameraError?.name !== 'NotAllowedError' && canRetry) {
+          setCameraIndex(index => index + 1)
+          setStatus('Trying another camera...')
+          return
+        }
         setError(cameraError?.name === 'NotAllowedError'
           ? 'Camera access was blocked. Allow camera permission and try again.'
-          : 'Could not open the camera. Check that another app is not using it.')
+          : 'Could not open a usable camera. Check that another app is not using it, then try switching cameras.')
         setScanState('error')
       }
     }
@@ -119,9 +149,11 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
       controlsRef.current = null
       trackRef.current = null
       window.clearTimeout(invalidResetRef.current)
+      window.clearTimeout(slowScanRef.current)
       invalidResetRef.current = null
+      slowScanRef.current = null
     }
-  }, [isOpen])
+  }, [cameraIndex, isOpen])
 
   const toggleTorch = async () => {
     const track = trackRef.current
@@ -134,6 +166,13 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
       console.warn('Could not change QR scanner flashlight:', torchError)
       setTorchAvailable(false)
     }
+  }
+
+  const switchCamera = () => {
+    setError('')
+    setStatus('Switching camera...')
+    setScanState('starting')
+    setCameraIndex(index => index + 1)
   }
 
   if (!isOpen) return null
@@ -164,13 +203,22 @@ const QrScannerModal = ({ isOpen, onClose, onScan }) => {
               <Zap className="h-5 w-5" />
             </button>
           )}
+          {!error && (
+            <button type="button" onClick={switchCamera} className="absolute left-4 top-4 inline-flex min-h-[44px] items-center gap-2 rounded-full border border-white/15 bg-black/45 px-3 text-xs font-black text-white backdrop-blur-md transition hover:bg-black/65" aria-label="Switch QR scanner camera">
+              <RefreshCw className="h-4 w-4" />
+              Switch camera
+            </button>
+          )}
           {status === 'Starting camera...' && !error && <div className="absolute inset-0 grid place-items-center"><Loader2 className="h-8 w-8 animate-spin text-orange-400" /></div>}
           {error && <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-8 text-center"><span className="grid h-16 w-16 place-items-center rounded-2xl bg-red-500/15 text-red-300"><Camera className="h-8 w-8" /></span><p className="max-w-xs font-bold">{error}</p></div>}
         </div>
 
         <div className="flex items-center gap-3 border-t border-white/10 px-4 py-4">
           <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
-          <p className="min-w-0 flex-1 text-sm font-semibold text-white/70" aria-live="polite">{error || status}</p>
+          <p className="min-w-0 flex-1 text-sm font-semibold text-white/70" aria-live="polite">
+            {error || status}
+            {activeCameraLabel && !error ? <span className="mt-1 block text-xs font-bold text-white/40">Camera: {activeCameraLabel}</span> : null}
+          </p>
         </div>
       </div>
     </div>
