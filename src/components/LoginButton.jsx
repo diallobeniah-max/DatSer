@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, memo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import {
   LogIn,
   LogOut,
@@ -78,7 +79,14 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+      const target = event.target
+      if (
+        target instanceof Element &&
+        (target.closest('.profile-drawer-panel') || target.closest('.profile-drawer-backdrop'))
+      ) {
+        return
+      }
+      if (dropdownRef.current && !dropdownRef.current.contains(target)) {
         setShowDropdown(false)
       }
     }
@@ -193,20 +201,20 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
       </button>
 
       {/* Professional Profile Dropdown */}
-      {shouldRender && (
+      {shouldRender && typeof document !== 'undefined' && createPortal(
         <>
           {/* Backdrop */}
           <div
-            className={`fixed inset-0 z-[150] drawer-backdrop-transition ${
+            className={`profile-drawer-backdrop fixed inset-0 z-[1000020] drawer-backdrop-transition ${
               isTransitioning
-                ? 'bg-black/40 backdrop-blur-sm'
+                ? 'bg-black/55 backdrop-blur-md'
                 : 'bg-transparent backdrop-blur-none pointer-events-none'
             }`}
             onClick={() => setShowDropdown(false)}
           />
 
           <div
-            className={`fixed inset-y-0 right-0 w-[85vw] sm:w-80 md:w-[360px] z-[151] border-y-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl overflow-hidden drawer-panel-transition flex flex-col ${
+            className={`profile-drawer-panel fixed inset-y-0 right-0 w-[min(92vw,390px)] z-[1000021] border-y-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl overflow-hidden drawer-panel-transition flex flex-col ${
               isTransitioning
                 ? 'translate-x-0 opacity-100'
                 : 'translate-x-full opacity-0'
@@ -428,7 +436,8 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
               </p>
             </div>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   )

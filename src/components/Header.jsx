@@ -786,12 +786,12 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
       {showColumnsMenu && currentView === 'dashboard' && (
         <div
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 px-4 py-8 backdrop-blur-sm animate-fade-in"
+          className="datser-preview-popover-backdrop fixed inset-0 z-[1000015] flex items-end justify-center bg-black/55 px-3 py-0 backdrop-blur-md animate-fade-in sm:items-start sm:px-4 sm:py-8 sm:pt-24"
           onClick={() => setShowColumnsMenu(false)}
         >
           <div
             ref={columnsMenuRef}
-            className="relative w-[min(92vw,360px)] rounded-3xl border border-gray-200 bg-white/95 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in dark:border-white/10 dark:bg-[#202121]/95"
+            className="datser-preview-popover-panel relative w-full max-w-[390px] rounded-t-[1.75rem] border border-gray-200 bg-white/95 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in dark:border-white/10 dark:bg-[#202121]/95 sm:w-[min(92vw,380px)] sm:rounded-3xl"
             onClick={(event) => event.stopPropagation()}
           >
             <button
@@ -923,11 +923,11 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
       {showConnectionMenu && currentView === 'dashboard' && (
         <div
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm animate-fade-in"
+          className="datser-preview-popover-backdrop fixed inset-0 z-[1000015] flex items-end justify-center bg-black/60 px-3 py-0 backdrop-blur-md animate-fade-in sm:items-start sm:px-4 sm:py-8 sm:pt-24"
           onClick={() => setShowConnectionMenu(false)}
         >
           <div
-            className="relative w-[min(92vw,380px)] rounded-3xl border border-gray-200 bg-white/95 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in dark:border-white/10 dark:bg-[#202121]/95"
+            className="datser-preview-popover-panel relative w-full max-w-[410px] rounded-t-[1.75rem] border border-gray-200 bg-white/95 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in dark:border-white/10 dark:bg-[#202121]/95 sm:w-[min(92vw,410px)] sm:rounded-3xl"
             onClick={(event) => event.stopPropagation()}
           >
             <button

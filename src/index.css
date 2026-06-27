@@ -4833,8 +4833,6 @@ button[data-testid*="attendance-btn"]:active,
 
 .admin-insight-card,
 .accessibility-control-card,
-.member-card,
-.member-card-shell > div,
 .member-pass-share-panel,
 .member-pass-share-art-wrap,
 [data-testid="add-member-modal"] > div,
@@ -4844,7 +4842,6 @@ button[data-testid*="attendance-btn"]:active,
 }
 
 .member-card,
-.member-card-shell > div,
 .admin-insight-card,
 .accessibility-control-card {
   border-radius: var(--datser-preview-radius) !important;
@@ -4856,7 +4853,6 @@ button[data-testid*="attendance-btn"]:active,
 }
 
 .dark .member-card,
-.dark .member-card-shell > div,
 .dark .admin-insight-card,
 .dark .accessibility-control-card {
   background:
@@ -4865,11 +4861,78 @@ button[data-testid*="attendance-btn"]:active,
 }
 
 .member-card-shell {
+  border-radius: var(--datser-preview-radius);
+  background: transparent !important;
+  filter: drop-shadow(0 16px 24px rgba(65, 43, 24, 0.08));
   transition: transform var(--datser-preview-motion), filter var(--datser-preview-motion);
 }
 
 .member-card-shell:hover {
   transform: translateY(-2px);
+  filter: drop-shadow(0 18px 28px rgba(65, 43, 24, 0.12));
+}
+
+.member-card {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72) !important;
+  overflow: hidden !important;
+}
+
+.dark .member-card-shell {
+  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.28));
+}
+
+.dark .member-card-shell:hover {
+  filter: drop-shadow(0 20px 34px rgba(0, 0, 0, 0.36));
+}
+
+.dark .member-card {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.profile-drawer-backdrop {
+  isolation: isolate;
+}
+
+.profile-drawer-panel {
+  background:
+    radial-gradient(circle at 14% 4%, rgba(249, 115, 22, 0.1), transparent 15rem),
+    var(--datser-preview-card-strong) !important;
+  box-shadow: -28px 0 80px rgba(35, 24, 15, 0.22), -8px 0 24px rgba(35, 24, 15, 0.12) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+}
+
+.dark .profile-drawer-panel {
+  background:
+    radial-gradient(circle at 14% 4%, rgba(249, 115, 22, 0.16), transparent 15rem),
+    rgba(23, 23, 24, 0.96) !important;
+  box-shadow: -28px 0 90px rgba(0, 0, 0, 0.58), -8px 0 30px rgba(0, 0, 0, 0.38) !important;
+}
+
+.datser-preview-popover-backdrop {
+  isolation: isolate;
+}
+
+.datser-preview-popover-panel {
+  max-height: min(82vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.datser-preview-popover-panel::before {
+  content: '';
+  display: block;
+  width: 3.75rem;
+  height: 0.375rem;
+  margin: 0 auto 0.85rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.42);
+}
+
+@media (min-width: 640px) {
+  .datser-preview-popover-panel::before {
+    display: none;
+  }
 }
 
 .member-card-name,
@@ -4983,6 +5046,12 @@ button[data-testid*="attendance-btn"]:active,
     border-radius: 1.1rem !important;
   }
 
+  .datser-preview-popover-panel {
+    max-height: min(78vh, 620px);
+    border-bottom: 0 !important;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 1rem)) !important;
+  }
+
   .member-pass-share-panel {
     border-radius: 1.25rem !important;
   }
@@ -5002,6 +5071,8 @@ button[data-testid*="attendance-btn"]:active,
   .datser-auth-shell,
   .app-header-safe button,
   .member-card-shell,
+  .profile-drawer-panel,
+  .datser-preview-popover-panel,
   .member-card-action,
   .admin-insight-card,
   .accessibility-control-card,
