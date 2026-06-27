@@ -4623,7 +4623,7 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
 
 @keyframes currentLevelSheetIn {
   from {
-    opacity: 0.8;
+    opacity: 1;
     transform: translate3d(0, 1.2rem, 0) scale(0.985);
   }
   to {
