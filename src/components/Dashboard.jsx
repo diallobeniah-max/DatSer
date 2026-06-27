@@ -279,11 +279,11 @@ const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, c
   ctx.font = '500 30px Arial'
   ctx.fillText('Growing Together in Faith', 348, 238)
 
-  const qrPanelX = 175
-  const qrPanelY = 340
-  const qrPanelSize = 440
-  const qrInset = 28
-  drawCanvasQrDots(ctx, 395, 560, 248, theme.accent)
+  const qrPanelX = 145
+  const qrPanelY = 318
+  const qrPanelSize = 520
+  const qrInset = 30
+  drawCanvasQrDots(ctx, 405, 578, 290, theme.accent)
   ctx.fillStyle = '#fff'
   ctx.beginPath()
   ctx.roundRect(qrPanelX, qrPanelY, qrPanelSize, qrPanelSize, 34)
@@ -313,31 +313,31 @@ const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, c
   ctx.textAlign = 'left'
   ctx.fillStyle = foreground
   ctx.font = '900 62px Arial'
-  wrapCanvasText(ctx, name, 720, 330, 620, 66, 3)
+  wrapCanvasText(ctx, name, 730, 330, 600, 66, 3)
   ctx.fillStyle = muted
   ctx.font = '600 32px Arial'
-  ctx.fillText(joinLabel, 760, 662)
+  ctx.fillText(joinLabel, 774, 660)
 
-  const badge = ctx.createLinearGradient(720, 500, 1120, 622)
+  const badge = ctx.createLinearGradient(730, 492, 1140, 620)
   badge.addColorStop(0, theme.badge)
   badge.addColorStop(1, theme.accent2)
   ctx.fillStyle = badge
   ctx.beginPath()
-  ctx.roundRect(720, 500, 410, 122, 32)
+  ctx.roundRect(730, 492, 430, 128, 34)
   ctx.fill()
   ctx.strokeStyle = `${theme.accent2}cc`
   ctx.lineWidth = 3
   ctx.stroke()
-  drawCanvasBadgePattern(ctx, 720, 500, 410, 122, '#fff', 0.32)
+  drawCanvasBadgePattern(ctx, 730, 492, 430, 128, '#fff', 0.32)
   ctx.fillStyle = '#fff'
-  ctx.font = '900 70px Arial'
+  ctx.font = '900 76px Arial'
   ctx.textAlign = 'center'
-  ctx.fillText(code, 925, 582)
+  ctx.fillText(code, 945, 580)
 
-  const messageX = 700
-  const messageY = 704
-  const messageWidth = 640
-  const messageHeight = 176
+  const messageX = 725
+  const messageY = 706
+  const messageWidth = 610
+  const messageHeight = 162
   ctx.fillStyle = softPanel
   ctx.beginPath()
   ctx.roundRect(messageX, messageY, messageWidth, messageHeight, 30)
@@ -365,9 +365,9 @@ const createMemberPassShareImage = async ({ name, code, joinLabel, churchName, c
   ctx.roundRect(messageX + 128, messageY + 24, messageWidth - 158, messageHeight - 48, 18)
   ctx.clip()
   ctx.fillStyle = darkCanvas ? 'rgba(255,255,255,0.88)' : 'rgba(23,32,51,0.86)'
-  ctx.font = '800 24px Arial'
+  ctx.font = '800 23px Arial'
   ctx.textAlign = 'left'
-  wrapCanvasText(ctx, message || 'Thanks for being a valued member.', messageX + 148, messageY + 58, messageWidth - 190, 32, 4)
+  wrapCanvasText(ctx, message || 'Thanks for being a valued member.', messageX + 148, messageY + 56, messageWidth - 190, 30, 4)
   ctx.restore()
 
   try {
@@ -978,9 +978,31 @@ const Dashboard = ({ isAdmin = false }) => {
   const sundayDates = useMemo(() => generateSundayDates(currentTable), [currentTable])
 
   // Aggregated counts across selected or all Sundays for Edited Members
-  const selectedDatesForCounting = selectedBulkSundayDates && selectedBulkSundayDates.size > 0
-    ? selectedBulkSundayDates
-    : new Set(sundayDates)
+  const selectedDatesForCounting = useMemo(() => (
+    selectedBulkSundayDates && selectedBulkSundayDates.size > 0
+      ? selectedBulkSundayDates
+      : new Set(sundayDates)
+  ), [selectedBulkSundayDates, sundayDates])
+
+  const canonicalAttendanceByDate = useMemo(() => {
+    const next = {}
+    sundayDates.forEach((dateKey) => {
+      const map = attendanceData[dateKey] || {}
+      next[dateKey] = {}
+      members.forEach((member) => {
+        const value = resolveMemberAttendanceForDate(member, dateKey, map)
+        if (value === true || value === false) {
+          next[dateKey][member.id] = value
+        }
+      })
+    })
+    return next
+  }, [attendanceData, members, sundayDates])
+
+  const getCanonicalAttendanceValue = useCallback((member, dateKey) => {
+    if (!member?.id || !dateKey) return undefined
+    return canonicalAttendanceByDate[dateKey]?.[member.id]
+  }, [canonicalAttendanceByDate])
 
   // Function to check if a member has been edited (has attendance marked for any date)
   const isEditedMember = (member) => {
@@ -993,7 +1015,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
     // Second check: attendanceData map (for real-time updates before DB sync)
     const editedViaMaps = sundayDates.some((date) => {
-      const v = resolveMemberAttendanceForDate(member, date, attendanceData[date] || {})
+      const v = getCanonicalAttendanceValue(member, date)
       return v === true || v === false
     })
 
@@ -1112,8 +1134,7 @@ const Dashboard = ({ isAdmin = false }) => {
         })
       }
       // Check both attendanceData map AND member record columns for the selected date
-      const map = attendanceData[dateKey] || {}
-      const getVal = (member) => resolveMemberAttendanceForDate(member, dateKey, map)
+      const getVal = (member) => getCanonicalAttendanceValue(member, dateKey)
 
       let filteredByDate = filteredMembers.filter(m => {
         const val = getVal(m)
@@ -1171,9 +1192,8 @@ const Dashboard = ({ isAdmin = false }) => {
       // Edited tab: count only edited members
       const membersBase = members.filter(isEditedMember)
       selectedDatesForCounting.forEach((dateKey) => {
-        const map = attendanceData[dateKey] || {}
         for (const m of membersBase) {
-          const val = resolveMemberAttendanceForDate(m, dateKey, map)
+          const val = getCanonicalAttendanceValue(m, dateKey)
           if (val === true) present += 1
           else if (val === false) absent += 1
         }
@@ -1181,16 +1201,15 @@ const Dashboard = ({ isAdmin = false }) => {
     } else {
       // All tab: count only current members so stale/deleted IDs do not inflate totals.
       selectedDatesForCounting.forEach((dateKey) => {
-        const map = attendanceData[dateKey] || {}
         for (const member of members) {
-          const val = resolveMemberAttendanceForDate(member, dateKey, map)
+          const val = getCanonicalAttendanceValue(member, dateKey)
           if (val === true) present += 1
           else if (val === false) absent += 1
         }
       })
     }
     return { presentCount: present, absentCount: absent }
-  }, [attendanceData, selectedBulkSundayDates, currentTable, dashboardTab, members])
+  }, [dashboardTab, getCanonicalAttendanceValue, isEditedMember, members, selectedDatesForCounting])
 
   // Helper function to normalize names for duplicate detection
   const normalizeName = (name) => {
@@ -2460,9 +2479,8 @@ const Dashboard = ({ isAdmin = false }) => {
               const isSelected = selectedSundayDate === dateStr
               const dateObj = new Date(dateStr)
               const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              const map = attendanceData[dateStr] || {}
-              const presentCount = members.filter(member => resolveMemberAttendanceForDate(member, dateStr, map) === true).length
-              const absentCount = members.filter(member => resolveMemberAttendanceForDate(member, dateStr, map) === false).length
+              const presentCount = members.filter(member => getCanonicalAttendanceValue(member, dateStr) === true).length
+              const absentCount = members.filter(member => getCanonicalAttendanceValue(member, dateStr) === false).length
               return (
                 <button
                   key={dateStr}
@@ -2499,9 +2517,8 @@ const Dashboard = ({ isAdmin = false }) => {
               {(() => {
                 const dateObj = new Date(selectedSundayDate)
                 const labelFull = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric' })
-                const map = attendanceData[selectedSundayDate] || {}
-                const presentMembers = members.filter(m => resolveMemberAttendanceForDate(m, selectedSundayDate, map) === true)
-                const absentMembers = members.filter(m => resolveMemberAttendanceForDate(m, selectedSundayDate, map) === false)
+                const presentMembers = members.filter(m => getCanonicalAttendanceValue(m, selectedSundayDate) === true)
+                const absentMembers = members.filter(m => getCanonicalAttendanceValue(m, selectedSundayDate) === false)
                 const presentCount = presentMembers.length
                 const absentCount = absentMembers.length
 
@@ -3652,7 +3669,7 @@ const Dashboard = ({ isAdmin = false }) => {
           aria-label="Member pass share preview"
         >
           <div
-            className="member-pass-share-panel w-full max-w-5xl overflow-hidden rounded-[1.75rem] border text-white shadow-2xl md:rounded-[2.2rem]"
+            className="member-pass-share-panel w-full max-w-4xl overflow-hidden rounded-[1.75rem] border text-white shadow-2xl md:rounded-[2.2rem]"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="member-pass-share-header flex items-center justify-between px-5 py-4 md:px-7 md:py-5">
@@ -3670,7 +3687,7 @@ const Dashboard = ({ isAdmin = false }) => {
               </button>
             </div>
 
-            <div className="member-pass-share-body grid gap-5 p-4 md:grid-cols-[minmax(0,1.18fr)_minmax(18rem,0.82fr)] md:p-6">
+            <div className="member-pass-share-body p-4 md:p-6">
               <div className="member-pass-share-art-wrap">
                 <img
                   src={memberPassSharePreview.imageUrl}
@@ -3682,43 +3699,22 @@ const Dashboard = ({ isAdmin = false }) => {
                 </div>
               </div>
 
-              <div className="member-pass-share-side flex min-w-0 flex-col justify-between gap-4">
-                <div className="member-pass-share-message rounded-2xl border p-4 md:p-5">
-                  <div className="flex items-center gap-3">
-                    <div className="member-pass-share-initial grid h-11 w-11 shrink-0 place-items-center rounded-full text-sm font-black">
-                      {memberPassSharePreview.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-black">{memberPassSharePreview.name}</p>
-                      <p className="text-sm font-bold text-[var(--member-pass-accent)]">{memberPassSharePreview.code}</p>
-                    </div>
-                  </div>
-                  <div className="member-pass-share-readonly-message mt-4 rounded-2xl border px-4 py-3">
-                    <p className="text-xs font-black uppercase tracking-[0.16em] opacity-60">Final message</p>
-                    <p className="mt-2 text-sm font-semibold leading-6 md:text-base">{memberPassSharePreview.message}</p>
-                  </div>
-                  <p className="mt-2 text-xs font-semibold opacity-55">
-                    To change this message, edit the Member Codes share message in Settings.
-                  </p>
-                </div>
-
-                <div className="space-y-3">
-                  <a
-                    href={memberPassSharePreview.imageUrl}
-                    download={`${memberPassSharePreview.name.replace(/[^\w-]+/g, '_') || 'member'}_${memberPassSharePreview.code}_pass.png`}
-                    className="member-pass-share-save flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold"
-                  >
-                    Save image
-                  </a>
-                  <button
-                    type="button"
-                    onClick={sendMemberPassShare}
-                    className="member-pass-share-send flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 font-black text-white"
-                  >
-                    <Share2 className="h-5 w-5" />
-                    Send
-                  </button>
-                </div>
+              <div className="member-pass-share-actions mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+                <a
+                  href={memberPassSharePreview.imageUrl}
+                  download={`${memberPassSharePreview.name.replace(/[^\w-]+/g, '_') || 'member'}_${memberPassSharePreview.code}_pass.png`}
+                  className="member-pass-share-save flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold"
+                >
+                  Save image
+                </a>
+                <button
+                  type="button"
+                  onClick={sendMemberPassShare}
+                  className="member-pass-share-send flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 font-black text-white"
+                >
+                  <Share2 className="h-5 w-5" />
+                  Send
+                </button>
               </div>
             </div>
           </div>

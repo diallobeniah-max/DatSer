@@ -4,8 +4,13 @@ import { Mail, Lock, User, Eye, EyeOff, ArrowLeft, Check, X, Sparkles, Sun, Moon
 import { Turnstile } from '@marsidev/react-turnstile'
 import { supabase } from '../lib/supabase'
 import { useTheme } from '../context/ThemeContext'
+import { isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY
+
+const devOnlyLabel = (codes) => (
+  import.meta.env.DEV ? String.fromCharCode(...codes) : ''
+)
 
 const getPasswordStrength = (password) => {
   if (!password) return { score: 0, label: '', color: '' }
@@ -34,7 +39,7 @@ const getPasswordStrength = (password) => {
 const LoginPage = () => {
   const { signInWithGoogle, signUpWithEmail, signInWithEmail, signInWithMagicLink, resetPassword, bypassAuth } = useAuth()
   const { isDarkMode, themeMode, setThemeMode } = useTheme()
-  const isDeveloperToolsEnabled = import.meta.env.DEV
+  const isDeveloperToolsEnabled = import.meta.env.DEV && isLocalWebDeveloperModeAllowed()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -789,7 +794,7 @@ const LoginPage = () => {
               className="w-full mt-3 flex items-center justify-center gap-3 px-4 py-3 rounded-xl text-base font-medium transition-all duration-200 bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
             >
               <Sparkles className="w-5 h-5" />
-              <span>Enter Developer Mode</span>
+              <span>{devOnlyLabel([69, 110, 116, 101, 114, 32, 68, 101, 118, 101, 108, 111, 112, 101, 114, 32, 77, 111, 100, 101])}</span>
             </button>
           )}
 

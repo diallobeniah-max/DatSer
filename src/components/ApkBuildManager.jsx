@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Hammer, RefreshCw, Upload, FolderOpen, TerminalSquare } from 'lucide-react'
-import { uploadApkRelease } from '../utils/appUpdates'
 import { notify } from '../utils/notify'
 
 const DEV_APK_ENDPOINT = '/__datser-dev/apk-build'
 const DEV_APK_STATUS_ENDPOINT = '/__datser-dev/apk-build/status'
-const DEV_APK_FILE_ENDPOINT = '/__datser-dev/apk-build/file'
+const DEV_APK_UPLOAD_ENDPOINT = '/__datser-dev/apk-build/upload'
 
 const formatBytes = (value) => {
   const bytes = Number(value || 0)
@@ -19,6 +18,8 @@ const ApkBuildManager = ({ canAccess = false, canUpload = false, userId = null }
   const [job, setJob] = useState(null)
   const [isStarting, setIsStarting] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadResult, setUploadResult] = useState(null)
+  const [uploadError, setUploadError] = useState(null)
   const [releaseForm, setReleaseForm] = useState({
     versionName: '',
     versionCode: '',
@@ -87,6 +88,8 @@ const ApkBuildManager = ({ canAccess = false, canUpload = false, userId = null }
     if (!canUseBuilder || isRunning) return
     setIsStarting(true)
     setJob(null)
+    setUploadResult(null)
+    setUploadError(null)
     try {
       const response = await fetch(DEV_APK_ENDPOINT, {
         method: 'POST',
@@ -117,30 +120,40 @@ const ApkBuildManager = ({ canAccess = false, canUpload = false, userId = null }
   const uploadBuiltApk = async () => {
     if (!canUploadBuiltApk || !job?.id) return
     setIsUploading(true)
+    setUploadError(null)
     try {
-      const response = await fetch(`${DEV_APK_FILE_ENDPOINT}?jobId=${encodeURIComponent(job.id)}`, { cache: 'no-store' })
+      const response = await fetch(DEV_APK_UPLOAD_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: job.id,
+          ...releaseForm,
+          userId
+        })
+      })
+      const payload = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({}))
-        throw new Error(payload?.error || 'Could not download the built APK from the local dev server.')
+        const message = payload?.details || payload?.error || 'Failed to upload built APK.'
+        const error = new Error(message)
+        error.step = payload?.step
+        error.nextStep = payload?.nextStep
+        throw error
       }
-
-      const blob = await response.blob()
-      const file = new File([blob], job.fileName || `datser-${releaseForm.versionName || 'local'}.apk`, {
-        type: 'application/vnd.android.package-archive'
-      })
-      const release = await uploadApkRelease({
-        ...releaseForm,
-        file,
-        userId
-      })
+      setUploadResult(payload)
       notify.success('Built APK uploaded.', {
-        title: `Version ${release.versionName}`,
-        details: 'Users can now download this APK from the update flow.'
+        title: `Version ${payload.release?.versionName || releaseForm.versionName}`,
+        details: `Uploaded to ${payload.bucket}/${payload.storagePath}`
       })
     } catch (error) {
-      notify.error(error?.message || 'Failed to upload built APK.', {
+      const stepLabel = error?.step ? `Failed step: ${error.step}. ` : ''
+      const message = `${stepLabel}${error?.message || 'Failed to upload built APK.'}`
+      setUploadError({
+        message,
+        nextStep: error?.nextStep || 'Check Supabase service role configuration, app update policies, and retry.'
+      })
+      notify.error(message, {
         title: 'Upload failed',
-        details: 'Check Supabase app update migration/storage setup, then retry.',
+        details: error?.nextStep || 'Check Supabase service role configuration, app update policies, and retry.',
         persistent: true
       })
     } finally {
@@ -315,6 +328,23 @@ const ApkBuildManager = ({ canAccess = false, canUpload = false, userId = null }
               {isUploading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {isUploading ? 'Uploading built APK...' : 'Upload built APK'}
             </button>
+          )}
+
+          {uploadResult && (
+            <div className="mt-4 rounded-2xl border border-green-200 bg-green-50 p-3 text-xs text-green-900 dark:border-green-400/20 dark:bg-green-500/10 dark:text-green-100">
+              <p className="font-black">Upload complete</p>
+              <p className="mt-1 break-all">Bucket/path: {uploadResult.bucket}/{uploadResult.storagePath}</p>
+              <p className="mt-1 break-all">Download URL: {uploadResult.apkUrl}</p>
+              <p className="mt-1">Status: {uploadResult.publishStatus}</p>
+            </div>
+          )}
+
+          {uploadError && (
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-100">
+              <p className="font-black">Upload needs attention</p>
+              <p className="mt-1">{uploadError.message}</p>
+              <p className="mt-1 font-semibold opacity-85">{uploadError.nextStep}</p>
+            </div>
           )}
 
           {!canUpload && (

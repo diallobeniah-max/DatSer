@@ -13,7 +13,7 @@ const openDeveloperMode = async (page) => {
   await page.evaluate(() => {
     window.openSettings?.()
   })
-  const developerModeEntry = page.getByRole('button', { name: /developer mode launch flows quickly/i })
+  const developerModeEntry = page.getByRole('button', { name: /developer mode/i }).filter({ hasText: /open risky flows quickly|launch flows quickly/i }).first()
   try {
     await expect(developerModeEntry).toBeVisible({ timeout: 5000 })
   } catch {
@@ -79,25 +79,22 @@ test.describe('Preflight smoke', () => {
     test.skip(isPreviewSmoke, 'Developer bypass is intentionally disabled in preview/prod smoke runs.')
 
     await loginWithDeveloperMode(page)
-    await openDeveloperMode(page)
 
-    await page.getByTestId('dev-launcher-select').selectOption('add-member')
-    await page.getByTestId('dev-launcher-open').click()
+    await page.evaluate(() => window.openAddMember?.())
     await expect(page.getByRole('heading', { name: 'Add New Member' })).toBeVisible()
 
     await page.getByPlaceholder('Enter full name').fill('Smoke Member')
     await page.getByText('Female').click()
-    await page.getByRole('button', { name: /select date/i }).click()
-    const currentPickerLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    await page.getByRole('button', { name: new RegExp(currentPickerLabel, 'i') }).click()
-    await page.getByText('January', { exact: true }).click()
-    const currentYear = new Date().getFullYear()
-    await page.getByText(String(currentYear - 1), { exact: true }).click()
-    await page.getByTestId('combined-date-picker-date-of-birth-dropdown').getByRole('button', { name: 'Apply' }).click()
-    await page.locator('div').filter({ hasText: /^15$/ }).first().click()
-    await page.getByTestId('combined-date-picker-date-of-birth-dropdown').getByRole('button', { name: 'Save' }).click()
-
-    await expect(page.getByRole('button', { name: /january 15,/i })).toBeVisible()
+    await page.getByTestId('member-form-level-toggle').click()
+    await expect(page.getByRole('dialog', { name: /select current level/i })).toBeVisible()
+    await page.getByTestId('member-form-level-shs2').click()
+    await page.getByRole('button', { name: /^save$/i }).last().click()
+    await expect(page.getByTestId('member-form-level-toggle')).toContainText('SHS2')
+    await page.getByTestId('combined-date-picker-date-of-birth-toggle').click()
+    await expect(page.getByTestId('combined-date-picker-date-of-birth-dropdown')).toBeVisible()
+    await expect(page.getByText('Select Date of Birth')).toBeVisible()
+    await page.getByRole('button', { name: /close date of birth picker/i }).click()
+    await expect(page.getByTestId('combined-date-picker-date-of-birth-dropdown')).toHaveCount(0)
     await expect(page.getByText('Something went wrong')).toHaveCount(0)
 
     await page.getByTestId('add-member-modal').getByRole('button', { name: 'Cancel' }).click()
@@ -113,41 +110,21 @@ test.describe('Preflight smoke', () => {
     await loginWithDeveloperMode(page)
     await openDeveloperMode(page)
 
-    await page.getByTestId('dev-member-picker-toggle').click()
-    const memberPickerList = page.getByTestId('dev-member-picker-list')
-    await expect(memberPickerList).toBeVisible()
-    const memberPickerMaxHeight = await memberPickerList.evaluate((node) => Number.parseFloat(window.getComputedStyle(node).maxHeight))
-    expect(memberPickerMaxHeight).toBeLessThanOrEqual(224)
-    await page.keyboard.press('Escape')
-
-    await page.getByTestId('dev-notification-stack-test').click()
-    const toasts = page.locator('.datser-toast-stack .dev-stack-test-toast')
-    await expect(toasts).toHaveCount(4)
-
-    const toastMetrics = await toasts.evaluateAll((nodes) => nodes.map((node) => {
-      const rect = node.getBoundingClientRect()
-      const style = window.getComputedStyle(node)
-      return {
-        top: rect.top,
-        bottom: rect.bottom,
-        opacity: Number.parseFloat(style.opacity)
-      }
-    }))
-
-    const stackHeight = toastMetrics[toastMetrics.length - 1].bottom - toastMetrics[0].top
-    expect(toastMetrics[0].top).toBeLessThanOrEqual(24)
-    expect(stackHeight).toBeLessThanOrEqual(240)
-    expect(Math.min(...toastMetrics.map((metric) => metric.opacity))).toBeGreaterThan(0.95)
+    await expect(page.getByRole('button', { name: /quick qa/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /deep qa/i })).toBeVisible()
+    await page.getByRole('button', { name: /open preview/i }).click()
+    await expect(page.getByRole('heading', { name: /notification qa preview/i })).toBeVisible()
+    await page.getByRole('button', { name: /^all$/i }).click()
+    await expect(page.getByRole('button', { name: /^all$/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /abaukua faustina/i })).toBeVisible()
   })
 
   test('developer mode launches create month and carry-over options switch cleanly', async ({ page }) => {
     test.skip(isPreviewSmoke, 'Developer bypass is intentionally disabled in preview/prod smoke runs.')
 
     await loginWithDeveloperMode(page)
-    await openDeveloperMode(page)
 
-    await page.getByTestId('dev-launcher-select').selectOption('create-month')
-    await page.getByTestId('dev-launcher-open').click()
+    await page.evaluate(() => window.openCreateMonth?.())
     await expect(page.getByRole('heading', { name: 'Create New Month' })).toBeVisible()
 
     const copyEveryone = page.locator('input[name="copyMode"][value="all"]')

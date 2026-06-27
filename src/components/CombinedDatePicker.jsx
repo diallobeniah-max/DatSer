@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronDown, Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -340,6 +340,14 @@ const CombinedDatePicker = ({
                     <button onClick={() => setViewDate(new Date(currentYear, currentMonth + 1, 1))} className="text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-full p-1.5 transition-colors">
                       <ChevronRight className="w-6 h-6" />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsOpen(false)}
+                      className="date-picker-close-button"
+                      aria-label="Close date picker"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
                   </div>
                 </div>
 
@@ -375,9 +383,19 @@ const CombinedDatePicker = ({
               </>
             ) : viewMode === 'combined' ? (
               <div className="flex flex-col h-[420px]">
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800/60">
-                  <span className="font-semibold text-gray-900 dark:text-gray-100 text-[16px]">Select Date of Birth</span>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Pick day, month, and year together</p>
+                <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-800/60">
+                  <div>
+                    <span className="font-semibold text-gray-900 dark:text-gray-100 text-[16px]">Select Date of Birth</span>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Pick day, month, and year together</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsOpen(false)}
+                    className="date-picker-close-button"
+                    aria-label="Close date of birth picker"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
                 <div className="grid grid-cols-3 border-b border-gray-100 bg-gray-50 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:border-gray-800/60 dark:bg-[#252626] dark:text-gray-300">
                   <div className="px-2 py-2 text-center border-r border-gray-100 dark:border-gray-800/60">Date</div>
@@ -430,14 +448,24 @@ const CombinedDatePicker = ({
                      <ChevronLeft className="w-5 h-5 -ml-1" /> Cancel
                    </button>
                    <span className="font-semibold text-gray-900 dark:text-gray-100 text-[16px]">Select Month & Year</span>
-                   <button
-                     type="button"
-                     onClick={handleMonthYearApply}
-                     disabled={!canApplyMonthYear}
-                     className={`font-semibold text-[16px] transition-opacity ${canApplyMonthYear ? 'text-orange-600 dark:text-orange-400 hover:opacity-70' : 'text-gray-400 dark:text-gray-500 cursor-not-allowed'}`}
-                   >
-                     Done
-                   </button>
+                   <div className="flex items-center gap-2">
+                     <button
+                       type="button"
+                       onClick={handleMonthYearApply}
+                       disabled={!canApplyMonthYear}
+                       className={`font-semibold text-[16px] transition-opacity ${canApplyMonthYear ? 'text-orange-600 dark:text-orange-400 hover:opacity-70' : 'text-gray-400 dark:text-gray-500 cursor-not-allowed'}`}
+                     >
+                       Done
+                     </button>
+                     <button
+                       type="button"
+                       onClick={() => setIsOpen(false)}
+                       className="date-picker-close-button"
+                       aria-label="Close month and year picker"
+                     >
+                       <X className="h-5 w-5" />
+                     </button>
+                   </div>
                 </div>
                 <div className="flex-1 flex px-3 overflow-hidden bg-white dark:bg-[#151515]">
                   {/* Months Scroll */}

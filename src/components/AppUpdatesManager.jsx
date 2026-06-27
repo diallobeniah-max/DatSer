@@ -84,6 +84,7 @@ const AppUpdatesManager = ({ canManage = false, userId = null }) => {
     } catch (error) {
       notify.error(error?.message || 'Failed to upload APK release.', {
         title: 'Upload failed',
+        details: error?.nextStep || 'Check Supabase app update migration/storage setup, then retry.',
         persistent: true
       })
     } finally {

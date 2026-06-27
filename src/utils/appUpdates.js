@@ -8,6 +8,24 @@ export const APP_UPDATES_BUCKET = 'app-updates'
 export const APK_FILE_LIMIT_BYTES = 150 * 1024 * 1024
 const APP_RELEASE_SELECT = 'id,version_name,version_code,title,description,apk_url,force_update,is_active,published_at,created_at,created_by'
 
+const buildApkUploadError = (step, error) => {
+  const rawMessage = String(error?.message || error || 'APK upload failed.')
+  const rlsBlocked = /row-level security|rls|policy/i.test(rawMessage)
+  const readableStep = {
+    'uploading-apk-file': 'uploading APK file',
+    'creating-update-record': 'creating update record',
+    'generating-download-link': 'generating download link'
+  }[step] || step
+  const nextStep = rlsBlocked
+    ? 'Supabase blocked the APK upload because the upload endpoint is not authorized. Check admin upload policy or service role configuration.'
+    : 'Check Supabase app update migration/storage setup, then retry.'
+  const wrapped = new Error(`${readableStep}: ${rawMessage}`)
+  wrapped.step = step
+  wrapped.nextStep = nextStep
+  wrapped.original = error
+  return wrapped
+}
+
 export const isAndroidNative = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
 
 export const getRuntimeModeLabel = () => {
@@ -168,11 +186,11 @@ export const uploadApkRelease = async ({ file, versionName, versionCode, title, 
       upsert: false
     })
 
-  if (uploadError) throw uploadError
+  if (uploadError) throw buildApkUploadError('uploading-apk-file', uploadError)
 
   const { data: publicData } = supabase.storage.from(APP_UPDATES_BUCKET).getPublicUrl(storagePath)
   const apkUrl = publicData?.publicUrl
-  if (!apkUrl) throw new Error('Could not create an APK download URL.')
+  if (!apkUrl) throw buildApkUploadError('generating-download-link', 'Could not create an APK download URL.')
 
   const { data, error } = await supabase
     .from('app_releases')
@@ -190,7 +208,7 @@ export const uploadApkRelease = async ({ file, versionName, versionCode, title, 
     .select(APP_RELEASE_SELECT)
     .single()
 
-  if (error) throw error
+  if (error) throw buildApkUploadError('creating-update-record', error)
   return normalizeRelease(data)
 }
 

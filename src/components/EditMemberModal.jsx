@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { useAuth } from '../context/AuthContext'
-import { X, User, Phone, Calendar, BookOpen, ChevronDown, ChevronUp, Users, StickyNote, Pencil } from 'lucide-react'
+import { X, User, Phone, ChevronDown, ChevronUp, Users, StickyNote } from 'lucide-react'
 import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { supabase } from '../lib/supabase'
@@ -12,6 +12,7 @@ import CombinedDatePicker from './CombinedDatePicker'
 import TagSelector from './TagSelector'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
+import CurrentLevelPicker from './CurrentLevelPicker'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, refreshSearch, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
@@ -781,7 +782,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
         {/* Form */}
         <form onSubmit={handleSubmit} noValidate className={`flex flex-col flex-1 min-h-0 ${overrideMode ? 'bg-orange-50 dark:bg-orange-900' : 'bg-white dark:bg-gray-800'}`}>
-          <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 pb-28 space-y-4 scrollbar-hide overscroll-contain" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
+          <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 pb-5 space-y-4 scrollbar-hide overscroll-contain" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
           {/* Full Name */}
           <GuidedField ref={guideRefs.fullName} active={activeStepId === 'full-name'}>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -943,81 +944,25 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           )}
 
           {/* Current Level */}
-          <GuidedField ref={guideRefs.level} active={activeStepId === 'level'} className="relative">
+          <GuidedField ref={guideRefs.level} active={activeStepId === 'level'}>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Current Level
             </label>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setIsLevelOpen(!isLevelOpen)}
-                data-testid="edit-form-level-toggle"
-                className={`w-full pl-3 pr-4 py-2 text-left rounded-lg focus:outline-none focus:ring-1 bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-colors duration-200 border flex items-center justify-between ${hasAttemptedSave && !formData.current_level ? 'border-red-500 ring-1 ring-red-400' : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500'}`}
-              >
-                <div className="flex items-center">
-                  <BookOpen className="w-4 h-4 text-gray-500 dark:text-gray-400 mr-2" />
-                  <span className={!formData.current_level ? 'text-gray-500 dark:text-gray-400' : ''}>
-                    {formData.current_level || 'Select level'}
-                  </span>
-                </div>
-                <ChevronDown className={`w-4 h-4 text-gray-500 dark:text-gray-400 transition-transform duration-200 ${isLevelOpen ? 'transform rotate-180' : ''}`} />
-              </button>
-
-              {isLevelOpen && (
-                <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg max-h-60 overflow-auto">
-                  {levels.map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      data-testid={`edit-form-level-${level.toLowerCase()}`}
-                      onClick={() => {
-                        handleInputChange({ target: { name: 'current_level', value: level } })
-                        setIsLevelOpen(false)
-                      }}
-                      className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors ${formData.current_level === level
-                        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 font-medium'
-                        : 'text-gray-700 dark:text-gray-300'
-                        }`}
-                    >
-                      {level}
-                    </button>
-                  ))}
-                  <div className="border-t border-gray-200 dark:border-gray-600 p-2 bg-gray-50 dark:bg-gray-800/70">
-                    <label className="flex items-center gap-1.5 px-1 pb-1.5 text-[11px] font-semibold uppercase text-gray-500 dark:text-gray-400">
-                      <Pencil className="w-3 h-3" />
-                      Custom level
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={customLevelValue}
-                        onChange={(e) => setCustomLevelValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            applyCustomLevel()
-                          }
-                        }}
-                        placeholder="Type level"
-                        data-testid="edit-form-level-custom-input"
-                        className="min-w-0 flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={applyCustomLevel}
-                        disabled={!customLevelValue.trim()}
-                        data-testid="edit-form-level-custom-add"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-orange-500 text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label="Add custom current level"
-                        title="Add custom current level"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <CurrentLevelPicker
+              value={formData.current_level}
+              levels={levels}
+              error={hasAttemptedSave && !formData.current_level}
+              testIdPrefix="edit-form-level"
+              customLevelValue={customLevelValue}
+              onCustomLevelChange={setCustomLevelValue}
+              onCustomLevelApply={applyCustomLevel}
+              onOpen={() => setIsLevelOpen(true)}
+              onClose={() => setIsLevelOpen(false)}
+              onChange={(level) => {
+                handleInputChange({ target: { name: 'current_level', value: level } })
+                setIsLevelOpen(false)
+              }}
+            />
             {hasAttemptedSave && !formData.current_level && (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">Please select current level</p>
             )}

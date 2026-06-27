@@ -22,9 +22,9 @@
     "android:sync": "npm run build && cap sync android",
     "android:sync:local": "set CAPACITOR_LOCAL_BUNDLE=true&& npm run build && cap sync android",
     "android:open": "cap open android",
-    "android:apk": "npm run build && cap sync android && cd android && gradlew.bat assembleDebug",
-    "android:apk:local": "set CAPACITOR_LOCAL_BUNDLE=true&& npm run build && cap sync android && cd android && gradlew.bat assembleDebug",
-    "android:apk:release": "npm run build && cap sync android && cd android && gradlew.bat assembleRelease"
+    "android:apk": "node scripts/build-android-apk.mjs debug",
+    "android:apk:local": "node scripts/build-android-apk.mjs debug --local",
+    "android:apk:release": "node scripts/build-android-apk.mjs release"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",

@@ -3371,11 +3371,29 @@ html:not(.dark) .member-code-designed-badge > span {
     0 18px 44px color-mix(in srgb, var(--member-pass-accent), transparent 86%);
 }
 
+.member-pass-share-body {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 38%),
+    radial-gradient(circle at 50% 8%, color-mix(in srgb, var(--member-pass-accent), transparent 88%), transparent 42%);
+}
+
 .member-pass-share-art {
   display: block;
   width: 100%;
   aspect-ratio: 3 / 2;
   object-fit: contain;
+}
+
+.member-pass-share-actions {
+  position: relative;
+}
+
+.member-pass-share-actions::before {
+  content: "";
+  position: absolute;
+  inset: -0.65rem 8% auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--member-pass-accent), transparent 42%), transparent);
 }
 
 .datser-command-preview-panel {
@@ -3483,6 +3501,12 @@ html:not(.dark) .member-pass-share-art-wrap {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.9),
     0 18px 44px rgba(15, 23, 42, 0.08);
+}
+
+html:not(.dark) .member-pass-share-body {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52), transparent 40%),
+    radial-gradient(circle at 50% 8%, color-mix(in srgb, var(--member-pass-accent), transparent 86%), transparent 42%);
 }
 
 html:not(.dark) .member-pass-share-art-note {
@@ -4524,5 +4548,138 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   }
   to {
     opacity: 1;
+  }
+}
+
+.current-level-sheet-backdrop {
+  animation: currentLevelBackdropIn 180ms ease-out both;
+}
+
+.current-level-sheet {
+  animation: currentLevelSheetIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition: transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  will-change: transform;
+}
+
+.current-level-desktop-panel {
+  animation: currentLevelDesktopIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.current-level-options {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.current-level-options::-webkit-scrollbar {
+  display: none;
+}
+
+.date-picker-close-button {
+  display: inline-grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  color: rgb(75 85 99);
+  background: rgb(243 244 246 / 0.9);
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.date-picker-close-button:hover {
+  color: rgb(17 24 39);
+  background: rgb(229 231 235);
+  transform: scale(1.03);
+}
+
+.dark .date-picker-close-button {
+  color: rgb(229 231 235 / 0.78);
+  background: rgb(255 255 255 / 0.1);
+}
+
+.dark .date-picker-close-button:hover {
+  color: rgb(255 255 255);
+  background: rgb(255 255 255 / 0.16);
+}
+
+@keyframes currentLevelBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes currentLevelSheetIn {
+  from {
+    opacity: 0.8;
+    transform: translate3d(0, 1.2rem, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes currentLevelDesktopIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 0.75rem, 0) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .current-level-sheet-backdrop,
+  .current-level-sheet,
+  .current-level-desktop-panel {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.admin-insight-card {
+  position: relative;
+  background-image:
+    radial-gradient(circle at 14% 0%, rgba(249, 115, 22, 0.12), transparent 34%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.96));
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.dark .admin-insight-card {
+  background-image:
+    radial-gradient(circle at 14% 0%, rgba(249, 115, 22, 0.15), transparent 36%),
+    linear-gradient(135deg, rgba(31, 41, 55, 0.96), rgba(17, 24, 39, 0.92));
+}
+
+.admin-insight-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.12);
+}
+
+.dark .admin-insight-card:hover {
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+}
+
+.admin-insight-help {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-insight-card {
+    transition: none !important;
+  }
+
+  .admin-insight-card:hover {
+    transform: none !important;
+  }
+
+  .date-picker-close-button {
+    transition: none !important;
   }
 }

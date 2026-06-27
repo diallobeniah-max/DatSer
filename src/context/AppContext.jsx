@@ -7,6 +7,7 @@ import { notify } from '../utils/notify'
 import { buildMemberIndexCodeMap, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
+import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import {
   clearAllOfflineData,
   deleteMemberPreviewMember,
@@ -647,9 +648,9 @@ const pickWorkspaceMemberCodePreferences = (source = {}) => (
 )
 
 const isDeveloperBypassStorageEnabled = () => (
-  import.meta.env.DEV &&
+  isLocalWebDeveloperModeAllowed() &&
   typeof window !== 'undefined' &&
-  window.localStorage.getItem('datser_dev_bypass') === 'true'
+  window.localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
 )
 
 export const AppProvider = ({ children }) => {
@@ -851,6 +852,7 @@ export const AppProvider = ({ children }) => {
   const autoSyncTimerRef = useRef(null)
   const autoSyncSignatureRef = useRef({ signature: '', at: 0 })
   const autoSnapshotTimerRef = useRef(null)
+  const autoPrepareOfflineRef = useRef({ signature: '', running: false })
   const syncOfflineChangesRef = useRef(null)
   const applyOfflineSnapshotRef = useRef(null)
   const searchDisplayPromptQueuedRef = useRef(false)
@@ -6258,7 +6260,8 @@ export const AppProvider = ({ children }) => {
 
       if (attendanceColumns.length === 0) {
         appContextLog('No attendance columns found in current table')
-        return attendanceData
+        setAttendanceData({})
+        return {}
       }
 
       // Build select query for all attendance columns
@@ -6459,7 +6462,12 @@ export const AppProvider = ({ children }) => {
           currentTable
         )
         if (freshAttendance && typeof freshAttendance === 'object') {
-          snapshotAttendanceData = mergeAttendanceSnapshots(freshAttendance, attendanceData)
+          const hasPendingAttendanceChanges = pendingChangesBeforeRefresh.some((change) => (
+            change?.action_type === 'attendance_mark' || change?.action_type === 'bulk_attendance_mark'
+          ))
+          snapshotAttendanceData = hasPendingAttendanceChanges
+            ? mergeAttendanceSnapshots(freshAttendance, attendanceData)
+            : freshAttendance
         }
 
         const latestSnapshotUpdate = snapshotMembers.reduce((latest, member) => {
@@ -6523,6 +6531,66 @@ export const AppProvider = ({ children }) => {
       setIsPreparingOffline(false)
     }
   }
+
+  useEffect(() => {
+    if (!user?.id || !hasAccess || loading) return undefined
+    if (!isOnline || offlineMode === 'offline' || pendingSyncCount > 0) return undefined
+    if (!currentTable || isPreparingOffline || isSyncingOffline) return undefined
+    if (autoPrepareOfflineRef.current.running) return undefined
+
+    const cachedAt = offlineCacheMeta?.cached_at ? Date.parse(offlineCacheMeta.cached_at) : 0
+    const cachedMemberCount = Number(offlineCacheMeta?.member_count || 0)
+    const expectedMemberCount = Math.max(
+      Number.isFinite(membersTotalCount) ? membersTotalCount : 0,
+      Array.isArray(members) ? members.length : 0
+    )
+    const cacheAgeMs = cachedAt > 0 ? Date.now() - cachedAt : Number.POSITIVE_INFINITY
+    const missingCache = !offlineCacheMeta || cachedMemberCount <= 0
+    const memberCacheBehind = expectedMemberCount > 0 && cachedMemberCount + 3 < expectedMemberCount
+    const cacheVeryOld = cacheAgeMs > 1000 * 60 * 60 * 12
+
+    if (!missingCache && !memberCacheBehind && !cacheVeryOld) return undefined
+
+    const signature = [
+      user.id,
+      dataOwnerId || user.id,
+      currentTable,
+      cachedMemberCount,
+      expectedMemberCount,
+      missingCache ? 'missing' : cacheVeryOld ? 'old' : 'behind'
+    ].join(':')
+
+    if (autoPrepareOfflineRef.current.signature === signature) return undefined
+    autoPrepareOfflineRef.current.signature = signature
+
+    const timer = setTimeout(async () => {
+      if (autoPrepareOfflineRef.current.running) return
+      autoPrepareOfflineRef.current.running = true
+      try {
+        await prepareOfflineData()
+      } catch (error) {
+        console.warn('Automatic offline data preparation failed:', error)
+      } finally {
+        autoPrepareOfflineRef.current.running = false
+      }
+    }, missingCache ? 900 : 1800)
+
+    return () => clearTimeout(timer)
+  }, [
+    user?.id,
+    dataOwnerId,
+    hasAccess,
+    loading,
+    isOnline,
+    offlineMode,
+    pendingSyncCount,
+    currentTable,
+    isPreparingOffline,
+    isSyncingOffline,
+    offlineCacheMeta,
+    membersTotalCount,
+    members
+  ])
 
   const clearOfflineCacheData = async () => {
     setIsPreparingOffline(true)

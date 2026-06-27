@@ -1,8 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createClient } from '@supabase/supabase-js'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+
+const APP_UPDATES_BUCKET = 'app-updates'
+const APP_RELEASE_SELECT = 'id,version_name,version_code,title,description,apk_url,force_update,is_active,published_at,created_at,created_by'
+const APK_FILE_LIMIT_BYTES = 150 * 1024 * 1024
 
 const createDatserApkDevPlugin = () => {
   const jobs = new Map()
@@ -63,6 +68,124 @@ const createDatserApkDevPlugin = () => {
       }
     })
   })
+
+  const normalizeRelease = (release) => ({
+    id: release?.id || null,
+    versionName: String(release?.version_name || ''),
+    versionCode: Number(release?.version_code || 0),
+    title: release?.title || 'DatSer update',
+    description: release?.description || '',
+    apkUrl: release?.apk_url || '',
+    forceUpdate: Boolean(release?.force_update),
+    isActive: Boolean(release?.is_active),
+    publishedAt: release?.published_at || null,
+    createdAt: release?.created_at || null,
+    createdBy: release?.created_by || null
+  })
+
+  const createAdminSupabaseClient = () => {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!supabaseUrl || !serviceRoleKey) {
+      const error = new Error('Missing SUPABASE_URL/VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in the local dev server environment.')
+      error.step = 'configure-service-role'
+      throw error
+    }
+    return createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    })
+  }
+
+  const uploadBuiltApkRelease = async ({ job, body }) => {
+    if (!job || job.status !== 'success' || !job.apkPath || !fs.existsSync(job.apkPath)) {
+      const error = new Error('Built APK file is not available for upload.')
+      error.step = 'read-built-apk'
+      throw error
+    }
+
+    const stat = fs.statSync(job.apkPath)
+    if (stat.size > APK_FILE_LIMIT_BYTES) {
+      const error = new Error('APK is too large. Keep updates under 150 MB.')
+      error.step = 'validate-apk'
+      throw error
+    }
+
+    const cleanVersion = String(body?.versionName || job.defaults?.versionName || '').trim()
+    const numericCode = Number(body?.versionCode || job.defaults?.versionCode)
+    if (!cleanVersion) {
+      const error = new Error('Version name is required.')
+      error.step = 'validate-release'
+      throw error
+    }
+    if (!Number.isFinite(numericCode) || numericCode < 1) {
+      const error = new Error('Version code must be a positive number.')
+      error.step = 'validate-release'
+      throw error
+    }
+
+    const supabaseAdmin = createAdminSupabaseClient()
+    const safeName = String(job.fileName || path.basename(job.apkPath) || 'datser-local.apk').replace(/[^a-zA-Z0-9._-]/g, '-')
+    const storagePath = `${cleanVersion}-${numericCode}/${Date.now()}-${safeName}`
+    const apkBuffer = fs.readFileSync(job.apkPath)
+
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from(APP_UPDATES_BUCKET)
+      .upload(storagePath, apkBuffer, {
+        contentType: 'application/vnd.android.package-archive',
+        upsert: false
+      })
+
+    if (uploadError) {
+      const error = new Error(uploadError.message || 'Supabase blocked the APK file upload.')
+      error.step = 'uploading-apk-file'
+      error.cause = uploadError
+      throw error
+    }
+
+    const { data: publicData } = supabaseAdmin.storage.from(APP_UPDATES_BUCKET).getPublicUrl(storagePath)
+    const apkUrl = publicData?.publicUrl
+    if (!apkUrl) {
+      const error = new Error('Could not create an APK download URL after upload.')
+      error.step = 'generating-download-link'
+      throw error
+    }
+
+    const { data, error: releaseError } = await supabaseAdmin
+      .from('app_releases')
+      .insert({
+        version_name: cleanVersion,
+        version_code: numericCode,
+        title: body?.title || job.defaults?.title || `DatSer ${cleanVersion}`,
+        description: body?.description || job.defaults?.description || '',
+        apk_url: apkUrl,
+        force_update: Boolean(body?.forceUpdate),
+        is_active: body?.isActive !== false,
+        published_at: body?.isActive === false ? null : new Date().toISOString(),
+        created_by: body?.userId || null
+      })
+      .select(APP_RELEASE_SELECT)
+      .single()
+
+    if (releaseError) {
+      const error = new Error(releaseError.message || 'Supabase blocked the app release record.')
+      error.step = 'creating-update-record'
+      error.cause = releaseError
+      throw error
+    }
+
+    return {
+      release: normalizeRelease(data),
+      bucket: APP_UPDATES_BUCKET,
+      storagePath,
+      apkUrl,
+      fileSize: stat.size,
+      fileName: safeName,
+      publishStatus: body?.isActive === false ? 'draft' : 'published'
+    }
+  }
 
   const createJob = ({ mode = 'local' } = {}) => {
     const jobId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -227,6 +350,35 @@ const createDatserApkDevPlugin = () => {
         res.setHeader('Content-Type', 'application/vnd.android.package-archive')
         res.setHeader('Content-Disposition', `attachment; filename="${job.fileName || 'datser-local.apk'}"`)
         fs.createReadStream(job.apkPath).pipe(res)
+      })
+
+      server.middlewares.use('/__datser-dev/apk-build/upload', async (req, res) => {
+        if (req.method !== 'POST') {
+          writeJson(res, 405, { error: 'Method not allowed' })
+          return
+        }
+
+        try {
+          const body = await parseBody(req)
+          const jobId = body?.jobId
+          const job = jobId ? jobs.get(jobId) : null
+          const result = await uploadBuiltApkRelease({ job, body })
+          writeJson(res, 200, result)
+        } catch (error) {
+          const step = error?.step || 'uploading-apk'
+          const message = String(error?.message || 'Upload failed.')
+          const rlsBlocked = /row-level security|rls|policy/i.test(message)
+          writeJson(res, 500, {
+            step,
+            error: message,
+            details: rlsBlocked
+              ? 'Supabase blocked the APK upload because the upload endpoint is not authorized. Check admin upload policy or service role configuration.'
+              : 'The local dev server could not finish the APK upload. Check the step, environment variables, Supabase bucket, and app_releases migration.',
+            nextStep: step === 'configure-service-role'
+              ? 'Set SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY in the shell running npm run dev, then restart the dev server.'
+              : 'Review Supabase Storage bucket app-updates, app_releases policies, and the local dev server log, then retry.'
+          })
+        }
       })
     }
   }

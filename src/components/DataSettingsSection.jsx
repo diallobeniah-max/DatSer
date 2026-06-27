@@ -1,5 +1,5 @@
 import React from 'react'
-import { Database, Download, Upload, RefreshCw, Trash2, Archive, ChevronLeft, Loader2 } from 'lucide-react'
+import { Download, Upload, RefreshCw, Trash2, Archive, ChevronLeft, Loader2 } from 'lucide-react'
 
 const DataSettingsSection = ({
     offlineModeStatus,
@@ -64,11 +64,8 @@ const DataSettingsSection = ({
                 <div className="p-4 sm:p-5">
                     <div className="flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-5">
                         <div className="flex-1 min-w-0">
-                            <div className="flex items-start gap-3">
-                                <div className="p-2.5 bg-orange-100 dark:bg-orange-900/30 rounded-xl flex-shrink-0">
-                                    <Database className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-                                </div>
-                                <div className="min-w-0">
+                            <div className="flex items-start">
+                                <div className="min-w-0 w-full">
                                     <div className="flex flex-wrap items-center gap-2">
                                         <p className="font-semibold text-gray-900 dark:text-white">Offline Mode</p>
                                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${offlineBadgeClass}`}>
@@ -84,6 +81,9 @@ const DataSettingsSection = ({
                                     </div>
                                     <p className="text-sm text-gray-600 dark:text-gray-300 mt-1.5 max-w-2xl">
                                         Cache members and attendance on this device, then keep attendance changes safe when the APK is offline.
+                                    </p>
+                                    <p className="mt-2 text-xs font-medium text-orange-700 dark:text-orange-300">
+                                        Auto mode now prepares a fresh local copy after login and refreshes it when the device cache falls behind.
                                     </p>
                                     <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
                                         <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">Mode:</span>

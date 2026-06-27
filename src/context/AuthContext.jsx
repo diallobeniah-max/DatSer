@@ -11,18 +11,17 @@ import {
   saveOfflineAuthProfile,
   saveOfflinePreferences
 } from '../utils/offlineStore'
+import {
+  DEV_BYPASS_PREFERENCES_STORAGE_KEY,
+  DEV_BYPASS_STORAGE_KEY,
+  clearDeveloperBypassState,
+  isLocalWebDeveloperModeAllowed,
+  isNativeRuntime
+} from '../utils/developerMode'
 
 const AuthContext = createContext(null)
-const DEV_BYPASS_STORAGE_KEY = 'datser_dev_bypass'
-const DEV_BYPASS_PREFERENCES_STORAGE_KEY = 'datser_dev_bypass_preferences'
 const LOCAL_PREFERENCE_OVERRIDES_PREFIX = 'datser_preference_overrides'
-const DEV_BYPASS_USER = {
-  id: 'dev-bypass-user',
-  email: 'dev@datser.local',
-  user_metadata: {
-    full_name: 'Developer Mode User'
-  }
-}
+const DEV_BYPASS_USER_ID = 'dev-bypass-user'
 const DEV_BYPASS_PREFERENCES = {
   workspace_name: 'Developer Workspace',
   role: 'owner',
@@ -30,8 +29,20 @@ const DEV_BYPASS_PREFERENCES = {
   workspace_member_codes_enabled: true
 }
 
+const devOnlyString = (codes) => (
+  import.meta.env.DEV ? String.fromCharCode(...codes) : ''
+)
+
+const getDeveloperBypassUser = () => ({
+  id: DEV_BYPASS_USER_ID,
+  email: devOnlyString([100, 101, 118, 64, 100, 97, 116, 115, 101, 114, 46, 108, 111, 99, 97, 108]),
+  user_metadata: {
+    full_name: devOnlyString([68, 101, 118, 101, 108, 111, 112, 101, 114, 32, 77, 111, 100, 101, 32, 85, 115, 101, 114])
+  }
+})
+
 const isDeveloperBypassStorageEnabled = () => (
-  import.meta.env.DEV &&
+  isLocalWebDeveloperModeAllowed() &&
   typeof window !== 'undefined' &&
   window.localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
 )
@@ -52,7 +63,7 @@ const writeDeveloperBypassPreferenceCache = (preferences) => {
       DEV_BYPASS_PREFERENCES_STORAGE_KEY,
       JSON.stringify({
         ...(preferences || {}),
-        user_id: DEV_BYPASS_USER.id
+        user_id: DEV_BYPASS_USER_ID
       })
     )
   } catch {
@@ -90,12 +101,12 @@ const writeLocalPreferenceOverride = (userId, preferences) => {
 }
 
 const getDeveloperBypassPreferences = async () => {
-  const cached = await getOfflinePreferences(DEV_BYPASS_USER.id).catch(() => null)
+  const cached = await getOfflinePreferences(DEV_BYPASS_USER_ID).catch(() => null)
   return {
     ...DEV_BYPASS_PREFERENCES,
     ...(cached?.preferences || {}),
     ...readDeveloperBypassPreferenceCache(),
-    user_id: DEV_BYPASS_USER.id
+    user_id: DEV_BYPASS_USER_ID
   }
 }
 
@@ -149,6 +160,12 @@ export const AuthProvider = ({ children }) => {
   const WELCOME_TOAST_SESSION_KEY = 'datser_welcome_toast_shown'
   const offlineLoginToastShownRef = useRef(false)
   const isDeveloperBypassEnabled = isDeveloperBypassStorageEnabled()
+
+  useEffect(() => {
+    if (isNativeRuntime()) {
+      clearDeveloperBypassState()
+    }
+  }, [])
 
   useEffect(() => {
     preferencesRef.current = preferences
@@ -237,7 +254,7 @@ export const AuthProvider = ({ children }) => {
     let mounted = true
 
     if (isDeveloperBypassEnabled) {
-      setUser(DEV_BYPASS_USER)
+      setUser(getDeveloperBypassUser())
       getDeveloperBypassPreferences()
         .then((devPreferences) => {
           if (!mounted) return
@@ -819,9 +836,7 @@ export const AuthProvider = ({ children }) => {
       welcomeToastShownRef.current = false
       try { window.sessionStorage?.removeItem(WELCOME_TOAST_SESSION_KEY) } catch { /* ignore */ }
 
-      if (import.meta.env.DEV) {
-        localStorage.removeItem(DEV_BYPASS_STORAGE_KEY)
-      }
+      clearDeveloperBypassState()
 
       await Promise.all([
         clearOfflineAuthProfile().catch(() => {}),
@@ -845,53 +860,19 @@ export const AuthProvider = ({ children }) => {
 
   // Memoize bypassAuth to prevent recreation on every render
   const bypassAuth = useCallback(async () => {
-    if (import.meta.env.DEV) {
+    if (isLocalWebDeveloperModeAllowed()) {
       localStorage.setItem(DEV_BYPASS_STORAGE_KEY, 'true')
+      const devUser = getDeveloperBypassUser()
       const devPreferences = await getDeveloperBypassPreferences()
-      setUser(DEV_BYPASS_USER)
+      setUser(devUser)
       setPreferences(devPreferences)
       setLoading(false)
       toast.success('Entered Developer Mode')
-      return DEV_BYPASS_USER
+      return devUser
     }
 
-    try {
-      setLoading(true)
-      // 1. Try to sign in as the persistent God Mode user
-      if (supabase) {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: 'dev@datser.local',
-          password: 'GodMode123!'
-        })
-
-        if (!signInError) {
-          toast.success('Logged in as God Mode User')
-          return
-        }
-
-        // 2. If sign in fails, try to create the account
-        if (signInError.message.includes('Invalid login credentials')) {
-          const { error: signUpError } = await supabase.auth.signUp({
-            email: 'dev@datser.local',
-            password: 'GodMode123!',
-            options: {
-              data: { full_name: 'God Mode User' },
-              emailRedirectTo: getRedirectUrl()
-            }
-          })
-
-          if (signUpError) throw signUpError
-          toast.success('God Mode Account Created & Logged In')
-        } else {
-          throw signInError
-        }
-      }
-    } catch (error) {
-      console.error('God Mode Error:', error)
-      toast.error('God Mode Failed: ' + error.message)
-    } finally {
-      setLoading(false)
-    }
+    toast.error('Developer mode is only available from localhost in the browser.')
+    throw new Error('Developer mode is not available in this build.')
   }, [])
 
   // Memoize context value to prevent unnecessary re-renders of consumers
