@@ -4692,3 +4692,323 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
     transition: none !important;
   }
 }
+
+/* ============================================================
+   UI redesign preview branch
+   Broad visual polish only; component logic remains unchanged.
+   ============================================================ */
+
+:root {
+  --datser-preview-bg: #f7f3ed;
+  --datser-preview-card: rgba(255, 255, 255, 0.84);
+  --datser-preview-card-strong: rgba(255, 255, 255, 0.94);
+  --datser-preview-ink: #16120f;
+  --datser-preview-muted: #6f665f;
+  --datser-preview-border: rgba(124, 82, 44, 0.14);
+  --datser-preview-glow: rgba(249, 115, 22, 0.18);
+  --datser-preview-shadow: 0 24px 70px rgba(65, 43, 24, 0.12), 0 8px 24px rgba(65, 43, 24, 0.08);
+  --datser-preview-radius: 1.35rem;
+  --datser-preview-motion: 190ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.dark {
+  --datser-preview-bg: #0f0f10;
+  --datser-preview-card: rgba(31, 31, 33, 0.78);
+  --datser-preview-card-strong: rgba(36, 36, 38, 0.94);
+  --datser-preview-ink: #fafafa;
+  --datser-preview-muted: #c5bbb2;
+  --datser-preview-border: rgba(255, 255, 255, 0.1);
+  --datser-preview-glow: rgba(249, 115, 22, 0.2);
+  --datser-preview-shadow: 0 26px 78px rgba(0, 0, 0, 0.42), 0 8px 28px rgba(0, 0, 0, 0.32);
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(249, 115, 22, 0.1), transparent 28rem),
+    radial-gradient(circle at 90% 16%, rgba(251, 146, 60, 0.08), transparent 26rem),
+    linear-gradient(180deg, var(--datser-preview-bg), color-mix(in srgb, var(--datser-preview-bg), #000 3%));
+  color: var(--datser-preview-ink);
+}
+
+.dark body {
+  background:
+    radial-gradient(circle at 10% 5%, rgba(249, 115, 22, 0.16), transparent 26rem),
+    radial-gradient(circle at 92% 10%, rgba(168, 85, 247, 0.08), transparent 28rem),
+    linear-gradient(180deg, #101010, #0a0a0b 58%, #080808);
+}
+
+.app-header-safe {
+  border-color: var(--datser-preview-border) !important;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--datser-preview-card-strong), transparent 0%), color-mix(in srgb, var(--datser-preview-card), transparent 2%)) !important;
+  box-shadow: 0 1px 0 var(--datser-preview-border), 0 14px 34px rgba(54, 37, 21, 0.08) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+.dark .app-header-safe {
+  box-shadow: 0 1px 0 var(--datser-preview-border), 0 18px 44px rgba(0, 0, 0, 0.32) !important;
+}
+
+.app-header-safe button,
+.member-card-action,
+button[data-testid*="attendance-btn"],
+.member-pass-share-save,
+.member-pass-share-send,
+.date-picker-close-button {
+  transition:
+    transform var(--datser-preview-motion),
+    box-shadow var(--datser-preview-motion),
+    border-color var(--datser-preview-motion),
+    background-color var(--datser-preview-motion),
+    color var(--datser-preview-motion) !important;
+}
+
+.app-header-safe button:hover,
+.member-card-action:hover,
+button[data-testid*="attendance-btn"]:hover,
+.member-pass-share-save:hover,
+.member-pass-share-send:hover {
+  transform: translateY(-1px);
+}
+
+.app-header-safe button:active,
+.member-card-action:active,
+button[data-testid*="attendance-btn"]:active,
+.member-pass-share-save:active,
+.member-pass-share-send:active {
+  transform: translateY(0) scale(0.985);
+}
+
+.datser-auth-page {
+  background:
+    radial-gradient(circle at 50% 4%, rgba(255, 255, 255, 0.62), transparent 20rem),
+    radial-gradient(circle at 12% 18%, rgba(249, 115, 22, 0.18), transparent 20rem),
+    radial-gradient(circle at 92% 80%, rgba(251, 146, 60, 0.18), transparent 22rem);
+}
+
+.datser-auth-shell {
+  animation: datserPreviewRise 440ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.datser-auth-brand .inline-flex {
+  border-radius: 1.45rem !important;
+  box-shadow: 0 18px 44px rgba(249, 115, 22, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+}
+
+.datser-auth-card {
+  border-color: var(--datser-preview-border) !important;
+  border-radius: 1.65rem !important;
+  background:
+    radial-gradient(circle at 16% 4%, rgba(249, 115, 22, 0.1), transparent 16rem),
+    var(--datser-preview-card-strong) !important;
+  box-shadow: var(--datser-preview-shadow) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(160%) !important;
+  backdrop-filter: blur(22px) saturate(160%) !important;
+}
+
+.datser-auth-card input,
+[data-testid="add-member-modal"] input,
+[data-testid="edit-member-modal"] input,
+[data-testid="missing-data-modal"] input,
+[data-testid="add-member-modal"] textarea,
+[data-testid="edit-member-modal"] textarea,
+[data-testid="missing-data-modal"] textarea {
+  border-radius: 1rem !important;
+}
+
+.app-main-safe > div,
+.admin-insight-card,
+.accessibility-control-card,
+.settings-live-preview-aside,
+.settings-live-preview-drawer,
+.member-code-settings-pass-preview,
+.member-pass-share-panel,
+.member-pass-share-art-wrap,
+[data-testid="add-member-modal"] > div,
+[data-testid="edit-member-modal"] > div,
+[data-testid="missing-data-modal"] > div {
+  border-color: var(--datser-preview-border) !important;
+}
+
+.admin-insight-card,
+.accessibility-control-card,
+.member-card,
+.member-card-shell > div,
+.member-pass-share-panel,
+.member-pass-share-art-wrap,
+[data-testid="add-member-modal"] > div,
+[data-testid="edit-member-modal"] > div,
+[data-testid="missing-data-modal"] > div {
+  box-shadow: var(--datser-preview-shadow);
+}
+
+.member-card,
+.member-card-shell > div,
+.admin-insight-card,
+.accessibility-control-card {
+  border-radius: var(--datser-preview-radius) !important;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(249, 115, 22, 0.08), transparent 15rem),
+    var(--datser-preview-card) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+
+.dark .member-card,
+.dark .member-card-shell > div,
+.dark .admin-insight-card,
+.dark .accessibility-control-card {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(249, 115, 22, 0.14), transparent 15rem),
+    var(--datser-preview-card) !important;
+}
+
+.member-card-shell {
+  transition: transform var(--datser-preview-motion), filter var(--datser-preview-motion);
+}
+
+.member-card-shell:hover {
+  transform: translateY(-2px);
+}
+
+.member-card-name,
+.admin-insight-card h2,
+.admin-insight-card h3,
+.accessibility-settings-hero h3,
+.member-pass-share-header h3 {
+  letter-spacing: -0.035em;
+}
+
+.dashboard-status-pill,
+.datser-toast-stack .Toastify__toast,
+.datser-toast-stack .datser-toast {
+  border-color: var(--datser-preview-border) !important;
+}
+
+.accessibility-settings-shell {
+  gap: 1rem;
+}
+
+.accessibility-settings-hero {
+  border-radius: 1.6rem !important;
+  box-shadow: var(--datser-preview-shadow);
+}
+
+.accessibility-control-card {
+  overflow: hidden;
+}
+
+.accessibility-control-card > div {
+  min-height: 100%;
+}
+
+.member-pass-share-panel {
+  max-width: min(68rem, calc(100vw - 1.5rem)) !important;
+}
+
+.member-pass-share-body {
+  gap: 1.2rem !important;
+}
+
+.member-pass-share-art-wrap {
+  border-radius: 1.6rem !important;
+  padding: clamp(0.85rem, 1.2vw, 1.25rem) !important;
+}
+
+.member-pass-share-art {
+  border-radius: 1.2rem;
+}
+
+.member-pass-share-actions {
+  align-items: stretch;
+}
+
+.member-pass-share-save,
+.member-pass-share-send {
+  min-height: 3.15rem;
+  border-radius: 1rem !important;
+}
+
+.current-level-sheet,
+.date-picker-birth,
+.picker-surface {
+  border-radius: clamp(1.15rem, 2vw, 1.6rem) !important;
+}
+
+.current-level-sheet button,
+.date-picker-birth button {
+  touch-action: manipulation;
+}
+
+@keyframes datserPreviewRise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (min-width: 768px) {
+  .app-main-safe {
+    max-width: min(1220px, calc(100vw - 2rem));
+  }
+
+  .admin-insight-card:hover,
+  .accessibility-control-card:hover {
+    transform: translateY(-2px);
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --datser-preview-radius: 1.1rem;
+  }
+
+  .datser-auth-card {
+    border-radius: 1.35rem !important;
+    padding: 1.15rem !important;
+  }
+
+  .app-header-safe {
+    border-bottom-left-radius: 1rem;
+    border-bottom-right-radius: 1rem;
+  }
+
+  .member-card,
+  .member-card-shell > div {
+    border-radius: 1.1rem !important;
+  }
+
+  .member-pass-share-panel {
+    border-radius: 1.25rem !important;
+  }
+
+  .member-pass-share-body {
+    padding: 0.85rem !important;
+  }
+
+  [data-testid="add-member-modal"] > div,
+  [data-testid="edit-member-modal"] > div,
+  [data-testid="missing-data-modal"] > div {
+    border-radius: 1.35rem 1.35rem 0 0 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .datser-auth-shell,
+  .app-header-safe button,
+  .member-card-shell,
+  .member-card-action,
+  .admin-insight-card,
+  .accessibility-control-card,
+  .member-pass-share-save,
+  .member-pass-share-send {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}
