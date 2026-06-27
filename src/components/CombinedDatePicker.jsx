@@ -18,7 +18,6 @@ const CombinedDatePicker = ({
   error,
   disabled = false,
   birthDateMode = 'combined',
-  dropdownPlacement = 'auto',
   className = ''
 }) => {
   const [isOpen, setIsOpen] = useState(false)
@@ -75,32 +74,16 @@ const CombinedDatePicker = ({
       const shouldStartWithMonthYear = isBirthDatePicker && !selectedDate && !value
       
       if (!sheetViewport && containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect()
-        const spaceBelow = window.innerHeight - rect.bottom
-        const spaceAbove = rect.top
         const dropdownHeight = 430
-        const openUpwards = dropdownPlacement !== 'below' && spaceBelow < dropdownHeight && spaceAbove > spaceBelow
-        const insideModal = Boolean(containerRef.current.closest('[data-testid="add-member-modal"], [data-testid="edit-member-modal"], [data-testid="missing-data-modal"]'))
-        
-        const dropdownWidth = 340 // Wider for desktop
-        let calcLeft = rect.left
-        if (calcLeft + dropdownWidth > window.innerWidth - 16) {
-          calcLeft = window.innerWidth - dropdownWidth - 16
-        }
-        calcLeft = Math.max(16, calcLeft)
-
-        const unclampedTop = rect.bottom + 8
-        const clampedTop = dropdownPlacement === 'below'
-          ? unclampedTop
-          : Math.max(16, Math.min(unclampedTop, window.innerHeight - dropdownHeight - 16))
+        const dropdownWidth = 340
 
         setDropdownStyle({
           position: 'fixed',
-          top: insideModal ? `${Math.max(16, Math.round((window.innerHeight - dropdownHeight) / 2))}px` : (openUpwards ? 'auto' : `${clampedTop}px`),
-          bottom: insideModal ? 'auto' : (openUpwards ? `${window.innerHeight - rect.top + 8}px` : 'auto'),
-          left: insideModal ? `${Math.max(16, Math.round((window.innerWidth - dropdownWidth) / 2))}px` : `${calcLeft}px`,
+          top: `${Math.max(16, Math.round((window.innerHeight - dropdownHeight) / 2))}px`,
+          bottom: 'auto',
+          left: `${Math.max(16, Math.round((window.innerWidth - dropdownWidth) / 2))}px`,
           width: `${dropdownWidth}px`,
-          zIndex: 1000001
+          zIndex: 1000011
         })
       }
       
@@ -127,6 +110,23 @@ const CombinedDatePicker = ({
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [isOpen, isSheetViewport])
+
+  useEffect(() => {
+    if (!isOpen || typeof document === 'undefined') return undefined
+
+    const previousOverflow = document.body.style.overflow
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsOpen(false)
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen])
 
   const handleSave = () => {
     if (selectedDate) {
@@ -284,26 +284,24 @@ const CombinedDatePicker = ({
 
       {isOpen && typeof document !== 'undefined' && createPortal(
         <>
-          {/* Sheet Overlay */}
-          {isSheetViewport && (
-            <div 
-              className="fixed inset-0 bg-black/70 z-[1000000] backdrop-blur-md backdrop-animate"
-              onClick={() => setIsOpen(false)}
-            />
-          )}
+          {/* Shared dim/blur overlay for sheet and centered modal modes */}
+          <div 
+            className="fixed inset-0 bg-black/70 z-[1000010] backdrop-blur-md backdrop-animate"
+            onClick={() => setIsOpen(false)}
+          />
 
           {/* Dropdown / Bottom Sheet */}
           <div
             ref={dropdownRef}
             data-testid={`combined-date-picker-${pickerId}-dropdown`}
             className={`
-              bg-white text-gray-900 dark:bg-[#2F3030] dark:text-gray-100 shadow-2xl overflow-hidden font-sans z-[1000001] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
+              bg-white text-gray-900 dark:bg-[#2F3030] dark:text-gray-100 shadow-2xl overflow-hidden font-sans z-[1000011] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
               ${isSheetViewport 
                 ? 'fixed bottom-0 left-0 right-0 w-full rounded-t-2xl filter-enter pb-safe' 
                 : 'border border-gray-200 dark:border-gray-700/60 rounded-xl animate-scale-in'
               }
             `}
-            style={isSheetViewport ? { paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', ...sheetStyle } : { ...dropdownStyle, transformOrigin: dropdownStyle.bottom !== 'auto' ? 'bottom' : 'top' }}
+            style={isSheetViewport ? { zIndex: 1000011, paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))', ...sheetStyle } : { ...dropdownStyle, zIndex: 1000011, transformOrigin: dropdownStyle.bottom !== 'auto' ? 'bottom' : 'top' }}
           >
             {isSheetViewport && (
               <div
@@ -397,7 +395,7 @@ const CombinedDatePicker = ({
                     <X className="h-5 w-5" />
                   </button>
                 </div>
-                <div className="grid grid-cols-3 border-b border-gray-100 bg-gray-50 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:border-gray-800/60 dark:bg-[#252626] dark:text-gray-300">
+                <div className="picker-section-header grid grid-cols-3 border-b border-gray-100 bg-gray-50 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:border-gray-800/60 dark:bg-[#252626] dark:text-gray-300">
                   <div className="px-2 py-2 text-center border-r border-gray-100 dark:border-gray-800/60">Date</div>
                   <div className="px-2 py-2 text-center border-r border-gray-100 dark:border-gray-800/60">Month</div>
                   <div className="px-2 py-2 text-center">Year</div>

@@ -116,40 +116,43 @@ const CurrentLevelPicker = ({
   }
 
   const triggerClassName = `w-full pl-3 pr-4 py-2 text-left rounded-lg focus:outline-none focus:ring-1 bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-colors duration-200 border flex items-center justify-between ${error ? 'border-red-500 ring-1 ring-red-400' : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500'}`
-  const optionClassName = (level) => `flex min-h-[50px] w-full items-center justify-between rounded-2xl px-4 text-left text-base transition ${draftLevel === level
-    ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20'
-    : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-white/5 dark:text-gray-100 dark:hover:bg-white/10'
+  const optionClassName = (level) => `flex min-h-[44px] w-full items-center justify-between rounded-xl px-3 text-left text-[16px] transition ${draftLevel === level
+    ? 'border border-orange-200 bg-orange-100 font-bold text-orange-700 shadow-sm transition-none dark:border-orange-400/25 dark:bg-orange-500/15 dark:text-orange-300'
+    : 'text-gray-700 hover:bg-orange-50 dark:text-gray-300 dark:hover:bg-orange-500/10'
   }`
 
   const picker = isOpen && typeof document !== 'undefined' ? createPortal(
     <div
-      className={`fixed inset-0 z-[1000000] bg-black/60 backdrop-blur-md current-level-sheet-backdrop ${isSheetViewport ? 'flex items-end' : 'flex items-center justify-center p-4'}`}
+      className={`fixed inset-0 z-[1000010] bg-black/70 backdrop-blur-md current-level-sheet-backdrop ${isSheetViewport ? 'flex items-end' : 'flex items-center justify-center p-4'}`}
+      style={{ zIndex: 1000010 }}
       onClick={closePicker}
     >
       <div
-        className={`picker-surface current-level-sheet overflow-hidden border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-gray-700/70 dark:bg-gray-900 dark:text-gray-100 ${isSheetViewport ? 'w-full rounded-t-[1.6rem]' : 'w-[min(28rem,calc(100vw-2rem))] rounded-[1.35rem] current-level-desktop-panel'}`}
-        style={isSheetViewport && dragOffset ? { transform: `translate3d(0, ${dragOffset}px, 0)` } : undefined}
+        className={`picker-surface current-level-sheet overflow-hidden border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-gray-700/70 dark:bg-[#2F3030] dark:text-gray-100 ${isSheetViewport ? 'w-full rounded-t-2xl' : 'w-[min(340px,calc(100vw-2rem))] rounded-xl current-level-desktop-panel'}`}
+        style={isSheetViewport && dragOffset ? { zIndex: 1000011, transform: `translate3d(0, ${dragOffset}px, 0)` } : { zIndex: 1000011 }}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Select Current Level"
       >
-        <button
-          type="button"
-          className="flex w-full touch-none justify-center pt-3 pb-2"
-          onPointerDown={startDrag}
-          onPointerMove={moveDrag}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          aria-label="Drag down to close current level picker"
-        >
-          <span className="h-1.5 w-14 rounded-full bg-gray-300 dark:bg-gray-600" />
-        </button>
+        {isSheetViewport && (
+          <button
+            type="button"
+            className="mobile-sheet-drag-zone flex w-full touch-none justify-center pt-3 pb-1 flex-shrink-0 bg-white dark:bg-[#2F3030]"
+            onPointerDown={startDrag}
+            onPointerMove={moveDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            aria-label="Drag down to close current level picker"
+          >
+            <span className="h-1.5 w-10 rounded-full bg-gray-300 dark:bg-gray-600" />
+          </button>
+        )}
 
-        <div className={`flex items-start justify-between gap-3 ${isSheetViewport ? 'px-6 pb-4' : 'px-5 pb-4'}`}>
+        <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800/60">
           <div>
-            <h3 className={`${isSheetViewport ? 'text-xl' : 'text-lg'} font-black tracking-tight`}>Select Current Level</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Pick the member&apos;s class or stage</p>
+            <h3 className="text-[16px] font-semibold leading-tight text-gray-900 dark:text-gray-100">Select Current Level</h3>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Pick the member&apos;s class or stage</p>
           </div>
           <button
             type="button"
@@ -161,12 +164,12 @@ const CurrentLevelPicker = ({
           </button>
         </div>
 
-        <div className={`border-y border-gray-100 bg-gray-50 py-3 text-center text-sm font-black uppercase tracking-wide text-gray-500 dark:border-gray-800/70 dark:bg-gray-800/80 dark:text-gray-300 ${isSheetViewport ? 'px-6' : 'px-5'}`}>
+        <div className="picker-section-header border-b border-gray-100 bg-gray-50 px-2 py-2 text-center text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:border-gray-800/60 dark:bg-[#252626] dark:text-gray-300">
           Level
         </div>
 
-        <div className={`current-level-options overflow-y-auto bg-white px-4 py-3 dark:bg-gray-950 ${isSheetViewport ? 'max-h-[42vh]' : 'max-h-[38vh]'}`}>
-          <div className="space-y-2">
+        <div className={`current-level-options overflow-y-auto bg-white p-2 dark:bg-[#151515] ${isSheetViewport ? 'max-h-[42vh]' : 'max-h-[260px]'}`}>
+          <div className="space-y-1">
             {normalizedLevels.map((level) => (
               <button
                 key={level}
@@ -181,8 +184,8 @@ const CurrentLevelPicker = ({
             ))}
           </div>
 
-          <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-white/10 dark:bg-white/5">
-            <label className="flex items-center gap-2 pb-2 text-xs font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/10 dark:bg-white/5">
+            <label className="flex items-center gap-2 pb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               <Pencil className="h-3.5 w-3.5" />
               Custom level
             </label>
@@ -199,14 +202,14 @@ const CurrentLevelPicker = ({
                 }}
                 placeholder="Type level"
                 data-testid={`${testIdPrefix}-custom-input`}
-                className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-3 text-base text-gray-900 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-orange-400 dark:border-white/10 dark:bg-gray-950 dark:text-white dark:placeholder:text-white/40"
+                className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[16px] text-gray-900 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-orange-400 dark:border-white/10 dark:bg-[#202121] dark:text-white dark:placeholder:text-white/40"
               />
               <button
                 type="button"
                 onClick={applyCustom}
                 disabled={!customLevelValue.trim()}
                 data-testid={`${testIdPrefix}-custom-add`}
-                className="rounded-xl bg-orange-600 px-4 text-sm font-black text-white transition hover:bg-orange-700 disabled:opacity-40"
+                className="rounded-xl bg-orange-600 px-4 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:opacity-40"
               >
                 Add
               </button>
@@ -215,13 +218,13 @@ const CurrentLevelPicker = ({
         </div>
 
         <div
-          className={`flex items-center justify-between border-t border-gray-100 bg-gray-50/80 px-6 py-4 dark:border-gray-800/70 dark:bg-gray-900 ${isSheetViewport ? '' : 'px-5'}`}
+          className="flex items-center justify-between border-t border-gray-100 bg-gray-50/50 px-6 py-4 dark:border-gray-800/60 dark:bg-[#1a1a1c]"
           style={isSheetViewport ? { paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))' } : undefined}
         >
           <button
             type="button"
             onClick={closePicker}
-            className="rounded-2xl bg-gray-200/80 px-6 py-3 text-base font-black text-gray-700 transition hover:bg-gray-300 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+            className="rounded-xl bg-gray-200/50 px-4 py-2 text-[17px] font-medium text-gray-600 transition hover:text-gray-900 dark:bg-gray-800/50 dark:text-gray-400 dark:hover:text-gray-100"
           >
             Cancel
           </button>
@@ -229,7 +232,7 @@ const CurrentLevelPicker = ({
             type="button"
             onClick={() => commitLevel()}
             disabled={!draftLevel}
-            className="rounded-2xl px-6 py-3 text-base font-black text-white transition enabled:bg-orange-600 enabled:hover:bg-orange-700 disabled:text-gray-400 dark:disabled:text-white/35"
+            className="rounded-xl px-8 py-2 text-[17px] font-semibold text-white transition enabled:bg-orange-600 enabled:shadow-sm enabled:shadow-black/20 enabled:hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-gray-500/40 disabled:text-white disabled:opacity-70 dark:disabled:bg-gray-700/70"
           >
             Save
           </button>
