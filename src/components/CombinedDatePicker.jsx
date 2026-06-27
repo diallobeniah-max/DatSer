@@ -100,7 +100,7 @@ const CombinedDatePicker = ({
           bottom: insideModal ? 'auto' : (openUpwards ? `${window.innerHeight - rect.top + 8}px` : 'auto'),
           left: insideModal ? `${Math.max(16, Math.round((window.innerWidth - dropdownWidth) / 2))}px` : `${calcLeft}px`,
           width: `${dropdownWidth}px`,
-          zIndex: 999999
+          zIndex: 1000001
         })
       }
       
@@ -287,7 +287,7 @@ const CombinedDatePicker = ({
           {/* Sheet Overlay */}
           {isSheetViewport && (
             <div 
-              className="fixed inset-0 bg-black/70 z-[999998] backdrop-blur-md backdrop-animate"
+              className="fixed inset-0 bg-black/70 z-[1000000] backdrop-blur-md backdrop-animate"
               onClick={() => setIsOpen(false)}
             />
           )}
@@ -297,7 +297,7 @@ const CombinedDatePicker = ({
             ref={dropdownRef}
             data-testid={`combined-date-picker-${pickerId}-dropdown`}
             className={`
-              bg-white text-gray-900 dark:bg-[#2F3030] dark:text-gray-100 shadow-2xl overflow-hidden font-sans z-[999999] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
+              bg-white text-gray-900 dark:bg-[#2F3030] dark:text-gray-100 shadow-2xl overflow-hidden font-sans z-[1000001] flex flex-col ${isBirthDatePicker ? 'date-picker-birth' : ''}
               ${isSheetViewport 
                 ? 'fixed bottom-0 left-0 right-0 w-full rounded-t-2xl filter-enter pb-safe' 
                 : 'border border-gray-200 dark:border-gray-700/60 rounded-xl animate-scale-in'

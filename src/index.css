@@ -1892,29 +1892,32 @@ details[open] summary~* {
   max-height: none !important;
   overflow: visible !important;
   pointer-events: none !important;
+  z-index: 1000200 !important;
 }
 
 .datser-toast-stack .datser-toast,
 .datser-toast-stack .Toastify__toast {
+  position: relative !important;
   width: fit-content !important;
   min-width: min(300px, calc(100vw - 28px)) !important;
   max-width: min(460px, calc(100vw - 28px)) !important;
   min-height: 50px !important;
   padding: 8px 10px !important;
-  border-radius: 20px !important;
+  overflow: clip !important;
+  isolation: isolate !important;
+  border-radius: 999px !important;
   border: 1px solid rgba(15, 23, 42, 0.08) !important;
   color: #111827 !important;
   background:
     radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.13), transparent 34%),
     rgba(255, 255, 255, 0.88) !important;
-  box-shadow:
-    0 30px 70px rgba(15, 23, 42, 0.24),
-    0 12px 28px rgba(15, 23, 42, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.74) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74) !important;
+  filter: drop-shadow(0 14px 24px rgba(15, 23, 42, 0.16)) drop-shadow(0 4px 10px rgba(15, 23, 42, 0.1)) !important;
   -webkit-backdrop-filter: blur(20px) saturate(170%) !important;
   backdrop-filter: blur(20px) saturate(170%) !important;
   transform-origin: top center !important;
   will-change: opacity, transform !important;
+  clip-path: inset(0 round 999px);
 }
 
 .dark .datser-toast-stack .datser-toast,
@@ -1924,10 +1927,8 @@ details[open] summary~* {
   background:
     radial-gradient(circle at 78% 0%, rgba(249, 115, 22, 0.16), transparent 34%),
     rgba(18, 18, 20, 0.88) !important;
-  box-shadow:
-    0 32px 78px rgba(0, 0, 0, 0.56),
-    0 14px 30px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  filter: drop-shadow(0 16px 28px rgba(0, 0, 0, 0.38)) drop-shadow(0 5px 12px rgba(0, 0, 0, 0.28)) !important;
 }
 
 .datser-notification-card {
@@ -2382,12 +2383,12 @@ body:has([data-testid="missing-data-modal"]) #root {
 .date-picker-birth {
   color: #111827 !important;
   border-color: rgba(249, 115, 22, 0.35) !important;
-  box-shadow: 0 30px 76px rgba(15, 23, 42, 0.16), 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+  box-shadow: 0 30px 76px rgba(15, 23, 42, 0.16), 0 12px 28px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82) !important;
 }
 
 .dark .date-picker-birth {
   color: #f8fafc !important;
-  box-shadow: 0 30px 76px rgba(0, 0, 0, 0.62), 0 12px 28px rgba(0, 0, 0, 0.42) !important;
+  box-shadow: 0 30px 76px rgba(0, 0, 0, 0.62), 0 12px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
 }
 
 .dark .date-picker-birth,
@@ -4561,9 +4562,17 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   will-change: transform;
 }
 
+.picker-surface {
+  box-shadow: 0 30px 76px rgba(15, 23, 42, 0.16), 0 12px 28px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.dark .picker-surface {
+  box-shadow: 0 30px 76px rgba(0, 0, 0, 0.62), 0 12px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
 .current-level-desktop-panel {
   animation: currentLevelDesktopIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  max-height: min(680px, calc(100vh - 2rem));
 }
 
 .current-level-options {
