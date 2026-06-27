@@ -695,7 +695,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       onClick={() => closeWithAnimation()}
     >
       <div
-        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[92vh] sm:max-h-[90vh] flex flex-col rounded-t-2xl rounded-b-none sm:rounded-xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${overrideMode
+        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[84dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-t-2xl rounded-b-none sm:rounded-xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${overrideMode
         ? 'bg-orange-50 dark:bg-orange-900 ring-orange-300 dark:ring-orange-700'
         : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
         }`}
@@ -1265,13 +1265,13 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
           {/* Form Actions */}
           <div
-            className={`flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 sm:px-6 pt-3 flex space-x-3 rounded-b-none sm:rounded-b-xl ${overrideMode ? 'bg-orange-50 dark:bg-orange-900' : 'bg-white dark:bg-gray-800'}`}
-            style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 16px))' }}
+            className={`flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 pt-3 sm:px-5 sm:pb-5 flex space-x-3 rounded-b-none sm:rounded-b-xl ${overrideMode ? 'bg-orange-50 dark:bg-orange-900' : 'bg-white dark:bg-gray-800'}`}
+            style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}
           >
             <button
                   type="button"
                   onClick={() => closeWithAnimation()}
-                  className="flex-1 min-h-[48px] px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 transition-colors btn-press"
+                  className="flex-1 min-h-[44px] px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-700 transition-colors btn-press"
                 >
                   Cancel
                 </button>
@@ -1279,7 +1279,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
               type="submit"
               disabled={loading || (!overrideMode && !formData.full_name)}
               data-testid="edit-form-submit"
-              className={`flex-1 min-h-[48px] px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-press ${overrideMode
+              className={`flex-1 min-h-[44px] px-4 py-2 text-white rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-press ${overrideMode
                 ? 'bg-orange-600 hover:bg-orange-700'
                 : 'bg-primary-600 hover:bg-primary-700'
                 }`}

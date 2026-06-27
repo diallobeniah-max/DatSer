@@ -2214,6 +2214,10 @@ details[open] summary~* {
   [data-testid="edit-member-modal"] form {
     padding-bottom: calc(var(--app-safe-bottom) + 12px);
   }
+
+  [data-testid="edit-member-modal"] form {
+    padding-bottom: 0;
+  }
 }
 
 /* iOS overscroll fix on modals */
@@ -3145,7 +3149,7 @@ html:not(.dark) .member-code-designed-badge > span {
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 1.35rem;
+  gap: 1.7rem;
   margin: 1rem 0 0;
 }
 
@@ -3247,6 +3251,7 @@ html:not(.dark) .member-code-designed-badge > span {
   position: relative;
   z-index: 3;
   display: inline-flex;
+  margin-top: 0.1rem;
   min-height: 2.75rem;
   align-items: center;
   justify-content: center;
@@ -3747,7 +3752,7 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
 
   .member-code-pass-responsive .member-code-pass-qr-wrap {
     margin-top: 0.4rem;
-    gap: 0.65rem;
+    gap: 1rem;
   }
 
   .member-code-pass-responsive .member-code-pass-qr-card {
@@ -4387,6 +4392,10 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
 
   .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-layout {
     gap: 0.72rem !important;
+  }
+
+  .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-qr-wrap {
+    gap: 1.1rem !important;
   }
 
   .member-code-pass-responsive.member-code-pass-qr-expanded .member-code-pass-church {

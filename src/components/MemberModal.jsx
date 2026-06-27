@@ -532,7 +532,7 @@ const MemberModal = ({ isOpen, onClose }) => {
       <div className="flex justify-center pt-3 pb-1 sm:hidden absolute left-0 right-0" style={{ top: 'calc(10vh)' }}>
       </div>
       <div
-        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[92vh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-2xl sm:rounded-2xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${isOverrideMode
+        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[84dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-2xl sm:rounded-2xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${isOverrideMode
         ? 'bg-orange-50/90 dark:bg-orange-900/40 backdrop-blur-md ring-orange-300 dark:ring-orange-700'
         : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
         }`}
@@ -1057,7 +1057,10 @@ const MemberModal = ({ isOpen, onClose }) => {
           </form>
         </div>
 
-        <div className="flex flex-shrink-0 space-x-3 rounded-b-2xl border-t border-gray-200 bg-white/95 px-4 pb-4 pt-3 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 sm:px-5 sm:pb-5">
+        <div
+          className="flex flex-shrink-0 space-x-3 rounded-b-2xl border-t border-gray-200 bg-white/95 px-4 pt-3 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 sm:px-5 sm:pb-5"
+          style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}
+        >
           <button
             type="button"
             onClick={() => closeWithAnimation()}
