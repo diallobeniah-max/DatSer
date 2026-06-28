@@ -37,7 +37,7 @@ const getPasswordStrength = (password) => {
 }
 
 const LoginPage = () => {
-  const { signInWithGoogle, signUpWithEmail, signInWithEmail, signInWithMagicLink, resetPassword, bypassAuth } = useAuth()
+  const { signInWithGoogle, signUpWithEmail, signInWithEmail, signInWithMagicLink, signInWithAdminCode, resetPassword, bypassAuth } = useAuth()
   const { isDarkMode, themeMode, setThemeMode } = useTheme()
   const isDeveloperToolsEnabled = import.meta.env.DEV && isLocalWebDeveloperModeAllowed()
   const [isLoading, setIsLoading] = useState(false)
@@ -50,6 +50,8 @@ const LoginPage = () => {
   const [fullName, setFullName] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [confirmationSent, setConfirmationSent] = useState(false)
+  const [adminCode, setAdminCode] = useState('')
+  const [showAdminCodeLogin, setShowAdminCodeLogin] = useState(false)
 
   // Detect if user arrived via invite link (token_hash in URL, PKCE code, or hash fragment)
   const [isInviteFlow] = useState(() => {
@@ -154,6 +156,26 @@ const LoginPage = () => {
         // Show the actual error message for debugging
         setError(err.message || 'Something went wrong. Please try again.')
       }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleAdminCodeSignIn = async (e) => {
+    e.preventDefault()
+    if (!adminCode.trim()) {
+      setError('Enter the admin code')
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+    try {
+      await signInWithAdminCode(adminCode)
+      setAdminCode('')
+    } catch (err) {
+      setError(err.message || 'Admin code login failed')
+      setAdminCode('')
     } finally {
       setIsLoading(false)
     }
@@ -784,6 +806,51 @@ const LoginPage = () => {
             </svg>
             <span>Continue with Google</span>
           </button>
+
+          {mode === 'login' && (
+            <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50/70 p-3 dark:border-orange-900/50 dark:bg-orange-950/20">
+              {!showAdminCodeLogin ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdminCodeLogin(true)
+                    setError(null)
+                  }}
+                  disabled={isLoading}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-orange-700 transition-colors hover:bg-orange-100 disabled:opacity-50 dark:text-orange-300 dark:hover:bg-orange-900/30"
+                >
+                  <Lock className="h-4 w-4" />
+                  Use Admin Code
+                </button>
+              ) : (
+                <form onSubmit={handleAdminCodeSignIn} className="space-y-2">
+                  <label className="block text-left text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                    Admin code
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={adminCode}
+                      onChange={(event) => setAdminCode(event.target.value)}
+                      placeholder="Enter admin code"
+                      autoComplete="one-time-code"
+                      className="min-w-0 flex-1 rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-orange-900/50 dark:bg-gray-900 dark:text-white"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isLoading || !adminCode.trim()}
+                      className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-300"
+                    >
+                      {isLoading ? 'Checking...' : 'Login'}
+                    </button>
+                  </div>
+                  <p className="text-left text-[11px] text-gray-500 dark:text-gray-400">
+                    Verified by Supabase. If this fails, apply the admin-code migration.
+                  </p>
+                </form>
+              )}
+            </div>
+          )}
 
           {isDeveloperToolsEnabled && (
             <button

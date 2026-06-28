@@ -28,6 +28,7 @@ const DEV_BYPASS_PREFERENCES = {
   member_codes_enabled: true,
   workspace_member_codes_enabled: true
 }
+const ADMIN_CODE_SESSION_KEY = 'datser_admin_code_session'
 
 const devOnlyString = (codes) => (
   import.meta.env.DEV ? String.fromCharCode(...codes) : ''
@@ -107,6 +108,30 @@ const getDeveloperBypassPreferences = async () => {
     ...(cached?.preferences || {}),
     ...readDeveloperBypassPreferenceCache(),
     user_id: DEV_BYPASS_USER_ID
+  }
+}
+
+const readAdminCodeSession = () => {
+  if (typeof window === 'undefined') return null
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(ADMIN_CODE_SESSION_KEY) || 'null')
+    if (!parsed?.user?.id || !parsed?.expires_at) return null
+    if (Date.parse(parsed.expires_at) <= Date.now()) {
+      window.sessionStorage.removeItem(ADMIN_CODE_SESSION_KEY)
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const writeAdminCodeSession = (payload) => {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(ADMIN_CODE_SESSION_KEY, JSON.stringify(payload))
+  } catch {
+    // sessionStorage can be unavailable in restricted browser contexts.
   }
 }
 
@@ -263,6 +288,20 @@ export const AuthProvider = ({ children }) => {
         .finally(() => {
           if (mounted) setLoading(false)
         })
+      return () => {
+        mounted = false
+      }
+    }
+
+    const adminCodeSession = readAdminCodeSession()
+    if (adminCodeSession?.user) {
+      setUser(adminCodeSession.user)
+      setPreferences(adminCodeSession.preferences || {
+        workspace_name: adminCodeSession.workspace_name || 'Admin Workspace',
+        role: 'owner',
+        admin_code_login: true
+      })
+      setLoading(false)
       return () => {
         mounted = false
       }
@@ -825,6 +864,70 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
+  const signInWithAdminCode = async (code) => {
+    const trimmedCode = String(code || '').trim()
+    if (!trimmedCode) {
+      throw new Error('Enter the admin code')
+    }
+    if (!isSupabaseConfigured() || !supabase) {
+      throw new Error('Admin code login needs Supabase to be configured.')
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('verify_admin_code_login', {
+        p_code: trimmedCode
+      })
+      if (error) throw error
+
+      const result = Array.isArray(data) ? data[0] : data
+      if (!result?.ok || !result?.owner_id) {
+        throw new Error(result?.message || 'Invalid admin code')
+      }
+
+      const expiresAt = result.expires_at || new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      const adminUser = {
+        id: result.owner_id,
+        email: result.email || 'admin-code@datser.local',
+        app_metadata: { provider: 'admin-code' },
+        user_metadata: {
+          full_name: result.full_name || 'Admin Code User',
+          role: 'admin'
+        }
+      }
+      const adminPreferences = {
+        workspace_name: result.workspace_name || 'Admin Workspace',
+        role: 'owner',
+        admin_code_login: true,
+        user_id: result.owner_id
+      }
+      writeAdminCodeSession({
+        user: adminUser,
+        preferences: adminPreferences,
+        workspace_name: adminPreferences.workspace_name,
+        expires_at: expiresAt
+      })
+      try {
+        window.sessionStorage?.setItem('adminAuthenticated', 'true')
+        window.sessionStorage?.setItem('datser_admin_code_verified', 'true')
+      } catch { /* ignore */ }
+      setUser(adminUser)
+      setPreferences(adminPreferences)
+      setLoading(false)
+      toast.success('Admin code accepted')
+      return { user: adminUser, preferences: adminPreferences }
+    } catch (error) {
+      const missingRpc =
+        error?.code === '42883' ||
+        String(error?.message || '').toLowerCase().includes('verify_admin_code_login')
+      const message = missingRpc
+        ? 'Admin code login is not set up yet. Apply the latest Supabase migration first.'
+        : (error?.message || 'Invalid admin code')
+      console.error('Admin code login failed:', error)
+      toast.error(message)
+      throw new Error(message)
+    }
+  }
+
   // Sign out - memoized to prevent stale references
   const signOut = useCallback(async () => {
     // Supabase can throw AuthSessionMissingError if the session is already gone.
@@ -835,6 +938,11 @@ export const AuthProvider = ({ children }) => {
       setPreferences(null)
       welcomeToastShownRef.current = false
       try { window.sessionStorage?.removeItem(WELCOME_TOAST_SESSION_KEY) } catch { /* ignore */ }
+      try {
+        window.sessionStorage?.removeItem(ADMIN_CODE_SESSION_KEY)
+        window.sessionStorage?.removeItem('adminAuthenticated')
+        window.sessionStorage?.removeItem('datser_admin_code_verified')
+      } catch { /* ignore */ }
 
       clearDeveloperBypassState()
 
@@ -885,6 +993,7 @@ export const AuthProvider = ({ children }) => {
     signInWithEmail,
     signInWithMagicLink,
     resetPassword,
+    signInWithAdminCode,
     signOut,
     saveUserPreferences,
     updatePreference,
@@ -892,7 +1001,7 @@ export const AuthProvider = ({ children }) => {
     bypassAuth,
     isDeveloperBypass: isDeveloperBypassEnabled,
     isAuthenticated: !!user
-  }), [user, loading, preferences, signInWithGoogle, signUpWithEmail, signInWithEmail, signInWithMagicLink, resetPassword, signOut, saveUserPreferences, updatePreference, loadUserPreferences, bypassAuth, isDeveloperBypassEnabled])
+  }), [user, loading, preferences, signInWithGoogle, signUpWithEmail, signInWithEmail, signInWithMagicLink, resetPassword, signInWithAdminCode, signOut, saveUserPreferences, updatePreference, loadUserPreferences, bypassAuth, isDeveloperBypassEnabled])
 
   return (
     <AuthContext.Provider value={value}>

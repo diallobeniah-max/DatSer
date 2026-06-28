@@ -142,7 +142,7 @@ const DataSettingsSection = ({
                                     className="min-h-[44px] px-3 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 disabled:bg-orange-300 disabled:text-white/80 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm"
                                 >
                                     {isPreparingOffline ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                                    {isPreparingOffline ? 'Preparing...' : 'Download Offline Data'}
+                                    {isPreparingOffline ? 'Refreshing...' : 'Refresh data'}
                                 </button>
                                 <button
                                     type="button"

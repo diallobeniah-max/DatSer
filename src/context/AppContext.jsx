@@ -853,6 +853,8 @@ export const AppProvider = ({ children }) => {
   const autoSyncSignatureRef = useRef({ signature: '', at: 0 })
   const autoSnapshotTimerRef = useRef(null)
   const autoPrepareOfflineRef = useRef({ signature: '', running: false })
+  const backgroundRefreshRef = useRef({ running: false, lastRun: 0 })
+  const realtimeAttendanceRefreshTimerRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
   const applyOfflineSnapshotRef = useRef(null)
   const searchDisplayPromptQueuedRef = useRef(false)
@@ -2302,6 +2304,7 @@ export const AppProvider = ({ children }) => {
       const { data: { session } } = await supabase.auth.getSession()
       appContextLog('Current session:', session ? `authenticated as ${session.user?.id}` : 'not authenticated')
       if (!session) {
+        const isAdminCodeLogin = authContext?.preferences?.admin_code_login === true
         if (isDeveloperBypassStorageEnabled()) {
           appContextLog('Developer bypass became active during member fetch; using mock data')
           setMembers(mockMembers)
@@ -2320,15 +2323,19 @@ export const AppProvider = ({ children }) => {
           }
           return []
         }
-        console.warn('No active session - user may need to log in again')
-        if (!background) {
-          toast.error('Session expired. Please refresh and log in again.')
+        if (isAdminCodeLogin) {
+          appContextLog('Admin code session active; continuing with anon Supabase read path.')
+        } else {
+          console.warn('No active session - user may need to log in again')
+          if (!background) {
+            toast.error('Session expired. Please refresh and log in again.')
+          }
+          setMembers([])
+          if (!background) {
+            setLoading(false)
+          }
+          return []
         }
-        setMembers([])
-        if (!background) {
-          setLoading(false)
-        }
-        return []
       }
 
       // Serve from cache when fresh (reduces egress)
@@ -2440,7 +2447,7 @@ export const AppProvider = ({ children }) => {
         }
       }
 
-      appContextLog(`Querying first ${MEMBER_PREVIEW_PAGE_SIZE} members from ${tableName} with session user: ${session.user?.id}`)
+      appContextLog(`Querying first ${MEMBER_PREVIEW_PAGE_SIZE} members from ${tableName} with session user: ${session?.user?.id || user?.id || 'admin-code'}`)
       const { data, error, count } = await fetchMemberPreviewPage(tableName, 0)
 
       appContextLog(`Query result: ${data?.length || 0} rows, error: ${error?.message || 'none'}`)
@@ -3490,6 +3497,18 @@ export const AppProvider = ({ children }) => {
     return { success: true, offline: true }
   }, [applyLocalAttendanceState, currentTable, pendingSyncCount, refreshOfflineStatus, shouldShowOfflineSaveNotice])
 
+  const queueRetryableAttendanceChange = useCallback(async (memberIds, effectiveDate, present, reason) => {
+    const result = await queueOfflineAttendanceChanges(memberIds, effectiveDate, present)
+    const reasonText = reason?.message || reason || 'The server did not confirm the save.'
+    setOfflineStatusMessage('Attendance save is pending retry. It will sync automatically when the connection is healthy.')
+    notify.sync('Attendance save is pending retry.', {
+      title: 'Will retry save',
+      details: reasonText,
+      toastId: `attendance-retry-${getLocalDateString(effectiveDate)}`
+    })
+    return { ...result, queuedAfterFailure: true, error: reasonText }
+  }, [queueOfflineAttendanceChanges])
+
   // Mark attendance for a member in monthly table
   const markAttendance = async (memberId, date, present) => {
     try {
@@ -3506,9 +3525,12 @@ export const AppProvider = ({ children }) => {
         toast.warn('Online mode selected, but internet is unavailable.')
       }
 
+      setOfflineStatusMessage('Saving attendance...')
+
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - update local state
         applyLocalAttendanceState(memberId, effectiveDate, present)
+        setOfflineStatusMessage('Attendance saved.')
         return { success: true }
       }
 
@@ -3586,11 +3608,18 @@ export const AppProvider = ({ children }) => {
       const attendanceStatus = present === null ? 'Cleared' : present ? 'Present' : 'Absent'
       logActivity('MARK_ATTENDANCE', `Marked ${memberName} as ${attendanceStatus} on ${effectiveDate.toLocaleDateString()}`)
 
+      setOfflineStatusMessage('Attendance saved.')
       return { success: true }
     } catch (error) {
       console.error('Error marking attendance:', error)
-      toast.error('Failed to mark attendance')
-      throw error
+      const effectiveDate = normalizeDateToSundayForTable(date, currentTable)
+      if (effectiveDate && (isTransientSupabaseError(error) || !isBrowserOnline())) {
+        console.warn('Attendance save failed transiently; queued for retry:', error)
+        return queueRetryableAttendanceChange(memberId, effectiveDate, present, error)
+      }
+      setOfflineStatusMessage('Attendance save failed. Please retry.')
+      toast.error(error?.message || 'Failed to mark attendance')
+      return { success: false, error }
     }
   }
 
@@ -6574,12 +6603,12 @@ export const AppProvider = ({ children }) => {
         const result = await prepareOfflineData()
         if (result?.success === false) {
           autoPrepareOfflineRef.current.signature = ''
-          setOfflineStatusMessage('Auto download failed - use Download recent data to try again.')
+          setOfflineStatusMessage('Auto refresh failed - use Refresh data to try again.')
         }
       } catch (error) {
         console.warn('Automatic offline data preparation failed:', error)
         autoPrepareOfflineRef.current.signature = ''
-        setOfflineStatusMessage('Auto download failed - use Download recent data to try again.')
+        setOfflineStatusMessage('Auto refresh failed - use Refresh data to try again.')
       } finally {
         autoPrepareOfflineRef.current.running = false
       }
@@ -6857,6 +6886,54 @@ export const AppProvider = ({ children }) => {
     }
   }, [isOnline, offlineMode, pendingSyncCount, offlinePendingChanges, isSyncingOffline])
 
+  const refreshSyncedDataInBackground = useCallback(async (source = 'background', options = {}) => {
+    if (!currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
+    if (offlineMode === 'online' && !isOnline) return
+
+    const now = Date.now()
+    const minGapMs = options.force ? 0 : 3500
+    if (backgroundRefreshRef.current.running) return
+    if (!options.force && now - backgroundRefreshRef.current.lastRun < minGapMs) return
+
+    backgroundRefreshRef.current = { running: true, lastRun: now }
+    try {
+      setMemberPreviewSyncStatus(prev => ({
+        ...prev,
+        source,
+        isSyncing: true
+      }))
+      await Promise.all([
+        fetchMembers(currentTable, {
+          forceRefresh: true,
+          background: true,
+          forceOnline: true
+        }).catch((error) => {
+          console.warn(`Background member refresh failed (${source}):`, error)
+          return null
+        }),
+        loadAllAttendanceData({ forceOnline: true }).catch((error) => {
+          console.warn(`Background attendance refresh failed (${source}):`, error)
+          return null
+        }),
+        loadAllBadgeData().catch((error) => {
+          console.warn(`Background badge refresh failed (${source}):`, error)
+          return null
+        })
+      ])
+      setMemberPreviewSyncStatus(prev => ({
+        ...prev,
+        source,
+        isSyncing: false,
+        lastSyncedAt: new Date().toISOString()
+      }))
+    } finally {
+      backgroundRefreshRef.current = {
+        running: false,
+        lastRun: Date.now()
+      }
+    }
+  }, [currentTable, isDeveloperBypass, isOnline, isSupabaseConfigured, offlineMode, shouldUseOfflineData])
+
   useEffect(() => {
     if (!currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
 
@@ -6864,6 +6941,7 @@ export const AppProvider = ({ children }) => {
     const triggerPreviewSync = (source = 'auto') => {
       if (disposed) return
       memberPreviewBackgroundSyncRunnerRef.current?.(currentTable, { source })
+      refreshSyncedDataInBackground(source)
     }
 
     triggerPreviewSync('app-load')
@@ -6888,7 +6966,7 @@ export const AppProvider = ({ children }) => {
       window.removeEventListener('online', handleOnline)
       document.removeEventListener('visibilitychange', handleVisible)
     }
-  }, [currentTable, isDeveloperBypass, isSupabaseConfigured, shouldUseOfflineData])
+  }, [currentTable, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, shouldUseOfflineData])
 
   // Load attendance and badge data when table changes
   useEffect(() => {
@@ -6971,6 +7049,7 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
+    if (!currentTable) return undefined
 
     const channel = supabase
       .channel(`public:members:${currentTable}`)
@@ -7079,6 +7158,58 @@ export const AppProvider = ({ children }) => {
       supabase.removeChannel(channel);
     };
   }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, removeMemberFromAttendanceData, workspaceCacheScope]);
+
+  useEffect(() => {
+    const ownerId = dataOwnerId || user?.id
+    if (!ownerId || !currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
+
+    const scheduleAttendanceRefresh = (source = 'attendance-realtime') => {
+      if (realtimeAttendanceRefreshTimerRef.current) {
+        clearTimeout(realtimeAttendanceRefreshTimerRef.current)
+      }
+      realtimeAttendanceRefreshTimerRef.current = setTimeout(() => {
+        refreshSyncedDataInBackground(source, { force: true })
+      }, 250)
+    }
+
+    const channel = supabase
+      .channel(`public:attendance-records:${ownerId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'attendance_records'
+        },
+        (payload) => {
+          const row = payload?.new || payload?.old
+          if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
+          scheduleAttendanceRefresh('attendance-records-realtime')
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'attendance_sessions'
+        },
+        (payload) => {
+          const row = payload?.new || payload?.old
+          if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
+          scheduleAttendanceRefresh('attendance-sessions-realtime')
+        }
+      )
+      .subscribe()
+
+    return () => {
+      if (realtimeAttendanceRefreshTimerRef.current) {
+        clearTimeout(realtimeAttendanceRefreshTimerRef.current)
+        realtimeAttendanceRefreshTimerRef.current = null
+      }
+      supabase.removeChannel(channel)
+    }
+  }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, shouldUseOfflineData, user?.id])
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)

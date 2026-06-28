@@ -252,7 +252,6 @@ const MemberModal = ({ isOpen, onClose }) => {
 
   const setAttendanceChoice = (date, attendance) => {
     selection()
-    revealMissingRequiredFields()
     setSundayAttendance(prev => ({ ...prev, [date]: attendance }))
   }
 
@@ -298,12 +297,14 @@ const MemberModal = ({ isOpen, onClose }) => {
     if (!isOverrideMode) {
       if (!isFullNameValid || !isGenderValid || !isLevelValid || !isPhoneValid || !isAgeValid) {
         setShowErrors(true)
+        revealMissingRequiredFields()
         toast.error('Please fill in all required fields correctly')
         return
       }
       if (!hasParentInfo) {
         setShowErrors(true)
         setShowParentSection(true)
+        revealMissingRequiredFields()
         toast.error('Please provide at least one parent/guardian contact')
         return
       }

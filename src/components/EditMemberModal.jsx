@@ -314,7 +314,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
   const setAttendanceChoice = (date, attendance) => {
     selection()
-    revealMissingRequiredFields()
     setSundayAttendance(prev => ({ ...prev, [date]: attendance }))
   }
 
@@ -352,6 +351,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       }
     } else {
       if (!isFullNameValid || !isPhoneValid || !isAgeValid) {
+        revealMissingRequiredFields()
         toast.error('Please fill in all required fields correctly')
         return
       }

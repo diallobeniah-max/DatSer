@@ -985,7 +985,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
               className="mt-3 flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:bg-gray-300 disabled:text-white/80 dark:disabled:bg-gray-700"
             >
               {isPreparingOffline ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {isPreparingOffline ? 'Downloading...' : 'Download recent data'}
+              {isPreparingOffline ? 'Refreshing...' : 'Refresh data'}
             </button>
           </div>
         </div>

@@ -2358,7 +2358,7 @@ const Dashboard = ({ isAdmin = false }) => {
     )
   }
 
-  if (loading) {
+  if (loading && (!members || members.length === 0)) {
     return (
       <div className={`${dashboardShellClass} mx-auto mt-8`}>
         <TableSkeleton />

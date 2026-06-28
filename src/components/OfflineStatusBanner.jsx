@@ -109,7 +109,7 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
                     className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-300"
                   >
                     {isPreparingOffline ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                    {isPreparingOffline ? 'Downloading...' : 'Download Offline Data'}
+                    {isPreparingOffline ? 'Refreshing...' : 'Refresh data'}
                   </button>
                   <button
                     type="button"
