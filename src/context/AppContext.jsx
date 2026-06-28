@@ -3387,11 +3387,6 @@ export const AppProvider = ({ children }) => {
     const dateKey = getLocalDateString(effectiveDate)
     const columnName = attendanceColumn || getAttendanceColumnNameForDate(effectiveDate)
     const attendanceValue = present === null ? null : (present ? 'Present' : 'Absent')
-    const updates = {}
-
-    ids.forEach((id) => {
-      updates[id] = present
-    })
 
     setMembers((prev) => prev.map((member) =>
       ids.includes(member.id)
@@ -3399,13 +3394,21 @@ export const AppProvider = ({ children }) => {
         : member
     ))
 
-    setAttendanceData((prev) => ({
-      ...prev,
-      [dateKey]: {
-        ...prev[dateKey],
-        ...updates
+    setAttendanceData((prev) => {
+      const dateAttendance = { ...(prev[dateKey] || {}) }
+      ids.forEach((id) => {
+        if (present === null) {
+          delete dateAttendance[id]
+        } else {
+          dateAttendance[id] = present
+        }
+      })
+
+      return {
+        ...prev,
+        [dateKey]: dateAttendance
       }
-    }))
+    })
   }, [])
 
   const applyAttendanceColumnsFromMemberRows = useCallback((rows = [], tableName = currentTable) => {
@@ -6534,7 +6537,8 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     if (!user?.id || !hasAccess || loading) return undefined
-    if (!isOnline || offlineMode === 'offline' || pendingSyncCount > 0) return undefined
+    if (offlineMode !== 'auto') return undefined
+    if (!isOnline || pendingSyncCount > 0) return undefined
     if (!currentTable || isPreparingOffline || isSyncingOffline) return undefined
     if (autoPrepareOfflineRef.current.running) return undefined
 
@@ -6567,9 +6571,15 @@ export const AppProvider = ({ children }) => {
       if (autoPrepareOfflineRef.current.running) return
       autoPrepareOfflineRef.current.running = true
       try {
-        await prepareOfflineData()
+        const result = await prepareOfflineData()
+        if (result?.success === false) {
+          autoPrepareOfflineRef.current.signature = ''
+          setOfflineStatusMessage('Auto download failed - use Download recent data to try again.')
+        }
       } catch (error) {
         console.warn('Automatic offline data preparation failed:', error)
+        autoPrepareOfflineRef.current.signature = ''
+        setOfflineStatusMessage('Auto download failed - use Download recent data to try again.')
       } finally {
         autoPrepareOfflineRef.current.running = false
       }

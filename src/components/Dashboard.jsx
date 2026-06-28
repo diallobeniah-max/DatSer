@@ -16,6 +16,7 @@ import MemberCard from './MemberCard'
 import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
 import MissingDataModal from './MissingDataModal'
+import { resolveMemberAttendanceForDate } from '../utils/attendanceRecords'
 import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import lazyWithRetry from '../utils/lazyWithRetry'
@@ -387,62 +388,6 @@ const dataUrlToFile = async (dataUrl, fileName) => {
 const createQrImageUrl = async (value, size = 260) => value
   ? QRCode.toDataURL(value, { width: size, margin: 4, errorCorrectionLevel: 'H' })
   : ''
-
-const getOrdinalSuffix = (day) => {
-  const value = Number(day)
-  if (!Number.isFinite(value)) return 'th'
-  if (value % 100 >= 11 && value % 100 <= 13) return 'th'
-  switch (value % 10) {
-    case 1:
-      return 'st'
-    case 2:
-      return 'nd'
-    case 3:
-      return 'rd'
-    default:
-      return 'th'
-  }
-}
-
-const normalizeAttendanceValue = (value) => {
-  if (value === true || value === false) return value
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim().toLowerCase()
-  if (normalized === 'present') return true
-  if (normalized === 'absent') return false
-  return undefined
-}
-
-const getLegacyAttendanceColumnName = (dateKey) => {
-  if (!dateKey) return null
-  const parts = String(dateKey).split('-')
-  const day = Number(parts[2])
-  if (!Number.isFinite(day)) return null
-  return `Attendance ${day}${getOrdinalSuffix(day)}`
-}
-
-const resolveMemberAttendanceForDate = (member, dateKey, attendanceMap = {}) => {
-  if (!member || !dateKey) return undefined
-
-  if (Object.prototype.hasOwnProperty.call(attendanceMap, member.id)) {
-    const mapValue = normalizeAttendanceValue(attendanceMap[member.id])
-    if (mapValue !== undefined) return mapValue
-  }
-
-  const normalizedDateKey = String(dateKey).replace(/-/g, '_')
-  const newColumnName = `attendance_${normalizedDateKey}`
-  const legacyColumnName = getLegacyAttendanceColumnName(dateKey)
-
-  for (const key in member) {
-    const keyLower = key.toLowerCase()
-    if (keyLower === newColumnName || key === legacyColumnName) {
-      const memberValue = normalizeAttendanceValue(member[key])
-      if (memberValue !== undefined) return memberValue
-    }
-  }
-
-  return undefined
-}
 
 const Dashboard = ({ isAdmin = false }) => {
   const {
@@ -1106,7 +1051,7 @@ const Dashboard = ({ isAdmin = false }) => {
       const dateKey = selectedSundayDate || getDateString(selectedAttendanceDate)
       if (!dateKey) {
         const editedOnly = filteredMembers.filter(member => {
-          if (!isEditedMember(member) && !isRecentlyChangedMember(member)) return false
+          if (!isEditedMember(member)) return false
           // Apply name search only to members who have been edited (marked on any Sunday)
           if (searchTerm) {
             const lowerTerm = searchTerm.toLowerCase()
@@ -1138,7 +1083,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       let filteredByDate = filteredMembers.filter(m => {
         const val = getVal(m)
-        if (val === undefined && !isRecentlyChangedMember(m, dateKey)) return false
+        if (val !== true && val !== false) return false
         // Apply name search only to members who have been marked Present or Absent
         if (searchTerm) {
           const lowerTerm = searchTerm.toLowerCase()

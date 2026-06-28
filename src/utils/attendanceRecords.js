@@ -1,0 +1,56 @@
+export const getOrdinalSuffix = (day) => {
+  const value = Number(day)
+  if (!Number.isFinite(value)) return 'th'
+  if (value % 100 >= 11 && value % 100 <= 13) return 'th'
+  switch (value % 10) {
+    case 1:
+      return 'st'
+    case 2:
+      return 'nd'
+    case 3:
+      return 'rd'
+    default:
+      return 'th'
+  }
+}
+
+export const normalizeAttendanceValue = (value) => {
+  if (value === true || value === false) return value
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'present') return true
+  if (normalized === 'absent') return false
+  return undefined
+}
+
+export const getLegacyAttendanceColumnName = (dateKey) => {
+  if (!dateKey) return null
+  const parts = String(dateKey).split('-')
+  const day = Number(parts[2])
+  if (!Number.isFinite(day)) return null
+  return `Attendance ${day}${getOrdinalSuffix(day)}`
+}
+
+export const resolveMemberAttendanceForDate = (member, dateKey, attendanceMap = {}) => {
+  if (!member || !dateKey) return undefined
+
+  if (Object.prototype.hasOwnProperty.call(attendanceMap, member.id)) {
+    const mapValue = normalizeAttendanceValue(attendanceMap[member.id])
+    if (mapValue !== undefined) return mapValue
+    return undefined
+  }
+
+  const normalizedDateKey = String(dateKey).replace(/-/g, '_')
+  const newColumnName = `attendance_${normalizedDateKey}`
+  const legacyColumnName = getLegacyAttendanceColumnName(dateKey)
+
+  for (const key in member) {
+    const keyLower = key.toLowerCase()
+    if (keyLower === newColumnName || key === legacyColumnName) {
+      const memberValue = normalizeAttendanceValue(member[key])
+      if (memberValue !== undefined) return memberValue
+    }
+  }
+
+  return undefined
+}
