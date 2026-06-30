@@ -53,6 +53,7 @@ import {
     searchSettingsIndex
 } from '../config/navigation.js'
 import { getInstalledAppInfo } from '../utils/appUpdates.js'
+import { getCollaboratorEmail, normalizeCollaborators } from '../utils/collaborators.js'
 import ConfirmModal from './ConfirmModal'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import lazyWithRetry from '../utils/lazyWithRetry'
@@ -810,6 +811,13 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const [isShareModalOpen, setIsShareModalOpen] = useState(false)
     const [collaborators, setCollaborators] = useState([])
     const [fetchingCollaborators, setFetchingCollaborators] = useState(false)
+    const [collaboratorLoadError, setCollaboratorLoadError] = useState('')
+    const [hasConfirmedCollaboratorLoad, setHasConfirmedCollaboratorLoad] = useState(false)
+    const [adminCodeStatus, setAdminCodeStatus] = useState(null)
+    const [adminCodeForm, setAdminCodeForm] = useState({ code: '', confirm: '' })
+    const [isAdminCodeLoading, setIsAdminCodeLoading] = useState(false)
+    const [isAdminCodeSaving, setIsAdminCodeSaving] = useState(false)
+    const [isRelinkingCollaborators, setIsRelinkingCollaborators] = useState(false)
     const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false)
     const [isDeleteAccountOpen, setIsDeleteAccountOpen] = useState(false)
     const [isExportModalOpen, setIsExportModalOpen] = useState(false)
@@ -1064,50 +1072,170 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const [removeCountdownMs, setRemoveCountdownMs] = useState(0)
     const [showUsageDetails, setShowUsageDetails] = useState(false)
 
-    // Fetch collaborators for Team section display
-    useEffect(() => {
-        const fetchCollaborators = async () => {
-            if (!user?.id || isDeveloperBypass || !isSupabaseConfigured()) {
-                setCollaborators([])
-                return
-            }
-
-            setFetchingCollaborators(true)
-            try {
-                const { data, error } = await supabase
-                    .from('collaborators')
-                    .select('id,owner_id,collaborator_email,role,status,created_at,accepted_at,expires_at')
-                    .eq('owner_id', user.id)
-                    .order('created_at', { ascending: false })
-
-                if (!error && data) {
-                    setCollaborators(data)
-                } else if (error) {
-                    console.error('Error fetching collaborators:', error)
-                }
-            } catch (err) {
-                console.error('Error in fetchCollaborators:', err)
-            } finally {
-                setFetchingCollaborators(false)
-            }
+    const fetchCollaborators = useCallback(async ({ background = false } = {}) => {
+        if (!user?.id || isDeveloperBypass || !isSupabaseConfigured()) {
+            setCollaborators([])
+            setHasConfirmedCollaboratorLoad(true)
+            return []
         }
+
+        if (!background) setFetchingCollaborators(true)
+        setCollaboratorLoadError('')
+        try {
+            const { data, error } = await supabase
+                .from('collaborators')
+                .select('*')
+                .eq('owner_id', user.id)
+                .order('created_at', { ascending: false })
+
+            if (error) throw error
+            const normalized = normalizeCollaborators(data)
+            setCollaborators(normalized)
+            setHasConfirmedCollaboratorLoad(true)
+            return normalized
+        } catch (err) {
+            console.error('Error fetching collaborators:', err)
+            setCollaboratorLoadError('Could not load collaborators. Existing cached list is kept if available.')
+            return []
+        } finally {
+            if (!background) setFetchingCollaborators(false)
+        }
+    }, [isDeveloperBypass, isSupabaseConfigured, user?.id])
+
+    const loadAdminCodeStatus = useCallback(async () => {
+        if (!user?.id || isDeveloperBypass || isCollaborator || !isSupabaseConfigured()) {
+            setAdminCodeStatus(null)
+            return null
+        }
+
+        setIsAdminCodeLoading(true)
+        try {
+            const { data, error } = await supabase.rpc('get_admin_code_status')
+            if (error) throw error
+            setAdminCodeStatus(data || { is_set: false })
+            return data
+        } catch (err) {
+            console.error('Error loading admin code status:', err)
+            setAdminCodeStatus({ is_set: false, error: err?.message || 'Could not load admin code status' })
+            return null
+        } finally {
+            setIsAdminCodeLoading(false)
+        }
+    }, [isCollaborator, isDeveloperBypass, isSupabaseConfigured, user?.id])
+
+    // Fetch collaborators for Team section display after login/session restore.
+    useEffect(() => {
         fetchCollaborators()
-    }, [user?.id, isDeveloperBypass, isSupabaseConfigured])
+    }, [fetchCollaborators])
+
+    useEffect(() => {
+        loadAdminCodeStatus()
+    }, [loadAdminCodeStatus])
 
     // Refresh collaborators when modal closes
     const handleShareModalClose = async () => {
         setIsShareModalOpen(false)
-        if (user && !isDeveloperBypass && isSupabaseConfigured()) {
-            try {
-                const { data } = await supabase
-                    .from('collaborators')
-                    .select('id,owner_id,collaborator_email,role,status,created_at,accepted_at,expires_at')
-                    .eq('owner_id', user.id)
-                    .order('created_at', { ascending: false })
-                if (data) setCollaborators(data)
-            } catch (err) {
-                console.error('Error refreshing collaborators:', err)
-            }
+        fetchCollaborators({ background: true })
+    }
+
+    const handleSaveAdminCode = async (event) => {
+        event?.preventDefault?.()
+        if (!user?.id || isCollaborator || !isSupabaseConfigured()) {
+            toast.error('Only the workspace owner can update the admin code')
+            return
+        }
+
+        const code = adminCodeForm.code.trim()
+        const confirm = adminCodeForm.confirm.trim()
+        if (code.length < 6) {
+            toast.error('Admin code must be at least 6 characters')
+            return
+        }
+        if (code !== confirm) {
+            toast.error('Admin code confirmation does not match')
+            return
+        }
+
+        setIsAdminCodeSaving(true)
+        try {
+            const { error } = await supabase.rpc('set_admin_login_code', {
+                p_code: code,
+                p_label: 'Admin Code Login'
+            })
+            if (error) throw error
+            setAdminCodeForm({ code: '', confirm: '' })
+            toast.success('Admin code updated')
+            await loadAdminCodeStatus()
+        } catch (err) {
+            console.error('Error saving admin code:', err)
+            toast.error(err?.message || 'Failed to update admin code')
+        } finally {
+            setIsAdminCodeSaving(false)
+        }
+    }
+
+    const handleRelinkCollaborators = async () => {
+        if (!user?.id || isCollaborator || !isSupabaseConfigured()) {
+            toast.error('Only the workspace owner can relink collaborators')
+            return
+        }
+
+        setIsRelinkingCollaborators(true)
+        try {
+            const { data, error } = await supabase.rpc('relink_collaborators_for_owner', {
+                p_owner_id: user.id
+            })
+            if (error) throw error
+            const linked = data?.linked ?? 0
+            const missing = data?.missing_auth_user ?? 0
+            toast.success(`Relink complete: ${linked} linked, ${missing} still waiting for login`)
+            await fetchCollaborators({ background: true })
+        } catch (err) {
+            console.error('Error relinking collaborators:', err)
+            toast.error(err?.message || 'Failed to relink collaborators')
+        } finally {
+            setIsRelinkingCollaborators(false)
+        }
+    }
+
+    const handleToggleCollaboratorStatus = async (collaboratorId) => {
+        if (!user?.id || isCollaborator || !isSupabaseConfigured()) {
+            toast.error('Only the workspace owner can update collaborator access')
+            return
+        }
+
+        const target = collaborators.find(c => c.id === collaboratorId)
+        if (!target) return
+        const nextStatus = target.status === 'disabled' ? 'active' : 'disabled'
+        setDeletingCollaboratorId(collaboratorId)
+        try {
+            const { error } = await supabase
+                .from('collaborators')
+                .update({
+                    status: nextStatus,
+                    is_admin: nextStatus === 'disabled' ? false : target.is_admin
+                })
+                .eq('id', collaboratorId)
+                .eq('owner_id', user.id)
+            if (error) throw error
+            setCollaborators(prev => prev.map(item => (
+                item.id === collaboratorId
+                    ? {
+                        ...item,
+                        status: nextStatus,
+                        is_admin: nextStatus === 'disabled' ? false : item.is_admin,
+                        linked_status: nextStatus === 'disabled'
+                            ? 'disabled'
+                            : item.collaborator_user_id ? 'linked' : 'pending'
+                    }
+                    : item
+            )))
+            toast.success(`${nextStatus === 'disabled' ? 'Disabled' : 'Activated'} ${getCollaboratorEmail(target)}`)
+        } catch (err) {
+            console.error('Error updating collaborator status:', err)
+            toast.error(err?.message || 'Failed to update collaborator access')
+        } finally {
+            setDeletingCollaboratorId(null)
         }
     }
 
@@ -1144,7 +1272,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     }
 
     const handleDeleteCollaborator = (collaboratorId) => {
-        if (!user || !isSupabaseConfigured) {
+        if (!user || !isSupabaseConfigured()) {
             toast.error('Not authorized')
             return
         }
@@ -1163,7 +1291,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 .eq('owner_id', user.id)
             if (error) throw error
             setCollaborators(prev => prev.filter(c => c.id !== target.id))
-            toast.success(`Removed access for ${target.email}`)
+            toast.success(`Removed access for ${getCollaboratorEmail(target)}`)
         } catch (err) {
             console.error('Error deleting collaborator:', err)
             toast.error('Failed to remove collaborator from database')
@@ -1178,7 +1306,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         if (!pendingRemoval) return
         setIsRemovingCollaborator(true)
         if (removeDelay > 0) {
-            toast.info(`Will remove ${pendingRemoval.email} in ${removeDelay} minutes`)
+            toast.info(`Will remove ${getCollaboratorEmail(pendingRemoval)} in ${removeDelay} minutes`)
         }
         const totalMs = removeDelay * 60 * 1000
         setRemoveCountdownMs(totalMs)
@@ -1520,6 +1648,18 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         <TeamSettingsSection
                             collaborators={collaborators}
                             fetchingCollaborators={fetchingCollaborators}
+                            collaboratorLoadError={collaboratorLoadError}
+                            hasConfirmedCollaboratorLoad={hasConfirmedCollaboratorLoad}
+                            onRetryCollaborators={() => fetchCollaborators()}
+                            adminCodeStatus={adminCodeStatus}
+                            adminCodeForm={adminCodeForm}
+                            setAdminCodeForm={setAdminCodeForm}
+                            isAdminCodeLoading={isAdminCodeLoading}
+                            isAdminCodeSaving={isAdminCodeSaving}
+                            handleSaveAdminCode={handleSaveAdminCode}
+                            isRelinkingCollaborators={isRelinkingCollaborators}
+                            handleRelinkCollaborators={handleRelinkCollaborators}
+                            handleToggleCollaboratorStatus={handleToggleCollaboratorStatus}
                             isCollaborator={isCollaborator}
                             user={user}
                             setIsShareModalOpen={setIsShareModalOpen}
@@ -3111,7 +3251,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                 </div>
                                 <div>
                                     <h2 className="text-lg font-semibold text-red-700 dark:text-red-300">Remove access?</h2>
-                                    <p className="text-sm text-gray-500 dark:text-gray-400">{pendingRemoval.email}</p>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">{getCollaboratorEmail(pendingRemoval)}</p>
                                 </div>
                             </div>
                             <button

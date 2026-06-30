@@ -1,9 +1,22 @@
 import React from 'react'
-import { Users, UserPlus, Mail, Shield, CheckCircle, Trash2, Loader2, Zap } from 'lucide-react'
+import { Users, UserPlus, Mail, Shield, CheckCircle, Trash2, Loader2, AlertCircle, RefreshCw, KeyRound, Link2, Power } from 'lucide-react'
+import { getCollaboratorEmail } from '../utils/collaborators'
 
 const TeamSettingsSection = ({
     collaborators,
     fetchingCollaborators,
+    collaboratorLoadError,
+    hasConfirmedCollaboratorLoad,
+    onRetryCollaborators,
+    adminCodeStatus,
+    adminCodeForm,
+    setAdminCodeForm,
+    isAdminCodeLoading,
+    isAdminCodeSaving,
+    handleSaveAdminCode,
+    isRelinkingCollaborators,
+    handleRelinkCollaborators,
+    handleToggleCollaboratorStatus,
     isCollaborator,
     user,
     setIsShareModalOpen,
@@ -33,6 +46,98 @@ const TeamSettingsSection = ({
                 )}
             </div>
 
+            {!isCollaborator && (
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.72fr)]">
+                    <form
+                        onSubmit={handleSaveAdminCode}
+                        className="rounded-2xl border border-orange-200/70 bg-orange-50/50 p-4 dark:border-orange-900/50 dark:bg-orange-950/20"
+                    >
+                        <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-600 text-white">
+                                <KeyRound className="h-5 w-5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white">Admin Code Login</h4>
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                                        adminCodeStatus?.is_set
+                                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                    }`}>
+                                        {isAdminCodeLoading ? 'Checking...' : adminCodeStatus?.is_set ? 'Code active' : 'Not set'}
+                                    </span>
+                                </div>
+                                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                                    Rotate the Admin Code Login safely. The code is hashed server-side and never shown after saving.
+                                </p>
+                                {adminCodeStatus?.error && (
+                                    <p className="mt-2 text-xs font-semibold text-red-600 dark:text-red-300">
+                                        {adminCodeStatus.error}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <label className="space-y-1.5">
+                                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">New code</span>
+                                <input
+                                    type="password"
+                                    value={adminCodeForm.code}
+                                    onChange={(event) => setAdminCodeForm(prev => ({ ...prev, code: event.target.value }))}
+                                    placeholder="At least 6 characters"
+                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                                    autoComplete="new-password"
+                                />
+                            </label>
+                            <label className="space-y-1.5">
+                                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Confirm code</span>
+                                <input
+                                    type="password"
+                                    value={adminCodeForm.confirm}
+                                    onChange={(event) => setAdminCodeForm(prev => ({ ...prev, confirm: event.target.value }))}
+                                    placeholder="Repeat code"
+                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                                    autoComplete="new-password"
+                                />
+                            </label>
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={isAdminCodeSaving || !adminCodeForm.code || !adminCodeForm.confirm}
+                            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-500/20 transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                        >
+                            {isAdminCodeSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+                            Save admin code
+                        </button>
+                    </form>
+
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+                        <div className="flex items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                                <Link2 className="h-5 w-5" />
+                            </div>
+                            <div className="min-w-0">
+                                <h4 className="text-sm font-bold text-gray-900 dark:text-white">Collaborator links</h4>
+                                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                                    Match invited emails to real login accounts so access, counts, and Share Access stay in sync.
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleRelinkCollaborators}
+                            disabled={isRelinkingCollaborators || collaborators.length === 0}
+                            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-bold text-gray-800 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-700"
+                        >
+                            {isRelinkingCollaborators ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                            Relink existing collaborators
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div
                 data-setting-id="manage_team"
                 tabIndex={-1}
@@ -40,13 +145,29 @@ const TeamSettingsSection = ({
             >
                 <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
                     <Users className="w-4 h-4" />
-                    Workspace Collaborators ({collaborators.length})
+                    Workspace Collaborators ({fetchingCollaborators && !hasConfirmedCollaboratorLoad ? '...' : collaborators.length})
                 </h4>
 
                 {fetchingCollaborators ? (
                     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-8 flex flex-col items-center justify-center">
                         <Loader2 className="w-8 h-8 text-orange-500 animate-spin mb-3" />
                         <p className="text-sm text-gray-500 dark:text-gray-400">Loading collaborators...</p>
+                    </div>
+                ) : collaboratorLoadError && collaborators.length === 0 && !hasConfirmedCollaboratorLoad ? (
+                    <div className="bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-900/60 p-8 text-center">
+                        <AlertCircle className="w-10 h-10 text-red-500 mx-auto mb-3" />
+                        <h5 className="font-semibold text-gray-900 dark:text-white mb-1">Could not load collaborators</h5>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-5 max-w-sm mx-auto">
+                            {collaboratorLoadError}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={onRetryCollaborators}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                            Retry
+                        </button>
                     </div>
                 ) : collaborators.length === 0 ? (
                     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
@@ -76,7 +197,7 @@ const TeamSettingsSection = ({
                                     </div>
                                     <div className="min-w-0">
                                         <p className="font-semibold text-gray-900 dark:text-white truncate">
-                                            {collaborator.email}
+                                            {getCollaboratorEmail(collaborator)}
                                         </p>
                                         <div className="flex items-center gap-2 mt-0.5">
                                             <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
@@ -87,7 +208,12 @@ const TeamSettingsSection = ({
                                                 <Shield className="w-2.5 h-2.5" />
                                                 {collaborator.role}
                                             </span>
-                                            {collaborator.status === 'active' ? (
+                                            {collaborator.status === 'disabled' ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                                                    <Power className="w-2.5 h-2.5" />
+                                                    Disabled
+                                                </span>
+                                            ) : collaborator.status === 'active' ? (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
                                                     <CheckCircle className="w-2.5 h-2.5" />
                                                     Active
@@ -98,18 +224,34 @@ const TeamSettingsSection = ({
                                                     Pending
                                                 </span>
                                             )}
+                                            {collaborator.linked_status === 'missing auth user' && (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                                                    Missing login
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
 
                                 {!isCollaborator && (
-                                    <button
-                                        onClick={() => handleDeleteCollaborator(collaborator.id)}
-                                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                                        title="Remove collaborator"
-                                    >
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                        <button
+                                            onClick={() => handleToggleCollaboratorStatus(collaborator.id)}
+                                            disabled={deletingCollaboratorId === collaborator.id}
+                                            className="rounded-lg px-2.5 py-2 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
+                                            title={collaborator.status === 'disabled' ? 'Activate collaborator' : 'Disable collaborator'}
+                                        >
+                                            {collaborator.status === 'disabled' ? 'Activate' : 'Disable'}
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteCollaborator(collaborator.id)}
+                                            disabled={deletingCollaboratorId === collaborator.id}
+                                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
+                                            title="Remove collaborator"
+                                        >
+                                            {deletingCollaboratorId === collaborator.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         ))}

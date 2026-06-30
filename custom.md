@@ -61,3 +61,21 @@
 - Commit and push completed work to main unless the user says not to.
 - Use clear commit messages that describe the actual fix.
 - Leave generated artifacts, screenshots, logs, and temporary files unstaged unless they are intentionally part of the task.
+
+## Development Server Workflow
+- At the start of a Codex work session, run `npm run dev` automatically so the user does not have to start it manually.
+- Only run `npm run dev` once per session/task unless it crashes or needs to be restarted.
+- Before running it, check whether the dev server is already running. If it is already running, reuse the existing server instead of starting another one.
+- If the dev server starts successfully, open the local preview/browser inside Codex so the user can see the app quickly.
+- Do not repeatedly start duplicate dev servers.
+- If the port is already in use, identify the existing dev server URL and open that instead.
+- If `npm run dev` fails, summarize the key error lines and fix the root cause if it is related to the task.
+- Keep the dev server running in the background while working when possible.
+- Do not ask the user to run `npm run dev` manually unless Codex lacks terminal access or the command requires user action that Codex cannot provide.
+
+## Known Issues/Product Reliability Backlog
+- Team & Sharing previously displayed workspace collaborators but later showed `0` because the UI and invite flow drifted from the canonical collaborator data shape. Fix the existing sharing workflow before adding any separate collaborator system.
+- App collaborators are separate from Supabase dashboard collaborators. Do not assume people listed in the Supabase project dashboard automatically have DatSer app workspace access.
+- Admin Code Login needs owner/admin management from inside the app so the owner can rotate the hashed admin code and maintain the same collaborator records used by Team & Sharing.
+- If collaborator records look empty or stale, first check `collaborators.email`, `collaborators.collaborator_email`, `collaborator_user_id`, `status`, and the Team & Sharing fetch logic before building a new table.
+- A future secure Management API import can be considered for discovering Supabase dashboard users, but it must stay optional and must not expose service-role secrets to the frontend.

@@ -5,6 +5,7 @@ import { X, UserPlus, Mail, Trash2, Users, AlertCircle, Send, CheckCircle, Clock
 import { toast } from 'react-toastify'
 import { supabase } from '../lib/supabase'
 import { executeSupabaseWrite } from '../utils/supabaseWrite'
+import { collaboratorMatchesEmail, getCollaboratorEmail, normalizeCollaborators, normalizeCollaborator } from '../utils/collaborators'
 
 const ShareAccessModal = ({ isOpen, onClose }) => {
   const { user, preferences, isDeveloperBypass } = useAuth()
@@ -15,6 +16,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
   const [collaborators, setCollaborators] = useState([])
   const [fetchingCollaborators, setFetchingCollaborators] = useState(false)
   const [error, setError] = useState('')
+  const [hasLoadedCollaborators, setHasLoadedCollaborators] = useState(false)
 
   // Fetch existing collaborators when modal opens
   useEffect(() => {
@@ -35,15 +37,17 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
     try {
       const { data, error } = await supabase
         .from('collaborators')
-        .select('id,owner_id,collaborator_email,role,status,created_at,accepted_at,expires_at')
+        .select('*')
         .eq('owner_id', user.id)
         .order('created_at', { ascending: false })
 
       if (error) throw error
-      setCollaborators(data || [])
+      setCollaborators(normalizeCollaborators(data))
+      setHasLoadedCollaborators(true)
     } catch (err) {
       console.error('Error fetching collaborators:', err)
-      setError('Failed to load collaborators')
+      setError('Failed to load collaborators. Use Retry to refresh the team list.')
+      setHasLoadedCollaborators(collaborators.length > 0)
     } finally {
       setFetchingCollaborators(false)
     }
@@ -99,7 +103,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
     }
 
     // Check if already added
-    if (collaborators.some(c => c.email.toLowerCase() === email.trim().toLowerCase())) {
+    if (collaborators.some(c => collaboratorMatchesEmail(c, email))) {
       toast.warning('This person has already been invited')
       return
     }
@@ -120,7 +124,11 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
           .insert([{
             owner_id: user.id,
             email: collaboratorEmail,
+            collaborator_email: collaboratorEmail,
+            collaborator_user_id: inviteResult.userId || null,
             status: 'pending',
+            role: 'member',
+            is_admin: false,
             invite_token: inviteResult.inviteLink || null,
             invited_by_name: preferences?.workspace_name || user?.user_metadata?.full_name || user?.email
           }])
@@ -161,7 +169,8 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
         }
       }
 
-      setCollaborators(prev => [data, ...prev])
+      setCollaborators(prev => [normalizeCollaborator(data), ...prev])
+      setHasLoadedCollaborators(true)
       setEmail('')
     } catch (err) {
       console.error('Error adding collaborator:', err)
@@ -179,7 +188,8 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
   const handleResendInvite = async (collaborator) => {
     setResendingId(collaborator.id)
     try {
-      const result = await sendInvite(collaborator.email)
+      const collaboratorEmail = getCollaboratorEmail(collaborator)
+      const result = await sendInvite(collaboratorEmail)
       if (result.inviteLink) {
         // Update the stored invite link
         await executeSupabaseWrite(
@@ -187,7 +197,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
             .from('collaborators')
             .update({ invite_token: result.inviteLink })
             .eq('id', collaborator.id),
-          { action: `Update invite link for ${collaborator.email}` }
+          { action: `Update invite link for ${collaboratorEmail}` }
         )
         
         // Update local state
@@ -250,13 +260,13 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
           .update({ is_admin: !collaborator.is_admin })
           .eq('id', collaborator.id)
           .eq('owner_id', user.id),
-        { action: `Update collaborator admin access for ${collaborator.email}` }
+        { action: `Update collaborator admin access for ${getCollaboratorEmail(collaborator)}` }
       )
 
       setCollaborators(prev => prev.map(item => (
         item.id === collaborator.id ? { ...item, is_admin: !item.is_admin } : item
       )))
-      toast.success(`${collaborator.email} ${collaborator.is_admin ? 'removed from' : 'granted'} admin access`)
+      toast.success(`${getCollaboratorEmail(collaborator)} ${collaborator.is_admin ? 'removed from' : 'granted'} admin access`)
     } catch (err) {
       console.error('Error updating admin access:', err)
       toast.error('Failed to update admin access')
@@ -373,6 +383,19 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-600"></div>
               </div>
+            ) : error && collaborators.length === 0 && !hasLoadedCollaborators ? (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <AlertCircle className="w-12 h-12 mx-auto mb-3 text-red-500" />
+                <p className="text-sm font-semibold text-red-600 dark:text-red-300">Could not load people with access</p>
+                <p className="text-xs mt-1">{error}</p>
+                <button
+                  type="button"
+                  onClick={fetchCollaborators}
+                  className="mt-4 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700"
+                >
+                  Retry
+                </button>
+              </div>
             ) : collaborators.length === 0 ? (
               <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                 <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
@@ -389,12 +412,12 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
                     <div className="flex items-center space-x-3 flex-1 min-w-0">
                       <div className="w-8 h-8 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center">
                         <span className="text-sm font-medium text-orange-600 dark:text-orange-400">
-                          {collaborator.email.charAt(0).toUpperCase()}
+                          {getCollaboratorEmail(collaborator).charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm font-medium truncate ${collaborator.is_admin ? 'text-purple-700 dark:text-purple-200' : 'text-gray-900 dark:text-white'}`}>
-                          {collaborator.email}
+                          {getCollaboratorEmail(collaborator)}
                         </p>
                         <div className="flex items-center space-x-2 mt-0.5">
                           {getStatusBadge(collaborator.status)}
@@ -443,7 +466,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
                         </>
                       )}
                       <button
-                        onClick={() => handleRemoveCollaborator(collaborator.id, collaborator.email)}
+                        onClick={() => handleRemoveCollaborator(collaborator.id, getCollaboratorEmail(collaborator))}
                         className="p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
                         title="Remove access"
                       >
