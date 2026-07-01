@@ -6,6 +6,7 @@ import { toast } from 'react-toastify'
 import { supabase } from '../lib/supabase'
 import { executeSupabaseWrite } from '../utils/supabaseWrite'
 import { collaboratorMatchesEmail, getCollaboratorEmail, normalizeCollaborators, normalizeCollaborator } from '../utils/collaborators'
+import { sendCollaboratorSetupEmail } from '../utils/collaboratorSetup'
 
 const ShareAccessModal = ({ isOpen, onClose }) => {
   const { user, preferences, isDeveloperBypass } = useAuth()
@@ -51,34 +52,12 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
     }
   }
 
-  const sendInvite = async (collaboratorEmail) => {
-    const { data: { session } } = await supabase.auth.getSession()
-    const appUrl = `${window.location.origin}${import.meta.env?.BASE_URL || '/'}`
-    const inviterName = preferences?.workspace_name || user?.user_metadata?.full_name || user?.email
-
-    const response = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-collaborator-user`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
-        },
-        body: JSON.stringify({ 
-          email: collaboratorEmail,
-          inviterName,
-          appUrl
-        })
-      }
-    )
-    
-    const result = await response.json()
-    if (!response.ok || result.error) {
-      throw new Error(result.error || 'Failed to send invite')
-    }
-    return result
-  }
+  const sendInvite = async (collaboratorEmail) => sendCollaboratorSetupEmail({
+    supabase,
+    user,
+    preferences,
+    email: collaboratorEmail
+  })
 
   const handleAddCollaborator = async (e) => {
     e.preventDefault()
@@ -151,7 +130,9 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
       if (inviteResult.inviteLink) {
         try {
           await navigator.clipboard.writeText(inviteResult.inviteLink)
-          if (inviteResult.emailSent) {
+          if (inviteResult.passwordResetSent) {
+            toast.success(`Setup email sent to ${collaboratorEmail}. They can create or reset their password from the link.`)
+          } else if (inviteResult.emailSent) {
             toast.success(`Invite email sent to ${collaboratorEmail}! Link also copied to clipboard.`)
           } else if (inviteResult.alreadyExists) {
             toast.success(`${collaboratorEmail} already has an account. Login link copied to clipboard.`)
@@ -159,7 +140,9 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
             toast.success(`Invite link copied to clipboard! Share it with ${collaboratorEmail}`)
           }
         } catch {
-          if (inviteResult.emailSent) {
+          if (inviteResult.passwordResetSent) {
+            toast.success(`Setup email sent to ${collaboratorEmail}.`)
+          } else if (inviteResult.emailSent) {
             toast.success(`Invite email sent to ${collaboratorEmail}!`)
           } else {
             toast.success(`Invite created for ${collaboratorEmail}. Use the copy button to share the link.`)
@@ -188,6 +171,9 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
     try {
       const collaboratorEmail = getCollaboratorEmail(collaborator)
       const result = await sendInvite(collaboratorEmail)
+      if (result.passwordResetSent) {
+        toast.success(`Password reset/setup email sent to ${collaboratorEmail}`)
+      }
       if (result.inviteLink) {
         // Update the stored invite link
         await executeSupabaseWrite(

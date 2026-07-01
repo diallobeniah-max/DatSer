@@ -17,12 +17,15 @@ import {
     Copy,
     CheckSquare,
     Square,
-    Settings,
     FileText,
     Layout,
     ArrowRight,
     UserCheck,
-    Smartphone
+    Smartphone,
+    BarChart3,
+    SlidersHorizontal,
+    Sparkles,
+    TrendingUp
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { supabase } from '../lib/supabase'
@@ -220,6 +223,140 @@ const escapeVCardValue = (value) => String(value ?? '')
     .replace(/;/g, '\\;')
 
 // --- Memoized Sub-components ---
+
+const ExportStatCard = React.memo(({ label, value, tone = 'neutral', icon: Icon }) => {
+    const toneClass = {
+        neutral: 'border-gray-200 bg-white text-gray-950 dark:border-gray-800 dark:bg-gray-900 dark:text-white',
+        orange: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900/40 dark:bg-orange-950/20 dark:text-orange-300',
+        green: 'border-green-200 bg-green-50 text-green-700 dark:border-green-900/40 dark:bg-green-950/20 dark:text-green-300',
+        red: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300'
+    }[tone] || ''
+
+    return (
+        <div className={`rounded-2xl border p-4 shadow-sm transition-transform duration-200 hover:-translate-y-0.5 ${toneClass}`}>
+            <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-60">{label}</p>
+                {Icon && <Icon className="h-4 w-4 opacity-70" />}
+            </div>
+            <p className="mt-2 text-2xl font-black leading-none">{value}</p>
+        </div>
+    )
+})
+ExportStatCard.displayName = 'ExportStatCard'
+
+const MonthComparisonSection = React.memo(({
+    monthlyTables,
+    comparisonMonths,
+    setComparisonMonths,
+    comparisonData,
+    loadingComparison,
+    loadMonthComparison,
+    allMonthSundays,
+    formatTableName
+}) => {
+    const toggleComparisonMonth = (table) => {
+        setComparisonMonths(prev => (
+            prev.includes(table)
+                ? prev.filter(item => item !== table)
+                : [...prev, table]
+        ))
+    }
+
+    return (
+        <section className="export-center-card export-center-reveal rounded-3xl border border-orange-200/70 bg-gradient-to-br from-white via-orange-50/50 to-white p-4 shadow-sm dark:border-orange-900/40 dark:from-gray-950 dark:via-orange-950/10 dark:to-gray-950 md:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-2xl">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        Month Comparison
+                    </div>
+                    <h2 className="mt-3 text-xl font-black text-gray-950 dark:text-white">Compare attendance patterns without loading everything first</h2>
+                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                        Pick two or more months, then load only those months to compare Sundays, present, absent, marked, and missing counts.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={loadMonthComparison}
+                    disabled={comparisonMonths.length < 2 || loadingComparison}
+                    className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl bg-gray-950 px-5 text-sm font-black text-white shadow-lg shadow-black/10 transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-gray-950"
+                >
+                    {loadingComparison ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
+                    {loadingComparison ? 'Loading comparison...' : 'Load comparison'}
+                </button>
+            </div>
+
+            <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
+                {(monthlyTables || []).map(table => {
+                    const selected = comparisonMonths.includes(table)
+                    return (
+                        <button
+                            key={table}
+                            type="button"
+                            onClick={() => toggleComparisonMonth(table)}
+                            className={`shrink-0 rounded-2xl border px-4 py-3 text-left transition duration-200 active:scale-[0.98] ${
+                                selected
+                                    ? 'border-orange-500 bg-orange-600 text-white shadow-lg shadow-orange-600/20'
+                                    : 'border-gray-200 bg-white text-gray-700 hover:border-orange-300 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200'
+                            }`}
+                        >
+                            <span className="block text-xs font-black">{formatTableName(table)}</span>
+                            <span className="mt-1 block text-[10px] font-bold opacity-70">{(allMonthSundays[table] || []).length} Sundays</span>
+                        </button>
+                    )
+                })}
+            </div>
+
+            {comparisonData.length > 0 && (
+                <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                    {comparisonData.map(month => (
+                        <article key={month.table} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <h3 className="font-black text-gray-950 dark:text-white">{formatTableName(month.table)}</h3>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">{month.totalMembers} members checked across {month.sundays.length} Sundays</p>
+                                </div>
+                                <div className="rounded-2xl bg-orange-50 px-3 py-2 text-right dark:bg-orange-950/30">
+                                    <p className="text-[10px] font-black uppercase text-orange-500">Marked</p>
+                                    <p className="text-lg font-black text-orange-700 dark:text-orange-300">{month.markedTotal}</p>
+                                </div>
+                            </div>
+
+                            <div className="mt-4 space-y-3">
+                                {month.sundays.map(day => {
+                                    const marked = day.present + day.absent
+                                    const presentWidth = marked ? Math.round((day.present / marked) * 100) : 0
+                                    const absentWidth = marked ? Math.round((day.absent / marked) * 100) : 0
+                                    return (
+                                        <div key={day.dateKey} className="rounded-2xl bg-gray-50 p-3 dark:bg-gray-950/50">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-sm font-black text-gray-900 dark:text-white">{day.label}</p>
+                                                    <p className="text-[11px] text-gray-500">{day.dateKey}</p>
+                                                </div>
+                                                <p className="text-xs font-bold text-gray-500">{marked} marked · {day.missing} missing</p>
+                                            </div>
+                                            <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                                                <span className="bg-green-500" style={{ width: `${presentWidth}%` }} />
+                                                <span className="bg-red-500" style={{ width: `${absentWidth}%` }} />
+                                            </div>
+                                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
+                                                <span className="rounded-full bg-green-100 px-2 py-1 text-green-700 dark:bg-green-900/30 dark:text-green-300">{day.present} present</span>
+                                                <span className="rounded-full bg-red-100 px-2 py-1 text-red-700 dark:bg-red-900/30 dark:text-red-300">{day.absent} absent</span>
+                                                <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600 dark:bg-gray-800 dark:text-gray-300">{day.missing} unmarked</span>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </article>
+                    ))}
+                </div>
+            )}
+        </section>
+    )
+})
+MonthComparisonSection.displayName = 'MonthComparisonSection'
 
 const ServiceDatesSection = React.memo(({
     years,
@@ -523,6 +660,10 @@ const ExportCenterPage = ({ onBack }) => {
     const [selectedRows, setSelectedRows] = useState(new Set())
     const [isExportContactsModalOpen, setIsExportContactsModalOpen] = useState(false)
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+    const [showMonthComparison, setShowMonthComparison] = useState(false)
+    const [comparisonMonths, setComparisonMonths] = useState([])
+    const [comparisonData, setComparisonData] = useState([])
+    const [loadingComparison, setLoadingComparison] = useState(false)
     const workerRef = useRef(null)
 
     useEffect(() => {
@@ -1136,13 +1277,80 @@ const ExportCenterPage = ({ onBack }) => {
         }
     }, [attendanceData, selectedPreviewData, reportHeaderLines, selectedMonths, selectedSundays])
 
+    const loadMonthComparison = useCallback(async () => {
+        if (comparisonMonths.length < 2) {
+            toast.info('Select at least two months to compare')
+            return
+        }
+
+        setLoadingComparison(true)
+        try {
+            const nextComparison = []
+            for (const table of comparisonMonths) {
+                let rows = []
+                if (!isSupabaseConfigured()) {
+                    rows = currentTable === table ? members : []
+                } else {
+                    let offset = 0
+                    const pageSize = 1000
+                    while (true) {
+                        const { data, error } = await supabase
+                            .from(table)
+                            .select('*')
+                            .range(offset, offset + pageSize - 1)
+                        if (error) throw error
+                        if (!data || data.length === 0) break
+                        rows = rows.concat(data)
+                        if (data.length < pageSize) break
+                        offset += pageSize
+                    }
+                }
+
+                if (rows.length === 0 && currentTable === table && members.length > 0) {
+                    rows = members
+                }
+
+                const sundays = (allMonthSundays[table] || []).map(sunday => {
+                    let present = 0
+                    let absent = 0
+                    rows.forEach(row => {
+                        const value = resolveAttendanceForDate(row, sunday, attendanceData)
+                        if (value === true) present += 1
+                        if (value === false) absent += 1
+                    })
+                    const marked = present + absent
+                    return {
+                        ...sunday,
+                        present,
+                        absent,
+                        missing: Math.max(rows.length - marked, 0)
+                    }
+                })
+
+                nextComparison.push({
+                    table,
+                    totalMembers: rows.length,
+                    markedTotal: sundays.reduce((sum, sunday) => sum + sunday.present + sunday.absent, 0),
+                    sundays
+                })
+            }
+            setComparisonData(nextComparison)
+            toast.success('Month comparison loaded')
+        } catch (err) {
+            console.error('Month comparison load failed:', err)
+            toast.error(err?.message || 'Could not load month comparison')
+        } finally {
+            setLoadingComparison(false)
+        }
+    }, [allMonthSundays, attendanceData, comparisonMonths, currentTable, isSupabaseConfigured, members])
+
     const allMonthsSelected = selectedMonths.length === (monthlyTables || []).length && (monthlyTables || []).length > 0
 
     return (
-        <div className="min-h-screen bg-transparent pb-24 font-sans selection:bg-orange-100 dark:selection:bg-orange-900/40 p-4 md:p-6 lg:p-8">
-            <div className="bg-white dark:bg-gray-950 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xl overflow-hidden flex flex-col h-[calc(100vh-100px)]">
+        <div className="min-h-screen bg-transparent p-3 pb-24 font-sans selection:bg-orange-100 dark:selection:bg-orange-900/40 md:p-6 lg:p-8">
+            <div className="export-center-shell overflow-hidden rounded-[1.75rem] border border-orange-100/80 bg-gradient-to-br from-white via-orange-50/35 to-white shadow-2xl dark:border-orange-900/30 dark:from-gray-950 dark:via-orange-950/10 dark:to-gray-950 md:rounded-[2rem]">
                 {/* Simple Navigation Header */}
-                <div className="flex-none bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800">
+                <div className="flex-none border-b border-orange-100/70 bg-white/85 backdrop-blur-md dark:border-orange-900/30 dark:bg-gray-950/85">
                 <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button
@@ -1176,7 +1384,36 @@ const ExportCenterPage = ({ onBack }) => {
                 </div>
             </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-7 space-y-6">
+                <div className="custom-scrollbar max-h-[calc(100vh-100px)] overflow-y-auto p-4 lg:p-7 space-y-6">
+                    <section className="export-center-hero export-center-reveal rounded-[1.75rem] border border-orange-200/80 bg-gradient-to-br from-orange-600 via-orange-500 to-amber-400 p-5 text-white shadow-xl shadow-orange-500/20 md:p-6">
+                        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                            <div className="max-w-2xl">
+                                <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]">
+                                    <Sparkles className="h-3.5 w-3.5" />
+                                    Export build desk
+                                </div>
+                                <h2 className="mt-3 text-2xl font-black tracking-tight md:text-3xl">Build clean attendance exports without guessing what is selected.</h2>
+                                <p className="mt-2 max-w-xl text-sm font-medium text-white/85">
+                                    Choose service dates, preview the exact rows, compare months only when needed, then download the export that matches your workflow.
+                                </p>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-center sm:min-w-[22rem]">
+                                <div className="rounded-2xl bg-white/15 p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-wide text-white/70">Months</p>
+                                    <p className="text-2xl font-black">{selectedMonths.length}</p>
+                                </div>
+                                <div className="rounded-2xl bg-white/15 p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-wide text-white/70">Sundays</p>
+                                    <p className="text-2xl font-black">{selectedSundays.length}</p>
+                                </div>
+                                <div className="rounded-2xl bg-white/15 p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-wide text-white/70">Rows</p>
+                                    <p className="text-2xl font-black">{selectedPreviewData.length}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
                     {/* STEP 1: SERVICE DATES */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                     <div className="lg:col-span-8 space-y-6">
@@ -1198,18 +1435,14 @@ const ExportCenterPage = ({ onBack }) => {
                     <div className="lg:col-span-4 space-y-5">
                         {/* QUICK STATS */}
                         <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm">
-                                <p className="text-[9px] font-black uppercase tracking-wider text-gray-400 mb-0.5">Total</p>
-                                <p className="text-xl font-black text-gray-900 dark:text-white">{reportStats.total}</p>
-                            </div>
-                            <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm">
-                                <p className="text-[9px] font-black uppercase tracking-wider text-gray-400 mb-0.5">Present</p>
-                                <p className="text-xl font-black text-green-600">{reportStats.present}</p>
-                            </div>
+                            <ExportStatCard label="Total" value={reportStats.total} icon={Users} />
+                            <ExportStatCard label="Present" value={reportStats.present} tone="green" icon={UserCheck} />
+                            <ExportStatCard label="Absent" value={reportStats.absent} tone="red" icon={ClipboardList} />
+                            <ExportStatCard label="Sundays" value={selectedSundays.length} tone="orange" icon={Calendar} />
                         </div>
 
                         {/* EXPORT MODE */}
-                        <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm p-1.5 flex flex-col">
+                        <section className="rounded-2xl border border-gray-200 bg-white p-2 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                             {[
                                 { id: 'standard', label: 'All Members', icon: Users, desc: 'Full member list' },
                                 { id: 'marked-members', label: 'Marked Only', icon: UserCheck, desc: 'Only P/A marks' },
@@ -1236,18 +1469,23 @@ const ExportCenterPage = ({ onBack }) => {
                         {/* ADVANCED TOGGLE */}
                         <button
                             onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                            className="w-full flex items-center justify-between p-3.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 transition-all font-bold text-xs"
+                            className="group w-full flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-4 text-gray-800 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-orange-300 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200"
                         >
                             <div className="flex items-center gap-2">
-                                <Settings className="w-3.5 h-3.5" />
-                                <span>Advanced Options</span>
+                                <span className="grid h-9 w-9 place-items-center rounded-xl bg-orange-50 text-orange-600 dark:bg-orange-950/30 dark:text-orange-300">
+                                    <SlidersHorizontal className="w-4 h-4" />
+                                </span>
+                                <span className="text-left">
+                                    <span className="block text-sm font-black">Advanced Options</span>
+                                    <span className="block text-[11px] font-medium text-gray-500">Notes, columns, summaries</span>
+                                </span>
                             </div>
                             <ArrowRight className={`w-3.5 h-3.5 transition-transform ${showAdvancedSettings ? 'rotate-90' : ''}`} />
                         </button>
 
                         {showAdvancedSettings && (
-                            <div className="space-y-4 animate-in slide-in-from-top duration-300">
-                                <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-4 shadow-xl">
+                            <div className="export-center-reveal space-y-4">
+                                <section className="rounded-2xl border border-orange-200/70 bg-white p-4 shadow-xl shadow-orange-500/5 dark:border-orange-900/40 dark:bg-gray-900">
                                     <div className="space-y-2">
                                         <p className="text-[9px] font-black uppercase text-gray-400">Export Note</p>
                                         <textarea
@@ -1278,7 +1516,7 @@ const ExportCenterPage = ({ onBack }) => {
                         <button
                             onClick={fetchPreview}
                             disabled={selectedMonths.length === 0 || selectedSundays.length === 0 || loadingPreview}
-                            className="w-full flex items-center justify-center gap-2.5 py-4 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-black text-sm shadow-lg shadow-orange-600/20 transition-all active:scale-95 disabled:opacity-50"
+                            className="w-full flex items-center justify-center gap-2.5 rounded-2xl bg-orange-600 py-4 text-sm font-black text-white shadow-lg shadow-orange-600/20 transition duration-200 hover:-translate-y-0.5 hover:bg-orange-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {loadingPreview ? <Loader2 className="w-5 h-5 animate-spin" /> : <Eye className="w-5 h-5" />}
                             {loadingPreview ? 'Fetching...' : 'Preview & Load'}
@@ -1286,8 +1524,38 @@ const ExportCenterPage = ({ onBack }) => {
                     </div>
                 </div>
 
+                <button
+                    type="button"
+                    onClick={() => setShowMonthComparison(prev => !prev)}
+                    className="export-center-reveal flex w-full items-center justify-between rounded-3xl border border-gray-200 bg-white p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-orange-300 dark:border-gray-800 dark:bg-gray-900"
+                >
+                    <span className="flex items-center gap-3">
+                        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-950/30 dark:text-orange-300">
+                            <BarChart3 className="h-5 w-5" />
+                        </span>
+                        <span>
+                            <span className="block font-black text-gray-950 dark:text-white">Month Comparison</span>
+                            <span className="block text-sm text-gray-500 dark:text-gray-400">Open only when you want historical month-by-month counts.</span>
+                        </span>
+                    </span>
+                    <ArrowRight className={`h-4 w-4 text-gray-400 transition-transform ${showMonthComparison ? 'rotate-90' : ''}`} />
+                </button>
+
+                {showMonthComparison && (
+                    <MonthComparisonSection
+                        monthlyTables={monthlyTables}
+                        comparisonMonths={comparisonMonths}
+                        setComparisonMonths={setComparisonMonths}
+                        comparisonData={comparisonData}
+                        loadingComparison={loadingComparison}
+                        loadMonthComparison={loadMonthComparison}
+                        allMonthSundays={allMonthSundays}
+                        formatTableName={formatTableName}
+                    />
+                )}
+
                 {showPreview && (
-                    <div className="space-y-5 animate-in fade-in slide-in-from-bottom duration-500">
+                    <div className="space-y-5 export-center-reveal">
                         {/* STEP 2: WHATSAPP DRAWER */}
                         <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
                             <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-green-50/20 dark:bg-green-900/10">
@@ -1326,7 +1594,7 @@ const ExportCenterPage = ({ onBack }) => {
                                             <input
                                                 type="checkbox"
                                                 checked={includeWhatsAppMessage}
-                                                onChange={(e) => setIncludeWhatsAppMessage(e.checked)}
+                                                onChange={(e) => setIncludeWhatsAppMessage(e.target.checked)}
                                                 className="h-4 w-4 rounded-md border-gray-300 text-green-600 focus:ring-green-500"
                                             />
                                             <span className="text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-tight">Include message</span>

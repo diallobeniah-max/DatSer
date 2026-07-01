@@ -54,6 +54,7 @@ import {
 } from '../config/navigation.js'
 import { getInstalledAppInfo } from '../utils/appUpdates.js'
 import { getCollaboratorEmail, normalizeCollaborators } from '../utils/collaborators.js'
+import { sendCollaboratorSetupEmail } from '../utils/collaboratorSetup.js'
 import ConfirmModal from './ConfirmModal'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import lazyWithRetry from '../utils/lazyWithRetry'
@@ -820,6 +821,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const [isAdminCodeSaving, setIsAdminCodeSaving] = useState(false)
     const [isRelinkingCollaborators, setIsRelinkingCollaborators] = useState(false)
     const [isApprovingExistingCollaborators, setIsApprovingExistingCollaborators] = useState(false)
+    const [setupEmailSendingId, setSetupEmailSendingId] = useState(null)
     const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false)
     const [isDeleteAccountOpen, setIsDeleteAccountOpen] = useState(false)
     const [isExportModalOpen, setIsExportModalOpen] = useState(false)
@@ -1153,10 +1155,10 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             return
         }
 
-        const code = adminCodeForm.code.trim()
-        const confirm = adminCodeForm.confirm.trim()
-        if (code.length < 6) {
-            toast.error('Admin code must be at least 6 characters')
+        const code = adminCodeForm.code
+        const confirm = adminCodeForm.confirm
+        if (code.trim().length < 4) {
+            toast.error('Admin code must be at least 4 characters')
             return
         }
         if (code !== confirm) {
@@ -1228,6 +1230,54 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             toast.error(err?.message || 'Failed to approve existing collaborators')
         } finally {
             setIsApprovingExistingCollaborators(false)
+        }
+    }
+
+    const handleSendCollaboratorSetupEmail = async (collaborator) => {
+        if (!user?.id || isCollaborator || !isSupabaseConfigured()) {
+            toast.error('Only the workspace owner can send setup emails')
+            return
+        }
+
+        const collaboratorEmail = getCollaboratorEmail(collaborator)
+        if (!collaboratorEmail) {
+            toast.error('This collaborator does not have an email address')
+            return
+        }
+
+        setSetupEmailSendingId(collaborator.id)
+        try {
+            const result = await sendCollaboratorSetupEmail({
+                supabase,
+                user,
+                preferences,
+                email: collaboratorEmail
+            })
+
+            if (result.inviteLink) {
+                await executeSupabaseWrite(
+                    () => supabase
+                        .from('collaborators')
+                        .update({
+                            invite_token: result.inviteLink,
+                            collaborator_user_id: result.userId || collaborator.collaborator_user_id || null,
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', collaborator.id)
+                        .eq('owner_id', user.id),
+                    { action: `Save collaborator setup link for ${collaboratorEmail}` }
+                )
+            }
+
+            toast.success(result.passwordResetSent
+                ? `Password setup email sent to ${collaboratorEmail}`
+                : `Invite/setup email sent to ${collaboratorEmail}`)
+            await fetchCollaborators({ background: true })
+        } catch (err) {
+            console.error('Error sending collaborator setup email:', err)
+            toast.error(err?.message || 'Failed to send setup email')
+        } finally {
+            setSetupEmailSendingId(null)
         }
     }
 
@@ -1691,6 +1741,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             handleRelinkCollaborators={handleRelinkCollaborators}
                             isApprovingExistingCollaborators={isApprovingExistingCollaborators}
                             handleApproveExistingCollaborators={handleApproveExistingCollaborators}
+                            setupEmailSendingId={setupEmailSendingId}
+                            handleSendCollaboratorSetupEmail={handleSendCollaboratorSetupEmail}
                             handleToggleCollaboratorStatus={handleToggleCollaboratorStatus}
                             isCollaborator={isCollaborator}
                             user={user}

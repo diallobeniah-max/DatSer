@@ -12,6 +12,24 @@ export const normalizeCollaborator = (collaborator) => {
     collaborator.accepted_at || collaborator.collaborator_user_id ? 'active' : 'pending'
   )
   const role = collaborator.role || (collaborator.is_admin ? 'admin' : 'member')
+  const linkedStatus = collaborator.linked_status || (
+    collaborator.collaborator_user_id
+      ? 'linked'
+      : status === 'disabled'
+        ? 'disabled'
+        : status === 'active' || status === 'accepted'
+          ? 'missing_auth_account'
+          : 'pending'
+  )
+  const authAccountStatus = collaborator.auth_account_status || (
+    linkedStatus === 'missing auth user' || linkedStatus === 'missing_auth_account'
+      ? 'missing_auth_account'
+      : linkedStatus === 'pending'
+        ? 'pending'
+        : linkedStatus === 'disabled'
+          ? 'disabled'
+          : 'ready'
+  )
 
   return {
     ...collaborator,
@@ -21,13 +39,8 @@ export const normalizeCollaborator = (collaborator) => {
     role,
     status,
     is_admin: Boolean(collaborator.is_admin || role === 'admin'),
-    linked_status: collaborator.collaborator_user_id
-      ? 'linked'
-      : status === 'disabled'
-        ? 'disabled'
-        : status === 'active' || status === 'accepted'
-          ? 'missing auth user'
-          : 'pending'
+    linked_status: linkedStatus,
+    auth_account_status: authAccountStatus
   }
 }
 

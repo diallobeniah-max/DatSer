@@ -4476,6 +4476,42 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   }
 }
 
+.export-center-shell {
+  min-height: min(860px, calc(100vh - 72px));
+}
+
+.export-center-reveal {
+  animation: exportCenterReveal 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.export-center-card {
+  will-change: transform, opacity;
+}
+
+@keyframes exportCenterReveal {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (max-width: 767px) {
+  .export-center-shell {
+    min-height: calc(100dvh - 36px);
+    border-radius: 1.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-center-reveal {
+    animation: none !important;
+  }
+}
+
 .accessibility-settings-shell {
   container-type: inline-size;
 }

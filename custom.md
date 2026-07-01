@@ -85,3 +85,8 @@
 - Member Pass Share must behave like a bottom sheet on mobile/tablet and keep desktop positioning balanced.
 - Notifications should be centralized, deduped, fast to dismiss, and clear about member/action/time for attendance feedback.
 - QR expand/collapse animations must stay GPU-friendly and must not re-render or layout-animate the QR code repeatedly.
+- Export Center needs polished responsive UI across desktop/tablet/mobile.
+- Advanced options dropdown must be easy to use and accessible.
+- Month comparison should fetch historical data only when opened to avoid unnecessary Supabase usage.
+- Export Center animations must be lightweight and mobile-friendly.
+- Dark mode and light mode must both be maintained.

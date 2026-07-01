@@ -18,6 +18,8 @@ const TeamSettingsSection = ({
     handleRelinkCollaborators,
     isApprovingExistingCollaborators,
     handleApproveExistingCollaborators,
+    setupEmailSendingId,
+    handleSendCollaboratorSetupEmail,
     handleToggleCollaboratorStatus,
     isCollaborator,
     user,
@@ -87,7 +89,7 @@ const TeamSettingsSection = ({
                                     type="password"
                                     value={adminCodeForm.code}
                                     onChange={(event) => setAdminCodeForm(prev => ({ ...prev, code: event.target.value }))}
-                                    placeholder="At least 6 characters"
+                                    placeholder="At least 4 characters"
                                     className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
                                     autoComplete="new-password"
                                 />
@@ -107,7 +109,7 @@ const TeamSettingsSection = ({
 
                         <button
                             type="submit"
-                            disabled={isAdminCodeSaving || !adminCodeForm.code || !adminCodeForm.confirm}
+                            disabled={isAdminCodeSaving || adminCodeForm.code.trim().length < 4 || adminCodeForm.code !== adminCodeForm.confirm}
                             className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-500/20 transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                         >
                             {isAdminCodeSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
@@ -200,7 +202,15 @@ const TeamSettingsSection = ({
                     </div>
                 ) : (
                     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700 overflow-hidden">
-                        {collaborators.map((collaborator) => (
+                        {collaborators.map((collaborator) => {
+                            const needsLoginAccount = collaborator.auth_account_status === 'missing_auth_account' ||
+                                collaborator.linked_status === 'missing_auth_account' ||
+                                collaborator.linked_status === 'missing auth user' ||
+                                collaborator.linked_status === 'needs_link'
+                            const needsPasswordSetup = collaborator.auth_account_status === 'needs_password_setup' ||
+                                collaborator.auth_account_status === 'needs_email_confirmation'
+                            const canSendSetup = collaborator.status !== 'disabled' && (needsLoginAccount || needsPasswordSetup || collaborator.status === 'pending')
+                            return (
                             <div key={collaborator.id} className="p-4 flex items-center justify-between gap-4 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition-colors">
                                 <div className="flex items-center gap-3 min-w-0">
                                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-100 to-orange-50 dark:from-gray-700 dark:to-gray-800 flex items-center justify-center flex-shrink-0">
@@ -237,12 +247,13 @@ const TeamSettingsSection = ({
                                             )}
                                             {(collaborator.linked_status === 'missing auth user' || collaborator.linked_status === 'missing_auth_account' || collaborator.auth_account_status === 'missing_auth_account') && (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
-                                                    Missing login
+                                                    Needs login account
                                                 </span>
                                             )}
-                                            {collaborator.auth_account_status === 'needs_email_confirmation' && (
+                                            {(collaborator.auth_account_status === 'needs_email_confirmation' ||
+                                                collaborator.auth_account_status === 'needs_password_setup') && (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                                                    Confirm email
+                                                    Reset password/setup required
                                                 </span>
                                             )}
                                         </div>
@@ -251,6 +262,18 @@ const TeamSettingsSection = ({
 
                                 {!isCollaborator && (
                                     <div className="flex shrink-0 items-center gap-1">
+                                        {canSendSetup && (
+                                            <button
+                                                onClick={() => handleSendCollaboratorSetupEmail(collaborator)}
+                                                disabled={setupEmailSendingId === collaborator.id || deletingCollaboratorId === collaborator.id}
+                                                className="rounded-lg px-2.5 py-2 text-xs font-bold text-orange-600 transition-colors hover:bg-orange-50 disabled:opacity-50 dark:text-orange-300 dark:hover:bg-orange-900/20"
+                                                title={needsLoginAccount ? 'Send setup invite' : 'Send password reset/setup email'}
+                                            >
+                                                {setupEmailSendingId === collaborator.id ? (
+                                                    <span className="inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Sending</span>
+                                                ) : needsLoginAccount ? 'Send setup email' : 'Send password reset'}
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => handleToggleCollaboratorStatus(collaborator.id)}
                                             disabled={deletingCollaboratorId === collaborator.id}
@@ -270,7 +293,7 @@ const TeamSettingsSection = ({
                                     </div>
                                 )}
                             </div>
-                        ))}
+                        )})}
                     </div>
                 )}
             </div>
