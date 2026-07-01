@@ -307,6 +307,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
     const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil, setPersonalCalendarMode, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
     const { selection } = useHapticFeedback()
+    const isAdminCodeLogin = preferences?.admin_code_login === true || user?.app_metadata?.provider === 'admin-code'
     const isDeveloperToolsEnabled = import.meta.env.DEV
     const hasAdminAccess = !isCollaborator || isAdminCollaborator
 
@@ -818,6 +819,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     const [isAdminCodeLoading, setIsAdminCodeLoading] = useState(false)
     const [isAdminCodeSaving, setIsAdminCodeSaving] = useState(false)
     const [isRelinkingCollaborators, setIsRelinkingCollaborators] = useState(false)
+    const [isApprovingExistingCollaborators, setIsApprovingExistingCollaborators] = useState(false)
     const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false)
     const [isDeleteAccountOpen, setIsDeleteAccountOpen] = useState(false)
     const [isExportModalOpen, setIsExportModalOpen] = useState(false)
@@ -1108,6 +1110,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             return null
         }
 
+        if (isAdminCodeLogin) {
+            setAdminCodeStatus({
+                is_set: null,
+                error: 'Sign in with the owner account to rotate the admin code. Admin-code sessions can manage the app, but cannot rotate their own login code.'
+            })
+            return null
+        }
+
         setIsAdminCodeLoading(true)
         try {
             const { data, error } = await supabase.rpc('get_admin_code_status')
@@ -1121,7 +1131,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         } finally {
             setIsAdminCodeLoading(false)
         }
-    }, [isCollaborator, isDeveloperBypass, isSupabaseConfigured, user?.id])
+    }, [isAdminCodeLogin, isCollaborator, isDeveloperBypass, isSupabaseConfigured, user?.id])
 
     // Fetch collaborators for Team section display after login/session restore.
     useEffect(() => {
@@ -1140,8 +1150,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
     const handleSaveAdminCode = async (event) => {
         event?.preventDefault?.()
-        if (!user?.id || isCollaborator || !isSupabaseConfigured()) {
-            toast.error('Only the workspace owner can update the admin code')
+        if (!user?.id || isCollaborator || isAdminCodeLogin || !isSupabaseConfigured()) {
+            toast.error(isAdminCodeLogin ? 'Sign in with the owner account to rotate the admin code' : 'Only the workspace owner can update the admin code')
             return
         }
 
@@ -1195,6 +1205,31 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             toast.error(err?.message || 'Failed to relink collaborators')
         } finally {
             setIsRelinkingCollaborators(false)
+        }
+    }
+
+    const handleApproveExistingCollaborators = async () => {
+        if (!user?.id || isCollaborator || isAdminCodeLogin || !isSupabaseConfigured()) {
+            toast.error(isAdminCodeLogin ? 'Sign in with the owner account to approve collaborators' : 'Only the workspace owner can approve collaborators')
+            return
+        }
+
+        setIsApprovingExistingCollaborators(true)
+        try {
+            const { data, error } = await supabase.rpc('approve_existing_collaborators_for_owner', {
+                p_owner_id: user.id
+            })
+            if (error) throw error
+            const approved = data?.approved ?? 0
+            const linked = data?.linked ?? 0
+            const stillPending = data?.still_pending ?? 0
+            toast.success(`Approved ${approved}, linked ${linked}, still pending ${stillPending}`)
+            await fetchCollaborators({ background: true })
+        } catch (err) {
+            console.error('Error approving existing collaborators:', err)
+            toast.error(err?.message || 'Failed to approve existing collaborators')
+        } finally {
+            setIsApprovingExistingCollaborators(false)
         }
     }
 
@@ -1656,6 +1691,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             handleSaveAdminCode={handleSaveAdminCode}
                             isRelinkingCollaborators={isRelinkingCollaborators}
                             handleRelinkCollaborators={handleRelinkCollaborators}
+                            isApprovingExistingCollaborators={isApprovingExistingCollaborators}
+                            handleApproveExistingCollaborators={handleApproveExistingCollaborators}
                             handleToggleCollaboratorStatus={handleToggleCollaboratorStatus}
                             isCollaborator={isCollaborator}
                             user={user}

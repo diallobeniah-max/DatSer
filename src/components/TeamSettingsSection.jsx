@@ -16,6 +16,8 @@ const TeamSettingsSection = ({
     handleSaveAdminCode,
     isRelinkingCollaborators,
     handleRelinkCollaborators,
+    isApprovingExistingCollaborators,
+    handleApproveExistingCollaborators,
     handleToggleCollaboratorStatus,
     isCollaborator,
     user,
@@ -128,11 +130,20 @@ const TeamSettingsSection = ({
                         <button
                             type="button"
                             onClick={handleRelinkCollaborators}
-                            disabled={isRelinkingCollaborators || collaborators.length === 0}
+                            disabled={isRelinkingCollaborators || isApprovingExistingCollaborators || collaborators.length === 0}
                             className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-bold text-gray-800 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-700"
                         >
                             {isRelinkingCollaborators ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                             Relink existing collaborators
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleApproveExistingCollaborators}
+                            disabled={isApprovingExistingCollaborators || isRelinkingCollaborators || collaborators.length === 0}
+                            className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {isApprovingExistingCollaborators ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                            Approve existing collaborators
                         </button>
                     </div>
                 </div>
@@ -213,10 +224,10 @@ const TeamSettingsSection = ({
                                                     <Power className="w-2.5 h-2.5" />
                                                     Disabled
                                                 </span>
-                                            ) : collaborator.status === 'active' ? (
+                                            ) : collaborator.status === 'active' || collaborator.status === 'accepted' ? (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
                                                     <CheckCircle className="w-2.5 h-2.5" />
-                                                    Active
+                                                    {collaborator.status === 'accepted' ? 'Accepted' : 'Active'}
                                                 </span>
                                             ) : (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">

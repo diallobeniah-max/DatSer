@@ -661,6 +661,7 @@ export const AppProvider = ({ children }) => {
   const authLoading = authContext?.loading
   const isDeveloperBypass = authContext?.isDeveloperBypass === true
   const isDeveloperBypassActive = isDeveloperBypass || isDeveloperBypassStorageEnabled()
+  const isAdminCodeLogin = authContext?.preferences?.admin_code_login === true || user?.app_metadata?.provider === 'admin-code'
   const [members, setMembers] = useState([])
   const [membersTotalCount, setMembersTotalCount] = useState(0)
   const [membersLoadedAll, setMembersLoadedAll] = useState(false)
@@ -1645,6 +1646,19 @@ export const AppProvider = ({ children }) => {
       return user.id
     }
 
+    if (isAdminCodeLogin && user?.id) {
+      appContextLog('Admin code owner session detected; allowing owner access without collaborator lookup.')
+      setIsCollaborator(false)
+      setIsAdminCollaborator(false)
+      setDataOwnerId(user.id)
+      setOwnerEmail(null)
+      setHasAccess(true)
+      setOwnerStickyMonth(null)
+      setOwnerStickySundays([])
+      fetchOwnerStickyDefaults(user.id)
+      return user.id
+    }
+
     if (!user?.id || !isSupabaseConfigured()) {
       appContextLog('Skipping collaborator check - no user ID or Supabase not configured')
       setIsCollaborator(false)
@@ -1672,11 +1686,48 @@ export const AppProvider = ({ children }) => {
       let data = null
       let error = null
 
+      const { data: accessContext, error: accessContextError } = await supabase.rpc('get_current_user_access_context')
+      if (!accessContextError && accessContext) {
+        appContextLog('Access context RPC result:', accessContext)
+        if (!accessContext.has_access) {
+          setIsCollaborator(false)
+          setIsAdminCollaborator(false)
+          setDataOwnerId(null)
+          setOwnerEmail(null)
+          setHasAccess(false)
+          return null
+        }
+
+        if (accessContext.is_collaborator) {
+          setIsCollaborator(true)
+          setIsAdminCollaborator(Boolean(accessContext.is_admin_collaborator))
+          setDataOwnerId(accessContext.owner_id)
+          setOwnerEmail(null)
+          setHasAccess(true)
+          fetchOwnerStickyDefaults(accessContext.owner_id)
+          return accessContext.owner_id
+        }
+
+        setIsCollaborator(false)
+        setIsAdminCollaborator(false)
+        setDataOwnerId(accessContext.owner_id || user.id)
+        setOwnerEmail(null)
+        setHasAccess(true)
+        setOwnerStickyMonth(null)
+        setOwnerStickySundays([])
+        fetchOwnerStickyDefaults(accessContext.owner_id || user.id)
+        return accessContext.owner_id || user.id
+      }
+
+      if (accessContextError) {
+        console.warn('Access context RPC unavailable; falling back to legacy access checks:', accessContextError.message)
+      }
+
       const collaboratorQuery = supabase
         .from('collaborators')
         .select('owner_id, status, email, is_admin')
         .eq('collaborator_user_id', user.id)
-        .in('status', ['pending', 'accepted', 'active'])
+        .in('status', ['accepted', 'active'])
       const userLookup = await (
         typeof collaboratorQuery.maybeSingle === 'function'
           ? collaboratorQuery.maybeSingle()
@@ -1697,10 +1748,10 @@ export const AppProvider = ({ children }) => {
         const emailLookup = await (
           typeof emailQuery.maybeSingle === 'function'
             ? emailQuery
-              .in('status', ['pending', 'accepted', 'active'])
+              .in('status', ['accepted', 'active'])
               .maybeSingle()
             : emailQuery
-              .in('status', ['pending', 'accepted', 'active'])
+              .in('status', ['accepted', 'active'])
               .single()
         )
         data = emailLookup.data
@@ -1726,6 +1777,16 @@ export const AppProvider = ({ children }) => {
           .select('id')
           .eq('user_id', user.id)
           .limit(1)
+
+        if (ownerError || prefsError) {
+          console.warn('Owner access check failed; keeping access open until the next retry.', ownerError || prefsError)
+          setIsCollaborator(false)
+          setIsAdminCollaborator(false)
+          setDataOwnerId(user.id)
+          setOwnerEmail(null)
+          setHasAccess(true)
+          return user.id
+        }
 
         const isRealOwner = (ownerTables && ownerTables.length > 0) || (prefs && prefs.length > 0)
 
@@ -1802,11 +1863,13 @@ export const AppProvider = ({ children }) => {
         return snapshot.data_owner_id || user.id
       }
 
-      // On error without a matching offline cache, deny access by default for safety
+      // On transient access-check errors, avoid a false Access Denied state.
       setIsCollaborator(false)
-      setDataOwnerId(null)
-      setHasAccess(false)
-      return null
+      setIsAdminCollaborator(false)
+      setDataOwnerId(user?.id || null)
+      setOwnerEmail(null)
+      setHasAccess(true)
+      return user?.id || null
     }
   }
 
