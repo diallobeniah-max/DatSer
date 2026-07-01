@@ -95,6 +95,8 @@ USING (
     )
 );
 
+DROP FUNCTION IF EXISTS public.accept_invite_for_user(TEXT);
+
 CREATE OR REPLACE FUNCTION public.accept_invite_for_user(user_email TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -268,6 +270,10 @@ REVOKE ALL ON FUNCTION public.accept_invite_for_user(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.get_admin_code_status() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.set_admin_login_code(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.relink_collaborators_for_owner(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.accept_invite_for_user(TEXT) FROM anon;
+REVOKE ALL ON FUNCTION public.get_admin_code_status() FROM anon;
+REVOKE ALL ON FUNCTION public.set_admin_login_code(TEXT, TEXT) FROM anon;
+REVOKE ALL ON FUNCTION public.relink_collaborators_for_owner(UUID) FROM anon;
 
 GRANT EXECUTE ON FUNCTION public.accept_invite_for_user(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_admin_code_status() TO authenticated;

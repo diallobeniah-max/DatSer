@@ -1207,30 +1207,27 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         const target = collaborators.find(c => c.id === collaboratorId)
         if (!target) return
         const nextStatus = target.status === 'disabled' ? 'active' : 'disabled'
+        const rpcName = nextStatus === 'disabled' ? 'disable_collaborator' : 'activate_collaborator'
         setDeletingCollaboratorId(collaboratorId)
         try {
-            const { error } = await supabase
-                .from('collaborators')
-                .update({
-                    status: nextStatus,
-                    is_admin: nextStatus === 'disabled' ? false : target.is_admin
-                })
-                .eq('id', collaboratorId)
-                .eq('owner_id', user.id)
+            const { data, error } = await supabase.rpc(rpcName, {
+                p_collaborator_id: collaboratorId
+            })
             if (error) throw error
+            const savedStatus = data?.status || nextStatus
             setCollaborators(prev => prev.map(item => (
                 item.id === collaboratorId
                     ? {
                         ...item,
-                        status: nextStatus,
-                        is_admin: nextStatus === 'disabled' ? false : item.is_admin,
-                        linked_status: nextStatus === 'disabled'
+                        status: savedStatus,
+                        is_admin: savedStatus === 'disabled' ? false : item.is_admin,
+                        linked_status: savedStatus === 'disabled'
                             ? 'disabled'
                             : item.collaborator_user_id ? 'linked' : 'pending'
                     }
                     : item
             )))
-            toast.success(`${nextStatus === 'disabled' ? 'Disabled' : 'Activated'} ${getCollaboratorEmail(target)}`)
+            toast.success(`${savedStatus === 'disabled' ? 'Disabled' : 'Activated'} ${getCollaboratorEmail(target)}`)
         } catch (err) {
             console.error('Error updating collaborator status:', err)
             toast.error(err?.message || 'Failed to update collaborator access')
