@@ -1084,11 +1084,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         if (!background) setFetchingCollaborators(true)
         setCollaboratorLoadError('')
         try {
-            const { data, error } = await supabase
-                .from('collaborators')
-                .select('*')
-                .eq('owner_id', user.id)
-                .order('created_at', { ascending: false })
+            const { data, error } = await supabase.rpc('list_workspace_collaborators', {
+                p_owner_id: user.id
+            })
 
             if (error) throw error
             const normalized = normalizeCollaborators(data)

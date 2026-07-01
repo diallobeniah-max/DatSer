@@ -5985,27 +5985,20 @@ export const AppProvider = ({ children }) => {
 
       try {
         console.log('[OVERRIDE] Disabling override via RPC/upsert')
-        const { error } = canAdmin
-          ? await supabase.rpc('update_owner_admin_override', {
-            p_owner_id: targetOwnerId,
-            p_month_table: null,
-            p_year: null,
-            p_sunday_dates: null,
-            p_locked_date: null
-          })
-          : await supabase
-            .from('user_preferences')
-            .upsert({
-              user_id: targetOwnerId,
-              locked_default_date: null,
-              updated_at: new Date().toISOString()
-            }, {
-              onConflict: 'user_id'
-            })
+        const { data, error } = await supabase.rpc('update_owner_admin_override', {
+          p_owner_id: targetOwnerId,
+          p_month_table: null,
+          p_year: null,
+          p_sunday_dates: null,
+          p_locked_date: null
+        })
 
         if (error) {
           console.error('[OVERRIDE] RPC/upsert error:', error)
           throw error
+        }
+        if (data && data.success === false) {
+          throw new Error(data.error || 'Override update was rejected')
         }
 
         console.log('[OVERRIDE] Successfully disabled override')
@@ -6046,24 +6039,14 @@ export const AppProvider = ({ children }) => {
       }
       console.log('[OVERRIDE] Calling RPC with payload:', rpcPayload)
       
-      const { error } = canAdmin
-        ? await supabase.rpc('update_owner_admin_override', rpcPayload)
-        : await supabase
-          .from('user_preferences')
-          .upsert({
-            user_id: targetOwnerId,
-            admin_sticky_month: targetTable,
-            admin_sticky_year: yearNum,
-            admin_sticky_sundays: [dateKey],
-            locked_default_date: dateKey,
-            updated_at: new Date().toISOString()
-          }, {
-            onConflict: 'user_id'
-          })
+      const { data, error } = await supabase.rpc('update_owner_admin_override', rpcPayload)
 
       if (error) {
         console.error('[OVERRIDE] RPC/upsert failed:', error)
         throw error
+      }
+      if (data && data.success === false) {
+        throw new Error(data.error || 'Override update was rejected')
       }
 
       console.log('[OVERRIDE] Successfully enabled override, broadcasting...')

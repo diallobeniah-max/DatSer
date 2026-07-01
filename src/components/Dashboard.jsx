@@ -19,6 +19,7 @@ import MissingDataModal from './MissingDataModal'
 import { resolveMemberAttendanceForDate } from '../utils/attendanceRecords'
 import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
+import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
 
 
@@ -1495,6 +1496,15 @@ const Dashboard = ({ isAdmin = false }) => {
         actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
         if (present) success()
         else errorHaptic()
+        if (member) {
+          notify.show(present ? 'success' : 'warning', {
+            title: getMemberSearchName(member),
+            message: `${present ? 'Present' : 'Absent'} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+            details: `Attendance saved for ${targetDate}`,
+            toastId: `attendance:${memberId}:${targetDate}:${present ? 'present' : 'absent'}`,
+            autoClose: 2400
+          })
+        }
       }
     } catch (error) {
       console.error('Error marking attendance:', error)
@@ -1534,6 +1544,16 @@ const Dashboard = ({ isAdmin = false }) => {
         actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
         if (present) success()
         else errorHaptic()
+        const member = members.find(m => m.id === memberId)
+        if (member) {
+          notify.show(present ? 'success' : 'warning', {
+            title: getMemberSearchName(member),
+            message: `${present ? 'Present' : 'Absent'} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+            details: `Attendance saved for ${specificDate}`,
+            toastId: `attendance:${memberId}:${specificDate}:${present ? 'present' : 'absent'}`,
+            autoClose: 2400
+          })
+        }
       }
     } catch (error) {
       console.error('Error marking attendance:', error)
@@ -2252,7 +2272,13 @@ const Dashboard = ({ isAdmin = false }) => {
         if (result?.success === false) throw result.error || new Error('Check-in failed')
         success()
         if (memberCodeTurboNotificationEnabled) {
-          toast.success(`${getMemberSearchName(exactMember)} marked present`)
+          notify.show('success', {
+            title: getMemberSearchName(exactMember),
+            message: `Present • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+            details: `QR/code check-in saved for ${dateKey}`,
+            toastId: `attendance:${exactMember.id}:${dateKey}:present`,
+            autoClose: 2400
+          })
         }
       } catch (error) {
         console.error('Turbo code check-in failed:', error)

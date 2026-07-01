@@ -79,3 +79,9 @@
 - Admin Code Login needs owner/admin management from inside the app so the owner can rotate the hashed admin code and maintain the same collaborator records used by Team & Sharing.
 - If collaborator records look empty or stale, first check `collaborators.email`, `collaborators.collaborator_email`, `collaborator_user_id`, `status`, and the Team & Sharing fetch logic before building a new table.
 - A future secure Management API import can be considered for discovering Supabase dashboard users, but it must stay optional and must not expose service-role secrets to the frontend.
+- Collaborator login can fail when an app-level collaborator row exists but the Supabase Auth password/login account is missing or the password is unset; show a reset/resend path instead of treating the row as fully ready.
+- Team & Sharing must not depend on direct frontend access to protected `auth.users` or forbidden user tables; use owner/admin-safe RPCs for collaborator display and account status.
+- Workspace override must save through a secure owner/admin RPC and must affect collaborator views consistently after refresh or realtime/background sync.
+- Member Pass Share must behave like a bottom sheet on mobile/tablet and keep desktop positioning balanced.
+- Notifications should be centralized, deduped, fast to dismiss, and clear about member/action/time for attendance feedback.
+- QR expand/collapse animations must stay GPU-friendly and must not re-render or layout-animate the QR code repeatedly.

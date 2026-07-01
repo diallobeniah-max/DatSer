@@ -784,7 +784,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Error signing in:', error)
       if (error.message?.includes('Invalid login credentials')) {
-        toast.error('Invalid email or password')
+        toast.error('Invalid email or password. If this is a collaborator account, ask the owner to resend the invite or reset the login.')
       } else if (error.message?.includes('Email not confirmed')) {
         toast.error('Please check your email and confirm your account first')
       } else {

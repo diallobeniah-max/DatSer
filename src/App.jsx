@@ -69,7 +69,7 @@ const CustomCloseButton = ({ closeToast }) => {
 
     closeTimerRef.current = setTimeout(() => {
       dismiss?.();
-    }, 260);
+    }, 80);
   };
 
   const handleStart = (e) => {

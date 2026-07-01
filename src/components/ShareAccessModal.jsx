@@ -35,11 +35,9 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
     setError('')
     
     try {
-      const { data, error } = await supabase
-        .from('collaborators')
-        .select('*')
-        .eq('owner_id', user.id)
-        .order('created_at', { ascending: false })
+      const { data, error } = await supabase.rpc('list_workspace_collaborators', {
+        p_owner_id: user.id
+      })
 
       if (error) throw error
       setCollaborators(normalizeCollaborators(data))
@@ -404,7 +402,14 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
               </div>
             ) : (
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {collaborators.map((collaborator) => (
+                {collaborators.map((collaborator) => {
+                  const needsLoginSetup = collaborator.status === 'pending' ||
+                    collaborator.linked_status === 'needs_link' ||
+                    collaborator.linked_status === 'missing_auth_account' ||
+                    collaborator.linked_status === 'missing auth user' ||
+                    collaborator.auth_account_status === 'missing_auth_account' ||
+                    collaborator.auth_account_status === 'needs_email_confirmation'
+                  return (
                   <div
                     key={collaborator.id}
                     className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600"
@@ -427,6 +432,11 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
                               Admin
                             </span>
                           )}
+                          {needsLoginSetup && collaborator.status !== 'pending' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
+                              Login setup needed
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -446,7 +456,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
                       >
                         <ShieldCheck className="w-4 h-4" />
                       </button>
-                      {collaborator.status === 'pending' && (
+                      {needsLoginSetup && (
                         <>
                           <button
                             onClick={() => handleCopyLink(collaborator.invite_token)}
@@ -474,7 +484,7 @@ const ShareAccessModal = ({ isOpen, onClose }) => {
                       </button>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </div>

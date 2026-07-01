@@ -235,9 +235,14 @@ const TeamSettingsSection = ({
                                                     Pending
                                                 </span>
                                             )}
-                                            {collaborator.linked_status === 'missing auth user' && (
+                                            {(collaborator.linked_status === 'missing auth user' || collaborator.linked_status === 'missing_auth_account' || collaborator.auth_account_status === 'missing_auth_account') && (
                                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
                                                     Missing login
+                                                </span>
+                                            )}
+                                            {collaborator.auth_account_status === 'needs_email_confirmation' && (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                                                    Confirm email
                                                 </span>
                                             )}
                                         </div>
