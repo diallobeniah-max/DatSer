@@ -123,17 +123,17 @@ const WorkspaceSettingsSection = ({
                                         <button
                                             onClick={handleDisableOverride}
                                             disabled={isOverrideSaving}
-                                            className="px-3 py-1.5 rounded-lg bg-red-100 text-red-600 hover:bg-red-200 transition-colors text-sm font-medium disabled:opacity-50"
+                                            className="btn-press px-3 py-1.5 rounded-lg bg-red-100 text-red-600 hover:bg-red-200 transition-all duration-150 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
-                                            Disable
+                                            {isOverrideSaving ? 'Saving...' : 'Disable'}
                                         </button>
                                     ) : (
                                         <button
                                             onClick={() => handleEnableOverride()}
                                             disabled={isOverrideSaving}
-                                            className="px-3 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors text-sm font-medium disabled:opacity-50"
+                                            className="btn-press px-3 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-all duration-150 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
-                                            Enable
+                                            {isOverrideSaving ? 'Saving...' : 'Enable'}
                                         </button>
                                     )}
                                 </div>

@@ -9,6 +9,11 @@ import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import {
+  isAttendanceAlreadySynced,
+  isOfflineAttendanceConflict,
+  normalizeQueuedAttendanceValue
+} from '../utils/attendanceRecords'
+import {
   clearAllOfflineData,
   deleteMemberPreviewMember,
   getOfflineSnapshot,
@@ -3481,6 +3486,43 @@ export const AppProvider = ({ children }) => {
     })
   }, [])
 
+  const rollbackLocalAttendanceState = useCallback((memberIds, effectiveDate, previousState = {}) => {
+    const ids = Array.isArray(memberIds) ? memberIds : [memberIds]
+    const dateKey = getLocalDateString(effectiveDate)
+    const previousById = previousState.byId || {}
+
+    setMembers((prev) => prev.map((member) => {
+      if (!ids.includes(member.id)) return member
+      const previous = previousById[member.id]
+      if (!previous?.columnName) return member
+
+      if (previous.hadColumn) {
+        return { ...member, [previous.columnName]: previous.columnValue }
+      }
+
+      const { [previous.columnName]: _removed, ...rest } = member
+      return rest
+    }))
+
+    setAttendanceData((prev) => {
+      const dateAttendance = { ...(prev[dateKey] || {}) }
+      ids.forEach((id) => {
+        const previous = previousById[id]
+        if (!previous) return
+        if (previous.hadAttendanceKey) {
+          dateAttendance[id] = previous.attendanceValue
+        } else {
+          delete dateAttendance[id]
+        }
+      })
+
+      return {
+        ...prev,
+        [dateKey]: dateAttendance
+      }
+    })
+  }, [])
+
   const applyAttendanceColumnsFromMemberRows = useCallback((rows = [], tableName = currentTable) => {
     if (!Array.isArray(rows) || rows.length === 0) return
     setAttendanceData((prev) => {
@@ -3574,11 +3616,15 @@ export const AppProvider = ({ children }) => {
 
   // Mark attendance for a member in monthly table
   const markAttendance = async (memberId, date, present) => {
+    let optimisticApplied = false
+    let optimisticRollbackState = null
+    let optimisticEffectiveDate = null
     try {
       const effectiveDate = normalizeDateToSundayForTable(date, currentTable)
       if (!effectiveDate) {
         return { success: false, error: 'No valid Sunday found for this month' }
       }
+      optimisticEffectiveDate = effectiveDate
 
       if (shouldUseOfflineData) {
         return queueOfflineAttendanceChanges(memberId, effectiveDate, present)
@@ -3596,6 +3642,24 @@ export const AppProvider = ({ children }) => {
         setOfflineStatusMessage('Attendance saved.')
         return { success: true }
       }
+
+      const optimisticColumn = getAttendanceColumnNameForDate(effectiveDate)
+      const dateKey = getLocalDateString(effectiveDate)
+      const previousDateAttendance = attendanceData?.[dateKey] || {}
+      const previousMember = members.find(m => m.id === memberId) || {}
+      optimisticRollbackState = {
+        byId: {
+          [memberId]: {
+            columnName: optimisticColumn,
+            hadColumn: Object.prototype.hasOwnProperty.call(previousMember, optimisticColumn),
+            columnValue: previousMember?.[optimisticColumn],
+            hadAttendanceKey: Object.prototype.hasOwnProperty.call(previousDateAttendance, memberId),
+            attendanceValue: previousDateAttendance[memberId]
+          }
+        }
+      }
+      applyLocalAttendanceState(memberId, effectiveDate, present, optimisticColumn)
+      optimisticApplied = true
 
       let attendanceColumn = await findAttendanceColumnForDate(effectiveDate)
 
@@ -3679,6 +3743,9 @@ export const AppProvider = ({ children }) => {
       if (effectiveDate && (isTransientSupabaseError(error) || !isBrowserOnline())) {
         console.warn('Attendance save failed transiently; queued for retry:', error)
         return queueRetryableAttendanceChange(memberId, effectiveDate, present, error)
+      }
+      if (optimisticApplied && optimisticEffectiveDate && optimisticRollbackState) {
+        rollbackLocalAttendanceState(memberId, optimisticEffectiveDate, optimisticRollbackState)
       }
       setOfflineStatusMessage('Attendance save failed. Please retry.')
       toast.error(error?.message || 'Failed to mark attendance')
@@ -6824,8 +6891,9 @@ export const AppProvider = ({ children }) => {
         try {
           const serverAttendance = await fetchAttendanceForDate(effectiveDate)
           const serverValue = serverAttendance?.[change.member_id]
+          const queuedPresent = normalizeQueuedAttendanceValue(change.present)
 
-          if (typeof serverValue === 'boolean' && serverValue !== change.present) {
+          if (isOfflineAttendanceConflict(serverValue, queuedPresent)) {
             await updateOfflineChangeStatus(change.local_change_id, {
               sync_status: 'conflict',
               server_value: serverValue,
@@ -6835,13 +6903,13 @@ export const AppProvider = ({ children }) => {
             continue
           }
 
-          if (serverValue === change.present) {
+          if (isAttendanceAlreadySynced(serverValue, queuedPresent)) {
             await removeOfflineChange(change.local_change_id)
             synced += 1
             continue
           }
 
-          const result = await markAttendance(change.member_id, effectiveDate, change.present)
+          const result = await markAttendance(change.member_id, effectiveDate, queuedPresent)
           if (result?.success) {
             await removeOfflineChange(change.local_change_id)
             synced += 1

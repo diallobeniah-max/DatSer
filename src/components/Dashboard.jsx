@@ -1481,21 +1481,34 @@ const Dashboard = ({ isAdmin = false }) => {
 
       setAttendanceLoading(prev => ({ ...prev, [memberId]: true }))
       const currentStatus = attendanceData[targetDate]?.[memberId]
+      const nextStatus = currentStatus === present ? null : present
+      const actionLabel = nextStatus === null ? 'Cleared' : nextStatus ? 'Present' : 'Absent'
+      const toastKind = nextStatus === null ? 'info' : nextStatus ? 'success' : 'warning'
+      const toastActionKey = nextStatus === null ? 'clear' : nextStatus ? 'present' : 'absent'
+      const timeLabel = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
+      actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
+      if (nextStatus === null) selection()
+      else if (nextStatus) success()
+      else errorHaptic()
+
+      if (member) {
+        notify.show(toastKind, {
+          title: getMemberSearchName(member),
+          message: `${actionLabel} • ${timeLabel}`,
+          details: `Saving attendance for ${targetDate}...`,
+          toastId: `attendance:${memberId}:${targetDate}:${toastActionKey}`,
+          autoClose: 2400
+        })
+      }
 
       // Toggle functionality: if clicking the same status, deselect it (set to null)
       if (currentStatus === present) {
         const result = await markAttendance(memberId, new Date(targetDate), null)
         if (result?.success === false) return
-        // Record action timestamp for chronological sorting
-        actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
-        selection()
       } else {
         const result = await markAttendance(memberId, new Date(targetDate), present)
         if (result?.success === false) return
-        // Record action timestamp for chronological sorting
-        actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
-        if (present) success()
-        else errorHaptic()
         if (member) {
           notify.show(present ? 'success' : 'warning', {
             title: getMemberSearchName(member),
@@ -1529,22 +1542,35 @@ const Dashboard = ({ isAdmin = false }) => {
       setAttendanceLoading(prev => ({ ...prev, [loadingKey]: true }))
       // Read from date-keyed attendance map
       const currentStatus = attendanceData[specificDate]?.[memberId]
+      const member = members.find(m => m.id === memberId)
+      const nextStatus = currentStatus === present ? null : present
+      const actionLabel = nextStatus === null ? 'Cleared' : nextStatus ? 'Present' : 'Absent'
+      const toastKind = nextStatus === null ? 'info' : nextStatus ? 'success' : 'warning'
+      const toastActionKey = nextStatus === null ? 'clear' : nextStatus ? 'present' : 'absent'
+      const timeLabel = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
+      actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
+      if (nextStatus === null) selection()
+      else if (nextStatus) success()
+      else errorHaptic()
+
+      if (member) {
+        notify.show(toastKind, {
+          title: getMemberSearchName(member),
+          message: `${actionLabel} • ${timeLabel}`,
+          details: `Saving attendance for ${specificDate}...`,
+          toastId: `attendance:${memberId}:${specificDate}:${toastActionKey}`,
+          autoClose: 2400
+        })
+      }
 
       // Toggle functionality: if clicking the same status, deselect it (set to null)
       if (currentStatus === present) {
         const result = await markAttendance(memberId, new Date(specificDate), null)
         if (result?.success === false) return
-        // Record action timestamp for chronological sorting
-        actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
-        selection()
       } else {
         const result = await markAttendance(memberId, new Date(specificDate), present)
         if (result?.success === false) return
-        // Record action timestamp for chronological sorting
-        actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
-        if (present) success()
-        else errorHaptic()
-        const member = members.find(m => m.id === memberId)
         if (member) {
           notify.show(present ? 'success' : 'warning', {
             title: getMemberSearchName(member),

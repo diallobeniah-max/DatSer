@@ -89,6 +89,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   // Generate Sunday dates dynamically based on current table, memoized to avoid ref churn
   const sundayDates = useMemo(() => generateSundayDates(currentTable), [currentTable])
   const [sundayAttendance, setSundayAttendance] = useState({})
+  const [clearedAttendanceDates, setClearedAttendanceDates] = useState(() => new Set())
   const [selectedTags, setSelectedTags] = useState([])
   const [selectedWorkspaceTagIds, setSelectedWorkspaceTagIds] = useState(new Set())
   const [initialWorkspaceTagIds, setInitialWorkspaceTagIds] = useState(new Set())
@@ -198,6 +199,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       }
     })
     setSundayAttendance(initialAttendance)
+    setClearedAttendanceDates(new Set())
   }, [isOpen, latestMember?.id, currentTable])
 
   // Update attendance state when attendanceData changes
@@ -315,6 +317,12 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const setAttendanceChoice = (date, attendance) => {
     selection()
     setSundayAttendance(prev => ({ ...prev, [date]: attendance }))
+    setClearedAttendanceDates(prev => {
+      const next = new Set(prev)
+      if (attendance === null) next.add(date)
+      else next.delete(date)
+      return next
+    })
   }
 
   const handleSubmit = async (e) => {
@@ -338,8 +346,11 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     if (overrideMode) {
       if (!isFullNameValid) {
         const hasAttendanceChanges = Object.entries(sundayAttendance).some(([date, attendance]) => {
-          if (attendance === null || attendance === undefined) return false
-          return attendanceData[date]?.[latestMember.id] !== attendance
+          const currentAttendance = attendanceData[date]?.[latestMember.id]
+          if (attendance === null || attendance === undefined) {
+            return clearedAttendanceDates.has(date) && currentAttendance !== undefined
+          }
+          return currentAttendance !== attendance
         })
         const hasTagChanges = selectedWorkspaceTagIds.size !== initialWorkspaceTagIds.size ||
           Array.from(selectedWorkspaceTagIds).some(id => !initialWorkspaceTagIds.has(id))
@@ -420,8 +431,10 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       console.log('[EditMemberModal] changedPayload:', JSON.stringify(changedPayload))
 
       const attendanceUpdates = Object.entries(sundayAttendance).filter(([date, attendance]) => {
-        if (attendance === null || attendance === undefined) return false
         const currentAttendance = attendanceData[date]?.[latestMember.id]
+        if (attendance === null || attendance === undefined) {
+          return clearedAttendanceDates.has(date) && currentAttendance !== undefined
+        }
         return currentAttendance !== attendance
       })
 
@@ -588,6 +601,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
       // Reset Sunday attendance state
       setSundayAttendance({})
+      setClearedAttendanceDates(new Set())
       setSelectedTags([])
 
       // Removed redundant setTimeout refreshSearch to prevent double-triggering
@@ -1031,7 +1045,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
                       <button
                         type="button"
                         data-testid={`edit-form-attendance-${date}-clear`}
-                        onClick={() => setSundayAttendance(prev => ({ ...prev, [date]: null }))}
+                        onClick={() => setAttendanceChoice(date, null)}
                         className="min-h-[40px] px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-500 hover:bg-gray-200 dark:hover:bg-gray-500 transition-colors"
                       >
                         Clear

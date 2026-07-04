@@ -23,6 +23,26 @@ export const normalizeAttendanceValue = (value) => {
   return undefined
 }
 
+export const normalizeQueuedAttendanceValue = (value) => (
+  value === true || value === false ? value : null
+)
+
+export const isOfflineAttendanceConflict = (serverValue, queuedValue) => {
+  const queued = normalizeQueuedAttendanceValue(queuedValue)
+  if (queued === null) return false
+
+  const normalizedServer = normalizeAttendanceValue(serverValue)
+  return typeof normalizedServer === 'boolean' && normalizedServer !== queued
+}
+
+export const isAttendanceAlreadySynced = (serverValue, queuedValue) => {
+  const queued = normalizeQueuedAttendanceValue(queuedValue)
+  const normalizedServer = normalizeAttendanceValue(serverValue)
+
+  if (queued === null) return normalizedServer === undefined
+  return normalizedServer === queued
+}
+
 export const getLegacyAttendanceColumnName = (dateKey) => {
   if (!dateKey) return null
   const parts = String(dateKey).split('-')

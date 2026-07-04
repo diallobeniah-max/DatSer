@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isAttendanceAlreadySynced,
+  isOfflineAttendanceConflict,
   normalizeAttendanceValue,
   resolveMemberAttendanceForDate
 } from './attendanceRecords'
@@ -31,5 +33,19 @@ describe('attendance record resolution', () => {
     }
 
     expect(resolveMemberAttendanceForDate(member, '2026-06-25', {})).toBe(true)
+  })
+
+  it('does not treat queued clear/deselect actions as offline conflicts', () => {
+    expect(isOfflineAttendanceConflict(true, null)).toBe(false)
+    expect(isOfflineAttendanceConflict(false, null)).toBe(false)
+    expect(isAttendanceAlreadySynced(undefined, null)).toBe(true)
+    expect(isAttendanceAlreadySynced(true, null)).toBe(false)
+  })
+
+  it('detects real offline conflicts only for competing present/absent values', () => {
+    expect(isOfflineAttendanceConflict(true, false)).toBe(true)
+    expect(isOfflineAttendanceConflict(false, true)).toBe(true)
+    expect(isOfflineAttendanceConflict(true, true)).toBe(false)
+    expect(isOfflineAttendanceConflict(undefined, true)).toBe(false)
   })
 })
