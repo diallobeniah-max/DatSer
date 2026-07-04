@@ -30,7 +30,7 @@ export const supabase = isSupabaseConfigured() ? createClient(supabaseUrl, supab
   },
   realtime: {
     params: {
-      eventsPerSecond: 2 // Reduce realtime overhead
+      eventsPerSecond: 10 // Keep collaborator updates fast without flooding slow devices
     }
   }
 }) : null

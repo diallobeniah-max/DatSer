@@ -73,6 +73,11 @@
 - Keep the dev server running in the background while working when possible.
 - Do not ask the user to run `npm run dev` manually unless Codex lacks terminal access or the command requires user action that Codex cannot provide.
 
+## Android APK Build Rule
+- When creating or preparing an Android APK, never include or enable the "Enter Developer Mode" button.
+- Developer Mode is only for local laptop/development use.
+- Production, deployed web, and Android APK builds must hide Developer Mode from normal users.
+- Do not reintroduce Developer Mode into APK builds unless the user explicitly asks for a private developer-only build.
 ## Known Issues/Product Reliability Backlog
 - Team & Sharing previously displayed workspace collaborators but later showed `0` because the UI and invite flow drifted from the canonical collaborator data shape. Fix the existing sharing workflow before adding any separate collaborator system.
 - App collaborators are separate from Supabase dashboard collaborators. Do not assume people listed in the Supabase project dashboard automatically have DatSer app workspace access.

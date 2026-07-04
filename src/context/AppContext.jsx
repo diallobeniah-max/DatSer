@@ -861,6 +861,7 @@ export const AppProvider = ({ children }) => {
   const autoPrepareOfflineRef = useRef({ signature: '', running: false })
   const backgroundRefreshRef = useRef({ running: false, lastRun: 0 })
   const realtimeAttendanceRefreshTimerRef = useRef(null)
+  const realtimeSyncStatusTimerRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
   const applyOfflineSnapshotRef = useRef(null)
   const searchDisplayPromptQueuedRef = useRef(false)
@@ -7161,6 +7162,30 @@ export const AppProvider = ({ children }) => {
     }
   }, [attendanceData, currentTable, markAttendance, members, preferences?.member_code_turbo_enabled, refreshMemberPreviewById, selectedAttendanceDate, setAndSaveAttendanceDate])
 
+  const signalRealtimeSyncStatus = useCallback((source = 'realtime-update') => {
+    const now = new Date().toISOString()
+    setMemberPreviewSyncStatus((prev) => ({
+      ...prev,
+      isSyncing: true,
+      source,
+      lastRemoteUpdatedAt: now
+    }))
+
+    if (realtimeSyncStatusTimerRef.current) {
+      clearTimeout(realtimeSyncStatusTimerRef.current)
+    }
+
+    realtimeSyncStatusTimerRef.current = setTimeout(() => {
+      setMemberPreviewSyncStatus((prev) => ({
+        ...prev,
+        isSyncing: false,
+        source,
+        lastSyncedAt: now,
+        lastSyncAt: now
+      }))
+      realtimeSyncStatusTimerRef.current = null
+    }, 650)
+  }, [])
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
     if (!currentTable) return undefined
@@ -7176,6 +7201,7 @@ export const AppProvider = ({ children }) => {
         },
         (payload) => {
           console.log('Change received!', payload);
+          signalRealtimeSyncStatus(`members-${String(payload.eventType || 'change').toLowerCase()}`);
 
           if (payload.eventType === 'INSERT') {
             const incoming = normalizeMemberRecord(payload.new)
@@ -7269,9 +7295,13 @@ export const AppProvider = ({ children }) => {
       .subscribe();
 
     return () => {
+      if (realtimeSyncStatusTimerRef.current) {
+        clearTimeout(realtimeSyncStatusTimerRef.current)
+        realtimeSyncStatusTimerRef.current = null
+      }
       supabase.removeChannel(channel);
     };
-  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, removeMemberFromAttendanceData, workspaceCacheScope]);
+  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, removeMemberFromAttendanceData, signalRealtimeSyncStatus, workspaceCacheScope]);
 
   useEffect(() => {
     const ownerId = dataOwnerId || user?.id

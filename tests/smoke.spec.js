@@ -75,6 +75,11 @@ test.describe('Preflight smoke', () => {
     await expect(page.getByText('Something went wrong')).toHaveCount(0)
   })
 
+  test('production smoke hides local developer mode entry', async ({ page }) => {
+    test.skip(!isPreviewSmoke, 'Developer button is intentionally available only in local dev smoke runs.')
+    await expect(page.getByTestId('dev-login-button')).toHaveCount(0)
+    await expect(page.getByText('Enter Developer Mode')).toHaveCount(0)
+  })
   test('developer mode launches add member and date picking stays stable', async ({ page }) => {
     test.skip(isPreviewSmoke, 'Developer bypass is intentionally disabled in preview/prod smoke runs.')
 
