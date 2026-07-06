@@ -244,6 +244,111 @@ const ExportStatCard = React.memo(({ label, value, tone = 'neutral', icon: Icon 
 })
 ExportStatCard.displayName = 'ExportStatCard'
 
+const formatAverage = (value) => {
+    const number = Number(value)
+    if (!Number.isFinite(number)) return '0'
+    if (number === 0) return '0'
+    return number % 1 === 0 ? String(number) : number.toFixed(1)
+}
+
+const MonthlyAttendanceInsights = React.memo(({ analytics, previewLoaded }) => {
+    const hasMonths = analytics.months.length > 0
+
+    return (
+        <section className="export-center-card export-center-reveal overflow-hidden rounded-3xl border border-orange-200/70 bg-white shadow-sm dark:border-orange-900/40 dark:bg-gray-900">
+            <div className="border-b border-orange-100 bg-gradient-to-r from-orange-50 via-white to-amber-50 p-4 dark:border-orange-900/30 dark:from-orange-950/20 dark:via-gray-900 dark:to-amber-950/10">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <div className="inline-flex items-center gap-2 rounded-full bg-orange-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+                            <BarChart3 className="h-3.5 w-3.5" />
+                            Attendance Intelligence
+                        </div>
+                        <h2 className="mt-3 text-lg font-black tracking-tight text-gray-950 dark:text-white">Monthly averages before you export</h2>
+                        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                            Uses the same selected Sundays and preview rows as the export, so the totals match the file you download.
+                        </p>
+                    </div>
+                    <div className="rounded-2xl bg-gray-950 px-4 py-3 text-white shadow-lg shadow-black/10 dark:bg-white dark:text-gray-950">
+                        <p className="text-[9px] font-black uppercase tracking-[0.16em] opacity-60">Overall weekly avg</p>
+                        <p className="mt-1 text-2xl font-black leading-none">{formatAverage(analytics.overallAveragePresent)}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="p-4">
+                {!previewLoaded && (
+                    <div className="mb-4 rounded-2xl border border-dashed border-orange-200 bg-orange-50/60 p-3 text-xs font-bold text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-200">
+                        Select a month, then tap Preview & Load to calculate attendance totals from live rows.
+                    </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-950/50">
+                        <p className="text-[9px] font-black uppercase tracking-[0.16em] text-gray-400">Total present</p>
+                        <p className="mt-1 text-2xl font-black text-gray-950 dark:text-white">{analytics.totalPresent}</p>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-950/50">
+                        <p className="text-[9px] font-black uppercase tracking-[0.16em] text-gray-400">Total marked</p>
+                        <p className="mt-1 text-2xl font-black text-gray-950 dark:text-white">{analytics.totalMarked}</p>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-950/50">
+                        <p className="text-[9px] font-black uppercase tracking-[0.16em] text-gray-400">Avg Sunday attendance</p>
+                        <p className="mt-1 text-2xl font-black text-green-700 dark:text-green-300">{formatAverage(analytics.overallAveragePresent)}</p>
+                    </div>
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-950/50">
+                        <p className="text-[9px] font-black uppercase tracking-[0.16em] text-gray-400">Sundays counted</p>
+                        <p className="mt-1 text-2xl font-black text-orange-700 dark:text-orange-300">{analytics.totalSundays}</p>
+                    </div>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                    {hasMonths ? analytics.months.map(month => (
+                        <article key={month.table} className="rounded-2xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950/40">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 className="font-black text-gray-950 dark:text-white">{month.label}</h3>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                                        {month.sundayCount} Sundays · {month.rowCount} preview rows
+                                    </p>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 text-center sm:min-w-[22rem]">
+                                    <div className="rounded-xl bg-green-50 p-2 dark:bg-green-950/20">
+                                        <p className="text-[8px] font-black uppercase text-green-600 dark:text-green-300">Total</p>
+                                        <p className="text-lg font-black text-green-700 dark:text-green-200">{month.totalPresent}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-orange-50 p-2 dark:bg-orange-950/20">
+                                        <p className="text-[8px] font-black uppercase text-orange-600 dark:text-orange-300">Avg / week</p>
+                                        <p className="text-lg font-black text-orange-700 dark:text-orange-200">{formatAverage(month.averagePresent)}</p>
+                                    </div>
+                                    <div className="rounded-xl bg-gray-100 p-2 dark:bg-gray-800">
+                                        <p className="text-[8px] font-black uppercase text-gray-500">Marked avg</p>
+                                        <p className="text-lg font-black text-gray-900 dark:text-white">{formatAverage(month.averageMarked)}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                {month.sundays.map(day => (
+                                    <div key={day.dateKey} className="rounded-xl bg-gray-50 p-2 dark:bg-gray-900">
+                                        <p className="text-[10px] font-black text-gray-700 dark:text-gray-200">{day.label}</p>
+                                        <p className="mt-1 text-[11px] font-bold text-gray-500">
+                                            {day.present} present · {day.absent} absent
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                        </article>
+                    )) : (
+                        <div className="rounded-2xl bg-gray-50 p-4 text-center text-sm font-bold text-gray-500 dark:bg-gray-950/50 dark:text-gray-400">
+                            No month selected yet.
+                        </div>
+                    )}
+                </div>
+            </div>
+        </section>
+    )
+})
+MonthlyAttendanceInsights.displayName = 'MonthlyAttendanceInsights'
+
 const MonthComparisonSection = React.memo(({
     monthlyTables,
     comparisonMonths,
@@ -388,7 +493,7 @@ const ServiceDatesSection = React.memo(({
                 </button>
             </div>
 
-            <div className="p-5 space-y-6 max-h-[480px] overflow-y-auto custom-scrollbar">
+            <div className="p-4 space-y-5 max-h-[560px] overflow-y-auto custom-scrollbar md:p-5">
                 {years.map(year => (
                     <div key={year} className="space-y-4">
                         <div className="flex items-center gap-3">
@@ -928,6 +1033,79 @@ const ExportCenterPage = ({ onBack }) => {
         }
     }, [attendanceData, selectedPreviewData, displayedSummary, selectedMonths, selectedSundays])
 
+    const attendanceAnalytics = useMemo(() => {
+        const selectedMonthSet = new Set(selectedMonths)
+        const monthRows = new Map()
+        const loadedRows = selectedPreviewData.length > 0 ? selectedPreviewData : []
+
+        selectedMonths.forEach(table => monthRows.set(table, []))
+        loadedRows.forEach(row => {
+            const table = row._month || currentTable
+            if (!selectedMonthSet.has(table)) return
+            if (!monthRows.has(table)) monthRows.set(table, [])
+            monthRows.get(table).push(row)
+        })
+
+        let totalPresent = 0
+        let totalAbsent = 0
+        let totalMarked = 0
+        let totalSundays = 0
+
+        const months = selectedMonths.map(table => {
+            const rows = monthRows.get(table) || []
+            const sundays = selectedSundays.filter(sunday => sunday.table === table)
+            let monthPresent = 0
+            let monthAbsent = 0
+
+            const sundayStats = sundays.map(sunday => {
+                let present = 0
+                let absent = 0
+                rows.forEach(row => {
+                    const value = resolveAttendanceForDate(row, sunday, attendanceData)
+                    if (value === true) present += 1
+                    if (value === false) absent += 1
+                })
+                monthPresent += present
+                monthAbsent += absent
+                return {
+                    ...sunday,
+                    present,
+                    absent,
+                    marked: present + absent
+                }
+            })
+
+            const monthMarked = monthPresent + monthAbsent
+            totalPresent += monthPresent
+            totalAbsent += monthAbsent
+            totalMarked += monthMarked
+            totalSundays += sundays.length
+
+            return {
+                table,
+                label: formatTableName(table),
+                rowCount: rows.length,
+                sundayCount: sundays.length,
+                totalPresent: monthPresent,
+                totalAbsent: monthAbsent,
+                totalMarked: monthMarked,
+                averagePresent: sundays.length ? monthPresent / sundays.length : 0,
+                averageMarked: sundays.length ? monthMarked / sundays.length : 0,
+                sundays: sundayStats
+            }
+        })
+
+        return {
+            months,
+            totalPresent,
+            totalAbsent,
+            totalMarked,
+            totalSundays,
+            overallAveragePresent: totalSundays ? totalPresent / totalSundays : 0,
+            overallAverageMarked: totalSundays ? totalMarked / totalSundays : 0
+        }
+    }, [attendanceData, currentTable, selectedMonths, selectedPreviewData, selectedSundays])
+
     const allReportHeaderLines = useMemo(() => ({
         month: `Month: ${reportStats.monthLabel}`,
         total: `Total Members: ${reportStats.total}`,
@@ -1430,6 +1608,41 @@ const ExportCenterPage = ({ onBack }) => {
                             handleSelectAllMonths={handleSelectAllMonths}
                             formatTableName={formatTableName}
                         />
+
+                        <MonthlyAttendanceInsights
+                            analytics={attendanceAnalytics}
+                            previewLoaded={showPreview && previewData.length > 0}
+                        />
+
+                        <button
+                            type="button"
+                            onClick={() => setShowMonthComparison(prev => !prev)}
+                            className="export-center-reveal flex w-full items-center justify-between rounded-3xl border border-orange-200/70 bg-white p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-orange-300 dark:border-orange-900/40 dark:bg-gray-900"
+                        >
+                            <span className="flex items-center gap-3">
+                                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-950/30 dark:text-orange-300">
+                                    <BarChart3 className="h-5 w-5" />
+                                </span>
+                                <span>
+                                    <span className="block font-black text-gray-950 dark:text-white">Month Comparison</span>
+                                    <span className="block text-sm text-gray-500 dark:text-gray-400">Compare two or more months after choosing your service dates.</span>
+                                </span>
+                            </span>
+                            <ArrowRight className={`h-4 w-4 text-gray-400 transition-transform ${showMonthComparison ? 'rotate-90' : ''}`} />
+                        </button>
+
+                        {showMonthComparison && (
+                            <MonthComparisonSection
+                                monthlyTables={monthlyTables}
+                                comparisonMonths={comparisonMonths}
+                                setComparisonMonths={setComparisonMonths}
+                                comparisonData={comparisonData}
+                                loadingComparison={loadingComparison}
+                                loadMonthComparison={loadMonthComparison}
+                                allMonthSundays={allMonthSundays}
+                                formatTableName={formatTableName}
+                            />
+                        )}
                     </div>
 
                     <div className="lg:col-span-4 space-y-5">
@@ -1523,36 +1736,6 @@ const ExportCenterPage = ({ onBack }) => {
                         </button>
                     </div>
                 </div>
-
-                <button
-                    type="button"
-                    onClick={() => setShowMonthComparison(prev => !prev)}
-                    className="export-center-reveal flex w-full items-center justify-between rounded-3xl border border-gray-200 bg-white p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-orange-300 dark:border-gray-800 dark:bg-gray-900"
-                >
-                    <span className="flex items-center gap-3">
-                        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-950/30 dark:text-orange-300">
-                            <BarChart3 className="h-5 w-5" />
-                        </span>
-                        <span>
-                            <span className="block font-black text-gray-950 dark:text-white">Month Comparison</span>
-                            <span className="block text-sm text-gray-500 dark:text-gray-400">Open only when you want historical month-by-month counts.</span>
-                        </span>
-                    </span>
-                    <ArrowRight className={`h-4 w-4 text-gray-400 transition-transform ${showMonthComparison ? 'rotate-90' : ''}`} />
-                </button>
-
-                {showMonthComparison && (
-                    <MonthComparisonSection
-                        monthlyTables={monthlyTables}
-                        comparisonMonths={comparisonMonths}
-                        setComparisonMonths={setComparisonMonths}
-                        comparisonData={comparisonData}
-                        loadingComparison={loadingComparison}
-                        loadMonthComparison={loadMonthComparison}
-                        allMonthSundays={allMonthSundays}
-                        formatTableName={formatTableName}
-                    />
-                )}
 
                 {showPreview && (
                     <div className="space-y-5 export-center-reveal">
