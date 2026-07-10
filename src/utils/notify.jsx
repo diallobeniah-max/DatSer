@@ -51,8 +51,7 @@ const notifyCard = (type, options = {}) => {
   } = options
   const toastFn = toastByType[type] || toast.info
   const resolvedToastId = toastId || (dedupe ? makeToastId(type, title, message) : undefined)
-
-  return toastFn(
+  const content = (
     <NotificationToast
       type={type}
       title={title}
@@ -60,10 +59,33 @@ const notifyCard = (type, options = {}) => {
       details={details}
       actions={actions}
       defaultExpanded={defaultExpanded}
-    />,
+    />
+  )
+  const resolvedAutoClose = persistent
+    ? false
+    : (autoClose ?? getStoredAutoClose() ?? defaultAutoCloseByType[type] ?? 2600)
+
+  // A save notification starts as "Saving" and is updated in place when the
+  // server confirms, queues, or rejects it. Reusing the same toast id without
+  // update() left stale "Saving..." messages on screen.
+  if (resolvedToastId && toast.isActive(resolvedToastId)) {
+    toast.update(resolvedToastId, {
+      render: content,
+      type: ['success', 'error', 'warning', 'info'].includes(type) ? type : 'info',
+      autoClose: resolvedAutoClose,
+      closeButton: false,
+      className: 'datser-notification-shell',
+      bodyClassName: 'datser-notification-body',
+      progressClassName: `datser-notification-progress datser-notification-progress-${type}`
+    })
+    return resolvedToastId
+  }
+
+  return toastFn(
+    content,
     {
       toastId: resolvedToastId,
-      autoClose: persistent ? false : (autoClose ?? getStoredAutoClose() ?? defaultAutoCloseByType[type] ?? 2600),
+      autoClose: resolvedAutoClose,
       closeButton: false,
       className: 'datser-notification-shell',
       bodyClassName: 'datser-notification-body',

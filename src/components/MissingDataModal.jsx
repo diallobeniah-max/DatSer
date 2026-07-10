@@ -160,23 +160,10 @@ const MissingDataModal = ({
         if (saveError) setSaveError(null)
     }
 
-    const handleAttendanceChange = async (dateKey, status) => {
+    const handleAttendanceChange = (dateKey, status) => {
         setAttendanceData(prev => ({ ...prev, [dateKey]: status }))
         // Clear error when user makes changes
         if (saveError) setSaveError(null)
-        
-        // Auto-save when user selects Present/Absent
-        try {
-            const parseLocalDate = (dateStr) => {
-                if (!dateStr) return null
-                const [year, month, day] = dateStr.split('-').map(Number)
-                return new Date(year, month - 1, day)
-            }
-            await markAttendance(member.id, parseLocalDate(dateKey), status)
-        } catch (error) {
-            console.error('Error marking attendance:', error)
-            toast.error('Failed to mark attendance')
-        }
     }
 
     // Check if all required fields are filled
@@ -253,9 +240,6 @@ const MissingDataModal = ({
         setSaveError(null)
 
         try {
-            // Unmount the sheet before writes begin so data refreshes cannot repaint it.
-            onClose?.({ suppressAll: true })
-
             // Update member data if there are missing fields
             if (missingFields.length > 0) {
                 const updates = {}
@@ -335,15 +319,19 @@ const MissingDataModal = ({
             console.log('pendingAttendanceAction.present:', pendingAttendanceAction?.present)
             console.log('isOverrideMode:', isOverrideMode)
             
-            // Always mark attendance if we have Override mode OR pending action
-            // This ensures attendance is saved even if member update fails
-            if (selectedKey) {
-                // Determine action: use pendingAttendanceAction.present if available, otherwise default based on what user tapped
-                const actionBool = pendingAttendanceAction?.present ?? true // Default to present if not specified
+            // Only replay the attendance action that actually opened this sheet.
+            // Opening Complete Missing Info directly must never mark Present by default.
+            const hasPendingAttendanceAction = Boolean(
+                pendingAttendanceAction &&
+                (pendingAttendanceAction.present === true || pendingAttendanceAction.present === false)
+            )
+            if (selectedKey && hasPendingAttendanceAction) {
+                const actionBool = pendingAttendanceAction.present
                 console.log(`Marking attendance for ${selectedKey}: ${actionBool}`)
-                await markAttendance(member.id, parseLocalDate(selectedKey), actionBool)
-            } else {
-                console.warn('No selectedKey - attendance will not be marked!')
+                const pendingResult = await markAttendance(member.id, parseLocalDate(selectedKey), actionBool)
+                if (pendingResult?.success === false) {
+                    throw pendingResult.error || new Error('Attendance save failed')
+                }
             }
 
             // Mark attendance for all dates in attendanceData (the Sunday dates shown in modal)
@@ -352,14 +340,17 @@ const MissingDataModal = ({
             
             for (const dateKey of dateKeys) {
                 // Skip if this is the same as selectedKey (already marked above)
-                if (selectedKey && dateKey === selectedKey) continue
+                if (selectedKey && hasPendingAttendanceAction && dateKey === selectedKey) continue
                 
                 const status = attendanceData[dateKey]
                 console.log(`Checking date ${dateKey}: status =`, status)
                 
                 if (status !== null && status !== undefined) {
                     console.log(`Marking attendance for ${dateKey}: ${status}`)
-                    await markAttendance(member.id, parseLocalDate(dateKey), status)
+                    const attendanceResult = await markAttendance(member.id, parseLocalDate(dateKey), status)
+                    if (attendanceResult?.success === false) {
+                        throw attendanceResult.error || new Error(`Attendance save failed for ${dateKey}`)
+                    }
                 }
             }
 

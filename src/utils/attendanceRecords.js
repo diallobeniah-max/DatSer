@@ -27,8 +27,24 @@ export const normalizeQueuedAttendanceValue = (value) => (
   value === true || value === false ? value : null
 )
 
-export const isOfflineAttendanceConflict = (serverValue, queuedValue) => {
+export const isOfflineAttendanceConflict = (
+  serverValue,
+  queuedValue,
+  baseValue = undefined,
+  hasBaseValue = false
+) => {
   const queued = normalizeQueuedAttendanceValue(queuedValue)
+
+  // New queue entries remember what the user originally saw. A conflict only
+  // exists when the server changed since that snapshot; changing Present to
+  // Absent (or Clear) while offline is otherwise an intentional edit.
+  if (hasBaseValue) {
+    const normalizedServer = normalizeAttendanceValue(serverValue)
+    const normalizedBase = normalizeQueuedAttendanceValue(baseValue)
+    const serverState = typeof normalizedServer === 'boolean' ? normalizedServer : null
+    return serverState !== normalizedBase
+  }
+
   if (queued === null) return false
 
   const normalizedServer = normalizeAttendanceValue(serverValue)

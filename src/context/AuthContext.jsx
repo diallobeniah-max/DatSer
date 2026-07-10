@@ -111,30 +111,6 @@ const getDeveloperBypassPreferences = async () => {
   }
 }
 
-const readAdminCodeSession = () => {
-  if (typeof window === 'undefined') return null
-  try {
-    const parsed = JSON.parse(window.sessionStorage.getItem(ADMIN_CODE_SESSION_KEY) || 'null')
-    if (!parsed?.user?.id || !parsed?.expires_at) return null
-    if (Date.parse(parsed.expires_at) <= Date.now()) {
-      window.sessionStorage.removeItem(ADMIN_CODE_SESSION_KEY)
-      return null
-    }
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-const writeAdminCodeSession = (payload) => {
-  if (typeof window === 'undefined') return
-  try {
-    window.sessionStorage.setItem(ADMIN_CODE_SESSION_KEY, JSON.stringify(payload))
-  } catch {
-    // sessionStorage can be unavailable in restricted browser contexts.
-  }
-}
-
 const isBrowserOffline = () => (
   typeof navigator !== 'undefined' &&
   navigator.onLine === false
@@ -293,19 +269,10 @@ export const AuthProvider = ({ children }) => {
       }
     }
 
-    const adminCodeSession = readAdminCodeSession()
-    if (adminCodeSession?.user) {
-      setUser(adminCodeSession.user)
-      setPreferences(adminCodeSession.preferences || {
-        workspace_name: adminCodeSession.workspace_name || 'Admin Workspace',
-        role: 'owner',
-        admin_code_login: true
-      })
-      setLoading(false)
-      return () => {
-        mounted = false
-      }
-    }
+    // Older builds stored a local pseudo-session after Admin Code login. It
+    // could render the app but could not safely satisfy Supabase RLS. Remove it
+    // and require the server exchange below to create a real Auth session.
+    try { window.sessionStorage?.removeItem(ADMIN_CODE_SESSION_KEY) } catch { /* ignore */ }
 
     // Check if Supabase is configured
     if (!isSupabaseConfigured()) {
@@ -612,18 +579,28 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       // Network / fetch errors are expected when Supabase is unreachable.
       // Keep the UI responsive and avoid throwing (which can cascade into repeated calls).
-      if (isTransientSupabaseError(error) || isPreferenceSchemaError(error) || isBrowserOffline()) {
+      const retryable = isTransientSupabaseError(error) || isPreferenceSchemaError(error) || isBrowserOffline()
+      if (retryable) {
         console.warn('Preference save queued for later sync:', error)
       } else {
         console.error('Error saving preferences:', error)
       }
-      setPreferences(nextPreferences)
-      preferencesRef.current = nextPreferences
-      await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
-      if (isTransientSupabaseError(error) || isPreferenceSchemaError(error) || isBrowserOffline()) {
+      if (retryable) {
+        setPreferences(nextPreferences)
+        preferencesRef.current = nextPreferences
+        await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
         await queuePreferenceSync(user.id, nextPreferences)
+        return nextPreferences
       }
-      return nextPreferences
+
+      // Permission/validation failures will not heal through retries. Restore
+      // the last confirmed state and make the failure visible.
+      setPreferences(freshestPreferences)
+      preferencesRef.current = freshestPreferences
+      writeLocalPreferenceOverride(user.id, freshestPreferences)
+      await saveOfflinePreferences(user.id, freshestPreferences).catch(() => {})
+      toast.error(error?.message || 'Setting could not be saved. Please retry.')
+      throw error
     }
   }
 
@@ -874,51 +851,38 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      const { data, error } = await supabase.rpc('verify_admin_code_login', {
-        p_code: trimmedCode
+      const { data: exchange, error: exchangeError } = await supabase.functions.invoke('admin-code-login', {
+        body: { code: trimmedCode }
+      })
+      if (exchangeError) {
+        const context = exchangeError?.context
+        let serverMessage = ''
+        try {
+          serverMessage = (await context?.json?.())?.error || ''
+        } catch { /* use the safe fallback below */ }
+        throw new Error(serverMessage || exchangeError.message || 'Invalid admin code')
+      }
+      if (!exchange?.success || !exchange?.token_hash) {
+        throw new Error(exchange?.error || 'Invalid admin code')
+      }
+
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash: exchange.token_hash,
+        type: exchange.type || 'email'
       })
       if (error) throw error
-
-      const result = Array.isArray(data) ? data[0] : data
-      if (!result?.ok || !result?.owner_id) {
-        throw new Error(result?.message || 'Invalid admin code')
+      if (!data?.session || !data?.user) {
+        throw new Error('Admin session could not be established')
       }
-
-      const expiresAt = result.expires_at || new Date(Date.now() + 60 * 60 * 1000).toISOString()
-      const adminUser = {
-        id: result.owner_id,
-        email: result.email || 'admin-code@datser.local',
-        app_metadata: { provider: 'admin-code' },
-        user_metadata: {
-          full_name: result.full_name || 'Admin Code User',
-          role: 'admin'
-        }
-      }
-      const adminPreferences = {
-        workspace_name: result.workspace_name || 'Admin Workspace',
-        role: 'owner',
-        admin_code_login: true,
-        user_id: result.owner_id
-      }
-      writeAdminCodeSession({
-        user: adminUser,
-        preferences: adminPreferences,
-        workspace_name: adminPreferences.workspace_name,
-        expires_at: expiresAt
-      })
       try {
         window.sessionStorage?.setItem('adminAuthenticated', 'true')
         window.sessionStorage?.setItem('datser_admin_code_verified', 'true')
       } catch { /* ignore */ }
-      setUser(adminUser)
-      setPreferences(adminPreferences)
-      setLoading(false)
       toast.success('Admin code accepted')
-      return { user: adminUser, preferences: adminPreferences }
+      return data
     } catch (error) {
-      const missingRpc =
-        error?.code === '42883' ||
-        String(error?.message || '').toLowerCase().includes('verify_admin_code_login')
+      const errorText = String(error?.message || '').toLowerCase()
+      const missingRpc = error?.code === '42883' || errorText.includes('admin-code-login')
       const message = missingRpc
         ? 'Admin code login is not set up yet. Apply the latest Supabase migration first.'
         : (error?.message || 'Invalid admin code')

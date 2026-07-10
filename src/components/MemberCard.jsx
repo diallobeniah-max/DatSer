@@ -152,7 +152,8 @@ const MemberCard = memo(({
                                     onAttendance(member.id, true)
                                 }}
                                 disabled={attendanceLoading}
-                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
+                                aria-busy={attendanceLoading || undefined}
+                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-[color,background-color,transform,opacity] duration-150 active:scale-[0.98] motion-reduce:transform-none whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
                                     ? 'bg-orange-600 dark:bg-orange-800 text-white shadow ring-1 ring-orange-300 dark:ring-orange-500/70'
                                     : attendanceLoading
                                         ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
@@ -168,7 +169,8 @@ const MemberCard = memo(({
                                     onAttendance(member.id, false)
                                 }}
                                 disabled={attendanceLoading}
-                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-colors duration-150 whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
+                                aria-busy={attendanceLoading || undefined}
+                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-[color,background-color,transform,opacity] duration-150 active:scale-[0.98] motion-reduce:transform-none whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
                                     ? 'bg-red-600 dark:bg-red-900 text-white shadow ring-1 ring-red-300 dark:ring-red-500/70'
                                     : attendanceLoading
                                         ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'

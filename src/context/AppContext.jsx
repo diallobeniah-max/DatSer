@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
-import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabaseWrite'
+import {
+  assertSupabaseMutationAffected,
+  executeSupabaseWrite,
+  isTransientSupabaseError
+} from '../utils/supabaseWrite'
 import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
 import { buildMemberIndexCodeMap, memberMatchesIndexCode } from '../utils/memberIndexCodes'
@@ -377,13 +381,6 @@ const resolveAttendanceDateKeyFromColumn = (columnName, tableName = '') => {
   }
 
   return null
-}
-
-const makeOfflineChangeId = () => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `offline-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 const makeLocalUuid = () => {
@@ -862,6 +859,7 @@ export const AppProvider = ({ children }) => {
   const backgroundRefreshRef = useRef({ running: false, lastRun: 0 })
   const realtimeAttendanceRefreshTimerRef = useRef(null)
   const realtimeSyncStatusTimerRef = useRef(null)
+  const normalizedAttendanceBackendAvailableRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
   const applyOfflineSnapshotRef = useRef(null)
   const searchDisplayPromptQueuedRef = useRef(false)
@@ -3392,6 +3390,7 @@ export const AppProvider = ({ children }) => {
 
   const syncNormalizedAttendanceRecord = async (memberId, effectiveDate, present) => {
     if (isDeveloperBypass || !isSupabaseConfigured() || !supabase) return
+    if (normalizedAttendanceBackendAvailableRef.current === false) return
 
     const ownerId = dataOwnerId || user?.id
     if (!ownerId || !memberId || !effectiveDate) return
@@ -3425,6 +3424,9 @@ export const AppProvider = ({ children }) => {
 
         if (!missingMemberSync) {
           console.warn('Normalized member sync failed, continuing attendance sync:', memberSyncError)
+        } else {
+          normalizedAttendanceBackendAvailableRef.current = false
+          return
         }
       }
     }
@@ -3440,6 +3442,7 @@ export const AppProvider = ({ children }) => {
       })
 
       if (error) throw error
+      normalizedAttendanceBackendAvailableRef.current = true
     } catch (error) {
       const message = error?.message || ''
       const missingBackend =
@@ -3451,6 +3454,7 @@ export const AppProvider = ({ children }) => {
         message.includes('attendance_records')
 
       if (missingBackend) {
+        normalizedAttendanceBackendAvailableRef.current = false
         console.info('Attendance follow-up backend migration has not been applied yet; monthly attendance was still saved.')
       } else {
         console.warn('Monthly attendance saved, but normalized follow-up sync failed:', error)
@@ -3569,26 +3573,64 @@ export const AppProvider = ({ children }) => {
     })
   }, [])
 
-  const queueOfflineAttendanceChanges = useCallback(async (memberIds, effectiveDate, present, actionType = 'attendance_mark') => {
+  const queueOfflineAttendanceChanges = useCallback(async (
+    memberIds,
+    effectiveDate,
+    present,
+    actionType = 'attendance_mark',
+    baseValues = null
+  ) => {
     const ids = Array.isArray(memberIds) ? memberIds : [memberIds]
     const serviceDate = getLocalDateString(effectiveDate)
     const createdAt = new Date().toISOString()
 
+    // One durable queue row per member/date means repeated offline taps converge
+    // to the user's latest choice instead of replaying stale intermediate states.
+    const pendingChanges = await getPendingOfflineChanges().catch(() => [])
+    const existingById = new Map(
+      pendingChanges
+        .filter((change) => (
+          change?.member_id &&
+          change?.table_name === currentTable &&
+          change?.service_date === serviceDate &&
+          ['attendance_mark', 'bulk_attendance_mark'].includes(change?.action_type)
+        ))
+        .map((change) => [String(change.member_id), change])
+    )
+    const currentDateAttendance = attendanceData?.[serviceDate] || {}
+
     applyLocalAttendanceState(ids, effectiveDate, present)
 
-    await Promise.all(ids.map((memberId) => queueOfflineChange({
-      local_change_id: makeOfflineChangeId(),
-      action_type: actionType,
-      member_id: memberId,
-      session_id: serviceDate,
-      service_date: serviceDate,
-      table_name: currentTable,
-      attendance_status: present === null ? 'unknown' : (present ? 'present' : 'absent'),
-      present,
-      timestamp: createdAt,
-      created_at: createdAt,
-      sync_status: 'pending'
-    })))
+    await Promise.all(ids.map((memberId) => {
+      const existing = existingById.get(String(memberId))
+      const suppliedBase = baseValues && Object.prototype.hasOwnProperty.call(baseValues, memberId)
+        ? baseValues[memberId]
+        : undefined
+      const basePresent = existing?.has_base_value
+        ? existing.base_present
+        : suppliedBase !== undefined
+          ? suppliedBase
+          : Object.prototype.hasOwnProperty.call(currentDateAttendance, memberId)
+            ? currentDateAttendance[memberId]
+            : null
+
+      return queueOfflineChange({
+        local_change_id: existing?.local_change_id || `attendance_${currentTable}_${serviceDate}_${memberId}`,
+        action_type: actionType,
+        member_id: memberId,
+        session_id: serviceDate,
+        service_date: serviceDate,
+        table_name: currentTable,
+        attendance_status: present === null ? 'unknown' : (present ? 'present' : 'absent'),
+        present,
+        base_present: basePresent,
+        has_base_value: true,
+        timestamp: createdAt,
+        created_at: existing?.created_at || createdAt,
+        updated_at: createdAt,
+        sync_status: 'pending'
+      })
+    }))
 
     await refreshOfflineStatus()
     setOfflineStatusMessage(`${ids.length} attendance change${ids.length === 1 ? '' : 's'} saved offline.`)
@@ -3601,10 +3643,10 @@ export const AppProvider = ({ children }) => {
     }
 
     return { success: true, offline: true }
-  }, [applyLocalAttendanceState, currentTable, pendingSyncCount, refreshOfflineStatus, shouldShowOfflineSaveNotice])
+  }, [applyLocalAttendanceState, attendanceData, currentTable, pendingSyncCount, refreshOfflineStatus, shouldShowOfflineSaveNotice])
 
-  const queueRetryableAttendanceChange = useCallback(async (memberIds, effectiveDate, present, reason) => {
-    const result = await queueOfflineAttendanceChanges(memberIds, effectiveDate, present)
+  const queueRetryableAttendanceChange = useCallback(async (memberIds, effectiveDate, present, reason, baseValues = null) => {
+    const result = await queueOfflineAttendanceChanges(memberIds, effectiveDate, present, 'attendance_mark', baseValues)
     const reasonText = reason?.message || reason || 'The server did not confirm the save.'
     setOfflineStatusMessage('Attendance save is pending retry. It will sync automatically when the connection is healthy.')
     notify.sync('Attendance save is pending retry.', {
@@ -3673,7 +3715,7 @@ export const AppProvider = ({ children }) => {
           toast.error('Failed to create attendance column for this date', {
             toastId: `attendance-column-${currentTable}-${getLocalDateString(effectiveDate)}`
           })
-          return { success: false, error: 'Failed to create column' }
+          throw result.error || new Error('Failed to create attendance column')
         }
 
         attendanceColumn = result.columnName
@@ -3682,18 +3724,24 @@ export const AppProvider = ({ children }) => {
       const attendanceUpdatedAt = new Date().toISOString()
       const canWritePreviewSyncColumns = await ensureMemberPreviewSyncColumns(currentTable)
 
-      await executeSupabaseWrite(
+      const attendanceWrite = await executeSupabaseWrite(
         () => supabase
           .from(currentTable)
           .update({
             [attendanceColumn]: present === null ? null : (present ? 'Present' : 'Absent'),
             ...(canWritePreviewSyncColumns ? { updated_at: attendanceUpdatedAt } : {})
           })
-          .eq('id', memberId),
+          .eq('id', memberId)
+          .select('id'),
         { action: `Save attendance in ${currentTable}` }
       )
+      assertSupabaseMutationAffected(attendanceWrite, 'Attendance save')
 
-      await syncNormalizedAttendanceRecord(memberId, effectiveDate, present)
+      // The monthly table is the source of truth. Follow-up normalization is an
+      // optional secondary index and must never delay live check-in feedback.
+      syncNormalizedAttendanceRecord(memberId, effectiveDate, present).catch((error) => {
+        console.warn('Background attendance follow-up sync failed:', error)
+      })
 
       // Update local state for members and attendanceData (for real-time UI updates)
       applyLocalAttendanceState(memberId, effectiveDate, present, attendanceColumn)
@@ -3743,7 +3791,11 @@ export const AppProvider = ({ children }) => {
       const effectiveDate = normalizeDateToSundayForTable(date, currentTable)
       if (effectiveDate && (isTransientSupabaseError(error) || !isBrowserOnline())) {
         console.warn('Attendance save failed transiently; queued for retry:', error)
-        return queueRetryableAttendanceChange(memberId, effectiveDate, present, error)
+        const previous = optimisticRollbackState?.byId?.[memberId]
+        const baseValues = previous
+          ? { [memberId]: previous.hadAttendanceKey ? previous.attendanceValue : null }
+          : null
+        return queueRetryableAttendanceChange(memberId, effectiveDate, present, error, baseValues)
       }
       if (optimisticApplied && optimisticEffectiveDate && optimisticRollbackState) {
         rollbackLocalAttendanceState(memberId, optimisticEffectiveDate, optimisticRollbackState)
@@ -3849,6 +3901,8 @@ export const AppProvider = ({ children }) => {
 
   // Bulk attendance marking for monthly table
   const bulkAttendance = async (memberIds, date, present) => {
+    let rollbackState = null
+    let rollbackDate = null
     try {
       const effectiveDate = normalizeDateToSundayForTable(date, currentTable)
       if (!effectiveDate) {
@@ -3870,11 +3924,28 @@ export const AppProvider = ({ children }) => {
         return { success: true }
       }
 
+      rollbackDate = effectiveDate
+      const optimisticColumn = getAttendanceColumnNameForDate(effectiveDate)
+      const dateKey = getLocalDateString(effectiveDate)
+      const previousDateAttendance = attendanceData?.[dateKey] || {}
+      rollbackState = {
+        byId: Object.fromEntries(memberIds.map((memberId) => {
+          const previousMember = members.find((member) => member.id === memberId) || {}
+          return [memberId, {
+            columnName: optimisticColumn,
+            hadColumn: Object.prototype.hasOwnProperty.call(previousMember, optimisticColumn),
+            columnValue: previousMember?.[optimisticColumn],
+            hadAttendanceKey: Object.prototype.hasOwnProperty.call(previousDateAttendance, memberId),
+            attendanceValue: previousDateAttendance[memberId]
+          }]
+        }))
+      }
+      applyLocalAttendanceState(memberIds, effectiveDate, present, optimisticColumn)
+
       const attendanceColumn = await findAttendanceColumnForDate(effectiveDate)
 
       if (!attendanceColumn) {
-        toast.error(`No attendance column found for this date in ${currentTable}`)
-        return { success: false, error: 'Column does not exist' }
+        throw new Error(`No attendance column found for this date in ${currentTable}`)
       }
 
       const attendanceValue = present ? 'Present' : 'Absent'
@@ -3882,23 +3953,22 @@ export const AppProvider = ({ children }) => {
       const canWritePreviewSyncColumns = await ensureMemberPreviewSyncColumns(currentTable)
 
       // Update each member's attendance in the monthly table
-      const updatePromises = memberIds.map(memberId =>
-        supabase
-          .from(currentTable)
-          .update({
-            [attendanceColumn]: attendanceValue,
-            ...(canWritePreviewSyncColumns ? { updated_at: bulkAttendanceUpdatedAt } : {})
-          })
-          .eq('id', memberId)
-      )
+      const updatePromises = memberIds.map(async (memberId) => {
+        const result = await executeSupabaseWrite(
+          () => supabase
+            .from(currentTable)
+            .update({
+              [attendanceColumn]: attendanceValue,
+              ...(canWritePreviewSyncColumns ? { updated_at: bulkAttendanceUpdatedAt } : {})
+            })
+            .eq('id', memberId)
+            .select('id'),
+          { action: `Save bulk attendance in ${currentTable}` }
+        )
+        return assertSupabaseMutationAffected(result, 'Bulk attendance save')
+      })
 
-      const results = await Promise.all(updatePromises)
-
-      // Check for errors
-      const errors = results.filter(result => result.error)
-      if (errors.length > 0) {
-        throw new Error(`Failed to update ${errors.length} records`)
-      }
+      await Promise.all(updatePromises)
 
       // Update local state for members and attendanceData (for real-time UI updates)
       applyLocalAttendanceState(memberIds, effectiveDate, present, attendanceColumn)
@@ -3931,6 +4001,9 @@ export const AppProvider = ({ children }) => {
       return { success: true }
     } catch (error) {
       console.error('Error marking bulk attendance:', error)
+      if (rollbackDate && rollbackState) {
+        rollbackLocalAttendanceState(memberIds, rollbackDate, rollbackState)
+      }
       toast.error('Failed to mark bulk attendance')
       return { success: false, error }
     }
@@ -4323,16 +4396,19 @@ export const AppProvider = ({ children }) => {
       const optimisticPatch = { ...updates, ...normalized, updated_at: editTimestamp }
 
       try {
-        await executeSupabaseWrite(
+        const updateResult = await executeSupabaseWrite(
           () => supabase
             .from(currentTable)
             .update(normalized)
-            .eq('id', id),
+            .eq('id', id)
+            .select('id'),
           { action: `Update member in ${currentTable}` }
         )
+        assertSupabaseMutationAffected(updateResult, 'Member update')
       } catch (error) {
         const isRlsError =
           error.code === '42501' ||
+          error.code === 'DATSER_NO_ROWS' ||
           error.message?.toLowerCase().includes('row-level security') ||
           error.message?.toLowerCase().includes('permission denied')
 
@@ -6053,18 +6129,16 @@ export const AppProvider = ({ children }) => {
 
       try {
         console.log('[OVERRIDE] Disabling override via RPC/upsert')
-        const { data, error } = await supabase.rpc('update_owner_admin_override', {
-          p_owner_id: targetOwnerId,
-          p_month_table: null,
-          p_year: null,
-          p_sunday_dates: null,
-          p_locked_date: null
-        })
-
-        if (error) {
-          console.error('[OVERRIDE] RPC/upsert error:', error)
-          throw error
-        }
+        const { data } = await executeSupabaseWrite(
+          () => supabase.rpc('update_owner_admin_override', {
+            p_owner_id: targetOwnerId,
+            p_month_table: null,
+            p_year: null,
+            p_sunday_dates: null,
+            p_locked_date: null
+          }),
+          { action: 'Disable workspace override' }
+        )
         if (data && data.success === false) {
           throw new Error(data.error || 'Override update was rejected')
         }
@@ -6107,12 +6181,10 @@ export const AppProvider = ({ children }) => {
       }
       console.log('[OVERRIDE] Calling RPC with payload:', rpcPayload)
       
-      const { data, error } = await supabase.rpc('update_owner_admin_override', rpcPayload)
-
-      if (error) {
-        console.error('[OVERRIDE] RPC/upsert failed:', error)
-        throw error
-      }
+      const { data } = await executeSupabaseWrite(
+        () => supabase.rpc('update_owner_admin_override', rpcPayload),
+        { action: 'Enable workspace override' }
+      )
       if (data && data.success === false) {
         throw new Error(data.error || 'Override update was rejected')
       }
@@ -6894,7 +6966,12 @@ export const AppProvider = ({ children }) => {
           const serverValue = serverAttendance?.[change.member_id]
           const queuedPresent = normalizeQueuedAttendanceValue(change.present)
 
-          if (isOfflineAttendanceConflict(serverValue, queuedPresent)) {
+          if (isOfflineAttendanceConflict(
+            serverValue,
+            queuedPresent,
+            change.base_present,
+            change.has_base_value === true
+          )) {
             await updateOfflineChangeStatus(change.local_change_id, {
               sync_status: 'conflict',
               server_value: serverValue,
@@ -7292,7 +7369,20 @@ export const AppProvider = ({ children }) => {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          signalRealtimeSyncStatus('realtime-connected')
+          return
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setMemberPreviewSyncStatus((prev) => ({
+            ...prev,
+            isSyncing: false,
+            source: 'realtime-fallback'
+          }))
+          refreshSyncedDataInBackground('realtime-fallback', { force: true })
+        }
+      });
 
     return () => {
       if (realtimeSyncStatusTimerRef.current) {
@@ -7301,7 +7391,7 @@ export const AppProvider = ({ children }) => {
       }
       supabase.removeChannel(channel);
     };
-  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, removeMemberFromAttendanceData, signalRealtimeSyncStatus, workspaceCacheScope]);
+  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, refreshSyncedDataInBackground, removeMemberFromAttendanceData, signalRealtimeSyncStatus, workspaceCacheScope]);
 
   useEffect(() => {
     const ownerId = dataOwnerId || user?.id
@@ -7344,7 +7434,13 @@ export const AppProvider = ({ children }) => {
           scheduleAttendanceRefresh('attendance-sessions-realtime')
         }
       )
-      .subscribe()
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          signalRealtimeSyncStatus('attendance-realtime-connected')
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          refreshSyncedDataInBackground('attendance-realtime-fallback', { force: true })
+        }
+      })
 
     return () => {
       if (realtimeAttendanceRefreshTimerRef.current) {
@@ -7353,7 +7449,7 @@ export const AppProvider = ({ children }) => {
       }
       supabase.removeChannel(channel)
     }
-  }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, shouldUseOfflineData, user?.id])
+  }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, shouldUseOfflineData, signalRealtimeSyncStatus, user?.id])
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)

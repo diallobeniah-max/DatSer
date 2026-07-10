@@ -1086,8 +1086,12 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         if (!background) setFetchingCollaborators(true)
         setCollaboratorLoadError('')
         try {
+            const workspaceOwnerId = isCollaborator ? dataOwnerId : user.id
+            if (!workspaceOwnerId) {
+                throw new Error('Workspace access is still loading. Please retry in a moment.')
+            }
             const { data, error } = await supabase.rpc('list_workspace_collaborators', {
-                p_owner_id: user.id
+                p_owner_id: workspaceOwnerId
             })
 
             if (error) throw error
@@ -1102,7 +1106,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         } finally {
             if (!background) setFetchingCollaborators(false)
         }
-    }, [isDeveloperBypass, isSupabaseConfigured, user?.id])
+    }, [dataOwnerId, isCollaborator, isDeveloperBypass, isSupabaseConfigured, user?.id])
 
     const loadAdminCodeStatus = useCallback(async () => {
         if (!user?.id || isDeveloperBypass || isCollaborator || !isSupabaseConfigured()) {
@@ -1168,11 +1172,16 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
         setIsAdminCodeSaving(true)
         try {
-            const { error } = await supabase.rpc('set_admin_login_code', {
-                p_code: code,
-                p_label: 'Admin Code Login'
-            })
-            if (error) throw error
+            const { data } = await executeSupabaseWrite(
+                () => supabase.rpc('set_admin_login_code', {
+                    p_code: code,
+                    p_label: 'Admin Code Login'
+                }),
+                { action: 'Save admin login code' }
+            )
+            if (data?.success === false) {
+                throw new Error(data?.error || 'Admin code update was rejected')
+            }
             setAdminCodeForm({ code: '', confirm: '' })
             toast.success('Admin code updated')
             await loadAdminCodeStatus()

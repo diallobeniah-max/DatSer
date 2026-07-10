@@ -1502,23 +1502,21 @@ const Dashboard = ({ isAdmin = false }) => {
         })
       }
 
-      // Toggle functionality: if clicking the same status, deselect it (set to null)
-      if (currentStatus === present) {
-        const result = await markAttendance(memberId, new Date(targetDate), null)
-        if (result?.success === false) return
-      } else {
-        const result = await markAttendance(memberId, new Date(targetDate), present)
-        if (result?.success === false) return
-        if (member) {
-          notify.show(present ? 'success' : 'warning', {
-            title: getMemberSearchName(member),
-            message: `${present ? 'Present' : 'Absent'} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
-            details: `Attendance saved for ${targetDate}`,
-            toastId: `attendance:${memberId}:${targetDate}:${present ? 'present' : 'absent'}`,
-            autoClose: 2400
-          })
-        }
+      const result = await markAttendance(memberId, new Date(targetDate), nextStatus)
+      if (member) {
+        notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
+          title: getMemberSearchName(member),
+          message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+          details: result?.success === false
+            ? 'Attendance was not saved. Tap the action again to retry.'
+            : result?.offline
+              ? 'Saved on this device and queued for automatic sync.'
+              : `Attendance saved for ${targetDate}`,
+          toastId: `attendance:${memberId}:${targetDate}:${toastActionKey}`,
+          autoClose: result?.success === false ? 5200 : 2400
+        })
       }
+      if (result?.success === false) return
     } catch (error) {
       console.error('Error marking attendance:', error)
       errorHaptic()
@@ -1564,23 +1562,21 @@ const Dashboard = ({ isAdmin = false }) => {
         })
       }
 
-      // Toggle functionality: if clicking the same status, deselect it (set to null)
-      if (currentStatus === present) {
-        const result = await markAttendance(memberId, new Date(specificDate), null)
-        if (result?.success === false) return
-      } else {
-        const result = await markAttendance(memberId, new Date(specificDate), present)
-        if (result?.success === false) return
-        if (member) {
-          notify.show(present ? 'success' : 'warning', {
-            title: getMemberSearchName(member),
-            message: `${present ? 'Present' : 'Absent'} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
-            details: `Attendance saved for ${specificDate}`,
-            toastId: `attendance:${memberId}:${specificDate}:${present ? 'present' : 'absent'}`,
-            autoClose: 2400
-          })
-        }
+      const result = await markAttendance(memberId, new Date(specificDate), nextStatus)
+      if (member) {
+        notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
+          title: getMemberSearchName(member),
+          message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+          details: result?.success === false
+            ? 'Attendance was not saved. Tap the action again to retry.'
+            : result?.offline
+              ? 'Saved on this device and queued for automatic sync.'
+              : `Attendance saved for ${specificDate}`,
+          toastId: `attendance:${memberId}:${specificDate}:${toastActionKey}`,
+          autoClose: result?.success === false ? 5200 : 2400
+        })
       }
+      if (result?.success === false) return
     } catch (error) {
       console.error('Error marking attendance:', error)
       errorHaptic()

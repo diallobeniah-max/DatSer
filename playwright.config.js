@@ -1,13 +1,15 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const usePreviewServer = process.env.PLAYWRIGHT_USE_PREVIEW === '1';
+const previewPort = Number(process.env.PLAYWRIGHT_PREVIEW_PORT || 4173);
+const previewUrl = `http://127.0.0.1:${previewPort}`;
 
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.spec.js',
   timeout: 30000,
   use: {
-    baseURL: usePreviewServer ? 'http://127.0.0.1:4173' : 'http://localhost:3000',
+    baseURL: usePreviewServer ? previewUrl : 'http://localhost:3000',
     trace: 'on-first-retry',
   },
   projects: [
@@ -15,10 +17,10 @@ export default defineConfig({
   ],
   webServer: {
     command: usePreviewServer
-      ? 'npm run preview -- --host 127.0.0.1 --port 4173'
+      ? `npm run preview -- --host 127.0.0.1 --port ${previewPort}`
       : 'npm run dev',
-    url: usePreviewServer ? 'http://127.0.0.1:4173' : 'http://localhost:3000',
-    reuseExistingServer: true,
+    url: usePreviewServer ? previewUrl : 'http://localhost:3000',
+    reuseExistingServer: !usePreviewServer,
     timeout: 120000,
   },
 });

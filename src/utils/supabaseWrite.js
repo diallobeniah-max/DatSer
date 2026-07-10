@@ -3,7 +3,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const TRANSIENT_CODE_MATCHERS = [
   '408',
   '409',
-  '42501',
   '429',
   '500',
   '502',
@@ -15,6 +14,22 @@ const TRANSIENT_CODE_MATCHERS = [
   'UND_ERR',
   'PGRST301'
 ]
+
+// PostgREST can return a successful HTTP response with zero affected rows when
+// RLS hides the target row. Treat that as a failed save instead of showing a
+// misleading success state.
+export const assertSupabaseMutationAffected = (result, action = 'Database update') => {
+  const data = result?.data
+  const affected = Array.isArray(data) ? data.length : (data ? 1 : 0)
+
+  if (affected < 1) {
+    const error = new Error(`${action} did not update a record. Check access and retry.`)
+    error.code = 'DATSER_NO_ROWS'
+    throw error
+  }
+
+  return result
+}
 
 export const isTransientSupabaseError = (error) => {
   if (!error) return false

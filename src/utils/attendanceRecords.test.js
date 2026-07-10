@@ -48,4 +48,11 @@ describe('attendance record resolution', () => {
     expect(isOfflineAttendanceConflict(true, true)).toBe(false)
     expect(isOfflineAttendanceConflict(undefined, true)).toBe(false)
   })
+
+  it('uses the original server snapshot so intentional offline changes can sync', () => {
+    expect(isOfflineAttendanceConflict(true, false, true, true)).toBe(false)
+    expect(isOfflineAttendanceConflict(false, null, false, true)).toBe(false)
+    expect(isOfflineAttendanceConflict(true, false, false, true)).toBe(true)
+    expect(isOfflineAttendanceConflict(undefined, true, null, true)).toBe(false)
+  })
 })
