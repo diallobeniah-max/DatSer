@@ -1997,6 +1997,29 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                     <span className={`inline-block h-6 w-6 rounded-full bg-white shadow transition-transform ${missingInfoPromptEnabled === true ? 'translate-x-7' : 'translate-x-1'}`} />
                                 </button>
                             </div>
+                            {[
+                                { key: 'showVisitorField', title: 'Show Visitor Option', description: 'Show the Mark as Visitor control in Add and Edit Member.' },
+                                { key: 'showTagsField', title: 'Show Tags', description: 'Show optional member tag controls in Add and Edit Member.' },
+                                { key: 'showNotesField', title: 'Show Notes', description: 'Show the optional notes field in Add and Edit Member.' }
+                            ].map((setting) => {
+                                const enabled = guidedFormSettings?.[setting.key] === true
+                                return (
+                                    <div key={setting.key} className="p-4 flex items-center justify-between gap-4">
+                                        <div className="min-w-0">
+                                            <h4 className="font-semibold text-gray-900 dark:text-white">{setting.title}</h4>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">{setting.description}</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleGuidedFormSetting(setting.key, setting.title)}
+                                            aria-pressed={enabled}
+                                            className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors ${enabled ? 'bg-orange-600' : 'bg-gray-300 dark:bg-gray-700'}`}
+                                        >
+                                            <span className={`inline-block h-6 w-6 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-7' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+                                )
+                            })}
                         </div>
                         <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                             <div data-setting-id="guided_form_assistant" tabIndex={-1} className={`p-4 flex items-center justify-between gap-4 ${getSettingTargetClass('guided_form_assistant')}`}>

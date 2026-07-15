@@ -39,6 +39,9 @@ export const DEFAULT_GUIDED_FORM_SETTINGS = {
   showInEditMember: true,
   showInMissingInfo: true,
   attendanceAutoPresent: true,
+  showVisitorField: false,
+  showTagsField: false,
+  showNotesField: false,
   guidedOrder: GUIDED_FORM_FIELD_ORDER
 }
 

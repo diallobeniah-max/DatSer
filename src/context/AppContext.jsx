@@ -322,6 +322,30 @@ const mergeAttendanceSnapshots = (...sources) => {
   return merged
 }
 
+const applyPendingAttendanceChanges = (source = {}, pendingChanges = [], tableName = '') => {
+  const next = mergeAttendanceSnapshots(source)
+
+  pendingChanges
+    .filter((change) => (
+      change?.member_id &&
+      (!tableName || !change.table_name || change.table_name === tableName) &&
+      ['attendance_mark', 'bulk_attendance_mark'].includes(change.action_type)
+    ))
+    .forEach((change) => {
+      const dateKey = change.service_date || change.session_id
+      if (!dateKey) return
+      next[dateKey] = { ...(next[dateKey] || {}) }
+      const queuedPresent = normalizeQueuedAttendanceValue(change.present)
+      if (queuedPresent === null) {
+        delete next[dateKey][change.member_id]
+      } else {
+        next[dateKey][change.member_id] = queuedPresent
+      }
+    })
+
+  return next
+}
+
 const getWorkspaceCacheScope = ({ userId, dataOwnerId, isCollaborator }) => {
   if (isCollaborator && dataOwnerId) return `owner-${dataOwnerId}`
   if (dataOwnerId) return `owner-${dataOwnerId}`
@@ -613,7 +637,6 @@ export const useApp = () => {
 
 const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
   'workspace_member_codes_enabled',
-  'member_codes_enabled',
   'member_code_quick_pass_enabled',
   'member_code_show_logo',
   'member_code_show_photo',
@@ -627,7 +650,8 @@ const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
   'member_code_turbo_notification_enabled',
   'member_code_auto_cycle_minutes',
   'member_code_lookup_enabled',
-  'member_code_share_message_template'
+  'member_code_share_message_template',
+  'guided_form_settings'
 ]
 
 const OWNER_STICKY_MEMBER_CODE_SELECT_KEYS = WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS
@@ -1176,17 +1200,51 @@ export const AppProvider = ({ children }) => {
 
   const [guidedFormSettingsState, setGuidedFormSettingsState] = useState(() => readGuidedFormSettings())
   const setGuidedFormSetting = useCallback((key, value) => {
+    const resolvedValue = typeof value === 'function'
+      ? value(guidedFormSettingsState[key])
+      : value
+    const nextSettings = {
+      ...guidedFormSettingsState,
+      [key]: key === 'guidedOrder' ? normalizeGuidedOrder(resolvedValue) : resolvedValue
+    }
+    setGuidedFormSettingsState(nextSettings)
+    writeGuidedFormSettings(nextSettings)
+
+    if (user?.id) {
+      const persistSettings = isCollaborator && dataOwnerId
+        ? executeSupabaseWrite(
+          () => supabase
+            .from('user_preferences')
+            .update({ guided_form_settings: nextSettings, updated_at: new Date().toISOString() })
+            .eq('user_id', dataOwnerId)
+            .select('user_id'),
+          { action: 'Save workspace form visibility settings' }
+        ).then((result) => assertSupabaseMutationAffected(result, 'Form settings update'))
+        : authContext?.updatePreference?.('guided_form_settings', nextSettings)
+
+      Promise.resolve(persistSettings).catch((error) => {
+          console.error('Unable to save workspace form visibility settings:', error)
+          notify.error('Form settings were kept on this device but could not sync.', {
+            title: 'Settings sync failed'
+          })
+        })
+    }
+  }, [authContext, dataOwnerId, guidedFormSettingsState, isCollaborator, user?.id])
+  const guidedFormSettings = guidedFormSettingsState
+
+  useEffect(() => {
+    const remoteSettings = preferences?.guided_form_settings
+    if (!remoteSettings || typeof remoteSettings !== 'object' || Array.isArray(remoteSettings)) return
     setGuidedFormSettingsState((currentSettings) => {
-      const resolvedValue = typeof value === 'function' ? value(currentSettings[key]) : value
       const nextSettings = {
         ...currentSettings,
-        [key]: key === 'guidedOrder' ? normalizeGuidedOrder(resolvedValue) : resolvedValue
+        ...remoteSettings,
+        guidedOrder: normalizeGuidedOrder(remoteSettings.guidedOrder || currentSettings.guidedOrder)
       }
       writeGuidedFormSettings(nextSettings)
       return nextSettings
     })
-  }, [])
-  const guidedFormSettings = guidedFormSettingsState
+  }, [preferences?.guided_form_settings])
 
   useEffect(() => {
     document.documentElement.classList.toggle(
@@ -1985,15 +2043,21 @@ export const AppProvider = ({ children }) => {
     return query
   }, [])
 
+  const applyWorkspaceOwnerFilter = useCallback((query) => {
+    const ownerId = dataOwnerId || user?.id
+    if (!query || !ownerId || typeof query.eq !== 'function') return query
+    return query.eq('user_id', ownerId)
+  }, [dataOwnerId, user?.id])
+
   const fetchMemberPreviewPage = async (tableName, offset = 0) => {
     const from = Math.max(0, offset)
     const to = from + MEMBER_PREVIEW_PAGE_SIZE - 1
     await ensureMemberPreviewSyncColumns(tableName)
-    let response = await applyDeletedAtFilter(
+    let response = await applyDeletedAtFilter(applyWorkspaceOwnerFilter(
       supabase
         .from(tableName)
         .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
-    ).range(from, to)
+    )).range(from, to)
 
     if (response.error) {
       const message = response.error.message?.toLowerCase() || ''
@@ -2007,9 +2071,9 @@ export const AppProvider = ({ children }) => {
       if (shouldFallback) {
         console.warn('[fetchMembers] Preview column select failed; falling back to one-page row select:', response.error)
         const deletedColumnMissing = message.includes('deleted_at') || response.error.code === '42703'
-        let fallbackQuery = supabase
+        let fallbackQuery = applyWorkspaceOwnerFilter(supabase
           .from(tableName)
-          .select('*', { count: 'exact' })
+          .select('*', { count: 'exact' }))
         if (!deletedColumnMissing) {
           fallbackQuery = applyDeletedAtFilter(fallbackQuery)
         }
@@ -2225,6 +2289,7 @@ export const AppProvider = ({ children }) => {
           .from(tableName)
           .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
           .order('updated_at', { ascending: true })
+        query = applyWorkspaceOwnerFilter(query)
 
         if (syncSince) {
           query = query.gt('updated_at', syncSince)
@@ -2417,10 +2482,10 @@ export const AppProvider = ({ children }) => {
         let hasMore = true
 
         while (hasMore) {
-          const { data, error } = await supabase
+          let fullSnapshotQuery = applyDeletedAtFilter(applyWorkspaceOwnerFilter(supabase
             .from(tableName)
-            .select('*')
-            .range(from, from + pageSize - 1)
+            .select('*')))
+          const { data, error } = await fullSnapshotQuery.range(from, from + pageSize - 1)
 
           if (error) {
             console.error('Error fetching full offline member snapshot:', error)
@@ -2682,6 +2747,7 @@ export const AppProvider = ({ children }) => {
 
   // Add new member to current monthly table
   const addMember = async (memberData) => {
+    let transformedDataForQueue = null
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - add to local state
@@ -2736,8 +2802,9 @@ export const AppProvider = ({ children }) => {
       const transformedData = buildMemberTableRow(memberData, {
         id: localId,
         workspaceName,
-        userId: user?.id
+        userId: dataOwnerId || user?.id
       })
+      transformedDataForQueue = transformedData
 
       console.log('[addMember] Transformed data:', JSON.stringify(transformedData))
 
@@ -2832,6 +2899,43 @@ export const AppProvider = ({ children }) => {
       return createdMember
     } catch (error) {
       console.error('Error adding member:', error)
+      if (transformedDataForQueue && (isTransientSupabaseError(error) || !isBrowserOnline())) {
+        const createdAt = new Date().toISOString()
+        const createdMember = normalizeMemberRecord({
+          ...transformedDataForQueue,
+          inserted_at: createdAt,
+          created_at: createdAt,
+          updated_at: createdAt,
+          __offline_status: 'pending_add'
+        })
+        setMembers(prev => [createdMember, ...prev.filter(existing => existing.id !== createdMember.id)])
+        invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+        await persistMemberPreviewIndex(currentTable, [createdMember], {
+          cachedCount: members.length + 1,
+          totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
+          source: 'network-fallback-add'
+        })
+        await queueOfflineChange({
+          local_change_id: `member_add_${createdMember.id}`,
+          action_type: 'member_add',
+          table_name: currentTable,
+          member_id: createdMember.id,
+          member_data: createdMember,
+          created_at: createdAt,
+          sync_status: 'pending'
+        })
+        await refreshOfflineStatus()
+        recordRecentMemberEdit(createdMember, createdAt, {
+          action: 'add',
+          summary: 'Added member while connection was unavailable',
+          table: currentTable
+        })
+        refreshSearch()
+        notify.sync('Member saved on this device and will sync automatically.', {
+          title: 'Saved offline'
+        })
+        return createdMember
+      }
       toast.error('Failed to add member')
       // Propagate error; callers can catch
       throw error
@@ -4030,9 +4134,13 @@ export const AppProvider = ({ children }) => {
       let fetchOff = 0
       const PG_SIZE = 1000
       while (true) {
-        const { data: pg, error: pgErr } = await supabase
+        let query = supabase
           .from(currentTable)
           .select(`id, "${attendanceColumn}"`)
+        const ownerId = dataOwnerId || user?.id
+        if (ownerId) query = query.eq('user_id', ownerId)
+        query = query.is('deleted_at', null)
+        const { data: pg, error: pgErr } = await query
           .range(fetchOff, fetchOff + PG_SIZE - 1)
 
         if (pgErr) throw pgErr
@@ -4057,7 +4165,8 @@ export const AppProvider = ({ children }) => {
       return attendanceMap
     } catch (error) {
       console.error('Error fetching attendance:', error)
-      return {}
+      const dateKey = getLocalDateString(date)
+      return attendanceData[dateKey] || {}
     }
   }
 
@@ -4080,9 +4189,13 @@ export const AppProvider = ({ children }) => {
       let fetchOff = 0
       const PG_SIZE = 1000
       while (true) {
-        const { data: pg, error: pgErr } = await supabase
+        let query = supabase
           .from(tableName)
           .select(`id, "${attendanceColumn}"`)
+        const ownerId = dataOwnerId || user?.id
+        if (ownerId) query = query.eq('user_id', ownerId)
+        query = query.is('deleted_at', null)
+        const { data: pg, error: pgErr } = await query
           .range(fetchOff, fetchOff + PG_SIZE - 1)
 
         if (pgErr) throw pgErr
@@ -4105,9 +4218,10 @@ export const AppProvider = ({ children }) => {
       return attendanceMap
     } catch (error) {
       console.error('Error fetching attendance:', error)
-      return {}
+      const dateKey = getLocalDateString(date)
+      return attendanceData[dateKey] || {}
     }
-  }, [attendanceData, findAttendanceColumnForDateInTable, isSupabaseConfigured])
+  }, [attendanceData, dataOwnerId, findAttendanceColumnForDateInTable, isSupabaseConfigured, user?.id])
 
   // Update member.
   // skipRefresh keeps optimistic local state without triggering the dashboard skeleton.
@@ -4527,7 +4641,8 @@ export const AppProvider = ({ children }) => {
       return { ...(members.find(m => m.id === id) || {}), ...optimisticPatch }
     } catch (error) {
       console.error('Error updating member:', error)
-      if (allowLocalFallback) {
+      const shouldQueueForRetry = isTransientSupabaseError(error) || !isBrowserOnline()
+      if (allowLocalFallback || shouldQueueForRetry) {
         const fallbackName = (
           typeof updates.full_name === 'string' && updates.full_name.trim()
         ) ? updates.full_name : (typeof updates['Full Name'] === 'string' ? updates['Full Name'] : undefined)
@@ -4543,6 +4658,20 @@ export const AppProvider = ({ children }) => {
           return merged
         }))
         recordRecentMemberEdit(fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }, editTimestamp)
+        if (shouldQueueForRetry) {
+          const existingMember = members.find(m => m.id === id) || {}
+          await queueOfflineChange({
+            local_change_id: `member_update_${currentTable}_${id}`,
+            action_type: 'member_update',
+            table_name: currentTable,
+            member_id: id,
+            updates,
+            base_updated_at: existingMember.updated_at || existingMember.UpdatedAt || existingMember.inserted_at || null,
+            created_at: editTimestamp,
+            sync_status: 'pending'
+          })
+          await refreshOfflineStatus()
+        }
         await persistMemberPreviewIndex(currentTable, [fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }], {
           cachedCount: members.length,
           totalCount: membersTotalCount,
@@ -4556,8 +4685,16 @@ export const AppProvider = ({ children }) => {
           lastSyncAt: editTimestamp
         })
         refreshSearch()
-        if (!silent) toast.info('Saved locally on this device')
-        return members.find(m => m.id === id)
+        if (!silent) {
+          if (shouldQueueForRetry) {
+            notify.sync('Member update saved on this device and will sync automatically.', {
+              title: 'Saved offline'
+            })
+          } else {
+            toast.info('Saved locally on this device')
+          }
+        }
+        return fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }
       }
       toast.error('Failed to update member')
       throw error
@@ -6490,9 +6627,13 @@ export const AppProvider = ({ children }) => {
       let offset = 0
       const PAGE_SIZE = 1000
       while (true) {
-        const { data: page, error: pageError } = await supabase
+        let query = supabase
           .from(currentTable)
           .select(selectColumns.join(', '))
+        const ownerId = dataOwnerId || user?.id
+        if (ownerId) query = query.eq('user_id', ownerId)
+        query = query.is('deleted_at', null)
+        const { data: page, error: pageError } = await query
           .range(offset, offset + PAGE_SIZE - 1)
 
         if (pageError) throw pageError
@@ -6553,10 +6694,17 @@ export const AppProvider = ({ children }) => {
         }
       })
 
+      const pendingChanges = pendingSyncCount > 0
+        ? await getPendingOfflineChanges().catch(() => [])
+        : []
+      const reconciledAttendanceData = pendingChanges.length > 0
+        ? applyPendingAttendanceChanges(newAttendanceData, pendingChanges, currentTable)
+        : newAttendanceData
+
       // Update attendance data state
-      setAttendanceData(newAttendanceData)
-      console.log('Loaded attendance data for all dates:', Object.keys(newAttendanceData), 'from', allData.length, 'rows')
-      return newAttendanceData
+      setAttendanceData(reconciledAttendanceData)
+      console.log('Loaded attendance data for all dates:', Object.keys(reconciledAttendanceData), 'from', allData.length, 'rows')
+      return reconciledAttendanceData
 
     } catch (error) {
       console.error('Error loading attendance data:', error)
@@ -6684,7 +6832,7 @@ export const AppProvider = ({ children }) => {
             change?.action_type === 'attendance_mark' || change?.action_type === 'bulk_attendance_mark'
           ))
           snapshotAttendanceData = hasPendingAttendanceChanges
-            ? mergeAttendanceSnapshots(freshAttendance, attendanceData)
+            ? applyPendingAttendanceChanges(freshAttendance, pendingChangesBeforeRefresh, currentTable)
             : freshAttendance
         }
 

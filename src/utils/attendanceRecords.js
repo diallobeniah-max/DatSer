@@ -67,7 +67,12 @@ export const getLegacyAttendanceColumnName = (dateKey) => {
   return `Attendance ${day}${getOrdinalSuffix(day)}`
 }
 
-export const resolveMemberAttendanceForDate = (member, dateKey, attendanceMap = {}) => {
+export const resolveMemberAttendanceForDate = (
+  member,
+  dateKey,
+  attendanceMap = {},
+  options = {}
+) => {
   if (!member || !dateKey) return undefined
 
   if (Object.prototype.hasOwnProperty.call(attendanceMap, member.id)) {
@@ -75,6 +80,11 @@ export const resolveMemberAttendanceForDate = (member, dateKey, attendanceMap = 
     if (mapValue !== undefined) return mapValue
     return undefined
   }
+
+  // Once a date map has been loaded from Supabase it is authoritative. A
+  // missing member id means "not marked" and must not resurrect an older
+  // attendance value copied onto a cached member row.
+  if (options.authoritativeMap === true) return undefined
 
   const normalizedDateKey = String(dateKey).replace(/-/g, '_')
   const newColumnName = `attendance_${normalizedDateKey}`

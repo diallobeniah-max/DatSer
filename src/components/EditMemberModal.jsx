@@ -1058,7 +1058,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           </GuidedField>
 
           {/* Collapsible Parent/Guardian Info Section */}
-          <GuidedField ref={guideRefs.parent} active={activeStepId === 'parent'} className={`border rounded-lg overflow-visible transition-all duration-300 ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
+          <GuidedField ref={guideRefs.parent} active={activeStepId === 'parent'} className={`border rounded-xl overflow-hidden transition-all duration-300 ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
             ? 'border-red-500 ring-4 ring-red-50 dark:ring-red-900/30'
             : 'border-gray-200 dark:border-gray-600'
             }`}>
@@ -1205,6 +1205,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
             )}
           </GuidedField>
 
+          {guidedFormSettings?.showTagsField !== false && (
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
               Member Tags
@@ -1235,8 +1236,10 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
               })}
             </div>
           </div>
+          )}
 
           {/* Visitor Toggle */}
+          {guidedFormSettings?.showVisitorField !== false && (
           <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Mark as Visitor</span>
             <button
@@ -1255,8 +1258,10 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
               }`} />
             </button>
           </div>
+          )}
 
           {/* Notes Section */}
+          {guidedFormSettings?.showNotesField !== false && (
           <GuidedField ref={guideRefs.notes} active={activeStepId === 'notes'}>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               <span className="flex items-center gap-1.5">
@@ -1274,6 +1279,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
               className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 border-gray-300 dark:border-gray-600 focus:ring-primary-500 text-sm resize-none"
             />
           </GuidedField>
+          )}
 
           </div>
 

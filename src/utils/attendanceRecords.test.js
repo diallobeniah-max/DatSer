@@ -35,6 +35,20 @@ describe('attendance record resolution', () => {
     expect(resolveMemberAttendanceForDate(member, '2026-06-25', {})).toBe(true)
   })
 
+  it('does not resurrect stale row columns after the server date map is loaded', () => {
+    const member = {
+      id: 'member-1',
+      attendance_2026_06_25: 'Present'
+    }
+
+    expect(resolveMemberAttendanceForDate(
+      member,
+      '2026-06-25',
+      {},
+      { authoritativeMap: true }
+    )).toBeUndefined()
+  })
+
   it('does not treat queued clear/deselect actions as offline conflicts', () => {
     expect(isOfflineAttendanceConflict(true, null)).toBe(false)
     expect(isOfflineAttendanceConflict(false, null)).toBe(false)

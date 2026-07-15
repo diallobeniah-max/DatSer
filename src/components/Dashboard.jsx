@@ -411,6 +411,7 @@ const Dashboard = ({ isAdmin = false }) => {
     membersTotalCount,
     membersLoadedAll,
     fetchMoreMembers,
+    fetchMembers,
     calculateMemberBadge,
 
     toggleMemberBadge,
@@ -934,9 +935,10 @@ const Dashboard = ({ isAdmin = false }) => {
     const next = {}
     sundayDates.forEach((dateKey) => {
       const map = attendanceData[dateKey] || {}
+      const authoritativeMap = Object.prototype.hasOwnProperty.call(attendanceData, dateKey)
       next[dateKey] = {}
       members.forEach((member) => {
-        const value = resolveMemberAttendanceForDate(member, dateKey, map)
+        const value = resolveMemberAttendanceForDate(member, dateKey, map, { authoritativeMap })
         if (value === true || value === false) {
           next[dateKey][member.id] = value
         }
@@ -1346,8 +1348,15 @@ const Dashboard = ({ isAdmin = false }) => {
   useEffect(() => {
     if (dashboardTab === 'edited') {
       loadAllAttendanceData()
+      if (!membersLoadedAll) {
+        fetchMembers(currentTable, {
+          background: true,
+          forceOnline: true,
+          fullSnapshot: true
+        })
+      }
     }
-  }, [dashboardTab])
+  }, [currentTable, dashboardTab, membersLoadedAll])
 
   // Ensure attendance map loads when a Sunday is selected (local state)
   useEffect(() => {
@@ -2472,8 +2481,9 @@ const Dashboard = ({ isAdmin = false }) => {
               const isSelected = selectedSundayDate === dateStr
               const dateObj = new Date(dateStr)
               const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              const presentCount = members.filter(member => getCanonicalAttendanceValue(member, dateStr) === true).length
-              const absentCount = members.filter(member => getCanonicalAttendanceValue(member, dateStr) === false).length
+              const authoritativeValues = Object.values(attendanceData[dateStr] || {})
+              const presentCount = authoritativeValues.filter(value => value === true).length
+              const absentCount = authoritativeValues.filter(value => value === false).length
               return (
                 <button
                   key={dateStr}
