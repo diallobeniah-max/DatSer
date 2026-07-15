@@ -5108,3 +5108,52 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
     filter: none !important;
   }
 }
+
+/* Keep notifications as one clean DatSer box; remove older pill/backplate layers. */
+.datser-toast-stack .datser-notification-shell,
+.datser-toast-stack .datser-toast,
+.datser-toast-stack .Toastify__toast,
+.datser-toast-stack .Toastify__toast-theme--light,
+.datser-toast-stack .Toastify__toast-theme--dark,
+.datser-toast-stack .Toastify__toast--success,
+.datser-toast-stack .Toastify__toast--error,
+.datser-toast-stack .Toastify__toast--info,
+.datser-toast-stack .Toastify__toast--warning {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+  border-radius: 0 !important;
+}
+
+.datser-toast-stack .Toastify__toast::before,
+.datser-toast-stack .Toastify__toast::after,
+.datser-toast-stack .datser-toast::before,
+.datser-toast-stack .datser-toast::after,
+.datser-toast-stack .datser-notification-shell::before,
+.datser-toast-stack .datser-notification-shell::after {
+  content: none !important;
+  display: none !important;
+}
+
+.datser-notification-card {
+  border-radius: 1rem !important;
+}
+
+.datser-toast-stack .Toastify__progress-bar,
+.datser-notification-progress {
+  left: 0.95rem !important;
+  right: 0.95rem !important;
+  bottom: 0.34rem !important;
+  width: auto !important;
+  max-width: none !important;
+  height: 0.12rem !important;
+  opacity: 0.72;
+  border-radius: 999px;
+}
+
+@media (max-width: 640px) {
+  .datser-notification-card {
+    border-radius: 0.95rem !important;
+  }
+}
