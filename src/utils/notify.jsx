@@ -75,6 +75,7 @@ const notifyCard = (type, options = {}) => {
       type: ['success', 'error', 'warning', 'info'].includes(type) ? type : 'info',
       autoClose: resolvedAutoClose,
       closeButton: false,
+      icon: false,
       className: 'datser-notification-shell',
       bodyClassName: 'datser-notification-body',
       progressClassName: `datser-notification-progress datser-notification-progress-${type}`
@@ -88,6 +89,7 @@ const notifyCard = (type, options = {}) => {
       toastId: resolvedToastId,
       autoClose: resolvedAutoClose,
       closeButton: false,
+      icon: false,
       className: 'datser-notification-shell',
       bodyClassName: 'datser-notification-body',
       progressClassName: `datser-notification-progress datser-notification-progress-${type}`

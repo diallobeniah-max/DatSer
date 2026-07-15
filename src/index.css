@@ -5211,3 +5211,238 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
     border-radius: 0.65rem !important;
   }
 }
+
+/* Canonical notification surface. Keep this last so legacy toast themes cannot
+   recreate the old stacked pill and duplicate icon layers. */
+.Toastify__toast-container.datser-toast-stack,
+.Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
+  top: max(0.75rem, env(safe-area-inset-top)) !important;
+  left: 50% !important;
+  right: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.55rem !important;
+  width: min(30rem, calc(100vw - 1.5rem)) !important;
+  max-width: calc(100vw - 1.5rem) !important;
+  max-height: min(70vh, 34rem) !important;
+  padding: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  transform: translateX(-50%) !important;
+  pointer-events: none !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast,
+.Toastify__toast-container.datser-toast-stack .datser-toast,
+.Toastify__toast-container.datser-toast-stack .Toastify__toast:nth-child(n) {
+  position: relative !important;
+  grid-area: auto !important;
+  display: flex !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  min-height: 3.35rem !important;
+  margin: 0 !important;
+  padding: 0.72rem 0.78rem !important;
+  overflow: hidden !important;
+  clip-path: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  border: 1px solid rgba(249, 115, 22, 0.24) !important;
+  border-radius: 0.5rem !important;
+  color: #172033 !important;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 247, 237, 0.84)) !important;
+  box-shadow:
+    0 16px 38px rgba(15, 23, 42, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(145%) !important;
+  backdrop-filter: blur(16px) saturate(145%) !important;
+  pointer-events: auto !important;
+  animation: datserBoxToastIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both !important;
+}
+
+.dark .Toastify__toast-container.datser-toast-stack .Toastify__toast,
+.dark .Toastify__toast-container.datser-toast-stack .datser-toast {
+  color: #f8fafc !important;
+  border-color: rgba(249, 115, 22, 0.28) !important;
+  background: linear-gradient(135deg, rgba(28, 28, 29, 0.92), rgba(12, 12, 12, 0.86)) !important;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast--success {
+  border-left: 0.28rem solid #22c55e !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast--error {
+  border-left: 0.28rem solid #ef4444 !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast--warning {
+  border-left: 0.28rem solid #f59e0b !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast--info {
+  border-left: 0.28rem solid #3b82f6 !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast-icon {
+  display: none !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast-body,
+.Toastify__toast-container.datser-toast-stack .datser-toast-body,
+.Toastify__toast-container.datser-toast-stack .datser-notification-body {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Custom DatSer notifications provide their own complete surface. The
+   Toastify element is only a transparent positioning shell in this case. */
+.Toastify__toast-container.datser-toast-stack .datser-notification-shell {
+  min-height: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-card {
+  display: grid !important;
+  grid-template-columns: 2rem minmax(0, 1fr) 2rem !important;
+  align-items: center !important;
+  gap: 0.7rem !important;
+  width: 100% !important;
+  min-height: 3.35rem !important;
+  padding: 0.68rem 0.72rem !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(249, 115, 22, 0.24) !important;
+  border-radius: 0.5rem !important;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 247, 237, 0.84)) !important;
+  box-shadow:
+    0 16px 38px rgba(15, 23, 42, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(145%) !important;
+  backdrop-filter: blur(16px) saturate(145%) !important;
+}
+
+.dark .Toastify__toast-container.datser-toast-stack .datser-notification-card {
+  border-color: rgba(249, 115, 22, 0.28) !important;
+  background: linear-gradient(135deg, rgba(28, 28, 29, 0.92), rgba(12, 12, 12, 0.86)) !important;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-accent {
+  display: block !important;
+  width: 0.24rem !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-icon,
+.Toastify__toast-container.datser-toast-stack .datser-notification-close,
+.Toastify__toast-container.datser-toast-stack .datser-toast-close,
+.Toastify__toast-container.datser-toast-stack .Toastify__close-button {
+  width: 2rem !important;
+  height: 2rem !important;
+  min-width: 2rem !important;
+  flex-basis: 2rem !important;
+  margin: 0 !important;
+  border-radius: 0.38rem !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-icon {
+  color: #f97316 !important;
+  background: rgba(249, 115, 22, 0.12) !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-success .datser-notification-icon,
+.Toastify__toast-container.datser-toast-stack .datser-notification-online .datser-notification-icon {
+  color: #22c55e !important;
+  background: rgba(34, 197, 94, 0.13) !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-copy {
+  align-self: center !important;
+  padding: 0 !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-title {
+  margin: 0 !important;
+  font-size: 0.92rem !important;
+  line-height: 1.2 !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-message {
+  margin: 0.12rem 0 0 !important;
+  font-size: 0.8rem !important;
+  line-height: 1.3 !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__progress-bar,
+.Toastify__toast-container.datser-toast-stack .datser-notification-progress {
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 0.14rem !important;
+  border-radius: 0 !important;
+  opacity: 0.72 !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast.Toastify__toast--exit,
+.Toastify__toast-container.datser-toast-stack .Toastify__toast.datser-toast-manual-closing {
+  animation: datserBoxToastOut 150ms cubic-bezier(0.4, 0, 1, 1) both !important;
+  pointer-events: none !important;
+}
+
+@keyframes datserBoxToastIn {
+  from {
+    opacity: 0;
+    translate: 0 -0.75rem;
+    scale: 0.985;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+}
+
+@keyframes datserBoxToastOut {
+  from {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    translate: 0 -0.5rem;
+    scale: 0.99;
+  }
+}
+
+@media (max-width: 640px) {
+  .Toastify__toast-container.datser-toast-stack,
+  .Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
+    top: max(0.5rem, env(safe-area-inset-top)) !important;
+    width: calc(100vw - 1rem) !important;
+    max-width: calc(100vw - 1rem) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .Toastify__toast-container.datser-toast-stack .Toastify__toast,
+  .Toastify__toast-container.datser-toast-stack .datser-toast {
+    animation: none !important;
+    translate: none !important;
+    scale: 1 !important;
+  }
+}

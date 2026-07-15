@@ -777,6 +777,7 @@ function AppContent({ isMobile }) {
         className="datser-toast-stack"
         toastClassName="datser-toast"
         bodyClassName="datser-toast-body"
+        icon={false}
         position="top-center"
         autoClose={6500}
         transition={Slide}
