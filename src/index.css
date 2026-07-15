@@ -5157,3 +5157,57 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
     border-radius: 0.95rem !important;
   }
 }
+
+/* Final notification shape lock: rectangular cards, not pills. */
+.Toastify__toast-container.datser-toast-stack .Toastify__toast,
+.Toastify__toast-container.datser-toast-stack .datser-toast,
+.Toastify__toast-container.datser-toast-stack .datser-notification-shell {
+  border-radius: 0.72rem !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast:not(.datser-notification-shell) {
+  overflow: hidden !important;
+  border: 1px solid rgba(249, 115, 22, 0.22) !important;
+  border-radius: 0.72rem !important;
+  background:
+    linear-gradient(135deg, rgba(20, 20, 20, 0.98), rgba(10, 10, 10, 0.98)) !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32) !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-shell {
+  overflow: visible !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-card {
+  overflow: hidden;
+  border-radius: 0.72rem !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .datser-notification-icon,
+.Toastify__toast-container.datser-toast-stack .datser-notification-close,
+.Toastify__toast-container.datser-toast-stack .datser-toast-close,
+.Toastify__toast-container.datser-toast-stack .Toastify__close-button,
+.Toastify__toast-container.datser-toast-stack .Toastify__toast-icon {
+  border-radius: 0.55rem !important;
+}
+
+.Toastify__toast-container.datser-toast-stack .Toastify__toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin-inline-end: 0.72rem;
+}
+
+@media (max-width: 640px) {
+  .Toastify__toast-container.datser-toast-stack .Toastify__toast,
+  .Toastify__toast-container.datser-toast-stack .datser-toast,
+  .Toastify__toast-container.datser-toast-stack .datser-notification-shell,
+  .Toastify__toast-container.datser-toast-stack .datser-notification-card {
+    border-radius: 0.65rem !important;
+  }
+}
