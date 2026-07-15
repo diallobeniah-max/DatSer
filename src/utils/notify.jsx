@@ -51,13 +51,14 @@ const notifyCard = (type, options = {}) => {
   } = options
   const toastFn = toastByType[type] || toast.info
   const resolvedToastId = toastId || (dedupe ? makeToastId(type, title, message) : undefined)
-  const content = (
+  const renderContent = ({ closeToast } = {}) => (
     <NotificationToast
       type={type}
       title={title}
       message={message}
       details={details}
       actions={actions}
+      closeToast={closeToast}
       defaultExpanded={defaultExpanded}
     />
   )
@@ -70,7 +71,7 @@ const notifyCard = (type, options = {}) => {
   // update() left stale "Saving..." messages on screen.
   if (resolvedToastId && toast.isActive(resolvedToastId)) {
     toast.update(resolvedToastId, {
-      render: content,
+      render: renderContent,
       type: ['success', 'error', 'warning', 'info'].includes(type) ? type : 'info',
       autoClose: resolvedAutoClose,
       closeButton: false,
@@ -82,7 +83,7 @@ const notifyCard = (type, options = {}) => {
   }
 
   return toastFn(
-    content,
+    renderContent,
     {
       toastId: resolvedToastId,
       autoClose: resolvedAutoClose,

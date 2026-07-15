@@ -29,6 +29,7 @@ const DEV_BYPASS_PREFERENCES = {
   workspace_member_codes_enabled: true
 }
 const ADMIN_CODE_SESSION_KEY = 'datser_admin_code_session'
+const ADMIN_CODE_VERIFIED_SESSION_KEY = 'datser_admin_code_verified'
 
 const devOnlyString = (codes) => (
   import.meta.env.DEV ? String.fromCharCode(...codes) : ''
@@ -41,6 +42,26 @@ const getDeveloperBypassUser = () => ({
     full_name: devOnlyString([68, 101, 118, 101, 108, 111, 112, 101, 114, 32, 77, 111, 100, 101, 32, 85, 115, 101, 114])
   }
 })
+
+const isAdminCodeSessionMarked = () => {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.sessionStorage?.getItem(ADMIN_CODE_VERIFIED_SESSION_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+const markUserAsAdminCodeSession = (user) => {
+  if (!user || !isAdminCodeSessionMarked()) return user
+  return {
+    ...user,
+    app_metadata: {
+      ...(user.app_metadata || {}),
+      provider: 'admin-code'
+    }
+  }
+}
 
 const isDeveloperBypassStorageEnabled = () => (
   isLocalWebDeveloperModeAllowed() &&
@@ -357,7 +378,7 @@ export const AuthProvider = ({ children }) => {
           }
 
           if (mounted) {
-            setUser(session?.user ?? null)
+            setUser(session?.user ? markUserAsAdminCodeSession(session.user) : null)
             setLoading(false)
             // Load preferences in background - don't block UI
             if (session?.user) {
@@ -388,7 +409,7 @@ export const AuthProvider = ({ children }) => {
         if (isDeveloperBypassStorageEnabled()) return
 
         // Update user state immediately
-        setUser(session?.user ?? null)
+        setUser(session?.user ? markUserAsAdminCodeSession(session.user) : null)
         setLoading(false)
 
         if (event === 'SIGNED_IN' && session?.user) {
@@ -876,8 +897,13 @@ export const AuthProvider = ({ children }) => {
       }
       try {
         window.sessionStorage?.setItem('adminAuthenticated', 'true')
-        window.sessionStorage?.setItem('datser_admin_code_verified', 'true')
+        window.sessionStorage?.setItem(ADMIN_CODE_VERIFIED_SESSION_KEY, 'true')
       } catch { /* ignore */ }
+      const adminCodeUser = markUserAsAdminCodeSession(data.user)
+      setUser(adminCodeUser)
+      setLoading(false)
+      rememberOnlineSession({ ...data.session, user: adminCodeUser })
+      loadUserPreferencesBackground(data.user.id)
       toast.success('Admin code accepted')
       return data
     } catch (error) {
@@ -902,6 +928,7 @@ export const AuthProvider = ({ children }) => {
       setPreferences(null)
       welcomeToastShownRef.current = false
       try { window.sessionStorage?.removeItem(WELCOME_TOAST_SESSION_KEY) } catch { /* ignore */ }
+      try { window.sessionStorage?.removeItem(ADMIN_CODE_VERIFIED_SESSION_KEY) } catch { /* ignore */ }
       try {
         window.sessionStorage?.removeItem(ADMIN_CODE_SESSION_KEY)
         window.sessionStorage?.removeItem('adminAuthenticated')

@@ -51,6 +51,7 @@ const LoginPage = () => {
   const [showPassword, setShowPassword] = useState(false)
   const [confirmationSent, setConfirmationSent] = useState(false)
   const [adminCode, setAdminCode] = useState('')
+  const [showAdminCode, setShowAdminCode] = useState(false)
   const [showAdminCodeLogin, setShowAdminCodeLogin] = useState(false)
 
   // Detect if user arrived via invite link (token_hash in URL, PKCE code, or hash fragment)
@@ -173,9 +174,9 @@ const LoginPage = () => {
     try {
       await signInWithAdminCode(adminCode)
       setAdminCode('')
+      setShowAdminCode(false)
     } catch (err) {
       setError(err.message || 'Admin code login failed')
-      setAdminCode('')
     } finally {
       setIsLoading(false)
     }
@@ -828,14 +829,24 @@ const LoginPage = () => {
                     Admin code
                   </label>
                   <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={adminCode}
-                      onChange={(event) => setAdminCode(event.target.value)}
-                      placeholder="Enter admin code"
-                      autoComplete="one-time-code"
-                      className="min-w-0 flex-1 rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-orange-900/50 dark:bg-gray-900 dark:text-white"
-                    />
+                    <div className="relative min-w-0 flex-1">
+                      <input
+                        type={showAdminCode ? 'text' : 'password'}
+                        value={adminCode}
+                        onChange={(event) => setAdminCode(event.target.value)}
+                        placeholder="Enter admin code"
+                        autoComplete="one-time-code"
+                        className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 pr-10 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-orange-900/50 dark:bg-gray-900 dark:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminCode(prev => !prev)}
+                        className="absolute inset-y-0 right-1.5 inline-flex w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-orange-100 hover:text-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 dark:text-gray-400 dark:hover:bg-orange-900/40 dark:hover:text-orange-200"
+                        aria-label={showAdminCode ? 'Hide admin code' : 'Show admin code'}
+                      >
+                        {showAdminCode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                     <button
                       type="submit"
                       disabled={isLoading || !adminCode.trim()}

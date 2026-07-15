@@ -47,7 +47,7 @@ const NotificationToast = ({
     isClosingRef.current = true
     const toastElement = event?.currentTarget?.closest?.('.Toastify__toast')
     toastElement?.classList?.add('datser-toast-manual-closing')
-    window.setTimeout(() => closeToast?.(), 80)
+    window.setTimeout(() => closeToast?.(), 140)
   }
 
   return (

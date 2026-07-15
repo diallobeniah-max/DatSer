@@ -1,5 +1,5 @@
 import React from 'react'
-import { Users, UserPlus, Mail, Shield, CheckCircle, Trash2, Loader2, AlertCircle, RefreshCw, KeyRound, Link2, Power } from 'lucide-react'
+import { Users, UserPlus, Mail, Shield, CheckCircle, Trash2, Loader2, AlertCircle, RefreshCw, KeyRound, Link2, Power, Eye, EyeOff } from 'lucide-react'
 import { getCollaboratorEmail } from '../utils/collaborators'
 
 const TeamSettingsSection = ({
@@ -32,6 +32,8 @@ const TeamSettingsSection = ({
     closeRemoveModal,
     getSettingTargetClass
 }) => {
+    const [showAdminCodeFields, setShowAdminCodeFields] = React.useState(false)
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -85,25 +87,45 @@ const TeamSettingsSection = ({
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             <label className="space-y-1.5">
                                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">New code</span>
-                                <input
-                                    type="password"
-                                    value={adminCodeForm.code}
-                                    onChange={(event) => setAdminCodeForm(prev => ({ ...prev, code: event.target.value }))}
-                                    placeholder="At least 4 characters"
-                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
-                                    autoComplete="new-password"
-                                />
+                                <div className="relative">
+                                    <input
+                                        type={showAdminCodeFields ? 'text' : 'password'}
+                                        value={adminCodeForm.code}
+                                        onChange={(event) => setAdminCodeForm(prev => ({ ...prev, code: event.target.value }))}
+                                        placeholder="At least 4 characters"
+                                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 pr-11 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                                        autoComplete="new-password"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAdminCodeFields(prev => !prev)}
+                                        className="absolute inset-y-0 right-1.5 inline-flex w-9 items-center justify-center rounded-lg text-gray-500 transition hover:bg-orange-100 hover:text-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 dark:text-gray-400 dark:hover:bg-orange-900/40 dark:hover:text-orange-200"
+                                        aria-label={showAdminCodeFields ? 'Hide admin code fields' : 'Show admin code fields'}
+                                    >
+                                        {showAdminCodeFields ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </button>
+                                </div>
                             </label>
                             <label className="space-y-1.5">
                                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Confirm code</span>
-                                <input
-                                    type="password"
-                                    value={adminCodeForm.confirm}
-                                    onChange={(event) => setAdminCodeForm(prev => ({ ...prev, confirm: event.target.value }))}
-                                    placeholder="Repeat code"
-                                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
-                                    autoComplete="new-password"
-                                />
+                                <div className="relative">
+                                    <input
+                                        type={showAdminCodeFields ? 'text' : 'password'}
+                                        value={adminCodeForm.confirm}
+                                        onChange={(event) => setAdminCodeForm(prev => ({ ...prev, confirm: event.target.value }))}
+                                        placeholder="Repeat code"
+                                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 pr-11 text-sm text-gray-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                                        autoComplete="new-password"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAdminCodeFields(prev => !prev)}
+                                        className="absolute inset-y-0 right-1.5 inline-flex w-9 items-center justify-center rounded-lg text-gray-500 transition hover:bg-orange-100 hover:text-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 dark:text-gray-400 dark:hover:bg-orange-900/40 dark:hover:text-orange-200"
+                                        aria-label={showAdminCodeFields ? 'Hide admin code fields' : 'Show admin code fields'}
+                                    >
+                                        {showAdminCodeFields ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </button>
+                                </div>
                             </label>
                         </div>
 

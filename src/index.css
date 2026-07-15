@@ -4757,3 +4757,354 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
     transition: none !important;
   }
 }
+
+/* DatSer notification refresh: compact, readable, and fast on every screen. */
+.Toastify__toast-container.datser-toast-stack,
+.Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: 50%;
+  right: auto;
+  width: min(94vw, 31rem);
+  transform: translateX(-50%);
+  display: grid;
+  gap: 0.62rem;
+  padding: 0;
+  pointer-events: none;
+  z-index: 2147483000;
+}
+
+.datser-toast-stack .datser-toast,
+.datser-toast-stack .Toastify__toast {
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 1.35rem;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  pointer-events: auto;
+  animation: datserToastLiftIn 220ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.datser-toast-stack .datser-toast-body,
+.datser-toast-stack .Toastify__toast-body,
+.datser-notification-body {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.datser-notification-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.86rem 0.9rem 0.86rem 0.95rem;
+  overflow: hidden;
+  border: 1px solid rgba(251, 146, 60, 0.28);
+  border-radius: 1.35rem;
+  background:
+    radial-gradient(circle at 16% 0%, rgba(251, 146, 60, 0.18), transparent 32%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(255, 247, 237, 0.94));
+  box-shadow:
+    0 18px 48px rgba(15, 23, 42, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.82) inset;
+  backdrop-filter: blur(18px) saturate(1.16);
+  -webkit-backdrop-filter: blur(18px) saturate(1.16);
+  cursor: default;
+}
+
+.dark .datser-notification-card {
+  border-color: rgba(251, 146, 60, 0.24);
+  background:
+    radial-gradient(circle at 16% 0%, rgba(251, 146, 60, 0.16), transparent 34%),
+    linear-gradient(145deg, rgba(31, 24, 20, 0.95), rgba(12, 12, 12, 0.92));
+  box-shadow:
+    0 18px 52px rgba(0, 0, 0, 0.42),
+    0 1px 0 rgba(255, 255, 255, 0.08) inset;
+}
+
+.datser-notification-accent {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0.32rem;
+  background: linear-gradient(180deg, #f97316, #fb923c);
+}
+
+.datser-notification-success .datser-notification-accent,
+.datser-notification-online .datser-notification-accent {
+  background: linear-gradient(180deg, #22c55e, #86efac);
+}
+
+.datser-notification-error .datser-notification-accent,
+.datser-notification-offline .datser-notification-accent {
+  background: linear-gradient(180deg, #ef4444, #fb7185);
+}
+
+.datser-notification-warning .datser-notification-accent {
+  background: linear-gradient(180deg, #f59e0b, #facc15);
+}
+
+.datser-notification-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.18rem;
+  height: 2.18rem;
+  margin-left: 0.1rem;
+  border-radius: 999px;
+  color: #f97316;
+  background: rgba(249, 115, 22, 0.12);
+  box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.16) inset;
+}
+
+.datser-notification-success .datser-notification-icon,
+.datser-notification-online .datser-notification-icon {
+  color: #16a34a;
+  background: rgba(34, 197, 94, 0.13);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.18) inset;
+}
+
+.datser-notification-error .datser-notification-icon,
+.datser-notification-offline .datser-notification-icon {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.13);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18) inset;
+}
+
+.datser-notification-icon svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  stroke-width: 2.6;
+}
+
+.datser-notification-copy {
+  min-width: 0;
+  padding-top: 0.08rem;
+}
+
+.datser-toast-stack .datser-notification-title {
+  margin: 0;
+  color: #111827;
+  font-size: 0.96rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+.dark .datser-toast-stack .datser-notification-title {
+  color: #fff7ed;
+}
+
+.datser-toast-stack .datser-notification-message {
+  margin: 0.18rem 0 0;
+  color: #4b5563;
+  font-size: 0.86rem;
+  font-weight: 550;
+  line-height: 1.35;
+}
+
+.dark .datser-toast-stack .datser-notification-message {
+  color: rgba(255, 237, 213, 0.78);
+}
+
+.datser-notification-details {
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.62);
+  color: #6b7280;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.dark .datser-notification-details {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 237, 213, 0.7);
+}
+
+.datser-notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.datser-notification-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  min-height: 2.15rem;
+  padding: 0.48rem 0.72rem;
+  border: 1px solid rgba(249, 115, 22, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.66);
+  color: #9a3412;
+  font-size: 0.78rem;
+  font-weight: 800;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.datser-notification-action:hover {
+  transform: translateY(-1px);
+  border-color: rgba(249, 115, 22, 0.4);
+  background: rgba(255, 247, 237, 0.96);
+}
+
+.datser-notification-action.is-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #f97316, #fb923c);
+  color: white;
+}
+
+.datser-notification-action-icon svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.datser-toast-stack .datser-notification-close,
+.datser-toast-stack .datser-toast-close,
+.datser-toast-stack .Toastify__close-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  min-width: 2.1rem;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #475569;
+  opacity: 1;
+  transition: transform 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.dark .datser-toast-stack .datser-notification-close,
+.dark .datser-toast-stack .datser-toast-close,
+.dark .datser-toast-stack .Toastify__close-button {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fed7aa;
+}
+
+.datser-toast-stack .datser-notification-close:hover,
+.datser-toast-stack .datser-toast-close:hover,
+.datser-toast-stack .Toastify__close-button:hover {
+  transform: scale(1.04);
+  background: rgba(249, 115, 22, 0.14);
+  color: #c2410c;
+}
+
+.datser-toast-stack .datser-notification-close svg,
+.datser-toast-stack .datser-toast-close svg,
+.datser-toast-stack .Toastify__close-button svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  stroke-width: 2.5;
+}
+
+.datser-toast-stack .Toastify__progress-bar,
+.datser-notification-progress {
+  height: 0.18rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f97316, #fb923c);
+}
+
+.datser-notification-progress-success,
+.datser-notification-progress-online {
+  background: linear-gradient(90deg, #22c55e, #86efac) !important;
+}
+
+.datser-notification-progress-error,
+.datser-notification-progress-offline {
+  background: linear-gradient(90deg, #ef4444, #fb7185) !important;
+}
+
+.datser-notification-spinable {
+  animation: datserNotifySpin 900ms linear infinite;
+}
+
+.datser-toast-stack .Toastify__toast.Toastify__toast--exit,
+.datser-toast-stack .Toastify__toast.Toastify__slide-exit--top-center,
+.datser-toast-stack .Toastify__toast.Toastify__slide-exit-active,
+.datser-toast-stack .Toastify__toast.datser-toast-manual-closing {
+  animation: datserToastLiftOut 160ms ease-in forwards !important;
+}
+
+@keyframes datserToastLiftIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -0.75rem, 0) scale(0.975);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes datserToastLiftOut {
+  to {
+    opacity: 0;
+    transform: translate3d(0, -0.5rem, 0) scale(0.985);
+    filter: blur(1px);
+  }
+}
+
+@keyframes datserNotifySpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 640px) {
+  .Toastify__toast-container.datser-toast-stack,
+  .Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
+    top: max(0.55rem, env(safe-area-inset-top));
+    width: calc(100vw - 1rem);
+  }
+
+  .datser-notification-card {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.62rem;
+    padding: 0.78rem 0.72rem 0.78rem 0.86rem;
+    border-radius: 1.1rem;
+  }
+
+  .datser-notification-icon {
+    width: 1.95rem;
+    height: 1.95rem;
+  }
+
+  .datser-toast-stack .datser-notification-title {
+    font-size: 0.9rem;
+  }
+
+  .datser-toast-stack .datser-notification-message {
+    font-size: 0.8rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .datser-toast-stack .datser-toast,
+  .datser-toast-stack .Toastify__toast,
+  .datser-toast-stack .Toastify__toast.Toastify__toast--exit,
+  .datser-toast-stack .Toastify__toast.datser-toast-manual-closing,
+  .datser-notification-spinable,
+  .datser-notification-action,
+  .datser-toast-stack .datser-notification-close,
+  .datser-toast-stack .datser-toast-close,
+  .datser-toast-stack .Toastify__close-button {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}
