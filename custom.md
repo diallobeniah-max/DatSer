@@ -78,6 +78,16 @@
 - Developer Mode is only for local laptop/development use.
 - Production, deployed web, and Android APK builds must hide Developer Mode from normal users.
 - Do not reintroduce Developer Mode into APK builds unless the user explicitly asks for a private developer-only build.
+
+## iOS PWA App-Shell Rule
+- In the installed iPhone/Home Screen web app, the top navigation and bottom action/search dock must remain anchored.
+- Only the central content/member list should scroll.
+- Use dynamic viewport units and iOS safe-area insets.
+- Account for the visual viewport when the software keyboard opens.
+- Do not use body/document scrolling for core app screens.
+- Do not place fixed or sticky navigation inside transformed or incorrectly overflowing ancestors.
+- Do not apply global overflow rules without verifying Settings, Export Center, modals, and other routes.
+- Test iPhone standalone/PWA behavior after changes to Dashboard layout, headers, bottom controls, search, modals, or viewport CSS.
 ## Known Issues/Product Reliability Backlog
 - Team & Sharing previously displayed workspace collaborators but later showed `0` because the UI and invite flow drifted from the canonical collaborator data shape. Fix the existing sharing workflow before adding any separate collaborator system.
 - App collaborators are separate from Supabase dashboard collaborators. Do not assume people listed in the Supabase project dashboard automatically have DatSer app workspace access.

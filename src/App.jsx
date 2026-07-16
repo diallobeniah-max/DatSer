@@ -280,6 +280,17 @@ function AppContent({ isMobile }) {
   }, [compactUiEnabled, hapticFeedbackEnabled, hapticFeedbackStrength, motionAndSoundsEnabled])
 
   useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const dashboardActive = currentView === 'dashboard'
+    document.documentElement.classList.toggle('dashboard-shell-active', dashboardActive)
+    document.body.classList.toggle('dashboard-shell-active', dashboardActive)
+    return () => {
+      document.documentElement.classList.remove('dashboard-shell-active')
+      document.body.classList.remove('dashboard-shell-active')
+    }
+  }, [currentView])
+
+  useEffect(() => {
     if (typeof window === 'undefined') return undefined
     if (!smartCompactPromptEnabled || compactUiEnabled) {
       setShowCompactSuggestion(false)
@@ -531,7 +542,7 @@ function AppContent({ isMobile }) {
   return (
     <div
       onClick={handleGlobalInteractionFeedback}
-      className={`min-app-vh app-shell ios-overscroll-none transition-colors duration-200 ${motionAndSoundsEnabled ? '' : 'animations-disabled'} ${compactUiEnabled ? 'compact-ui' : ''}`}
+      className={`min-app-vh app-shell ios-overscroll-none transition-colors duration-200 ${currentView === 'dashboard' ? 'dashboard-app-shell' : ''} ${motionAndSoundsEnabled ? '' : 'animations-disabled'} ${compactUiEnabled ? 'compact-ui' : ''}`}
     >
       {showCompactSuggestion && (
         <div className={`fixed left-3 right-3 top-[calc(env(safe-area-inset-top,0px)+72px)] z-[1000000] mx-auto max-w-sm rounded-2xl border border-orange-300/70 bg-white/95 p-3 shadow-2xl shadow-black/20 backdrop-blur-xl transition-all duration-200 dark:border-orange-400/25 dark:bg-[#202121]/95 ${isCompactSuggestionClosing ? 'pointer-events-none -translate-y-2 opacity-0' : 'translate-y-0 opacity-100'}`}>
@@ -607,7 +618,7 @@ function AppContent({ isMobile }) {
         </div>
       )}
 
-      <main className={`app-main-safe ${currentView === 'dashboard' ? 'app-main-dashboard-safe' : ''} ${currentView === 'settings' ? 'app-main-settings-safe' : ''} ${currentView === 'admin' ? 'app-main-admin-safe' : ''} mx-auto px-0 sm:px-4 pt-0 pb-6 md:py-6 w-full`}>
+      <main className={`app-main-safe ${currentView === 'dashboard' ? 'app-main-dashboard-safe dashboard-app-content' : ''} ${currentView === 'settings' ? 'app-main-settings-safe' : ''} ${currentView === 'admin' ? 'app-main-admin-safe' : ''} mx-auto px-0 sm:px-4 pt-0 pb-6 md:py-6 w-full`}>
         <OfflineStatusBanner
           onOpenOfflineSettings={() => {
             setCurrentView('settings')
@@ -885,24 +896,42 @@ function App() {
     coarseMedia?.addEventListener('change', onMediaChange)
     widthMedia?.addEventListener('change', onMediaChange)
 
-    // Keyboard offset for iOS
+    // Visual viewport variables keep the Dashboard shell and bottom dock tied
+    // to the visible screen while iOS/Android keyboards animate.
     const vv = window.visualViewport
-    const applyOffset = () => {
-      if (!vv) return
-      // Use full difference between layout viewport and visual viewport height.
-      // This closely matches keyboard height across iOS Safari and Android Chrome.
-      const diff = Math.max(0, window.innerHeight - vv.height)
-      document.documentElement.style.setProperty('--keyboard-offset', `${diff}px`)
+    let viewportFrame = 0
+    const applyViewport = () => {
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
+      viewportFrame = window.requestAnimationFrame(() => {
+        viewportFrame = 0
+        const visibleHeight = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight)
+        const offsetTop = Math.round(vv?.offsetTop || 0)
+        const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0)
+        const obscuredHeight = vv ? Math.max(0, Math.round(layoutHeight - vv.height - vv.offsetTop)) : 0
+        const keyboardOffset = obscuredHeight > 120 ? obscuredHeight : 0
+        const root = document.documentElement
+
+        root.style.setProperty('--app-visual-height', `${visibleHeight}px`)
+        root.style.setProperty('--app-visual-offset-top', `${offsetTop}px`)
+        root.style.setProperty('--keyboard-offset', `${keyboardOffset}px`)
+        root.classList.toggle('app-keyboard-open', keyboardOffset > 0)
+      })
     }
-    vv?.addEventListener('resize', applyOffset)
-    vv?.addEventListener('scroll', applyOffset)
-    applyOffset()
+    vv?.addEventListener('resize', applyViewport)
+    vv?.addEventListener('scroll', applyViewport)
+    window.addEventListener('resize', applyViewport)
+    window.addEventListener('orientationchange', applyViewport)
+    applyViewport()
 
     return () => {
-      vv?.removeEventListener('resize', applyOffset)
-      vv?.removeEventListener('scroll', applyOffset)
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
+      vv?.removeEventListener('resize', applyViewport)
+      vv?.removeEventListener('scroll', applyViewport)
+      window.removeEventListener('resize', applyViewport)
+      window.removeEventListener('orientationchange', applyViewport)
       coarseMedia?.removeEventListener('change', onMediaChange)
       widthMedia?.removeEventListener('change', onMediaChange)
+      document.documentElement.classList.remove('app-keyboard-open')
     }
   }, [])
 

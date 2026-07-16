@@ -220,6 +220,8 @@
   html {
     scroll-behavior: smooth;
     width: 100%;
+    height: 100%;
+    min-height: 100%;
     max-width: 100%;
     overflow-x: clip;
     /* Prevent page from moving left/right */
@@ -272,13 +274,22 @@
     @apply text-gray-900 dark:text-gray-100 transition-colors duration-200;
     background: #f4efe8;
     width: 100%;
+    height: 100%;
+    min-height: 100%;
     max-width: 100%;
+    margin: 0;
     overflow-x: clip;
     /* Belt-and-suspenders to ensure no horizontal scroll */
   }
 
   .dark body {
     background: #0d0d0d;
+  }
+
+  #root {
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
   }
 
   html.background-static body,
@@ -1775,6 +1786,78 @@ details[open] summary~* {
     border-radius: 1.35rem 1.35rem 0 0 !important;
     animation-name: memberPassShareSheetIn !important;
     animation-duration: 240ms !important;
+  }
+}
+
+/* Dashboard app shell
+   -------------------
+   Scope the fixed application viewport to the Members/Marked screen only.
+   Settings, Export Center, Admin, and modal routes keep their existing
+   document-scrolling behavior. */
+html.dashboard-shell-active,
+body.dashboard-shell-active {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.dashboard-app-shell {
+  position: fixed;
+  top: var(--app-visual-offset-top, 0px);
+  right: 0;
+  bottom: auto;
+  left: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: var(--app-visual-height, var(--app-vh));
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-app-shell > .app-header {
+  position: relative !important;
+  inset: auto !important;
+  grid-row: 1;
+  flex: none;
+}
+
+.dashboard-app-shell > .dashboard-app-content {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0 !important;
+  height: 100%;
+  max-height: 100%;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-top: 0 !important;
+  padding-bottom: calc(4.75rem + var(--app-safe-bottom)) !important;
+}
+
+.dashboard-app-shell .app-bottom-dock {
+  position: absolute !important;
+  bottom: 0 !important;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.dashboard-app-shell .search-suggestion-tray {
+  position: absolute !important;
+  bottom: calc(4.35rem + var(--app-safe-bottom)) !important;
+}
+
+@media (min-width: 768px) {
+  .dashboard-app-shell > .dashboard-app-content {
+    padding-bottom: 4.75rem !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-app-shell .app-bottom-dock {
+    transition: none !important;
   }
 }
 

@@ -80,6 +80,166 @@ test.describe('Preflight smoke', () => {
     await expect(page.getByTestId('dev-login-button')).toHaveCount(0)
     await expect(page.getByText('Enter Developer Mode')).toHaveCount(0)
   })
+
+  test('dashboard app shell keeps navigation and search dock anchored', async ({ page }, testInfo) => {
+    test.skip(isPreviewSmoke, 'Developer bypass is intentionally disabled in preview/prod smoke runs.')
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await loginWithDeveloperMode(page)
+
+    const shell = page.locator('.dashboard-app-shell')
+    const header = page.locator('.app-header')
+    const content = page.locator('.dashboard-app-content')
+    const dock = page.locator('.app-bottom-dock')
+    const search = dock.getByPlaceholder(/search members/i)
+
+    await expect(shell).toBeVisible()
+    await expect(header).toBeVisible()
+    await expect(content).toBeVisible()
+    await expect(dock).toBeVisible()
+    await expect(search).toBeVisible()
+
+    const initialLayout = await page.evaluate(() => {
+      const shellElement = document.querySelector('.dashboard-app-shell')
+      const headerElement = document.querySelector('.app-header')
+      const contentElement = document.querySelector('.dashboard-app-content')
+      const dockElement = document.querySelector('.app-bottom-dock')
+      const inputElement = dockElement?.querySelector('input')
+      const rect = (element) => element?.getBoundingClientRect().toJSON()
+
+      return {
+        bodyOverflow: getComputedStyle(document.body).overflow,
+        shellPosition: getComputedStyle(shellElement).position,
+        shellOverflow: getComputedStyle(shellElement).overflow,
+        headerPosition: getComputedStyle(headerElement).position,
+        contentOverflowY: getComputedStyle(contentElement).overflowY,
+        dockPosition: getComputedStyle(dockElement).position,
+        inputFontSize: Number.parseFloat(getComputedStyle(inputElement).fontSize),
+        headerRect: rect(headerElement),
+        dockRect: rect(dockElement),
+      }
+    })
+
+    expect(initialLayout.bodyOverflow).toBe('hidden')
+    expect(initialLayout.shellPosition).toBe('fixed')
+    expect(initialLayout.shellOverflow).toBe('hidden')
+    expect(initialLayout.headerPosition).toBe('relative')
+    expect(initialLayout.contentOverflowY).toBe('auto')
+    expect(initialLayout.dockPosition).toBe('absolute')
+    expect(initialLayout.inputFontSize).toBeGreaterThanOrEqual(16)
+
+    await content.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+    })
+    await page.waitForTimeout(100)
+
+    const scrolledLayout = await page.evaluate(() => ({
+      headerRect: document.querySelector('.app-header')?.getBoundingClientRect().toJSON(),
+      dockRect: document.querySelector('.app-bottom-dock')?.getBoundingClientRect().toJSON(),
+    }))
+
+    expect(Math.abs(scrolledLayout.headerRect.top - initialLayout.headerRect.top)).toBeLessThan(1)
+    expect(Math.abs(scrolledLayout.dockRect.bottom - initialLayout.dockRect.bottom)).toBeLessThan(1)
+
+    const scrollTopBeforeFocus = await content.evaluate((element) => element.scrollTop)
+    await search.focus()
+    const focusLayout = await page.evaluate(() => ({
+      windowScrollY: window.scrollY,
+      contentScrollTop: document.querySelector('.dashboard-app-content')?.scrollTop,
+    }))
+    expect(focusLayout.windowScrollY).toBe(0)
+    expect(focusLayout.contentScrollTop).toBe(scrollTopBeforeFocus)
+
+    await search.fill('John')
+    await expect(search).toHaveValue('John')
+
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--app-visual-height', '520px')
+    })
+    await page.waitForTimeout(100)
+
+    const keyboardLayout = await page.evaluate(() => ({
+      shellHeight: document.querySelector('.dashboard-app-shell')?.getBoundingClientRect().height,
+      dockBottom: document.querySelector('.app-bottom-dock')?.getBoundingClientRect().bottom,
+      shellBottom: document.querySelector('.dashboard-app-shell')?.getBoundingClientRect().bottom,
+    }))
+
+    expect(Math.abs(keyboardLayout.shellHeight - 520)).toBeLessThan(1)
+    expect(Math.abs(keyboardLayout.dockBottom - keyboardLayout.shellBottom)).toBeLessThan(1)
+
+    await page.evaluate(() => {
+      document.documentElement.style.removeProperty('--app-visual-height')
+    })
+    await search.fill('')
+    const compactDismiss = page.getByRole('button', { name: /dismiss compact ui suggestion/i })
+    if (await compactDismiss.isVisible().catch(() => false)) {
+      await compactDismiss.click()
+    }
+    const toastCloseButtons = page.locator('.Toastify__close-button')
+    for (let index = (await toastCloseButtons.count()) - 1; index >= 0; index -= 1) {
+      const closeButton = toastCloseButtons.nth(index)
+      if (await closeButton.isVisible().catch(() => false)) {
+        await closeButton.click()
+      }
+    }
+    await page.waitForTimeout(250)
+
+    const responsiveViewports = [
+      { name: 'iphone-se', width: 320, height: 568 },
+      { name: 'iphone', width: 390, height: 844 },
+      { name: 'iphone-pro-max', width: 430, height: 932 },
+      { name: 'android', width: 412, height: 915 },
+      { name: 'tablet', width: 768, height: 1024 },
+      { name: 'desktop', width: 1440, height: 900 },
+    ]
+
+    for (const viewport of responsiveViewports) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height })
+      await page.waitForTimeout(100)
+      const layout = await page.evaluate(() => {
+        const shellElement = document.querySelector('.dashboard-app-shell')
+        const headerElement = document.querySelector('.app-header')
+        const contentElement = document.querySelector('.dashboard-app-content')
+        const dockElement = document.querySelector('.app-bottom-dock')
+        return {
+          viewportWidth: window.innerWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          shellRect: shellElement?.getBoundingClientRect().toJSON(),
+          headerRect: headerElement?.getBoundingClientRect().toJSON(),
+          contentHeight: contentElement?.getBoundingClientRect().height,
+          dockRect: dockElement?.getBoundingClientRect().toJSON(),
+        }
+      })
+
+      expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth)
+      expect(layout.headerRect.top).toBeGreaterThanOrEqual(-1)
+      expect(layout.contentHeight).toBeGreaterThan(0)
+      expect(layout.dockRect.bottom).toBeLessThanOrEqual(layout.shellRect.bottom + 1)
+      expect(layout.dockRect.bottom).toBeGreaterThan(layout.shellRect.bottom - 2)
+
+      if (['iphone', 'tablet', 'desktop'].includes(viewport.name)) {
+        await page.screenshot({
+          path: testInfo.outputPath(`pwa-shell-${viewport.name}.png`),
+          fullPage: false,
+        })
+      }
+    }
+
+    await page.evaluate(() => window.openSettings?.())
+    await expect(page.getByText('Settings', { exact: true }).first()).toBeVisible()
+    const settingsLayout = await page.evaluate(() => ({
+      dashboardShellCount: document.querySelectorAll('.dashboard-app-shell').length,
+      bodyHasDashboardLock: document.body.classList.contains('dashboard-shell-active'),
+      settingsMainVisible: Boolean(document.querySelector('.app-main-settings-safe')),
+    }))
+    expect(settingsLayout.dashboardShellCount).toBe(0)
+    expect(settingsLayout.bodyHasDashboardLock).toBe(false)
+    expect(settingsLayout.settingsMainVisible).toBe(true)
+    await expect(page.getByText('Something went wrong')).toHaveCount(0)
+  })
+
   test('developer mode launches add member and date picking stays stable', async ({ page }) => {
     test.skip(isPreviewSmoke, 'Developer bypass is intentionally disabled in preview/prod smoke runs.')
 

@@ -2362,7 +2362,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const renderSearchSuggestionTray = () => {
     if (!showSearchSuggestions || !isShortSearchView) return null
     return (
-      <div className="fixed bottom-[calc(4.35rem+env(safe-area-inset-bottom,0px))] left-3 right-3 z-40 overflow-hidden rounded-[1.45rem] border border-orange-200/80 bg-white/96 ring-1 ring-white/70 backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-3 duration-200 dark:border-orange-500/45 dark:bg-[#101111]/96 dark:ring-white/[0.04] sm:left-1/2 sm:right-auto sm:w-[min(92rem,calc(100vw-2rem))] sm:-translate-x-1/2 md:bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] md:rounded-[1.8rem]">
+      <div className="search-suggestion-tray fixed bottom-[calc(4.35rem+env(safe-area-inset-bottom,0px))] left-3 right-3 z-40 overflow-hidden rounded-[1.45rem] border border-orange-200/80 bg-white/96 ring-1 ring-white/70 backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-3 duration-200 dark:border-orange-500/45 dark:bg-[#101111]/96 dark:ring-white/[0.04] sm:left-1/2 sm:right-auto sm:w-[min(92rem,calc(100vw-2rem))] sm:-translate-x-1/2 md:bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] md:rounded-[1.8rem]">
         <div className="border-b border-orange-100/80 bg-gradient-to-r from-orange-50/95 via-white/95 to-orange-50/70 px-4 pb-2 pt-4 dark:border-white/[0.06] dark:from-[#171817] dark:via-[#171817] dark:to-[#201714] sm:px-7 sm:pt-5">
           <p className="text-xs font-black uppercase tracking-[0.16em] text-orange-600 dark:text-orange-300 sm:text-sm">Search matches</p>
         </div>
@@ -3848,13 +3848,12 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Bottom Search Bar */}
-      <div className={`bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
+      <div className={`app-bottom-dock bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
         <div className="mx-auto px-3 sm:px-4 py-2 sm:py-2.5">
           <div className="flex items-center gap-2">
             {dashboardTab === 'edited' ? (
               /* Marked tab: Search bar that only searches within Present/Absent members */
               <div className="flex-1 relative">
-                {renderSearchSuggestionTray()}
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
                 <input
                   type="text"
@@ -3864,7 +3863,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3881,7 +3880,6 @@ const Dashboard = ({ isAdmin = false }) => {
             ) : (
               /* Other tabs: Normal text search */
               <div className="flex-1 relative">
-                {renderSearchSuggestionTray()}
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
                 <input
                   type="text"
@@ -3891,7 +3889,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-sm border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 sm:text-base ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3948,6 +3946,8 @@ const Dashboard = ({ isAdmin = false }) => {
           </div>
         </div>
       </div>
+
+      {renderSearchSuggestionTray()}
 
       {/* Add padding to prevent content from being hidden behind bottom search bar */}
       <div className="h-16 md:h-10" />
