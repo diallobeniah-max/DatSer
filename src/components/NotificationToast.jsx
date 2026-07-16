@@ -45,9 +45,7 @@ const NotificationToast = ({
     event?.stopPropagation?.()
     if (isClosingRef.current) return
     isClosingRef.current = true
-    const toastElement = event?.currentTarget?.closest?.('.Toastify__toast')
-    toastElement?.classList?.add('datser-toast-manual-closing')
-    window.setTimeout(() => closeToast?.(), 180)
+    closeToast?.()
   }
 
   return (

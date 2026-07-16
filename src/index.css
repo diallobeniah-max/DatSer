@@ -5260,6 +5260,7 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   -webkit-backdrop-filter: blur(16px) saturate(145%) !important;
   backdrop-filter: blur(16px) saturate(145%) !important;
   pointer-events: auto !important;
+  will-change: opacity, translate;
   animation: datserBoxToastIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both !important;
 }
 
@@ -5403,7 +5404,7 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
 
 .Toastify__toast-container.datser-toast-stack .Toastify__toast.Toastify__toast--exit,
 .Toastify__toast-container.datser-toast-stack .Toastify__toast.datser-toast-manual-closing {
-  animation: datserBoxToastOut 180ms cubic-bezier(0.4, 0, 0.2, 1) both !important;
+  animation: datserBoxToastOut 210ms cubic-bezier(0.4, 0, 0.2, 1) both !important;
   pointer-events: none !important;
 }
 
@@ -5411,12 +5412,10 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   from {
     opacity: 0;
     translate: 0 -0.75rem;
-    scale: 0.985;
   }
   to {
     opacity: 1;
     translate: 0 0;
-    scale: 1;
   }
 }
 
@@ -5424,12 +5423,10 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   from {
     opacity: 1;
     translate: 0 0;
-    scale: 1;
   }
   to {
     opacity: 0;
-    translate: 0 -0.32rem;
-    scale: 0.995;
+    translate: 0 -0.375rem;
   }
 }
 
@@ -5486,6 +5483,5 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   .Toastify__toast-container.datser-toast-stack .datser-toast {
     animation: none !important;
     translate: none !important;
-    scale: 1 !important;
   }
 }

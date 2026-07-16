@@ -2424,7 +2424,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   return (
-    <div className={`space-y-2 pb-24 md:pb-12 ${dashboardShellClass} mx-auto`}>
+    <div className={`space-y-2 pb-0 md:pb-14 ${dashboardShellClass} mx-auto`}>
       {/* Header removed; summary now shown in sticky Header */}
 
       {/* Desktop tab navigation removed; use mobile segmented control in Header */}

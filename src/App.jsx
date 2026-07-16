@@ -53,12 +53,10 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 const CustomCloseButton = ({ closeToast }) => {
   const [showCloseAll, setShowCloseAll] = React.useState(false);
   const timerRef = React.useRef(null);
-  const closeTimerRef = React.useRef(null);
   const isClosingRef = React.useRef(false);
 
   React.useEffect(() => () => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
   }, []);
 
   const playCloseAnimation = (event, dismiss) => {
@@ -67,13 +65,7 @@ const CustomCloseButton = ({ closeToast }) => {
 
     if (isClosingRef.current) return;
     isClosingRef.current = true;
-
-    const toastElement = event?.currentTarget?.closest?.('.Toastify__toast');
-    toastElement?.classList?.add('datser-toast-manual-closing');
-
-    closeTimerRef.current = setTimeout(() => {
-      dismiss?.();
-    }, 180);
+    dismiss?.();
   };
 
   const handleStart = (e) => {
@@ -92,8 +84,6 @@ const CustomCloseButton = ({ closeToast }) => {
   };
 
   const handleCloseAll = (e) => {
-    const toasts = document.querySelectorAll('.datser-toast-stack .Toastify__toast');
-    toasts.forEach((toastElement) => toastElement.classList.add('datser-toast-manual-closing'));
     playCloseAnimation(e, () => toast.dismiss());
   };
 
