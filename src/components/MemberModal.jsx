@@ -13,6 +13,7 @@ import TagSelector from './TagSelector'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import CurrentLevelPicker from './CurrentLevelPicker'
+import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard, scrollControlIntoModalView } from '../hooks/useKeyboardSafeModal'
 
 const MemberModal = ({ isOpen, onClose }) => {
   const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById } = useApp()
@@ -108,6 +109,7 @@ const MemberModal = ({ isOpen, onClose }) => {
   const [workspaceTags, setWorkspaceTags] = useState([])
   const [selectedTagIds, setSelectedTagIds] = useState(new Set())
   const scrollContainerRef = useRef(null)
+  useKeyboardSafeModal({ scrollContainerRef, active: isOpen })
   const guideRefs = {
     fullName: useRef(null),
     gender: useRef(null),
@@ -195,6 +197,7 @@ const MemberModal = ({ isOpen, onClose }) => {
   const closeTimeoutRef = useRef(null)
   const closeWithAnimation = useCallback(({ skipHaptic = false, viaDrag = false } = {}) => {
     if (isClosingSheet) return
+    dismissMobileKeyboard()
     if (!skipHaptic) selection()
     if (viaDrag) {
       onClose()
@@ -246,7 +249,7 @@ const MemberModal = ({ isOpen, onClose }) => {
     }
 
     requestAnimationFrame(() => {
-      firstMissingTarget.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      scrollControlIntoModalView(scrollContainerRef.current, firstMissingTarget.current)
     })
   }
 
@@ -257,6 +260,7 @@ const MemberModal = ({ isOpen, onClose }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    dismissMobileKeyboard()
 
     if (submitInFlightRef.current || loading) {
       return
@@ -528,17 +532,18 @@ const MemberModal = ({ isOpen, onClose }) => {
   if (!isOpen && !isClosingSheet) return null
 
   return (
-    <div className="fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate">
+    <div className="keyboard-safe-modal-backdrop fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate">
       {/* Drag handle for mobile */}
       <div className="flex justify-center pt-3 pb-1 sm:hidden absolute left-0 right-0" style={{ top: 'calc(10vh)' }}>
       </div>
       <div
-        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[84dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-2xl sm:rounded-2xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${isOverrideMode
+        className={`keyboard-safe-modal-shell mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[84dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-2xl sm:rounded-2xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${isOverrideMode
         ? 'bg-orange-50/90 dark:bg-orange-900/40 backdrop-blur-md ring-orange-300 dark:ring-orange-700'
         : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
         }`}
         data-testid="add-member-modal"
         style={sheetStyle}
+        onPointerDownCapture={dismissKeyboardForNonTextControl}
       >
         {/* Draggable Header Section (Mobile Only) */}
         <div
@@ -618,7 +623,7 @@ const MemberModal = ({ isOpen, onClose }) => {
         </div>
 
         {/* Scrollable Form Area */}
-        <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto no-scrollbar" >
+        <div ref={scrollContainerRef} className="keyboard-safe-modal-body min-h-0 flex-1 overflow-y-auto no-scrollbar" >
           <form id="add-member-form" onSubmit={handleSubmit} noValidate className="p-4 sm:p-5 pb-3 sm:pb-4 space-y-4 sm:space-y-5">
             {/* Section: Member Information */}
             <div className="space-y-4">
@@ -1063,7 +1068,7 @@ const MemberModal = ({ isOpen, onClose }) => {
         </div>
 
         <div
-          className="flex flex-shrink-0 space-x-3 rounded-b-2xl border-t border-gray-200 bg-white/95 px-4 pt-3 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 sm:px-5 sm:pb-5"
+          className="keyboard-safe-modal-footer flex flex-shrink-0 space-x-3 rounded-b-2xl border-t border-gray-200 bg-white/95 px-4 pt-3 backdrop-blur dark:border-gray-700 dark:bg-gray-800/95 sm:px-5 sm:pb-5"
           style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}
         >
           <button

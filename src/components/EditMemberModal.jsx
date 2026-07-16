@@ -13,6 +13,7 @@ import TagSelector from './TagSelector'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import CurrentLevelPicker from './CurrentLevelPicker'
+import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard, scrollControlIntoModalView } from '../hooks/useKeyboardSafeModal'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, refreshSearch, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
@@ -247,6 +248,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const closeTimeoutRef = useRef(null)
   const closeWithAnimation = useCallback(({ skipHaptic = false, viaDrag = false } = {}) => {
     if (isClosingSheet) return
+    dismissMobileKeyboard()
     if (!skipHaptic) selection()
     if (viaDrag) {
       onClose()
@@ -267,6 +269,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     }
   }, [])
   const scrollContainerRef = useRef(null)
+  useKeyboardSafeModal({ scrollContainerRef, active: isOpen })
   const guideRefs = {
     fullName: useRef(null),
     gender: useRef(null),
@@ -310,7 +313,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     }
 
     requestAnimationFrame(() => {
-      firstMissingTarget.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      scrollControlIntoModalView(scrollContainerRef.current, firstMissingTarget.current)
     })
   }
 
@@ -327,6 +330,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    dismissMobileKeyboard()
 
     if (submitInFlightRef.current || loading) {
       return
@@ -705,17 +709,18 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
   return (
     <div 
-      className="fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate"
+      className="keyboard-safe-modal-backdrop fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate"
       onClick={() => closeWithAnimation()}
     >
       <div
-        className={`mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[84dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-t-2xl rounded-b-none sm:rounded-xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${overrideMode
+        className={`keyboard-safe-modal-shell mobile-bottom-sheet shadow-2xl ring-1 w-full sm:max-w-md max-h-[84dvh] sm:max-h-[90vh] flex flex-col overflow-hidden rounded-t-2xl rounded-b-none sm:rounded-xl ${isClosingSheet ? 'filter-exit' : 'filter-enter'} ${overrideMode
         ? 'bg-orange-50 dark:bg-orange-900 ring-orange-300 dark:ring-orange-700'
         : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
         }`}
         data-testid="edit-member-modal"
         style={sheetStyle}
         onClick={(e) => e.stopPropagation()}
+        onPointerDownCapture={dismissKeyboardForNonTextControl}
       >
         {/* Draggable Header Section (Mobile Only) */}
         <div
@@ -796,7 +801,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
         {/* Form */}
         <form onSubmit={handleSubmit} noValidate className={`flex flex-col flex-1 min-h-0 ${overrideMode ? 'bg-orange-50 dark:bg-orange-900' : 'bg-white dark:bg-gray-800'}`}>
-          <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 pb-5 space-y-4 scrollbar-hide overscroll-contain" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
+          <div ref={scrollContainerRef} className="keyboard-safe-modal-body flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 pb-5 space-y-4 scrollbar-hide overscroll-contain" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
           {/* Full Name */}
           <GuidedField ref={guideRefs.fullName} active={activeStepId === 'full-name'}>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -1285,7 +1290,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
           {/* Form Actions */}
           <div
-            className={`flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 pt-3 sm:px-5 sm:pb-5 flex space-x-3 rounded-b-none sm:rounded-b-xl ${overrideMode ? 'bg-orange-50 dark:bg-orange-900' : 'bg-white dark:bg-gray-800'}`}
+            className={`keyboard-safe-modal-footer flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 pt-3 sm:px-5 sm:pb-5 flex space-x-3 rounded-b-none sm:rounded-b-xl ${overrideMode ? 'bg-orange-50 dark:bg-orange-900' : 'bg-white dark:bg-gray-800'}`}
             style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}
           >
             <button

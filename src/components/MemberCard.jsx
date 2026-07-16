@@ -10,6 +10,7 @@ import {
     History 
 } from 'lucide-react'
 import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
+import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 
 const MemberCard = memo(({ 
     member, 
@@ -92,6 +93,7 @@ const MemberCard = memo(({
                                     e.stopPropagation()
                                     onToggleSelection(member.id)
                                 } else {
+                                    dismissMobileKeyboard()
                                     onToggleExpansion(member.id)
                                 }
                             }}
@@ -102,6 +104,7 @@ const MemberCard = memo(({
                                     e.stopPropagation()
                                     onToggleSelection(member.id)
                                 } else {
+                                    dismissMobileKeyboard()
                                     onToggleExpansion(member.id)
                                 }
                             }}
@@ -129,6 +132,7 @@ const MemberCard = memo(({
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onClick={(event) => {
                                         event.stopPropagation()
+                                        dismissMobileKeyboard()
                                         onIndexClick?.(member)
                                     }}
                                     className="member-index-badge h-8 min-w-[4.75rem] px-4 text-xs transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500"
@@ -149,6 +153,7 @@ const MemberCard = memo(({
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                     event.stopPropagation()
+                                    dismissMobileKeyboard()
                                     onAttendance(member.id, true)
                                 }}
                                 disabled={attendanceLoading}
@@ -166,6 +171,7 @@ const MemberCard = memo(({
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                     event.stopPropagation()
+                                    dismissMobileKeyboard()
                                     onAttendance(member.id, false)
                                 }}
                                 disabled={attendanceLoading}

@@ -240,6 +240,172 @@ test.describe('Preflight smoke', () => {
     await expect(page.getByText('Something went wrong')).toHaveCount(0)
   })
 
+  test('mobile keyboard mode compacts search results and keeps form actions visible', async ({ page }, testInfo) => {
+    test.skip(isPreviewSmoke, 'Developer bypass is intentionally disabled in preview/prod smoke runs.')
+    test.setTimeout(60000)
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.addInitScript(() => {
+      localStorage.setItem('datser_compact_suggestion_dismissed_at', String(Date.now()))
+      localStorage.setItem('datser_search_suggestion_prompt_seen_v1', 'true')
+    })
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await loginWithDeveloperMode(page)
+
+    const compactDismiss = page.getByRole('button', { name: /dismiss compact ui suggestion/i })
+    if (await compactDismiss.isVisible().catch(() => false)) await compactDismiss.click()
+    await page.locator('.Toastify__close-button').evaluateAll((buttons) => buttons.forEach((button) => button.click()))
+
+    const firstCard = page.locator('.member-card').first()
+    const normalCardHeight = await firstCard.evaluate((element) => element.getBoundingClientRect().height)
+    const search = page.getByPlaceholder('Search members...')
+    await search.focus()
+    await expect(page.locator('.keyboard-search-active')).toBeVisible()
+    const compactCardHeight = await firstCard.evaluate((element) => element.getBoundingClientRect().height)
+    const joinedDisplay = await firstCard.locator('.member-card-meta').evaluate((element) => getComputedStyle(element).display)
+    expect(compactCardHeight).toBeLessThan(normalCardHeight)
+    expect(compactCardHeight).toBeLessThan(110)
+    expect(joinedDisplay).toBe('none')
+    await page.locator('.Toastify__close-button').evaluateAll((buttons) => buttons.forEach((button) => button.click()))
+    await page.screenshot({ path: testInfo.outputPath('keyboard-compact-search.png'), fullPage: false })
+
+    for (const viewport of [
+      { width: 320, height: 568 },
+      { width: 390, height: 844 },
+      { width: 430, height: 932 },
+      { width: 412, height: 915 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await page.waitForTimeout(50)
+      expect(await firstCard.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(110)
+      expect(await firstCard.locator('.member-card-meta').evaluate((element) => getComputedStyle(element).display)).toBe('none')
+    }
+    await page.setViewportSize({ width: 390, height: 844 })
+    await firstCard.locator('.member-card-header').click()
+    await expect(search).not.toBeFocused()
+    await expect(page.locator('.keyboard-search-active')).toHaveCount(0)
+    await expect(firstCard.locator('.member-card-expanded')).toBeVisible()
+
+    await search.focus()
+    await page.getByRole('button', { name: /scan member qr code/i }).click()
+    await expect(search).not.toBeFocused()
+    await expect(page.getByText('Scan member pass', { exact: true })).toBeVisible()
+    await page.getByRole('dialog', { name: 'Scan member pass' }).getByRole('button', { name: 'Close scanner' }).evaluate((button) => button.click())
+    await expect(page.getByRole('dialog', { name: 'Scan member pass' })).toHaveCount(0)
+
+    await search.focus()
+    await page.getByTitle('Add New Member').click()
+    await expect(search).not.toBeFocused()
+    await expect(page.getByTestId('add-member-modal')).toBeVisible()
+
+    const addModal = page.getByTestId('add-member-modal')
+    const addBody = addModal.locator('.keyboard-safe-modal-body')
+    const addFooter = addModal.locator('.keyboard-safe-modal-footer')
+    const nameInput = addModal.getByPlaceholder('Enter full name')
+    await nameInput.fill('Keyboard QA Member')
+    await nameInput.focus()
+    await page.evaluate(() => {
+      document.documentElement.classList.add('app-keyboard-open')
+      document.documentElement.style.setProperty('--app-visual-height', '520px')
+    })
+    await page.waitForTimeout(100)
+
+    const addLayout = await addModal.evaluate((shell) => {
+      const footer = shell.querySelector('.keyboard-safe-modal-footer')
+      const body = shell.querySelector('.keyboard-safe-modal-body')
+      return {
+        bodyOverflow: getComputedStyle(document.body).overflow,
+        shellHeight: shell.getBoundingClientRect().height,
+        shellBottom: shell.getBoundingClientRect().bottom,
+        footerBottom: footer.getBoundingClientRect().bottom,
+        bodyOverflowY: getComputedStyle(body).overflowY,
+      }
+    })
+    expect(addLayout.bodyOverflow).toBe('hidden')
+    expect(Math.abs(addLayout.shellHeight - 520)).toBeLessThan(1)
+    expect(Math.abs(addLayout.footerBottom - addLayout.shellBottom)).toBeLessThan(1)
+    expect(addLayout.bodyOverflowY).toBe('auto')
+
+    await addBody.evaluate((element) => { element.scrollTop = element.scrollHeight })
+    const attendanceButton = addModal.getByRole('button', { name: 'Present', exact: true }).last()
+    await attendanceButton.click()
+    await expect(nameInput).not.toBeFocused()
+    await nameInput.focus()
+    await addBody.evaluate((element) => { element.scrollTop = element.scrollHeight })
+    await addModal.getByTestId('member-form-parent-toggle').click()
+    await expect(nameInput).not.toBeFocused()
+    const parentName = addModal.getByTestId('member-form-parent1-name')
+    await expect(parentName).toBeVisible()
+    await parentName.focus()
+    await page.waitForTimeout(100)
+    const parentVisibility = await addBody.evaluate((body) => {
+      const target = body.querySelector('[data-testid="member-form-parent1-name"]')
+      const bodyRect = body.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      return targetRect.top >= bodyRect.top - 1 && targetRect.bottom <= bodyRect.bottom + 1
+    })
+    expect(parentVisibility).toBe(true)
+    await expect(addFooter.getByRole('button', { name: /Add Member/i })).toBeVisible()
+    await page.locator('.Toastify__close-button').evaluateAll((buttons) => buttons.forEach((button) => button.click()))
+    await page.screenshot({ path: testInfo.outputPath('keyboard-safe-add-member.png'), fullPage: false })
+    await addFooter.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(addModal).toHaveCount(0)
+
+    await page.evaluate(() => {
+      document.documentElement.classList.remove('app-keyboard-open')
+      document.documentElement.style.removeProperty('--app-visual-height')
+    })
+
+    const editOpened = await page.evaluate(() => window.openDeveloperEditMember?.('John Doe'))
+    expect(editOpened).toBe(true)
+    const editModal = page.getByTestId('edit-member-modal')
+    await expect(editModal).toBeVisible()
+    const editName = editModal.getByPlaceholder('Enter full name')
+    await editName.focus()
+    await page.evaluate(() => {
+      document.documentElement.classList.add('app-keyboard-open')
+      document.documentElement.style.setProperty('--app-visual-height', '520px')
+    })
+    await editModal.locator('.keyboard-safe-modal-body').evaluate((element) => { element.scrollTop = element.scrollHeight })
+    await editModal.getByRole('button', { name: 'Present', exact: true }).last().click()
+    await expect(editName).not.toBeFocused()
+    const editLayout = await editModal.evaluate((shell) => ({
+      shellBottom: shell.getBoundingClientRect().bottom,
+      footerBottom: shell.querySelector('.keyboard-safe-modal-footer').getBoundingClientRect().bottom,
+    }))
+    expect(Math.abs(editLayout.footerBottom - editLayout.shellBottom)).toBeLessThan(1)
+    await editModal.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(editModal).toHaveCount(0)
+
+    let missingOpened = false
+    for (const memberName of ['John Doe', 'Jane Smith', 'Michael Johnson']) {
+      missingOpened = await page.evaluate((name) => window.openDeveloperMissingDataFlow?.(name, true), memberName)
+      if (missingOpened) break
+    }
+    expect(missingOpened).toBe(true)
+    const missingModal = page.getByTestId('missing-data-modal')
+    await expect(missingModal).toBeVisible()
+    await expect(missingModal.locator('.keyboard-safe-modal-body')).toBeVisible()
+    await expect(missingModal.locator('.keyboard-safe-modal-footer')).toBeVisible()
+    await page.waitForTimeout(350)
+    const missingLayout = await missingModal.locator('.keyboard-safe-modal-shell').evaluate((shell) => ({
+      shellBottom: shell.getBoundingClientRect().bottom,
+      footerBottom: shell.querySelector('.keyboard-safe-modal-footer').getBoundingClientRect().bottom,
+      bodyOverflowY: getComputedStyle(shell.querySelector('.keyboard-safe-modal-body')).overflowY,
+    }))
+    expect(Math.abs(missingLayout.footerBottom - missingLayout.shellBottom)).toBeLessThan(1)
+    expect(missingLayout.bodyOverflowY).toBe('auto')
+    await page.locator('.Toastify__close-button').evaluateAll((buttons) => buttons.forEach((button) => button.click()))
+    await page.screenshot({ path: testInfo.outputPath('keyboard-safe-missing-info.png'), fullPage: false })
+
+    await page.evaluate(() => {
+      document.documentElement.classList.remove('app-keyboard-open')
+      document.documentElement.style.removeProperty('--app-visual-height')
+    })
+    await expect(page.getByText('Something went wrong')).toHaveCount(0)
+  })
+
   test('developer mode launches add member and date picking stays stable', async ({ page }) => {
     test.skip(isPreviewSmoke, 'Developer bypass is intentionally disabled in preview/prod smoke runs.')
 

@@ -88,6 +88,22 @@
 - Do not place fixed or sticky navigation inside transformed or incorrectly overflowing ancestors.
 - Do not apply global overflow rules without verifying Settings, Export Center, modals, and other routes.
 - Test iPhone standalone/PWA behavior after changes to Dashboard layout, headers, bottom controls, search, modals, or viewport CSS.
+
+## Mobile Form Keyboard-Safety Rule
+- Add, Edit, and Complete Missing Info forms must use a fixed modal/sheet shell with an internally scrolling body and an accessible action footer.
+- Save, Cancel, and Add Member actions must remain visible above the mobile keyboard.
+- Dismiss the keyboard when users move from text input to attendance, accordions, selectors, or other non-text controls where appropriate.
+- Never allow the document body to scroll behind an open form/modal.
+- Reuse the central visual viewport handling instead of adding conflicting keyboard calculations.
+- Test the iPhone keyboard and autofill accessory bar after changing forms, modal layouts, attendance controls, or sticky action footers.
+
+## Keyboard-Open Search Mode
+- Do not permanently shrink normal member cards just to fit the mobile keyboard.
+- While the software keyboard/search input is active, use compact readable member result rows.
+- Automatically dismiss the keyboard before opening member details, Add Member, scanner, or other views needing more space.
+- Restore normal full cards when the keyboard closes.
+- Preserve fixed top navigation, fixed bottom search dock, and central internal scrolling.
+
 ## Known Issues/Product Reliability Backlog
 - Team & Sharing previously displayed workspace collaborators but later showed `0` because the UI and invite flow drifted from the canonical collaborator data shape. Fix the existing sharing workflow before adding any separate collaborator system.
 - App collaborators are separate from Supabase dashboard collaborators. Do not assume people listed in the Supabase project dashboard automatically have DatSer app workspace access.

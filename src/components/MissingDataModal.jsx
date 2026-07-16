@@ -8,6 +8,7 @@ import { useApp } from '../context/AppContext'
 import { toast } from 'react-toastify'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
+import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 
 const MissingDataModal = ({
     member,
@@ -39,6 +40,7 @@ const MissingDataModal = ({
     // Tracks whether we have already initiated closing to block ghost-click re-opens
     const isClosingRef = useRef(false)
     const scrollContainerRef = useRef(null)
+    useKeyboardSafeModal({ scrollContainerRef })
     const guideRefs = {
         phone: useRef(null),
         gender: useRef(null),
@@ -219,6 +221,7 @@ const MissingDataModal = ({
     }
 
     const handleSave = async () => {
+        dismissMobileKeyboard()
         if (isSaveInFlightRef.current || isClosingRef.current) {
             return
         }
@@ -450,17 +453,18 @@ const MissingDataModal = ({
     return (
         <div
             data-testid="missing-data-modal"
-            className={`fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate overscroll-contain transition-opacity duration-200 ${isDismissing ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+            className={`keyboard-safe-modal-backdrop fixed inset-0 bg-black/65 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 z-[90] backdrop-animate overscroll-contain transition-opacity duration-200 ${isDismissing ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
             onWheelCapture={stopBackdropScroll}
             onTouchMoveCapture={stopBackdropScroll}
         >
             {/* Modal sheet: flex-col so header+footer never scroll */}
             <div
-                className={`mobile-bottom-sheet w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[calc(100vh-4rem)] flex flex-col transition-all duration-300 ring-1 sm:rounded-xl rounded-t-2xl rounded-b-none sm:rounded-b-xl ${isDismissing ? 'translate-y-4 scale-[0.98]' : 'animate-scale-in'} ${isOverrideMode
+                className={`keyboard-safe-modal-shell mobile-bottom-sheet w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[calc(100vh-4rem)] flex flex-col transition-all duration-300 ring-1 sm:rounded-xl rounded-t-2xl rounded-b-none sm:rounded-b-xl ${isDismissing ? 'translate-y-4 scale-[0.98]' : 'animate-scale-in'} ${isOverrideMode
                 ? 'bg-orange-50 dark:bg-orange-900 ring-orange-300 dark:ring-orange-700'
                 : 'bg-white dark:bg-gray-800 ring-gray-200 dark:ring-gray-700'
                 }`}
                 style={sheetStyle}
+                onPointerDownCapture={dismissKeyboardForNonTextControl}
             >
 
                 {/* Drag handle - mobile only */}
@@ -511,7 +515,7 @@ const MissingDataModal = ({
                 </div>
 
                 {/* Scrollable content — grows to fill remaining space */}
-                <div ref={scrollContainerRef} className="min-h-0 overflow-y-auto overscroll-contain" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', maxHeight: 'calc(100vh - 168px)' }}>
+                <div ref={scrollContainerRef} className="keyboard-safe-modal-body min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
                 <div className="px-4 sm:px-6 py-4 sm:py-5 space-y-4">
                     {saveError && (
                         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
@@ -866,7 +870,7 @@ const MissingDataModal = ({
                 </div>{/* end inner scroll wrapper */}
 
                 {/* Footer — always pinned at bottom, never scrolls */}
-                <div className={`flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 sm:px-6 pt-3 flex gap-3 rounded-b-none sm:rounded-b-xl ${isOverrideMode ? 'bg-orange-50/95 dark:bg-orange-900/95' : 'bg-white dark:bg-gray-800'}`}
+                <div className={`keyboard-safe-modal-footer flex-shrink-0 border-t border-gray-200 dark:border-gray-700 px-4 sm:px-6 pt-3 flex gap-3 rounded-b-none sm:rounded-b-xl ${isOverrideMode ? 'bg-orange-50/95 dark:bg-orange-900/95' : 'bg-white dark:bg-gray-800'}`}
                     style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}>
                     <button
                         type="button"

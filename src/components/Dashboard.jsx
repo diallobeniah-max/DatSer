@@ -21,6 +21,7 @@ import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } f
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
+import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 
 
 // Lazy load heavy modals for better initial load performance
@@ -2424,7 +2425,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   return (
-    <div className={`space-y-2 pb-0 md:pb-14 ${dashboardShellClass} mx-auto`}>
+    <div className={`space-y-2 pb-0 md:pb-14 ${isSearchFocused ? 'keyboard-search-active' : ''} ${dashboardShellClass} mx-auto`}>
       {/* Header removed; summary now shown in sticky Header */}
 
       {/* Desktop tab navigation removed; use mobile segmented control in Header */}
@@ -3856,6 +3857,7 @@ const Dashboard = ({ isAdmin = false }) => {
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
                 <input
+                  ref={searchInputRef}
                   type="text"
                   placeholder="Search marked members..."
                   value={localSearchTerm}
@@ -3882,6 +3884,7 @@ const Dashboard = ({ isAdmin = false }) => {
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
                 <input
+                  ref={searchInputRef}
                   type="text"
                   placeholder="Search members..."
                   value={localSearchTerm}
@@ -3908,7 +3911,7 @@ const Dashboard = ({ isAdmin = false }) => {
             {memberFilterButtonEnabled && (
               <button
                 type="button"
-                onClick={() => { selection(); setShowFilters(!showFilters) }}
+                onClick={() => { dismissMobileKeyboard(); selection(); setShowFilters(!showFilters) }}
                 className={`member-filter-toggle inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-2 sm:py-2.5 transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
                   ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border border-primary-300 dark:border-primary-700'
                   : isShortSearchActive
@@ -3927,7 +3930,7 @@ const Dashboard = ({ isAdmin = false }) => {
             {/* Add Member Button */}
             <button
               type="button"
-              onClick={() => { selection(); setShowQrScanner(true) }}
+              onClick={() => { dismissMobileKeyboard(); selection(); setShowQrScanner(true) }}
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-orange-400/40 bg-orange-500/10 text-orange-600 shadow-sm transition hover:bg-orange-500/20 active:scale-95 dark:text-orange-300 sm:h-11 sm:w-11"
               title="Scan member QR code"
               aria-label="Scan member QR code"
@@ -3935,7 +3938,7 @@ const Dashboard = ({ isAdmin = false }) => {
               <ScanLine className="h-5 w-5" />
             </button>
             <button
-              onClick={() => { selection(); setShowMemberModal(true) }}
+              onClick={() => { dismissMobileKeyboard(); selection(); setShowMemberModal(true) }}
               className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
               title="Add New Member"
             >
