@@ -40,6 +40,10 @@ const LazyFallback = memo(() => (
 ))
 LazyFallback.displayName = 'LazyFallback'
 
+const COMPACT_SUGGESTION_DISMISSED_AT_KEY = 'datser_compact_suggestion_dismissed_at'
+const COMPACT_SUGGESTION_LEGACY_KEY = 'datser_compact_suggestion_dismissed'
+const COMPACT_SUGGESTION_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
+
 // Context
 import { AppProvider, useApp } from './context/AppContext'
 import { ThemeProvider } from './context/ThemeContext'
@@ -69,7 +73,7 @@ const CustomCloseButton = ({ closeToast }) => {
 
     closeTimerRef.current = setTimeout(() => {
       dismiss?.();
-    }, 80);
+    }, 180);
   };
 
   const handleStart = (e) => {
@@ -286,28 +290,56 @@ function AppContent({ isMobile }) {
   }, [compactUiEnabled, hapticFeedbackEnabled, hapticFeedbackStrength, motionAndSoundsEnabled])
 
   useEffect(() => {
-    if (!smartCompactPromptEnabled || compactUiEnabled || typeof window === 'undefined') return
-    if (window.localStorage.getItem('datser_compact_suggestion_dismissed') === 'true') return
+    if (typeof window === 'undefined') return undefined
+    if (!smartCompactPromptEnabled || compactUiEnabled) {
+      setShowCompactSuggestion(false)
+      return undefined
+    }
+
+    let revealTimer = null
+    try {
+      const dismissedAt = Number(window.localStorage.getItem(COMPACT_SUGGESTION_DISMISSED_AT_KEY))
+      if (Number.isFinite(dismissedAt) && dismissedAt > 0 && Date.now() - dismissedAt < COMPACT_SUGGESTION_COOLDOWN_MS) {
+        return undefined
+      }
+
+      // Older releases stored a permanent boolean dismissal. Remove it once so
+      // eligible phones can receive the improved suggestion again.
+      window.localStorage.removeItem(COMPACT_SUGGESTION_LEGACY_KEY)
+    } catch { }
 
     const checkCrowdedScreen = () => {
       const rootFontSize = parseFloat(window.getComputedStyle(document.documentElement).fontSize || '16')
       const width = window.innerWidth || 0
       const height = window.innerHeight || 0
       const visualScale = window.visualViewport?.scale || 1
-      const crowded = width <= 390 || height <= 680 || rootFontSize >= 18 || visualScale > 1.08
-      if (crowded) window.setTimeout(() => setShowCompactSuggestion(true), 900)
+      const crowded = width <= 640 || height <= 760 || rootFontSize >= 18 || visualScale > 1.08
+
+      if (crowded && !revealTimer) {
+        revealTimer = window.setTimeout(() => {
+          revealTimer = null
+          setShowCompactSuggestion(true)
+        }, 700)
+      } else if (!crowded && revealTimer) {
+        window.clearTimeout(revealTimer)
+        revealTimer = null
+      }
     }
 
     checkCrowdedScreen()
     window.addEventListener('resize', checkCrowdedScreen)
-    return () => window.removeEventListener('resize', checkCrowdedScreen)
+    return () => {
+      window.removeEventListener('resize', checkCrowdedScreen)
+      if (revealTimer) window.clearTimeout(revealTimer)
+    }
   }, [compactUiEnabled, smartCompactPromptEnabled])
 
   const resolveCompactSuggestion = React.useCallback(async (applyCompact) => {
     if (isCompactSuggestionClosing) return
     setIsCompactSuggestionClosing(true)
     try {
-      window.localStorage.setItem('datser_compact_suggestion_dismissed', 'true')
+      window.localStorage.setItem(COMPACT_SUGGESTION_DISMISSED_AT_KEY, String(Date.now()))
+      window.localStorage.removeItem(COMPACT_SUGGESTION_LEGACY_KEY)
     } catch { }
 
     if (applyCompact) {
