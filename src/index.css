@@ -5222,8 +5222,8 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   display: flex !important;
   flex-direction: column !important;
   gap: 0.55rem !important;
-  width: min(30rem, calc(100vw - 1.5rem)) !important;
-  max-width: calc(100vw - 1.5rem) !important;
+  width: min(27rem, calc(100vw - 4rem)) !important;
+  max-width: min(27rem, calc(100vw - 4rem)) !important;
   max-height: min(70vh, 34rem) !important;
   padding: 0 !important;
   overflow-x: hidden !important;
@@ -5433,8 +5433,47 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   .Toastify__toast-container.datser-toast-stack,
   .Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
     top: max(0.5rem, env(safe-area-inset-top)) !important;
-    width: calc(100vw - 1rem) !important;
-    max-width: calc(100vw - 1rem) !important;
+    width: min(21.5rem, calc(100vw - 2.5rem)) !important;
+    max-width: min(21.5rem, calc(100vw - 2.5rem)) !important;
+  }
+
+  .Toastify__toast-container.datser-toast-stack .Toastify__toast,
+  .Toastify__toast-container.datser-toast-stack .datser-toast {
+    min-height: 3.05rem !important;
+    padding: 0.6rem 0.65rem !important;
+  }
+
+  .Toastify__toast-container.datser-toast-stack .datser-notification-card {
+    grid-template-columns: 1.8rem minmax(0, 1fr) 1.8rem !important;
+    gap: 0.56rem !important;
+    min-height: 3.05rem !important;
+    padding: 0.58rem 0.62rem !important;
+  }
+
+  .Toastify__toast-container.datser-toast-stack .datser-notification-icon,
+  .Toastify__toast-container.datser-toast-stack .datser-notification-close,
+  .Toastify__toast-container.datser-toast-stack .datser-toast-close,
+  .Toastify__toast-container.datser-toast-stack .Toastify__close-button {
+    width: 1.8rem !important;
+    height: 1.8rem !important;
+    min-width: 1.8rem !important;
+    flex-basis: 1.8rem !important;
+  }
+
+  .Toastify__toast-container.datser-toast-stack .datser-notification-title {
+    font-size: 0.86rem !important;
+  }
+
+  .Toastify__toast-container.datser-toast-stack .datser-notification-message {
+    font-size: 0.76rem !important;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1023px) {
+  .Toastify__toast-container.datser-toast-stack,
+  .Toastify__toast-container.datser-toast-stack.Toastify__toast-container--top-center {
+    width: min(24rem, calc(100vw - 5rem)) !important;
+    max-width: min(24rem, calc(100vw - 5rem)) !important;
   }
 }
 
