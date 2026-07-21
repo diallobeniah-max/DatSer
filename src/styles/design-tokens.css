@@ -1,0 +1,70 @@
+:root {
+  /* Brand and semantic colors */
+  --ds-color-primary: #f2550a;
+  --ds-color-primary-hover: #d94805;
+  --ds-color-present: #16a34a;
+  --ds-color-present-strong: #15803d;
+  --ds-color-absent: #dc2626;
+  --ds-color-absent-strong: #b91c1c;
+  --ds-color-clear: #f3f4f6;
+  --ds-color-info: #2563eb;
+  --ds-color-warning: #d97706;
+  --ds-color-error: #dc2626;
+  --ds-color-success: #16a34a;
+  --ds-color-canvas: #f7f3ee;
+  --ds-color-surface: #ffffff;
+  --ds-color-surface-subtle: #f8fafc;
+  --ds-color-border: #d1d5db;
+  --ds-color-text: #111827;
+  --ds-color-text-muted: #6b7280;
+
+  /* Spacing and sizing */
+  --ds-space-1: 0.25rem;
+  --ds-space-2: 0.5rem;
+  --ds-space-3: 0.75rem;
+  --ds-space-4: 1rem;
+  --ds-space-6: 1.5rem;
+  --ds-space-8: 2rem;
+  --ds-control-sm: 2.5rem;
+  --ds-control-md: 2.75rem;
+  --ds-control-lg: 3rem;
+
+  /* Shape and depth */
+  --ds-radius-sm: 0.5rem;
+  --ds-radius-md: 0.75rem;
+  --ds-radius-lg: 1rem;
+  --ds-radius-sheet: 1.5rem;
+  --ds-shadow-control: 0 1px 2px rgb(15 23 42 / 0.12);
+  --ds-shadow-card: 0 8px 24px rgb(15 23 42 / 0.08);
+
+  /* Typography and motion */
+  --ds-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ds-text-caption: 0.75rem;
+  --ds-text-body: 1rem;
+  --ds-text-section: 1.125rem;
+  --ds-text-title: clamp(1.5rem, 2.5vw, 2rem);
+  --ds-leading-tight: 1.2;
+  --ds-leading-body: 1.5;
+  --ds-motion-fast: 120ms;
+  --ds-motion-normal: 180ms;
+  --ds-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dark {
+  --ds-color-canvas: #0b0b0c;
+  --ds-color-surface: #202020;
+  --ds-color-surface-subtle: #2f3030;
+  --ds-color-border: #525252;
+  --ds-color-text: #f9fafb;
+  --ds-color-text-muted: #a3a3a3;
+  --ds-color-clear: #525252;
+  --ds-shadow-control: 0 1px 2px rgb(0 0 0 / 0.35);
+  --ds-shadow-card: 0 12px 30px rgb(0 0 0 / 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ds-motion-fast: 1ms;
+    --ds-motion-normal: 1ms;
+  }
+}

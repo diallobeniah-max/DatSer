@@ -14,6 +14,8 @@ import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import CurrentLevelPicker from './CurrentLevelPicker'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard, scrollControlIntoModalView } from '../hooks/useKeyboardSafeModal'
+import AttendanceChoice from './AttendanceChoice'
+import { areOptionalTagsVisible } from '../utils/tagVisibility'
 
 const MemberModal = ({ isOpen, onClose }) => {
   const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById } = useApp()
@@ -814,35 +816,12 @@ const MemberModal = ({ isOpen, onClose }) => {
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                           {dateLabel}
                         </span>
-                        <div className="grid grid-cols-3 gap-2 sm:flex sm:space-x-2">
-                          <button
-                            type="button"
-                            onClick={() => setAttendanceChoice(date, true)}
-                            className={`min-h-[40px] px-3 py-1 rounded-lg text-xs font-medium transition-colors ${sundayAttendance[date] === true
-                              ? 'bg-green-600 text-white shadow-sm'
-                              : 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800'
-                              }`}
-                          >
-                            Present
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setAttendanceChoice(date, false)}
-                            className={`min-h-[40px] px-3 py-1 rounded-lg text-xs font-medium transition-colors ${sundayAttendance[date] === false
-                              ? 'bg-red-600 text-white shadow-sm'
-                              : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800'
-                              }`}
-                          >
-                            Absent
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { selection(); setSundayAttendance(prev => ({ ...prev, [date]: null })) }}
-                            className="min-h-[40px] px-3 py-1 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-500 transition-colors"
-                          >
-                            Clear
-                          </button>
-                        </div>
+                        <AttendanceChoice
+                          value={sundayAttendance[date]}
+                          onChange={value => setAttendanceChoice(date, value)}
+                          testIdPrefix={`add-form-attendance-${date}`}
+                          ariaLabel={`Attendance for ${dateLabel}`}
+                        />
                       </div>
                     )
                   })}
@@ -1002,7 +981,7 @@ const MemberModal = ({ isOpen, onClose }) => {
               )}
 
               {/* Tags - Using TagSelector */}
-              {guidedFormSettings?.showTagsField !== false && workspaceTags.length > 0 && (
+              {areOptionalTagsVisible(guidedFormSettings) && workspaceTags.length > 0 && (
                 <GuidedField ref={guideRefs.tags} active={activeStepId === 'tags'} className="pt-2 border-t border-gray-200 dark:border-gray-600">
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
                     <Tag className="w-4 h-4" />

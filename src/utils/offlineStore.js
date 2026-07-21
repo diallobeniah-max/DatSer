@@ -283,15 +283,72 @@ export const clearMemberPreviewCache = async () => (
   runStore(MEMBER_PREVIEW_STORE, 'readwrite', (store) => store.clear())
 )
 
-export const queueOfflineChange = async (change) => {
-  const createdAt = change.created_at || new Date().toISOString()
-  const queuedChange = {
-    ...change,
-    created_at: createdAt,
-    sync_status: change.sync_status || 'pending'
+export const coalesceOfflineChange = (existingChanges = [], change = {}, now = new Date().toISOString()) => {
+  const sameMember = (candidate) => (
+    candidate?.member_id === change.member_id &&
+    candidate?.table_name === change.table_name
+  )
+  const existingAdd = existingChanges.find(candidate => candidate?.action_type === 'member_add' && sameMember(candidate))
+  const relatedUpdates = existingChanges.filter(candidate => candidate?.action_type === 'member_update' && sameMember(candidate))
+
+  if (change.action_type === 'member_delete' && existingAdd) {
+    return {
+      queuedChange: null,
+      removeIds: [existingAdd.local_change_id, ...relatedUpdates.map(item => item.local_change_id)].filter(Boolean),
+      coalesced: true
+    }
   }
-  await runStore(PENDING_STORE, 'readwrite', (store) => store.put(queuedChange))
-  return queuedChange
+
+  if (change.action_type === 'member_update' && existingAdd) {
+    return {
+      queuedChange: {
+        ...existingAdd,
+        member_data: { ...(existingAdd.member_data || {}), ...(change.updates || {}) },
+        updated_at: now,
+        sync_status: 'pending',
+        retry_count: 0,
+        client_revision: Number(existingAdd.client_revision || 1) + 1
+      },
+      removeIds: relatedUpdates.map(item => item.local_change_id).filter(Boolean),
+      coalesced: true
+    }
+  }
+
+  const sameId = existingChanges.find(candidate => candidate?.local_change_id === change.local_change_id)
+  const createdAt = sameId?.created_at || change.created_at || now
+  return {
+    queuedChange: {
+      ...(sameId || {}),
+      ...change,
+      ...(change.action_type === 'member_update' && sameId
+        ? { updates: { ...(sameId.updates || {}), ...(change.updates || {}) } }
+        : {}),
+      ...(change.action_type === 'member_add' && sameId
+        ? { member_data: { ...(sameId.member_data || {}), ...(change.member_data || {}) } }
+        : {}),
+      created_at: createdAt,
+      updated_at: now,
+      sync_status: 'pending',
+      retry_count: 0,
+      client_revision: Number(sameId?.client_revision || 0) + 1,
+      idempotency_key: change.idempotency_key || change.local_change_id
+    },
+    removeIds: [],
+    coalesced: Boolean(sameId)
+  }
+}
+
+export const queueOfflineChange = async (change) => {
+  const pendingChanges = await getPendingOfflineChanges()
+  const result = coalesceOfflineChange(pendingChanges, change)
+  for (const localChangeId of result.removeIds) {
+    await removeOfflineChange(localChangeId)
+  }
+  if (!result.queuedChange) {
+    return { ...change, sync_status: 'superseded', coalesced: true }
+  }
+  await runStore(PENDING_STORE, 'readwrite', (store) => store.put(result.queuedChange))
+  return result.queuedChange
 }
 
 export const getPendingOfflineChanges = async () => {
@@ -304,7 +361,21 @@ export const getPendingOfflineChanges = async () => {
 export const updateOfflineChangeStatus = async (localChangeId, updates = {}) => {
   const existing = await runStore(PENDING_STORE, 'readonly', (store) => store.get(localChangeId))
   if (!existing) return null
-  const next = { ...existing, ...updates, updated_at: new Date().toISOString() }
+  const next = {
+    ...existing,
+    ...updates,
+    retry_count: updates.retry_count ?? (
+      updates.sync_status === 'pending' || updates.sync_status === 'failed'
+        ? Number(existing.retry_count || 0) + 1
+        : Number(existing.retry_count || 0)
+    ),
+    last_attempt_at: updates.last_attempt_at || (
+      updates.sync_status === 'pending' || updates.sync_status === 'failed'
+        ? new Date().toISOString()
+        : existing.last_attempt_at
+    ),
+    updated_at: new Date().toISOString()
+  }
   await runStore(PENDING_STORE, 'readwrite', (store) => store.put(next))
   return next
 }

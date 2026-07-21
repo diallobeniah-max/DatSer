@@ -10,8 +10,15 @@ import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
 import { buildMemberIndexCodeMap, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
+import {
+  attachMemberIdentity,
+  buildMemberIdentityHint,
+  getMemberOwnerId,
+  getMemberSourceTable
+} from '../utils/memberIdentity'
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
+import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
 import {
   isAttendanceAlreadySynced,
   isOfflineAttendanceConflict,
@@ -533,7 +540,7 @@ const normalizeDateToSundayForTable = (date, tableName) => {
   return getSundayDefaultForTable(tableName, normalizedDate) || fallbackSunday
 }
 
-const normalizeMemberRecord = (member) => {
+const normalizeMemberRecord = (member, identity = {}) => {
   if (!member) return member
   // Preserve the original name if it exists, don't overwrite with empty string
   const existingName = member.full_name ?? member['Full Name']
@@ -545,7 +552,10 @@ const normalizeMemberRecord = (member) => {
       : (typeof member.Name === 'string' && member.Name.trim()
         ? member.Name.trim()
         : existingName)) // Keep original value (could be null/undefined) rather than defaulting to empty string
-  return { ...member, full_name: name, 'Full Name': name, name: name, Name: name }
+  return attachMemberIdentity(
+    { ...member, full_name: name, 'Full Name': name, name: name, Name: name },
+    identity
+  )
 }
 
 const buildMemberTableRow = (memberData = {}, { id = null, workspaceName = null, userId = null } = {}) => {
@@ -835,6 +845,7 @@ export const AppProvider = ({ children }) => {
   const [offlineCacheMeta, setOfflineCacheMeta] = useState(null)
   const [pendingSyncCount, setPendingSyncCount] = useState(0)
   const [offlinePendingChanges, setOfflinePendingChanges] = useState([])
+  const offlinePendingChangesRef = useRef([])
   const [offlineStatusMessage, setOfflineStatusMessage] = useState('')
   const [isPreparingOffline, setIsPreparingOffline] = useState(false)
   const [isSyncingOffline, setIsSyncingOffline] = useState(false)
@@ -885,8 +896,13 @@ export const AppProvider = ({ children }) => {
   const realtimeSyncStatusTimerRef = useRef(null)
   const normalizedAttendanceBackendAvailableRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
+  const offlineSyncInFlightRef = useRef(false)
   const applyOfflineSnapshotRef = useRef(null)
   const searchDisplayPromptQueuedRef = useRef(false)
+
+  useEffect(() => {
+    offlinePendingChangesRef.current = offlinePendingChanges
+  }, [offlinePendingChanges])
 
   const setOfflineMode = useCallback((mode) => {
     const nextMode = OFFLINE_MODES.includes(mode) ? mode : 'auto'
@@ -1245,6 +1261,20 @@ export const AppProvider = ({ children }) => {
       return nextSettings
     })
   }, [preferences?.guided_form_settings])
+
+  useEffect(() => {
+    const workspaceSettings = ownerMemberCodePreferences?.guided_form_settings
+    if (!workspaceSettings || typeof workspaceSettings !== 'object' || Array.isArray(workspaceSettings)) return
+    setGuidedFormSettingsState((currentSettings) => {
+      const nextSettings = {
+        ...currentSettings,
+        ...workspaceSettings,
+        guidedOrder: normalizeGuidedOrder(workspaceSettings.guidedOrder || currentSettings.guidedOrder)
+      }
+      writeGuidedFormSettings(nextSettings)
+      return nextSettings
+    })
+  }, [ownerMemberCodePreferences?.guided_form_settings])
 
   useEffect(() => {
     document.documentElement.classList.toggle(
@@ -2085,7 +2115,10 @@ export const AppProvider = ({ children }) => {
   }
 
   const applyMemberPreviewCache = (tableName, payload, { background = false } = {}) => {
-    const normalizedMembers = (payload?.data || []).map(normalizeMemberRecord)
+    const normalizedMembers = (payload?.data || []).map((member) => normalizeMemberRecord(member, {
+      tableName,
+      ownerId: dataOwnerId || user?.id
+    }))
     const totalCount = Number.isFinite(payload?.totalCount) ? payload.totalCount : normalizedMembers.length
     const loadedAll = Boolean(payload?.loadedAll) || normalizedMembers.length >= totalCount
     const cachePayload = {
@@ -2110,7 +2143,10 @@ export const AppProvider = ({ children }) => {
 
   const persistLoadedMemberPreview = (tableName, nextMembers, overrides = {}) => {
     const cacheKey = tableName || 'default'
-    const normalizedMembers = (nextMembers || []).map(normalizeMemberRecord)
+    const normalizedMembers = (nextMembers || []).map((member) => normalizeMemberRecord(member, {
+      tableName,
+      ownerId: dataOwnerId || user?.id
+    }))
     const totalCount = Number.isFinite(overrides.totalCount)
       ? overrides.totalCount
       : Math.max(membersTotalCount || 0, normalizedMembers.length)
@@ -2511,7 +2547,10 @@ export const AppProvider = ({ children }) => {
           from += pageSize
         }
 
-        const normalizedMembers = allData.map(normalizeMemberRecord)
+        const normalizedMembers = allData.map((member) => normalizeMemberRecord(member, {
+          tableName,
+          ownerId: dataOwnerId || user?.id
+        }))
         setMembers(normalizedMembers)
         setMembersTotalCount(normalizedMembers.length)
         setMembersLoadedAll(true)
@@ -2615,7 +2654,10 @@ export const AppProvider = ({ children }) => {
       } else {
         // Keep members even without names - don't filter them out as that could cause members to disappear
         // The normalizeMemberRecord function will handle setting a default name if needed
-        const normalizedMembers = (data || []).map(normalizeMemberRecord)
+        const normalizedMembers = (data || []).map((member) => normalizeMemberRecord(member, {
+          tableName,
+          ownerId: dataOwnerId || user?.id
+        }))
         const totalCount = count ?? normalizedMembers.length
         const loadedAll = normalizedMembers.length >= totalCount || normalizedMembers.length < MEMBER_PREVIEW_PAGE_SIZE
         const cachePayload = { data: normalizedMembers, ts: now, totalCount, loadedAll }
@@ -4226,10 +4268,20 @@ export const AppProvider = ({ children }) => {
   // Update member.
   // skipRefresh keeps optimistic local state without triggering the dashboard skeleton.
   // Use it only for flows that immediately update all affected local state themselves.
-  // Options: { silent: boolean, allowLocalFallback: boolean, skipRefresh: boolean }
+  // Options may pin the source table/owner/identity for replaying an offline mutation.
   const updateMember = async (id, updates, options = {}) => {
-    const { silent = false, allowLocalFallback = false, skipRefresh = false } = options
+    const {
+      silent = false,
+      allowLocalFallback = false,
+      skipRefresh = false,
+      targetTable: requestedTargetTable = null,
+      ownerId: requestedOwnerId = null,
+      identity: requestedIdentity = null
+    } = options
     const editTimestamp = new Date().toISOString()
+    const identityMember = members.find(m => m.id === id) || requestedIdentity || {}
+    const targetTable = requestedTargetTable || getMemberSourceTable(identityMember, currentTable)
+    const targetOwnerId = requestedOwnerId || getMemberOwnerId(identityMember, dataOwnerId || user?.id)
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - update local state
@@ -4269,20 +4321,22 @@ export const AppProvider = ({ children }) => {
           ...updates,
           updated_at: createdAt,
           __offline_status: 'pending_update'
-        })
+        }, { tableName: targetTable, ownerId: targetOwnerId })
 
         setMembers(prev => prev.map(m => (m.id === id ? optimisticMember : m)))
-        invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
-        await persistMemberPreviewIndex(currentTable, [optimisticMember], {
+        invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, targetTable)
+        await persistMemberPreviewIndex(targetTable, [optimisticMember], {
           cachedCount: members.length,
           totalCount: membersTotalCount,
           source: 'offline-update'
         })
         await queueOfflineChange({
-          local_change_id: `member_update_${currentTable}_${id}`,
+          local_change_id: `member_update_${targetTable}_${id}`,
           action_type: 'member_update',
-          table_name: currentTable,
+          table_name: targetTable,
+          owner_id: targetOwnerId,
           member_id: id,
+          identity: buildMemberIdentityHint(existingMember),
           updates,
           base_updated_at: existingMember.updated_at || existingMember.UpdatedAt || existingMember.inserted_at || null,
           created_at: createdAt,
@@ -4369,7 +4423,7 @@ export const AppProvider = ({ children }) => {
       let validColumns = null
       try {
         const { data: columnRows, error: columnError } = await supabase.rpc('get_table_columns', {
-          table_name: currentTable
+          table_name: targetTable
         })
         if (!columnError && Array.isArray(columnRows) && columnRows.length > 0) {
           validColumns = new Set(columnRows.map((column) => column.column_name).filter(Boolean))
@@ -4492,7 +4546,7 @@ export const AppProvider = ({ children }) => {
             } else if (key === 'newcomer' && validColumns.has('Newcomer')) {
               filteredNormalized['Newcomer'] = normalized[key]
             } else {
-              console.warn(`Skipping field "${key}" - column does not exist in table ${currentTable}`)
+              console.warn(`Skipping field "${key}" - column does not exist in table ${targetTable}`)
             }
           }
         }
@@ -4510,15 +4564,27 @@ export const AppProvider = ({ children }) => {
       const optimisticPatch = { ...updates, ...normalized, updated_at: editTimestamp }
 
       try {
+        if (!targetOwnerId) throw new Error('Unable to determine the workspace owner for this update')
         const updateResult = await executeSupabaseWrite(
-          () => supabase
-            .from(currentTable)
-            .update(normalized)
-            .eq('id', id)
-            .select('id'),
-          { action: `Update member in ${currentTable}` }
+          () => supabase.rpc('update_member_record_resilient', {
+            p_table_name: targetTable,
+            p_member_id: id,
+            p_updates: normalized,
+            p_owner_id: targetOwnerId,
+            p_identity: buildMemberIdentityHint(identityMember)
+          }),
+          { action: `Update member in ${targetTable}` }
         )
-        assertSupabaseMutationAffected(updateResult, 'Member update')
+        if (!updateResult?.data?.success || !updateResult?.data?.row) {
+          throw new Error('Member update could not be verified')
+        }
+        if (updateResult.data.recovered) {
+          console.info('[updateMember] Recovered stale member identity', {
+            table: targetTable,
+            originalMemberId: id,
+            resolvedMemberId: updateResult.data.member_id
+          })
+        }
       } catch (error) {
         const isRlsError =
           error.code === '42501' ||
@@ -4527,16 +4593,16 @@ export const AppProvider = ({ children }) => {
           error.message?.toLowerCase().includes('permission denied')
 
         if (isRlsError) {
-          const ownerId = dataOwnerId || user?.id
+          const ownerId = targetOwnerId
           if (!ownerId) throw error
           await executeSupabaseWrite(
             () => supabase.rpc('update_member_record', {
-              p_table_name: currentTable,
+              p_table_name: targetTable,
               p_member_id: id,
               p_updates: normalized,
               p_owner_id: ownerId
             }),
-            { action: `Update member via RPC in ${currentTable}` }
+            { action: `Update member via RPC in ${targetTable}` }
           )
         } else {
           throw error
@@ -4604,22 +4670,22 @@ export const AppProvider = ({ children }) => {
         action: 'update',
         summary: changedFields.length ? `Updated ${changedFields.slice(0, 3).join(', ')}` : 'Updated member details',
         changedFields,
-        table: currentTable
+        table: targetTable
       })
 
       searchCacheRef.current.clear()
       const cachedUpdateMember = recentEditedMember || { ...(members.find(m => m.id === id) || {}), ...optimisticPatch }
       persistLoadedMemberPreview(
-        currentTable,
+        targetTable,
         members.map((member) => member.id === id ? normalizeMemberRecord({ ...member, ...cachedUpdateMember }) : member),
         { totalCount: membersTotalCount, loadedAll: membersLoadedAll }
       )
-      await persistMemberPreviewIndex(currentTable, [cachedUpdateMember], {
+      await persistMemberPreviewIndex(targetTable, [cachedUpdateMember], {
         cachedCount: members.length,
         totalCount: membersTotalCount,
         source: 'update'
       })
-      markMemberPreviewSyncComplete(currentTable, {
+      markMemberPreviewSyncComplete(targetTable, {
         cachedCount: members.length,
         totalCount: membersTotalCount,
         source: 'update',
@@ -4661,10 +4727,12 @@ export const AppProvider = ({ children }) => {
         if (shouldQueueForRetry) {
           const existingMember = members.find(m => m.id === id) || {}
           await queueOfflineChange({
-            local_change_id: `member_update_${currentTable}_${id}`,
+            local_change_id: `member_update_${targetTable}_${id}`,
             action_type: 'member_update',
-            table_name: currentTable,
+            table_name: targetTable,
+            owner_id: targetOwnerId,
             member_id: id,
+            identity: buildMemberIdentityHint(existingMember),
             updates,
             base_updated_at: existingMember.updated_at || existingMember.UpdatedAt || existingMember.inserted_at || null,
             created_at: editTimestamp,
@@ -4672,13 +4740,13 @@ export const AppProvider = ({ children }) => {
           })
           await refreshOfflineStatus()
         }
-        await persistMemberPreviewIndex(currentTable, [fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }], {
+        await persistMemberPreviewIndex(targetTable, [fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }], {
           cachedCount: members.length,
           totalCount: membersTotalCount,
           source: 'local-fallback-update'
         })
         searchCacheRef.current.clear()
-        markMemberPreviewSyncComplete(currentTable, {
+        markMemberPreviewSyncComplete(targetTable, {
           cachedCount: members.length,
           totalCount: membersTotalCount,
           source: 'local-fallback-update',
@@ -5539,7 +5607,7 @@ export const AppProvider = ({ children }) => {
     }
     let { data, error } = await query
     if (error && !isAge) {
-      const nameCol = await resolveNameColumn(currentTable)
+      const nameCol = await resolveNameColumn(targetTable)
       const fallback = await applyDeletedAtFilter(
         supabase
           .from(currentTable)
@@ -6984,6 +7052,9 @@ export const AppProvider = ({ children }) => {
   }
 
   const syncOfflineChanges = async () => {
+    if (offlineSyncInFlightRef.current) {
+      return { success: false, syncing: true }
+    }
     if (!isOnline || !isBrowserOnline()) {
       toast.info('You are offline. Sync will be available when the connection returns.')
       return { success: false, error: 'offline' }
@@ -6993,13 +7064,13 @@ export const AppProvider = ({ children }) => {
       return { success: false, error: 'forced-offline' }
     }
 
+    offlineSyncInFlightRef.current = true
     setIsSyncingOffline(true)
     let shouldPullPreviewSync = false
     try {
       const pendingChanges = await getPendingOfflineChanges()
       let synced = 0
       let conflicts = 0
-      let waitingForMonth = 0
       let failed = 0
 
       for (const change of pendingChanges) {
@@ -7037,23 +7108,16 @@ export const AppProvider = ({ children }) => {
         }
 
         if (['member_add', 'member_update', 'member_delete'].includes(change.action_type)) {
-          if (change.table_name && change.table_name !== currentTable) {
-            await updateOfflineChangeStatus(change.local_change_id, {
-              sync_status: 'waiting_for_month',
-              error: `Switch to ${change.table_name.replace('_', ' ')} to sync this change.`
-            })
-            waitingForMonth += 1
-            continue
-          }
-
           try {
+            const changeTable = change.table_name || currentTable
+            if (!changeTable) throw new Error('Missing monthly table for member sync.')
             if (change.action_type === 'member_add') {
               const queuedMember = sanitizeQueuedMemberInsert(change.member_data || {})
               await executeSupabaseWrite(
                 () => supabase
-                  .from(currentTable)
+                  .from(changeTable)
                   .upsert([queuedMember], { onConflict: 'id' }),
-                { action: `Sync offline member add in ${currentTable}` }
+                { action: `Sync offline member add in ${changeTable}` }
               )
               setMembers(prev => prev.map(member => (
                 member.id === change.member_id
@@ -7061,12 +7125,24 @@ export const AppProvider = ({ children }) => {
                   : member
               )))
             } else if (change.action_type === 'member_update') {
-              await updateMember(change.member_id, change.updates || {}, { silent: true })
+              await updateMember(change.member_id, change.updates || {}, {
+                silent: true,
+                skipRefresh: changeTable !== currentTable,
+                targetTable: changeTable,
+                ownerId: change.owner_id,
+                identity: change.identity
+              })
             } else if (change.action_type === 'member_delete') {
-              const result = await deleteMember(change.member_id)
-              if (!result?.success) {
-                throw result?.error || new Error('Member delete sync failed.')
-              }
+              const deletedAt = new Date().toISOString()
+              const deleteResult = await executeSupabaseWrite(
+                () => supabase
+                  .from(changeTable)
+                  .update({ deleted_at: deletedAt, updated_at: deletedAt })
+                  .eq('id', change.member_id)
+                  .select('id'),
+                { action: `Sync offline member delete in ${changeTable}` }
+              )
+              assertSupabaseMutationAffected(deleteResult, 'Offline member delete')
             }
 
             await removeOfflineChange(change.local_change_id)
@@ -7090,16 +7166,8 @@ export const AppProvider = ({ children }) => {
           continue
         }
 
-        if (change.table_name && change.table_name !== currentTable) {
-          await updateOfflineChangeStatus(change.local_change_id, {
-            sync_status: 'waiting_for_month',
-            error: `Switch to ${change.table_name.replace('_', ' ')} to sync this change.`
-          })
-          waitingForMonth += 1
-          continue
-        }
-
-        const effectiveDate = normalizeDateToSundayForTable(new Date(change.service_date), currentTable)
+        const changeTable = change.table_name || currentTable
+        const effectiveDate = normalizeDateToSundayForTable(new Date(change.service_date), changeTable)
         if (!effectiveDate) {
           await updateOfflineChangeStatus(change.local_change_id, {
             sync_status: 'failed',
@@ -7110,8 +7178,24 @@ export const AppProvider = ({ children }) => {
         }
 
         try {
-          const serverAttendance = await fetchAttendanceForDate(effectiveDate)
-          const serverValue = serverAttendance?.[change.member_id]
+          let attendanceColumn = await findAttendanceColumnForDateInTable(effectiveDate, changeTable)
+          if (!attendanceColumn) {
+            attendanceColumn = getAttendanceColumnNameForDate(effectiveDate)
+            const { error: columnError } = await supabase.rpc('add_attendance_column', {
+              table_name: changeTable,
+              column_name: attendanceColumn
+            })
+            if (columnError) throw columnError
+          }
+
+          const { data: serverRows, error: serverError } = await supabase
+            .from(changeTable)
+            .select(`id,${attendanceColumn}`)
+            .eq('id', change.member_id)
+            .limit(1)
+          if (serverError) throw serverError
+          const rawServerValue = serverRows?.[0]?.[attendanceColumn]
+          const serverValue = rawServerValue === 'Present' ? true : rawServerValue === 'Absent' ? false : undefined
           const queuedPresent = normalizeQueuedAttendanceValue(change.present)
 
           if (isOfflineAttendanceConflict(
@@ -7135,17 +7219,24 @@ export const AppProvider = ({ children }) => {
             continue
           }
 
-          const result = await markAttendance(change.member_id, effectiveDate, queuedPresent)
-          if (result?.success) {
-            await removeOfflineChange(change.local_change_id)
-            synced += 1
-          } else {
-            await updateOfflineChangeStatus(change.local_change_id, {
-              sync_status: 'failed',
-              error: result?.error || 'Sync failed.'
-            })
-            failed += 1
-          }
+          const attendanceUpdatedAt = new Date().toISOString()
+          const attendanceResult = await executeSupabaseWrite(
+            () => supabase
+              .from(changeTable)
+              .update({
+                [attendanceColumn]: queuedPresent === null ? null : queuedPresent ? 'Present' : 'Absent',
+                updated_at: attendanceUpdatedAt
+              })
+              .eq('id', change.member_id)
+              .select('id'),
+            { action: `Sync offline attendance in ${changeTable}` }
+          )
+          assertSupabaseMutationAffected(attendanceResult, 'Offline attendance sync')
+          syncNormalizedAttendanceRecord(change.member_id, effectiveDate, queuedPresent).catch((error) => {
+            console.warn('Background normalized attendance sync failed:', error)
+          })
+          await removeOfflineChange(change.local_change_id)
+          synced += 1
         } catch (error) {
           await updateOfflineChangeStatus(change.local_change_id, {
             sync_status: 'failed',
@@ -7158,7 +7249,7 @@ export const AppProvider = ({ children }) => {
       await refreshOfflineStatus()
 
       const showSyncResultNotice = shouldShowOfflineSaveNotice()
-      if ((conflicts || failed || waitingForMonth) && showSyncResultNotice) {
+      if ((conflicts || failed) && showSyncResultNotice) {
         notify.error('Changes are still saved locally.', {
           title: 'Sync failed',
           toastId: 'offline-sync-failed',
@@ -7172,12 +7263,13 @@ export const AppProvider = ({ children }) => {
         })
       }
 
-      setOfflineStatusMessage(conflicts || failed || waitingForMonth
+      setOfflineStatusMessage(conflicts || failed
         ? 'Sync failed - changes are still saved locally.'
         : (synced ? 'All offline changes synced.' : 'No offline changes to sync.'))
       shouldPullPreviewSync = synced > 0
-      return { success: conflicts === 0 && failed === 0, synced, conflicts, failed, waitingForMonth }
+      return { success: conflicts === 0 && failed === 0, synced, conflicts, failed, waitingForMonth: 0 }
     } finally {
+      offlineSyncInFlightRef.current = false
       setIsSyncingOffline(false)
       if (shouldPullPreviewSync && currentTable) {
         startMemberPreviewBackgroundSync(currentTable, {
@@ -7190,9 +7282,38 @@ export const AppProvider = ({ children }) => {
   syncOfflineChangesRef.current = syncOfflineChanges
 
   useEffect(() => {
+    if (typeof window === 'undefined' || offlineMode === 'offline') return undefined
+    const flushVisiblePendingChanges = () => {
+      if (!isBrowserOnline() || offlineSyncInFlightRef.current) return
+      getPendingOfflineChanges()
+        .then((changes) => {
+          const hasSyncableChanges = changes.some((change) => (
+            change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
+          ))
+          if (hasSyncableChanges) return syncOfflineChangesRef.current?.()
+          return null
+        })
+        .catch((error) => console.warn('Could not flush visible offline changes:', error))
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') flushVisiblePendingChanges()
+    }
+    window.addEventListener('focus', flushVisiblePendingChanges)
+    window.addEventListener('online', flushVisiblePendingChanges)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      window.removeEventListener('focus', flushVisiblePendingChanges)
+      window.removeEventListener('online', flushVisiblePendingChanges)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [offlineMode])
+
+  useEffect(() => {
     if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline) return undefined
 
-    const syncableChanges = offlinePendingChanges.filter((change) => change?.sync_status === 'pending')
+    const syncableChanges = offlinePendingChanges.filter((change) => (
+      change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
+    ))
     if (syncableChanges.length === 0) return undefined
 
     const signature = syncableChanges
@@ -7411,6 +7532,19 @@ export const AppProvider = ({ children }) => {
       realtimeSyncStatusTimerRef.current = null
     }, 650)
   }, [])
+
+  const prepareRealtimeMember = useCallback((rawMember) => {
+    const normalized = normalizeMemberRecord(rawMember, {
+      tableName: currentTable,
+      ownerId: dataOwnerId || user?.id
+    })
+    return mergeRealtimeMemberWithPending(
+      normalized,
+      offlinePendingChangesRef.current,
+      currentTable
+    )
+  }, [currentTable, dataOwnerId, user?.id])
+
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
     if (!currentTable) return undefined
@@ -7429,8 +7563,9 @@ export const AppProvider = ({ children }) => {
           signalRealtimeSyncStatus(`members-${String(payload.eventType || 'change').toLowerCase()}`);
 
           if (payload.eventType === 'INSERT') {
-            const incoming = normalizeMemberRecord(payload.new)
-            if (incoming?.deleted_at) {
+            const prepared = prepareRealtimeMember(payload.new)
+            const incoming = prepared.member
+            if (prepared.shouldRemove || incoming?.deleted_at) {
               setMembers((prevMembers) => prevMembers.filter((member) => member.id !== incoming.id))
               deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
                 .catch((error) => console.warn('Could not remove realtime deleted member from index:', error))
@@ -7463,8 +7598,9 @@ export const AppProvider = ({ children }) => {
               return nextMembers
             });
           } else if (payload.eventType === 'UPDATE') {
-            const incoming = normalizeMemberRecord(payload.new)
-            if (incoming?.deleted_at) {
+            const prepared = prepareRealtimeMember(payload.new)
+            const incoming = prepared.member
+            if (prepared.shouldRemove || incoming?.deleted_at) {
               setMembers((prevMembers) => {
                 const nextMembers = prevMembers.filter((member) => member.id !== incoming.id)
                 membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
@@ -7500,6 +7636,16 @@ export const AppProvider = ({ children }) => {
               return nextMembers
             });
           } else if (payload.eventType === 'DELETE') {
+            const pendingDeleteMerge = prepareRealtimeMember(payload.old)
+            if (pendingDeleteMerge.pendingCount > 0 && !pendingDeleteMerge.shouldRemove) {
+              setMembers((prevMembers) => prevMembers.map((member) => (
+                member.id === payload.old.id
+                  ? { ...member, __offline_status: 'conflict', __remote_deleted_at: new Date().toISOString() }
+                  : member
+              )))
+              setOfflineStatusMessage('A remote delete conflicts with a saved offline change. Review and retry the pending change.')
+              return
+            }
             setMembers((prevMembers) => {
               const nextMembers = prevMembers.filter((member) => member.id !== payload.old.id)
               membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
@@ -7539,19 +7685,51 @@ export const AppProvider = ({ children }) => {
       }
       supabase.removeChannel(channel);
     };
-  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, refreshSyncedDataInBackground, removeMemberFromAttendanceData, signalRealtimeSyncStatus, workspaceCacheScope]);
+  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, prepareRealtimeMember, refreshSyncedDataInBackground, removeMemberFromAttendanceData, signalRealtimeSyncStatus, workspaceCacheScope]);
 
   useEffect(() => {
     const ownerId = dataOwnerId || user?.id
     if (!ownerId || !currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
 
-    const scheduleAttendanceRefresh = (source = 'attendance-realtime') => {
+    let disposed = false
+    const scheduleAttendanceRefresh = (serviceDate, source = 'attendance-realtime') => {
+      const targetDateKey = serviceDate || (selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null)
+      if (!targetDateKey) return
       if (realtimeAttendanceRefreshTimerRef.current) {
         clearTimeout(realtimeAttendanceRefreshTimerRef.current)
       }
-      realtimeAttendanceRefreshTimerRef.current = setTimeout(() => {
-        refreshSyncedDataInBackground(source, { force: true })
+      realtimeAttendanceRefreshTimerRef.current = setTimeout(async () => {
+        if (disposed) return
+        signalRealtimeSyncStatus(source)
+        const date = new Date(`${targetDateKey}T12:00:00`)
+        const remoteAttendance = await fetchAttendanceForDateInTable(date, currentTable)
+        if (disposed) return
+        const mergedAttendance = mergeAttendanceMapWithPending(
+          remoteAttendance,
+          offlinePendingChangesRef.current,
+          { tableName: currentTable, serviceDate: targetDateKey }
+        )
+        setAttendanceData((previous) => ({
+          ...previous,
+          [targetDateKey]: mergedAttendance
+        }))
       }, 250)
+    }
+
+    const handleAttendanceRecordChange = async (payload) => {
+      const row = payload?.new || payload?.old
+      if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
+      let serviceDate = row?.service_date || null
+      if (!serviceDate && row?.session_id) {
+        const { data, error } = await supabase
+          .from('attendance_sessions')
+          .select('service_date')
+          .eq('id', row.session_id)
+          .eq('owner_id', ownerId)
+          .maybeSingle()
+        if (!error) serviceDate = data?.service_date || null
+      }
+      scheduleAttendanceRefresh(serviceDate, 'attendance-records-realtime')
     }
 
     const channel = supabase
@@ -7564,9 +7742,9 @@ export const AppProvider = ({ children }) => {
           table: 'attendance_records'
         },
         (payload) => {
-          const row = payload?.new || payload?.old
-          if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
-          scheduleAttendanceRefresh('attendance-records-realtime')
+          handleAttendanceRecordChange(payload).catch((error) => {
+            console.warn('Could not apply targeted attendance record refresh:', error)
+          })
         }
       )
       .on(
@@ -7579,7 +7757,7 @@ export const AppProvider = ({ children }) => {
         (payload) => {
           const row = payload?.new || payload?.old
           if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
-          scheduleAttendanceRefresh('attendance-sessions-realtime')
+          scheduleAttendanceRefresh(row?.service_date, 'attendance-sessions-realtime')
         }
       )
       .subscribe((status) => {
@@ -7591,13 +7769,14 @@ export const AppProvider = ({ children }) => {
       })
 
     return () => {
+      disposed = true
       if (realtimeAttendanceRefreshTimerRef.current) {
         clearTimeout(realtimeAttendanceRefreshTimerRef.current)
         realtimeAttendanceRefreshTimerRef.current = null
       }
       supabase.removeChannel(channel)
     }
-  }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, shouldUseOfflineData, signalRealtimeSyncStatus, user?.id])
+  }, [currentTable, dataOwnerId, fetchAttendanceForDateInTable, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, selectedAttendanceDate, shouldUseOfflineData, signalRealtimeSyncStatus, user?.id])
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)

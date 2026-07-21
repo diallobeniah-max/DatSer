@@ -9,6 +9,7 @@ import { toast } from 'react-toastify'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
+import AttendanceChoice from './AttendanceChoice'
 
 const MissingDataModal = ({
     member,
@@ -828,38 +829,12 @@ const MissingDataModal = ({
                                             <div className={`text-sm font-medium mb-2 ${isMissing ? 'text-red-800 dark:text-red-200' : 'text-gray-700 dark:text-gray-300'}`}>
                                                 {dateLabel} {isMissing && '(Required)'}
                                             </div>
-                <div className="flex gap-2">
-                    <button
-                        type="button"
-                        data-testid={`missing-data-attendance-${dateKey}-present`}
-                        onClick={() => handleAttendanceChange(dateKey, true)}
-                        className={`flex-1 py-2 text-sm rounded-xl font-semibold transition-all duration-150 min-h-[44px] ${attendanceData[dateKey] === true
-                            ? 'bg-green-600 text-white shadow-md ring-2 ring-green-300 dark:ring-green-500'
-                            : 'bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-500'
-                            }`}
-                    >
-                        Present
-                    </button>
-                    <button
-                        type="button"
-                        data-testid={`missing-data-attendance-${dateKey}-absent`}
-                        onClick={() => handleAttendanceChange(dateKey, false)}
-                        className={`flex-1 py-2 text-sm rounded-xl font-semibold transition-all duration-150 min-h-[44px] ${attendanceData[dateKey] === false
-                            ? 'bg-red-600 text-white shadow-md ring-2 ring-red-300 dark:ring-red-500'
-                            : 'bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-500'
-                            }`}
-                    >
-                        Absent
-                    </button>
-                    <button
-                        type="button"
-                        data-testid={`missing-data-attendance-${dateKey}-clear`}
-                        onClick={() => handleAttendanceChange(dateKey, null)}
-                        className="px-3 py-2 text-sm rounded-xl bg-gray-100 dark:bg-gray-600 text-gray-500 dark:text-gray-400 border border-gray-300 dark:border-gray-500 min-h-[44px]"
-                    >
-                        ×
-                    </button>
-                </div>
+                <AttendanceChoice
+                    value={attendanceData[dateKey]}
+                    onChange={value => handleAttendanceChange(dateKey, value)}
+                    testIdPrefix={`missing-data-attendance-${dateKey}`}
+                    ariaLabel={`Attendance for ${dateLabel}`}
+                />
                                         </div>
                                     )
                                 })}

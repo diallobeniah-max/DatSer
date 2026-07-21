@@ -66,14 +66,12 @@ const useKeyboardSafeModal = ({ scrollContainerRef, active = true }) => {
     }
 
     scrollContainer.addEventListener('focusin', scheduleVisibilityCheck)
-    window.visualViewport?.addEventListener('resize', scheduleVisibilityCheck)
-    window.visualViewport?.addEventListener('scroll', scheduleVisibilityCheck)
+    window.addEventListener('datser:visual-viewport', scheduleVisibilityCheck)
 
     return () => {
       if (frameId) window.cancelAnimationFrame(frameId)
       scrollContainer.removeEventListener('focusin', scheduleVisibilityCheck)
-      window.visualViewport?.removeEventListener('resize', scheduleVisibilityCheck)
-      window.visualViewport?.removeEventListener('scroll', scheduleVisibilityCheck)
+      window.removeEventListener('datser:visual-viewport', scheduleVisibilityCheck)
     }
   }, [active, scrollContainerRef])
 }

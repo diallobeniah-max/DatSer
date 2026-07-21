@@ -1841,7 +1841,7 @@ body.dashboard-shell-active {
   position: absolute !important;
   bottom: 0 !important;
   transform: translateZ(0);
-  will-change: transform;
+  contain: layout paint;
 }
 
 .dashboard-app-shell .search-suggestion-tray {
@@ -1867,6 +1867,7 @@ body.dashboard-shell-active {
     height: min(var(--keyboard-safe-sheet-height), var(--app-visual-height, var(--app-vh)));
     max-height: var(--app-visual-height, var(--app-vh)) !important;
     min-height: 0;
+    contain: layout paint;
   }
 
   [data-testid="missing-data-modal"] .keyboard-safe-modal-shell {
@@ -1888,6 +1889,7 @@ body.dashboard-shell-active {
   .keyboard-safe-modal-footer {
     position: relative;
     z-index: 2;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
   }
 
   .app-keyboard-open .keyboard-safe-modal-footer {
@@ -5682,4 +5684,73 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
     animation: none !important;
     transform: none !important;
   }
+}
+/* Shared attendance control: one interaction and visual contract across forms and cards. */
+.attendance-choice {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ds-space-2);
+  width: 100%;
+}
+
+.attendance-choice__button {
+  min-width: 0;
+  min-height: var(--ds-control-md);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-color-clear);
+  color: var(--ds-color-text);
+  font: 600 0.875rem/1 var(--ds-font-sans);
+  box-shadow: var(--ds-shadow-control);
+  transition: transform var(--ds-motion-fast) var(--ds-ease-standard), background-color var(--ds-motion-fast) var(--ds-ease-standard), border-color var(--ds-motion-fast) var(--ds-ease-standard), color var(--ds-motion-fast) var(--ds-ease-standard), opacity var(--ds-motion-fast) var(--ds-ease-standard);
+  touch-action: manipulation;
+}
+
+.attendance-choice__button:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+.attendance-choice__button[data-tone="present"][data-selected="true"] {
+  border-color: var(--ds-color-present-strong);
+  background: var(--ds-color-present);
+  color: #fff;
+}
+
+.attendance-choice__button[data-tone="absent"][data-selected="true"] {
+  border-color: var(--ds-color-absent-strong);
+  background: var(--ds-color-absent);
+  color: #fff;
+}
+
+.attendance-choice__button[data-tone="clear"][data-selected="true"] {
+  border-color: var(--ds-color-text-muted);
+  background: var(--ds-color-text-muted);
+  color: #fff;
+}
+
+.attendance-choice[data-state="queued"] .attendance-choice__button[data-selected="true"] {
+  outline: 2px dashed var(--ds-color-warning);
+  outline-offset: 2px;
+}
+
+.attendance-choice[data-state="error"] .attendance-choice__button[data-selected="true"] {
+  outline: 2px solid var(--ds-color-error);
+  outline-offset: 2px;
+}
+
+.attendance-choice__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.attendance-choice--compact {
+  gap: var(--ds-space-1);
+}
+
+.attendance-choice--compact .attendance-choice__button {
+  min-height: 2rem;
+  padding: 0.3rem 0.2rem;
+  border-radius: var(--ds-radius-sm);
+  font-size: 0.6875rem;
 }

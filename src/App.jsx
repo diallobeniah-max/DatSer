@@ -900,6 +900,7 @@ function App() {
     // to the visible screen while iOS/Android keyboards animate.
     const vv = window.visualViewport
     let viewportFrame = 0
+    let lastViewportSignature = ''
     const applyViewport = () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
       viewportFrame = window.requestAnimationFrame(() => {
@@ -915,6 +916,13 @@ function App() {
         root.style.setProperty('--app-visual-offset-top', `${offsetTop}px`)
         root.style.setProperty('--keyboard-offset', `${keyboardOffset}px`)
         root.classList.toggle('app-keyboard-open', keyboardOffset > 0)
+        const nextSignature = `${visibleHeight}:${offsetTop}:${keyboardOffset}`
+        if (nextSignature !== lastViewportSignature) {
+          lastViewportSignature = nextSignature
+          window.dispatchEvent(new CustomEvent('datser:visual-viewport', {
+            detail: { visibleHeight, offsetTop, keyboardOffset }
+          }))
+        }
       })
     }
     vv?.addEventListener('resize', applyViewport)

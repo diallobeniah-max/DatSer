@@ -121,3 +121,41 @@
 - Month comparison should fetch historical data only when opened to avoid unnecessary Supabase usage.
 - Export Center animations must be lightweight and mobile-friendly.
 - Dark mode and light mode must both be maintained.
+
+## Canonical Member Identity
+- All member mutations must use stable canonical identity, including the source monthly table, workspace owner, member UUID, and a minimal identity hint for recovery.
+- A zero-row update must preserve form data, perform one safe owner-scoped lookup, and return a clear retryable error if the member still cannot be resolved.
+- Never create a new member as an automatic fallback for a failed update, and never create silent duplicates.
+
+## Design System
+- Read `docs/DESIGN_SYSTEM.md` before making UI changes.
+- Use the shared design tokens and reusable components before adding local styling.
+- Do not introduce arbitrary colors, fonts, radii, spacing, sizes, or animations.
+
+## Attendance Controls
+- Use the shared `AttendanceChoice` component for Present, Absent, and Clear interactions.
+- Preserve instant selected feedback, per-item saving/queued/error states, keyboard dismissal, accessibility labels, and reduced-motion behavior.
+
+## Global Tag Visibility
+- Every applicable Add, Edit, Complete Missing Info, member-card, and collaborator view must use the same owner-workspace Show Tags source of truth.
+- A collaborator's local preference must not override an owner-disabled workspace tag setting.
+
+## Mobile Keyboard Safety
+- Preserve the fixed app shell and the single central visual viewport system.
+- Forms must use internally scrolling bodies with accessible headers and action footers above the keyboard.
+- Do not add competing keyboard-height calculations or allow the document body to scroll behind a modal.
+
+## Offline Reliability
+- Use the IndexedDB-backed idempotent mutation queue for safe member and attendance changes.
+- Store canonical identity, workspace scope, table/date, retry metadata, and only the minimum mutation payload; never store credentials or secrets.
+- Compatible edits must coalesce, newest attendance intent must win, and no change may be silently lost, duplicated, or overwrite newer remote data.
+- Be explicit that iOS does not guarantee background sync while a PWA is fully closed; flush on reopen, focus, reconnect, and visibility restore.
+
+## Reliability Testing
+- Do not depend on a live Sunday service for primary testing.
+- Use synthetic data, unit/database tests, Playwright, two-account test workspaces, offline/reconnect tests, visual checks, and `npm run test:service-simulation`.
+- Never run destructive tests against real production members or attendance rows.
+
+## APK Rule
+- Never display **Enter Developer Mode** in production, deployed web, or Android APK builds.
+- Developer Mode is restricted to local laptop development on localhost and must remain disabled in native runtimes.

@@ -7,6 +7,7 @@ import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { supabase } from '../lib/supabase'
 import { executeSupabaseWrite } from '../utils/supabaseWrite'
+import { buildMemberIdentityHint, getMemberSourceTable } from '../utils/memberIdentity'
 import DatePicker from './DatePicker'
 import CombinedDatePicker from './CombinedDatePicker'
 import TagSelector from './TagSelector'
@@ -14,6 +15,8 @@ import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import CurrentLevelPicker from './CurrentLevelPicker'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard, scrollControlIntoModalView } from '../hooks/useKeyboardSafeModal'
+import AttendanceChoice from './AttendanceChoice'
+import { areOptionalTagsVisible } from '../utils/tagVisibility'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, refreshSearch, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
@@ -531,25 +534,27 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           throw new Error('Unable to determine the workspace owner for this save')
         }
 
+        const targetTable = getMemberSourceTable(latestMember, currentTable)
         console.info('[EditMemberModal] Submitting bundle update:', {
-          table: currentTable,
+          table: targetTable,
           memberId: latestMember.id,
           updates: backendUpdates,
           requestId: submitRequestIdRef.current
         })
 
         const { data: bundleResult } = await executeSupabaseWrite(
-          () => supabase.rpc('update_member_bundle', {
-            p_table_name: currentTable,
+          () => supabase.rpc('update_member_bundle_resilient', {
+            p_table_name: targetTable,
             p_owner_id: ownerId,
             p_member_id: latestMember.id,
             p_request_id: submitRequestIdRef.current,
             p_updates: backendUpdates,
             p_badges: selectedTags,
             p_tag_ids: tagSelectionChanged ? Array.from(selectedWorkspaceTagIds) : null,
-            p_attendance: attendancePayload
+            p_attendance: attendancePayload,
+            p_identity: buildMemberIdentityHint(latestMember)
           }),
-          { action: `Update member bundle in ${currentTable}` }
+          { action: `Update member bundle in ${targetTable}` }
         )
 
         if (!bundleResult?.success) {
@@ -1024,38 +1029,12 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
                     <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       {formattedDate}
                     </div>
-                    <div className="grid grid-cols-3 gap-2 sm:flex sm:space-x-2">
-                      <button
-                        type="button"
-                        data-testid={`edit-form-attendance-${date}-present`}
-                        onClick={() => setAttendanceChoice(date, true)}
-                        className={`min-h-[40px] px-3 py-1 text-xs rounded-lg font-bold transition-all duration-200 ${sundayAttendance[date] === true
-                          ? 'bg-green-800 dark:bg-green-700 text-white shadow-xl ring-4 ring-green-300 dark:ring-green-400 border-2 border-green-900 dark:border-green-300 font-extrabold transform scale-110'
-                          : 'bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-500 hover:bg-green-50 dark:hover:bg-green-800'
-                          }`}
-                      >
-                        Present
-                      </button>
-                      <button
-                        type="button"
-                        data-testid={`edit-form-attendance-${date}-absent`}
-                        onClick={() => setAttendanceChoice(date, false)}
-                        className={`min-h-[40px] px-3 py-1 text-xs rounded-lg font-bold transition-all duration-200 ${sundayAttendance[date] === false
-                          ? 'bg-red-800 dark:bg-red-700 text-white shadow-xl ring-4 ring-red-300 dark:ring-red-400 border-2 border-red-900 dark:border-red-300 font-extrabold transform scale-110'
-                          : 'bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-500 hover:bg-red-50 dark:hover:bg-red-800'
-                          }`}
-                      >
-                        Absent
-                      </button>
-                      <button
-                        type="button"
-                        data-testid={`edit-form-attendance-${date}-clear`}
-                        onClick={() => setAttendanceChoice(date, null)}
-                        className="min-h-[40px] px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-500 hover:bg-gray-200 dark:hover:bg-gray-500 transition-colors"
-                      >
-                        Clear
-                      </button>
-                    </div>
+                    <AttendanceChoice
+                      value={sundayAttendance[date]}
+                      onChange={value => setAttendanceChoice(date, value)}
+                      testIdPrefix={`edit-form-attendance-${date}`}
+                      ariaLabel={`Attendance for ${formattedDate}`}
+                    />
                   </div>
                 )
               })}
@@ -1210,7 +1189,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
             )}
           </GuidedField>
 
-          {guidedFormSettings?.showTagsField !== false && (
+          {areOptionalTagsVisible(guidedFormSettings) && (
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
               Member Tags

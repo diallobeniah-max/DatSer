@@ -11,6 +11,8 @@ import {
 } from 'lucide-react'
 import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
+import AttendanceChoice from './AttendanceChoice'
+import { normalizeVisibleTags } from '../utils/tagVisibility'
 
 const MemberCard = memo(({ 
     member, 
@@ -34,6 +36,7 @@ const MemberCard = memo(({
     monthSundays,
     attendanceData, // Full attendance data for the month
     memberTags = [],
+    showTags = false,
     currentTable,
     getMonthDisplayName,
     showDeleteActions = true,
@@ -55,11 +58,10 @@ const MemberCard = memo(({
         return regDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     }
 
-    const isPresentSelected = attendanceStatus === true
-    const isAbsentSelected = attendanceStatus === false
     const resolvedBadgeStyleKey = memberCodeBadgeStyle === 'auto'
         ? getAutoBadgeStyleKey({ member, code: memberIndexCode, cycleSlot: memberCodeBadgeCycleSlot })
         : (memberCodeBadgeStyle || 'soft')
+    const visibleTags = showTags ? normalizeVisibleTags(memberTags) : []
 
     return (
         <div className={`member-card-shell relative transition-colors duration-200`}>
@@ -148,44 +150,17 @@ const MemberCard = memo(({
 
                     {/* Row 2: Attendance Buttons */}
                     <div className="member-card-actions flex items-stretch gap-2 ml-0 w-full px-3 sm:px-0">
-                        <div className="flex flex-row items-stretch gap-2 w-full">
-                            <button
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                    event.stopPropagation()
-                                    dismissMobileKeyboard()
-                                    onAttendance(member.id, true)
-                                }}
-                                disabled={attendanceLoading}
-                                aria-busy={attendanceLoading || undefined}
-                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-[color,background-color,transform,opacity] duration-150 active:scale-[0.98] motion-reduce:transform-none whitespace-nowrap sm:text-sm md:text-sm ${isPresentSelected
-                                    ? 'bg-orange-600 dark:bg-orange-800 text-white shadow ring-1 ring-orange-300 dark:ring-orange-500/70'
-                                    : attendanceLoading
-                                        ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
-                                        : 'bg-orange-600 dark:bg-orange-800 text-white shadow-sm hover:bg-orange-700 dark:hover:bg-orange-700'
-                                    }`}
-                            >
-                                {attendanceLoading ? '...' : 'Present'}
-                            </button>
-                            <button
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                    event.stopPropagation()
-                                    dismissMobileKeyboard()
-                                    onAttendance(member.id, false)
-                                }}
-                                disabled={attendanceLoading}
-                                aria-busy={attendanceLoading || undefined}
-                                className={`member-card-action flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-[color,background-color,transform,opacity] duration-150 active:scale-[0.98] motion-reduce:transform-none whitespace-nowrap sm:text-sm md:text-sm ${isAbsentSelected
-                                    ? 'bg-red-600 dark:bg-red-900 text-white shadow ring-1 ring-red-300 dark:ring-red-500/70'
-                                    : attendanceLoading
-                                        ? 'bg-gray-200 dark:bg-gray-600 text-gray-400 cursor-not-allowed'
-                                        : 'bg-red-600 dark:bg-red-900 text-white shadow-sm hover:bg-red-700 dark:hover:bg-red-800'
-                                    }`}
-                            >
-                                {attendanceLoading ? '...' : 'Absent'}
-                            </button>
-                        </div>
+                        <AttendanceChoice
+                            value={attendanceStatus}
+                            onChange={(nextValue) => onAttendance(member.id, nextValue)}
+                            disabled={attendanceLoading}
+                            pending={attendanceLoading}
+                            showClear={false}
+                            stopPropagation
+                            className="member-card-attendance-choice w-full"
+                            testIdPrefix={`member-card-attendance-${member.id}`}
+                            ariaLabel={`Attendance for ${name}`}
+                        />
                         {showDeleteActions && (
                             <button
                                 type="button"
@@ -206,13 +181,26 @@ const MemberCard = memo(({
                             <div className="member-card-detail-grid grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4 p-3 sm:p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700">
                                 <div className="space-y-3">
                                     <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Member Info</h4>
-                                    <div className="space-y-2 text-xs sm:text-sm">
+                                        <div className="space-y-2 text-xs sm:text-sm">
                                         <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
                                             <span className="text-gray-500 dark:text-gray-400">Gender</span>
                                             <span className="font-medium capitalize text-gray-900 dark:text-white truncate ml-2">
                                                 {member['Gender'] || 'N/A'}
                                             </span>
                                         </div>
+                                        {visibleTags.length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 pt-1" aria-label="Member tags">
+                                                {visibleTags.map(tag => (
+                                                    <span
+                                                        key={tag.id}
+                                                        className="inline-flex min-h-7 items-center rounded-full border px-2.5 py-1 text-xs font-semibold"
+                                                        style={{ borderColor: tag.color, color: tag.color }}
+                                                    >
+                                                        {tag.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                         <div className="flex justify-between items-center py-1 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
                                             <span className="text-gray-500 dark:text-gray-400">Phone</span>
                                             <span className="font-medium text-gray-900 dark:text-white truncate ml-2 font-mono">{member['Phone Number'] || 'N/A'}</span>
@@ -263,35 +251,19 @@ const MemberCard = memo(({
                                 <div className="member-card-attendance-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                     {monthSundays.map(date => {
                                         const status = attendanceData[date]?.[member.id]
-                                        const isP = status === true
-                                        const isA = status === false
                                         return (
                                             <div key={date} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-2">
                                                 <div className="text-center text-[10px] font-medium text-gray-500 mb-1">
                                                     {new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                                                 </div>
-                                                <div className="flex gap-1">
-                                                    <button
-                                                        onPointerDown={(event) => event.stopPropagation()}
-                                                        onClick={(event) => {
-                                                            event.stopPropagation()
-                                                            onAttendanceForDate(member.id, true, date)
-                                                        }}
-                                                        className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${isP ? 'bg-green-600 dark:bg-green-800 text-white' : 'bg-green-50 text-green-600 dark:bg-green-950/60 dark:text-green-300'}`}
-                                                    >
-                                                        P
-                                                    </button>
-                                                    <button
-                                                        onPointerDown={(event) => event.stopPropagation()}
-                                                        onClick={(event) => {
-                                                            event.stopPropagation()
-                                                            onAttendanceForDate(member.id, false, date)
-                                                        }}
-                                                        className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${isA ? 'bg-red-600 dark:bg-red-900 text-white' : 'bg-red-50 text-red-600 dark:bg-red-950/60 dark:text-red-300'}`}
-                                                    >
-                                                        A
-                                                    </button>
-                                                </div>
+                                                <AttendanceChoice
+                                                    compact
+                                                    value={status}
+                                                    onChange={value => onAttendanceForDate(member.id, value, date)}
+                                                    stopPropagation
+                                                    testIdPrefix={`member-card-attendance-${member.id}-${date}`}
+                                                    ariaLabel={`Attendance for ${name} on ${date}`}
+                                                />
                                             </div>
                                         )
                                     })}
@@ -315,6 +287,7 @@ const MemberCard = memo(({
         prev.attendanceLoading === next.attendanceLoading &&
         prev.attendanceData === next.attendanceData &&
         prev.memberTags === next.memberTags &&
+        prev.showTags === next.showTags &&
         prev.currentTable === next.currentTable &&
         prev.memberCodeBadgeStyle === next.memberCodeBadgeStyle &&
         prev.memberCodeBadgeCycleSlot === next.memberCodeBadgeCycleSlot

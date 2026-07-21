@@ -15,6 +15,7 @@
     "test": "vitest --run --environment jsdom",
     "test:smoke": "playwright test tests/smoke.spec.js",
     "test:smoke:prod": "npm run build && node scripts/run-playwright-preview.mjs",
+    "test:service-simulation": "vitest run src/utils/serviceSimulation.test.js src/utils/offlineStore.test.js src/utils/realtimeMerge.test.js && playwright test tests/service-simulation.spec.js",
     "test:preflight": "npm run build && npm run test && npm run test:smoke",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

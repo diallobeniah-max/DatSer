@@ -439,6 +439,7 @@ const Dashboard = ({ isAdmin = false }) => {
     isDeveloperBypass,
     searchSuggestionView,
     preferences,
+    guidedFormSettings,
     recentMemberEdits
   } = useApp()
   const { isDarkMode } = useTheme()
@@ -1661,6 +1662,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const toggleMemberExpansion = (memberId) => {
     selection()
     const isExpanding = !expandedMembers[memberId]
+    if (isExpanding) dismissMobileKeyboard()
     setExpandedMembers(prev => ({
       ...prev,
       [memberId]: isExpanding
@@ -2400,6 +2402,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   monthSundays={sundayDates}
                   attendanceData={attendanceData}
                   memberTags={memberTags[member.id]}
+                  showTags={guidedFormSettings?.showTagsField === true}
                   currentTable={currentTable}
                   getMonthDisplayName={getMonthDisplayName}
                   showDeleteActions={showSearchTrayDelete}
@@ -2870,6 +2873,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     monthSundays={sundayDates}
                     attendanceData={attendanceData}
                     memberTags={memberTags[member.id]}
+                    showTags={guidedFormSettings?.showTagsField === true}
                     currentTable={currentTable}
                     getMonthDisplayName={getMonthDisplayName}
                   />

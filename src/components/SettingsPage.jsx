@@ -1999,7 +1999,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             </div>
                             {[
                                 { key: 'showVisitorField', title: 'Show Visitor Option', description: 'Show the Mark as Visitor control in Add and Edit Member.' },
-                                { key: 'showTagsField', title: 'Show Tags', description: 'Show optional member tag controls in Add and Edit Member.' },
+                                { key: 'showTagsField', title: 'Show Tags', description: 'Show optional workspace tags consistently in member forms, lists, search, and details.' },
                                 { key: 'showNotesField', title: 'Show Notes', description: 'Show the optional notes field in Add and Edit Member.' }
                             ].map((setting) => {
                                 const enabled = guidedFormSettings?.[setting.key] === true
