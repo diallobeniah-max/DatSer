@@ -15,6 +15,7 @@ const AttendanceChoice = memo(({
   queued = false,
   error = false,
   compact = false,
+  variant = 'editable',
   showClear = true,
   className = '',
   testIdPrefix = 'attendance-choice',
@@ -31,6 +32,8 @@ const AttendanceChoice = memo(({
   return (
     <div
       className={`attendance-choice ${compact ? 'attendance-choice--compact' : ''} ${className}`.trim()}
+      data-variant={variant}
+      data-columns={showClear ? '3' : '2'}
       role="group"
       aria-label={ariaLabel}
       data-state={error ? 'error' : queued ? 'queued' : pending ? 'saving' : 'idle'}

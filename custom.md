@@ -159,3 +159,31 @@
 ## APK Rule
 - Never display **Enter Developer Mode** in production, deployed web, or Android APK builds.
 - Developer Mode is restricted to local laptop development on localhost and must remain disabled in native runtimes.
+
+## Search and Deleted-Member Rule
+- Deleted or soft-deleted members must not appear in active search.
+- Exact, partial, and suggested matches must be clearly distinguished.
+- Search counts and visible results must use the same source of truth.
+- Debug information must remain development-only.
+- Stale cache must never reintroduce deleted members.
+
+## PWA Resume Stability Rule
+- Returning from another app must preserve the visible DatSer interface.
+- Resume/focus must not clear state, remount the app, flash themes, or show full-page loaders.
+- Deduplicate closely grouped lifecycle refresh triggers.
+- Refresh in the background and merge only changed data.
+
+## Parent and Guardian Form Rule
+- Parent/Guardian Info must remain visible and must not be hidden in an accordion.
+- Parent/Guardian 1 remains required according to existing rules.
+- Parent/Guardian 2 remains optional.
+- Add, Edit, and Complete Missing Info must share the same design, validation, and saving behavior.
+
+## Attendance Visual Rule
+- Member cards use two equal full-width actions: Present and Absent.
+- Member-card Present uses DatSer orange.
+- Member-card Absent uses DatSer red.
+- Editable attendance forms use three equal full-width choices: Present, Absent, and Clear.
+- Selected Present may use confirmed green in editable forms/history.
+- Do not leave unused trailing layout space.
+- Use shared tokens and components.

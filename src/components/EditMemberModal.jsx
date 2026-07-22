@@ -17,6 +17,7 @@ import CurrentLevelPicker from './CurrentLevelPicker'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard, scrollControlIntoModalView } from '../hooks/useKeyboardSafeModal'
 import AttendanceChoice from './AttendanceChoice'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
+import GuardianSectionHeader from './GuardianSectionHeader'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, refreshSearch, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
@@ -139,12 +140,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         parent_name_2: sourceMember['parent_name_2'] || '',
         parent_phone_2: sourceMember['parent_phone_2'] || ''
       })
-      // Auto-expand parent section if parent data exists
-      if (sourceMember['parent_name_1'] || sourceMember['parent_phone_1']) {
-        setShowParentSection(true)
-      } else {
-        setShowParentSection(false)
-      }
       hydratedMemberIdRef.current = sourceMember.id
       isDirtyRef.current = false
     }
@@ -240,7 +235,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const [isLevelOpen, setIsLevelOpen] = useState(false)
   const [customLevelValue, setCustomLevelValue] = useState('')
   const [overrideMode, setOverrideMode] = useState(false)
-  const [showParentSection, setShowParentSection] = useState(false)
   const [parentInfo, setParentInfo] = useState({
     parent_name_1: '',
     parent_phone_1: '',
@@ -311,10 +305,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     if (!firstMissingTarget) return
 
     setHasAttemptedSave(true)
-    if (firstMissingTarget === guideRefs.parent) {
-      setShowParentSection(true)
-    }
-
     requestAnimationFrame(() => {
       scrollControlIntoModalView(scrollContainerRef.current, firstMissingTarget.current)
     })
@@ -697,7 +687,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       label: 'Parent/Guardian Info',
       targetRef: guideRefs.parent,
       isComplete: () => Boolean((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim())),
-      onActive: () => setShowParentSection(true)
     },
     { id: 'tags', label: 'Tags', targetRef: guideRefs.tags, enabled: guidedFormSettings?.highlightTags, isComplete: () => selectedWorkspaceTagIds.size > 0 },
     { id: 'notes', label: 'Notes', targetRef: guideRefs.notes, enabled: guidedFormSettings?.highlightNotes, isComplete: () => Boolean(formData.notes?.trim()) }
@@ -1041,52 +1030,15 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
             </div>
           </GuidedField>
 
-          {/* Collapsible Parent/Guardian Info Section */}
+          {/* Parent/Guardian Info is intentionally always visible. */}
           <GuidedField ref={guideRefs.parent} active={activeStepId === 'parent'} className={`border rounded-xl overflow-hidden transition-all duration-300 ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
             ? 'border-red-500 ring-4 ring-red-50 dark:ring-red-900/30'
             : 'border-gray-200 dark:border-gray-600'
             }`}>
-            <button
-              type="button"
-              onClick={() => setShowParentSection(!showParentSection)}
-              data-testid="edit-form-parent-toggle"
-              className={`w-full flex items-center justify-between p-3 transition-colors ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                ? 'bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30'
-                : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'
-                }`}
-            >
-              <div className="flex items-center gap-2">
-                <Users className={`w-4 h-4 ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                  ? 'text-red-500 dark:text-red-400'
-                  : 'text-gray-500 dark:text-gray-400'
-                  }`} />
-                <span className={`text-sm font-medium ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                  ? 'text-red-700 dark:text-red-300'
-                  : 'text-gray-700 dark:text-gray-300'
-                  }`}>
-                  Parent/Guardian Info
-                </span>
-                {(parentInfo.parent_name_1 || parentInfo.parent_phone_1) && (
-                  <span className="text-xs px-1.5 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded">Saved</span>
-                )}
-                {hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim())) && (
-                  <span className="text-xs px-1.5 py-0.5 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded font-medium">Required</span>
-                )}
-              </div>
-              {showParentSection ? (
-                <ChevronUp className={`w-4 h-4 ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                  ? 'text-red-500 dark:text-red-400'
-                  : 'text-gray-500 dark:text-gray-400'
-                  }`} />
-              ) : (
-                <ChevronDown className={`w-4 h-4 ${hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                  ? 'text-red-500 dark:text-red-400'
-                  : 'text-gray-500 dark:text-gray-400'
-                  }`} />
-              )}
-            </button>
-
-            {showParentSection && (
+            <GuardianSectionHeader
+              invalid={hasAttemptedSave && !overrideMode && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))}
+              complete={Boolean(parentInfo.parent_name_1 || parentInfo.parent_phone_1)}
+            />
               <div className="p-3 space-y-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-600">
                 {/* Parent 1 */}
                 <div>
@@ -1148,6 +1100,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
                       <User className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                       <input
                         type="text"
+                        data-testid="edit-form-parent2-name"
                         value={parentInfo.parent_name_2}
                         onChange={(e) => {
                           isDirtyRef.current = true
@@ -1161,6 +1114,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
                       <Phone className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                       <input
                         type="tel"
+                        data-testid="edit-form-parent2-phone"
                         value={parentInfo.parent_phone_2}
                         onChange={(e) => {
                           isDirtyRef.current = true
@@ -1186,7 +1140,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
                   </div>
                 </div>
               </div>
-            )}
           </GuidedField>
 
           {areOptionalTagsVisible(guidedFormSettings) && (

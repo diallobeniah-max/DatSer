@@ -8,7 +8,7 @@ import {
 } from '../utils/supabaseWrite'
 import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
-import { buildMemberIndexCodeMap, memberMatchesIndexCode } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
 import {
   attachMemberIdentity,
@@ -19,6 +19,8 @@ import {
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
+import { classifyMemberSearch } from '../utils/memberSearch'
+import { createResumeSyncCoordinator } from '../utils/appResumeSync'
 import {
   isAttendanceAlreadySynced,
   isOfflineAttendanceConflict,
@@ -721,6 +723,7 @@ export const AppProvider = ({ children }) => {
   const [hasAccess, setHasAccess] = useState(true) // Whether user has permission to access the app
   const [searchTerm, setSearchTerm] = useState('')
   const [serverSearchResults, setServerSearchResults] = useState(null)
+  const [deletedMemberSearchTombstones, setDeletedMemberSearchTombstones] = useState([])
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
   const membersCacheRef = useRef(new Map()) // tableName -> { data, ts }
@@ -735,6 +738,12 @@ export const AppProvider = ({ children }) => {
   }), [dataOwnerId, isCollaborator, user?.id])
   const [attendanceData, setAttendanceData] = useState({})
   const [currentTable, setCurrentTable] = useState(getLatestTable())
+
+  useEffect(() => {
+    setDeletedMemberSearchTombstones([])
+    searchCacheRef.current.clear()
+    setServerSearchResults(null)
+  }, [currentTable, workspaceCacheScope])
 
   useEffect(() => {
     setRecentMemberEdits(readStoredRecentMemberEdits(workspaceCacheScope))
@@ -1983,25 +1992,6 @@ export const AppProvider = ({ children }) => {
   }, [isCollaborator, dataOwnerId, fetchOwnerStickyDefaults])
 
   useEffect(() => {
-    if (import.meta.env.MODE === 'test') return
-    if (!isCollaborator || !dataOwnerId || !isSupabaseConfigured()) return
-    const refreshStickyDefaults = () => {
-      fetchOwnerStickyDefaults(dataOwnerId)
-    }
-    const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        refreshStickyDefaults()
-      }
-    }
-    window.addEventListener('focus', refreshStickyDefaults)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => {
-      window.removeEventListener('focus', refreshStickyDefaults)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [isCollaborator, dataOwnerId, isSupabaseConfigured, fetchOwnerStickyDefaults])
-
-  useEffect(() => {
     if (!isSupabaseConfigured() || !isCollaborator || !dataOwnerId) return
 
     const channel = supabase
@@ -2115,7 +2105,7 @@ export const AppProvider = ({ children }) => {
   }
 
   const applyMemberPreviewCache = (tableName, payload, { background = false } = {}) => {
-    const normalizedMembers = (payload?.data || []).map((member) => normalizeMemberRecord(member, {
+    const normalizedMembers = (payload?.data || []).filter((member) => !member?.deleted_at).map((member) => normalizeMemberRecord(member, {
       tableName,
       ownerId: dataOwnerId || user?.id
     }))
@@ -2143,7 +2133,7 @@ export const AppProvider = ({ children }) => {
 
   const persistLoadedMemberPreview = (tableName, nextMembers, overrides = {}) => {
     const cacheKey = tableName || 'default'
-    const normalizedMembers = (nextMembers || []).map((member) => normalizeMemberRecord(member, {
+    const normalizedMembers = (nextMembers || []).filter((member) => !member?.deleted_at).map((member) => normalizeMemberRecord(member, {
       tableName,
       ownerId: dataOwnerId || user?.id
     }))
@@ -2248,7 +2238,7 @@ export const AppProvider = ({ children }) => {
     if (!isOfflineStoreAvailable()) return []
     try {
       const cachedMembers = await getMemberPreviewMembers(workspaceCacheScope, tableName)
-      return (cachedMembers || []).map(normalizeMemberRecord)
+      return (cachedMembers || []).filter((member) => !member?.deleted_at).map(normalizeMemberRecord)
     } catch (error) {
       console.warn('Could not read member preview index:', error)
       return []
@@ -2357,9 +2347,8 @@ export const AppProvider = ({ children }) => {
         await sleep(60)
       }
 
-      const deletedIds = remoteRows
-        .filter((row) => row?.deleted_at)
-        .map((row) => String(row.id))
+      const deletedRows = remoteRows.filter((row) => row?.deleted_at)
+      const deletedIds = deletedRows.map((row) => String(row.id))
       const activeRows = remoteRows.filter((row) => !row?.deleted_at)
 
       if (activeRows.length > 0) {
@@ -2368,6 +2357,11 @@ export const AppProvider = ({ children }) => {
       }
 
       if (deletedIds.length > 0) {
+        setDeletedMemberSearchTombstones((prev) => {
+          const byId = new Map(prev.map((member) => [String(member.id), member]))
+          deletedRows.forEach((member) => byId.set(String(member.id), normalizeMemberRecord(member)))
+          return [...byId.values()].slice(-100)
+        })
         await Promise.all(deletedIds.map((memberId) => deleteMemberPreviewMember(workspaceCacheScope, tableName, memberId)))
         deletedIds.forEach((memberId) => removeMemberFromAttendanceData(memberId))
       }
@@ -4784,6 +4778,13 @@ export const AppProvider = ({ children }) => {
     if (isDeveloperBypass || !isSupabaseConfigured()) {
       console.log(`[DELETE] Demo mode - deleting member ${memberId} from local state`)
       setMembers(prevMembers => {
+        const deletedMember = prevMembers.find((member) => String(member.id) === String(memberId))
+        if (deletedMember) {
+          setDeletedMemberSearchTombstones((prev) => [
+            ...prev.filter((member) => String(member.id) !== String(memberId)),
+            { ...deletedMember, deleted_at: new Date().toISOString() }
+          ].slice(-100))
+        }
         const updated = prevMembers.filter(member => member.id !== memberId)
         console.log(`[DELETE] Members before: ${prevMembers.length}, after: ${updated.length}`)
         return updated
@@ -4806,6 +4807,12 @@ export const AppProvider = ({ children }) => {
     if (shouldUseOfflineData || !isBrowserOnline()) {
       const existingMember = members.find(member => member.id === memberId) || null
       const createdAt = new Date().toISOString()
+      if (existingMember) {
+        setDeletedMemberSearchTombstones((prev) => [
+          ...prev.filter((member) => String(member.id) !== String(memberId)),
+          { ...existingMember, deleted_at: createdAt }
+        ].slice(-100))
+      }
       setMembers(prevMembers => prevMembers.filter(member => member.id !== memberId))
       setAttendanceData(prev => {
         const next = {}
@@ -4931,6 +4938,10 @@ export const AppProvider = ({ children }) => {
       console.log(`[DELETE] VERIFIED - member ${memberId} successfully soft-deleted from ${currentTable}`)
 
       const deletedMember = members.find(member => member.id === memberId) || { id: memberId }
+      setDeletedMemberSearchTombstones((prev) => [
+        ...prev.filter((member) => String(member.id) !== String(memberId)),
+        { ...deletedMember, deleted_at: deletedAt }
+      ].slice(-100))
 
       // Confirmed deleted - now update local state
       setMembers(prevMembers => {
@@ -4959,7 +4970,7 @@ export const AppProvider = ({ children }) => {
         // Filter out the deleted member from search results
         const filtered = prev.filter(member => member.id !== memberId)
         console.log(`[DELETE] Search results updated: ${prev.length} -> ${filtered.length}`)
-        return filtered.length > 0 ? filtered : null
+        return filtered
       })
 
       // Update caches/search without refetching the whole table.
@@ -5487,36 +5498,20 @@ export const AppProvider = ({ children }) => {
     }
   }
 
-  // Optimized filter members based on search term (instant search)
-  const filteredMembers = useMemo(() => {
-    if (!searchTerm.trim()) {
-      return members
-    }
-
-    const memberIndexCodeMap = buildMemberIndexCodeMap(members)
-    const search = searchTerm.toLowerCase().trim()
-    const codeMatches = members.filter(member => memberMatchesIndexCode(member, memberIndexCodeMap, searchTerm))
-    if (codeMatches.length > 0) {
-      return codeMatches.slice(0, 20)
-    }
-
-    if (serverSearchResults) {
-      return serverSearchResults.slice(0, 20)
-    }
-
-    // Fast client-side search
-    const tokens = search.split(/\s+/).filter(Boolean)
-    const filtered = members.filter(member => {
-      const fullName = (
-        (typeof member['full_name'] === 'string' ? member['full_name'] : '') ||
-        (typeof member['Full Name'] === 'string' ? member['Full Name'] : '') ||
-        ''
-      ).toLowerCase()
-      return tokens.every(t => fullName.includes(t))
-    }).slice(0, 20)
-
-    return filtered
-  }, [members, searchTerm, serverSearchResults])
+  const activeMembers = useMemo(() => members.filter((member) => !member?.deleted_at), [members])
+  const searchResultSections = useMemo(() => {
+    const codeMap = buildMemberIndexCodeMap(activeMembers)
+    return classifyMemberSearch({
+      members: activeMembers,
+      remoteMembers: serverSearchResults || [],
+      deletedMembers: deletedMemberSearchTombstones,
+      query: searchTerm,
+      getCode: (member) => getMemberIndexCode(member, codeMap) || member?.member_code || ''
+    })
+  }, [activeMembers, deletedMemberSearchTombstones, searchTerm, serverSearchResults])
+  const filteredMembers = searchTerm.trim()
+    ? searchResultSections.visible.slice(0, 20)
+    : activeMembers
 
   const resolveNameColumn = useCallback(async (tableName) => {
     const cached = nameColumnCacheRef.current.get(tableName)
@@ -5607,7 +5602,7 @@ export const AppProvider = ({ children }) => {
     }
     let { data, error } = await query
     if (error && !isAge) {
-      const nameCol = await resolveNameColumn(targetTable)
+      const nameCol = await resolveNameColumn(currentTable)
       const fallback = await applyDeletedAtFilter(
         supabase
           .from(currentTable)
@@ -5785,6 +5780,10 @@ export const AppProvider = ({ children }) => {
     if (!patchedMember?.id) return null
 
     if (patchedMember.deleted_at || options.deleted) {
+      setDeletedMemberSearchTombstones((prev) => [
+        ...prev.filter((member) => String(member.id) !== String(memberId)),
+        patchedMember
+      ].slice(-100))
       setMembers((prevMembers) => {
         const nextMembers = prevMembers.filter((member) => String(member.id) !== String(memberId))
         persistLoadedMemberPreview(tableName, nextMembers, {
@@ -5799,6 +5798,8 @@ export const AppProvider = ({ children }) => {
       refreshSearch()
       return null
     }
+
+    setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(memberId)))
 
     let nextCount = members.length
     let didInsert = false
@@ -7282,33 +7283,6 @@ export const AppProvider = ({ children }) => {
   syncOfflineChangesRef.current = syncOfflineChanges
 
   useEffect(() => {
-    if (typeof window === 'undefined' || offlineMode === 'offline') return undefined
-    const flushVisiblePendingChanges = () => {
-      if (!isBrowserOnline() || offlineSyncInFlightRef.current) return
-      getPendingOfflineChanges()
-        .then((changes) => {
-          const hasSyncableChanges = changes.some((change) => (
-            change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
-          ))
-          if (hasSyncableChanges) return syncOfflineChangesRef.current?.()
-          return null
-        })
-        .catch((error) => console.warn('Could not flush visible offline changes:', error))
-    }
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') flushVisiblePendingChanges()
-    }
-    window.addEventListener('focus', flushVisiblePendingChanges)
-    window.addEventListener('online', flushVisiblePendingChanges)
-    document.addEventListener('visibilitychange', handleVisibility)
-    return () => {
-      window.removeEventListener('focus', flushVisiblePendingChanges)
-      window.removeEventListener('online', flushVisiblePendingChanges)
-      document.removeEventListener('visibilitychange', handleVisibility)
-    }
-  }, [offlineMode])
-
-  useEffect(() => {
     if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline) return undefined
 
     const syncableChanges = offlinePendingChanges.filter((change) => (
@@ -7396,38 +7370,71 @@ export const AppProvider = ({ children }) => {
   }, [currentTable, isDeveloperBypass, isOnline, isSupabaseConfigured, offlineMode, shouldUseOfflineData])
 
   useEffect(() => {
-    if (!currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
+    if (typeof window === 'undefined' || import.meta.env.MODE === 'test') return undefined
 
-    let disposed = false
-    const triggerPreviewSync = (source = 'auto') => {
-      if (disposed) return
-      memberPreviewBackgroundSyncRunnerRef.current?.(currentTable, { source })
-      refreshSyncedDataInBackground(source)
-    }
+    const runResumeSync = async (source = 'resume') => {
+      if (document.visibilityState === 'hidden' || !isBrowserOnline()) return { skipped: 'offline-or-hidden' }
 
-    triggerPreviewSync('app-load')
-
-    const intervalId = setInterval(() => {
-      triggerPreviewSync('interval')
-    }, MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS)
-
-    const handleOnline = () => triggerPreviewSync('online')
-    const handleVisible = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        triggerPreviewSync('visible')
+      // Session confirmation is silent and never replaces the visible app with a loader.
+      if (!isDeveloperBypass && isSupabaseConfigured()) {
+        await supabase.auth.getSession().catch((error) => {
+          console.warn(`Silent session confirmation failed (${source}):`, error)
+        })
       }
+
+      if (isCollaborator && dataOwnerId && isSupabaseConfigured()) {
+        await fetchOwnerStickyDefaults(dataOwnerId).catch((error) => {
+          console.warn(`Could not refresh workspace defaults (${source}):`, error)
+        })
+      }
+
+      if (offlineMode !== 'offline' && !offlineSyncInFlightRef.current) {
+        const pendingChanges = await getPendingOfflineChanges().catch(() => [])
+        const hasSyncableChanges = pendingChanges.some((change) => (
+          change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
+        ))
+        if (hasSyncableChanges) {
+          await syncOfflineChangesRef.current?.().catch((error) => {
+            console.warn(`Could not flush pending changes (${source}):`, error)
+          })
+        }
+      }
+
+      if (currentTable && !isDeveloperBypass && isSupabaseConfigured() && !shouldUseOfflineData) {
+        memberPreviewBackgroundSyncRunnerRef.current?.(currentTable, { source })
+        await refreshSyncedDataInBackground(source)
+      }
+      return { success: true }
     }
 
+    const coordinator = createResumeSyncCoordinator({
+      refresh: runResumeSync,
+      cooldownMs: 1800
+    })
+    const trigger = (source, options) => coordinator.trigger(source, options)
+    const handleVisible = () => {
+      if (document.visibilityState === 'visible') trigger('visible')
+    }
+    const handlePageShow = (event) => trigger(event?.persisted ? 'pageshow-cache' : 'pageshow')
+    const handleFocus = () => trigger('focus')
+    const handleOnline = () => trigger('online', { force: true })
+
+    trigger('app-load', { force: true })
+    const intervalId = window.setInterval(() => trigger('interval'), MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS)
+    window.addEventListener('focus', handleFocus)
     window.addEventListener('online', handleOnline)
+    window.addEventListener('pageshow', handlePageShow)
     document.addEventListener('visibilitychange', handleVisible)
 
     return () => {
-      disposed = true
-      clearInterval(intervalId)
+      coordinator.dispose()
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
       window.removeEventListener('online', handleOnline)
+      window.removeEventListener('pageshow', handlePageShow)
       document.removeEventListener('visibilitychange', handleVisible)
     }
-  }, [currentTable, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, shouldUseOfflineData])
+  }, [currentTable, dataOwnerId, fetchOwnerStickyDefaults, isCollaborator, isDeveloperBypass, isSupabaseConfigured, offlineMode, refreshSyncedDataInBackground, shouldUseOfflineData])
 
   // Load attendance and badge data when table changes
   useEffect(() => {
@@ -7566,7 +7573,10 @@ export const AppProvider = ({ children }) => {
             const prepared = prepareRealtimeMember(payload.new)
             const incoming = prepared.member
             if (prepared.shouldRemove || incoming?.deleted_at) {
+              setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(incoming.id)), incoming].slice(-100))
               setMembers((prevMembers) => prevMembers.filter((member) => member.id !== incoming.id))
+              setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== incoming.id) : prev)
+              searchCacheRef.current.clear()
               deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
                 .catch((error) => console.warn('Could not remove realtime deleted member from index:', error))
               markMemberPreviewSyncComplete(currentTable, {
@@ -7577,6 +7587,9 @@ export const AppProvider = ({ children }) => {
               })
               return
             }
+            setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(incoming.id)))
+            setServerSearchResults((prev) => prev ? prev.map((member) => member.id === incoming.id ? incoming : member) : prev)
+            searchCacheRef.current.clear()
             setMembers((prevMembers) => {
               const exists = prevMembers.some(member => member.id === incoming.id)
               const nextMembers = exists
@@ -7601,6 +7614,9 @@ export const AppProvider = ({ children }) => {
             const prepared = prepareRealtimeMember(payload.new)
             const incoming = prepared.member
             if (prepared.shouldRemove || incoming?.deleted_at) {
+              setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(incoming.id)), incoming].slice(-100))
+              setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== incoming.id) : prev)
+              searchCacheRef.current.clear()
               setMembers((prevMembers) => {
                 const nextMembers = prevMembers.filter((member) => member.id !== incoming.id)
                 membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
@@ -7616,6 +7632,9 @@ export const AppProvider = ({ children }) => {
               })
               return
             }
+            setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(incoming.id)))
+            setServerSearchResults((prev) => prev ? prev.map((member) => member.id === incoming.id ? { ...member, ...incoming } : member) : prev)
+            searchCacheRef.current.clear()
             setMembers((prevMembers) => {
               const nextMembers = prevMembers.map((member) =>
                 member.id === incoming.id ? { ...member, ...incoming } : member
@@ -7646,6 +7665,9 @@ export const AppProvider = ({ children }) => {
               setOfflineStatusMessage('A remote delete conflicts with a saved offline change. Review and retry the pending change.')
               return
             }
+            setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(payload.old.id)), { ...payload.old, deleted_at: new Date().toISOString() }].slice(-100))
+            setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== payload.old.id) : prev)
+            searchCacheRef.current.clear()
             setMembers((prevMembers) => {
               const nextMembers = prevMembers.filter((member) => member.id !== payload.old.id)
               membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
@@ -7832,6 +7854,7 @@ export const AppProvider = ({ children }) => {
     setSearchTerm,
     refreshSearch,
     serverSearchResults,
+    searchResultSections,
     forceRefreshMembers,
     forceRefreshMembersSilent,
     refreshMemberPreviewById,
@@ -7931,7 +7954,7 @@ export const AppProvider = ({ children }) => {
     fetchLockedDefaultDate,
     sendAdminPeriodBroadcast
   }), [
-    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, searchTerm, serverSearchResults,
+    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, searchTerm, serverSearchResults, searchResultSections,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,

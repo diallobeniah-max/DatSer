@@ -156,21 +156,12 @@ const MemberCard = memo(({
                             disabled={attendanceLoading}
                             pending={attendanceLoading}
                             showClear={false}
+                            variant="member-card"
                             stopPropagation
                             className="member-card-attendance-choice w-full"
                             testIdPrefix={`member-card-attendance-${member.id}`}
                             ariaLabel={`Attendance for ${name}`}
                         />
-                        {showDeleteActions && (
-                            <button
-                                type="button"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.stopPropagation(); onDelete(e, member) }}
-                                className="member-card-action hidden md:inline-flex flex-1 items-center justify-center px-3 py-2 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 hover:border-red-200 dark:hover:border-red-800 text-sm font-medium transition-colors duration-150"
-                            >
-                                Delete
-                            </button>
-                        )}
                     </div>
                 </div>
 
@@ -233,7 +224,7 @@ const MemberCard = memo(({
                                             <button
                                                 onPointerDown={(e) => e.stopPropagation()}
                                                 onClick={(e) => { e.stopPropagation(); onDelete(e, member) }}
-                                                className="md:hidden w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-red-300 text-red-700 rounded-lg transition-colors shadow-sm"
+                                                className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-red-300 text-red-700 rounded-lg transition-colors shadow-sm"
                                             >
                                                 <Trash2 className="w-4 h-4" />
                                                 <span>Delete Member</span>

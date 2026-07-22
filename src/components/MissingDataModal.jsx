@@ -10,6 +10,7 @@ import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 import AttendanceChoice from './AttendanceChoice'
+import GuardianSectionHeader from './GuardianSectionHeader'
 
 const MissingDataModal = ({
     member,
@@ -132,12 +133,10 @@ const MissingDataModal = ({
         if (missingFields.includes('Current Level')) {
             initialData.currentLevel = member['Current Level'] || ''
         }
-        if (missingFields.includes('Parent Name 1')) {
-            initialData.parentName1 = member['parent_name_1'] || ''
-        }
-        if (missingFields.includes('Parent Phone 1')) {
-            initialData.parentPhone1 = member['parent_phone_1'] || ''
-        }
+        initialData.parentName1 = member['parent_name_1'] || ''
+        initialData.parentPhone1 = member['parent_phone_1'] || ''
+        initialData.parentName2 = member['parent_name_2'] || ''
+        initialData.parentPhone2 = member['parent_phone_2'] || ''
         setFormData(initialData)
 
         // Initialize attendance data - use consistent date format matching the rest of the app
@@ -244,8 +243,9 @@ const MissingDataModal = ({
         setSaveError(null)
 
         try {
-            // Update member data if there are missing fields
-            if (missingFields.length > 0) {
+            // Keep guardian details editable in every completion flow, even when
+            // attendance is the only item that originally opened the sheet.
+            {
                 const updates = {}
                 if (missingFields.includes('Phone Number')) {
                     updates['Phone Number'] = formData.phoneNumber
@@ -262,12 +262,10 @@ const MissingDataModal = ({
                 if (missingFields.includes('Current Level')) {
                     updates['Current Level'] = formData.currentLevel
                 }
-                if (missingFields.includes('Parent Name 1')) {
-                    updates.parent_name_1 = formData.parentName1
-                }
-                if (missingFields.includes('Parent Phone 1')) {
-                    updates.parent_phone_1 = formData.parentPhone1
-                }
+                updates.parent_name_1 = formData.parentName1
+                updates.parent_phone_1 = formData.parentPhone1
+                updates.parent_name_2 = formData.parentName2 || null
+                updates.parent_phone_2 = formData.parentPhone2 || null
 
                 console.log('Updating member with:', updates)
                 await updateMember(member.id, updates, { silent: true, skipRefresh: true })
@@ -365,8 +363,10 @@ const MissingDataModal = ({
                 ...(missingFields.includes('Age') ? { 'Age': formData.age } : {}),
                 ...(missingFields.includes('Date of Birth') ? { date_of_birth: formData.dateOfBirth } : {}),
                 ...(missingFields.includes('Current Level') ? { 'Current Level': formData.currentLevel } : {}),
-                ...(missingFields.includes('Parent Name 1') ? { parent_name_1: formData.parentName1 } : {}),
-                ...(missingFields.includes('Parent Phone 1') ? { parent_phone_1: formData.parentPhone1 } : {})
+                parent_name_1: formData.parentName1,
+                parent_phone_1: formData.parentPhone1,
+                parent_name_2: formData.parentName2 || null,
+                parent_phone_2: formData.parentPhone2 || null
             }
 
             toast.success(isOverrideMode ? 'Attendance saved (Override)' : 'Missing data saved successfully!')
@@ -721,69 +721,70 @@ const MissingDataModal = ({
                                 </GuidedField>
                             )}
 
-                            {(missingFields.includes('Parent Name 1') || missingFields.includes('Parent Phone 1')) && (
-                                <GuidedField ref={guideRefs.parent} active={activeStepId === 'parent'} className="space-y-3">
-                            {missingFields.includes('Parent Name 1') && (
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                        Parent/Guardian Name *
-                                    </label>
-                                    <input
-                                        type="text"
-                                        data-testid="missing-data-parent1-name"
-                                        value={formData.parentName1 || ''}
-                                        onChange={(e) => handleInputChange('parentName1', e.target.value)}
-                                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 dark:bg-gray-700 dark:text-white ${isFieldInvalid('Parent Name 1')
-                                            ? 'border-red-500 focus:ring-red-500 bg-red-50 dark:bg-red-900/10'
-                                            : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500'
-                                            }`}
-                                        placeholder="Enter parent/guardian name"
-                                    />
-                                    {isFieldInvalid('Parent Name 1') && (
-                                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">Parent name is required</p>
-                                    )}
-                                </div>
-                            )}
-
-                            {missingFields.includes('Parent Phone 1') && (
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                        Parent/Guardian Phone * (10 digits)
-                                    </label>
-                                    <div className="flex gap-2">
+                            <GuidedField ref={guideRefs.parent} active={activeStepId === 'parent'} className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800">
+                                <GuardianSectionHeader
+                                    invalid={isFieldInvalid('Parent Name 1') || isFieldInvalid('Parent Phone 1')}
+                                    complete={Boolean(formData.parentName1 && formData.parentPhone1?.length === 10)}
+                                />
+                                <div className="space-y-4 p-3">
+                                    <div>
+                                        <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                            Parent/Guardian Name {missingFields.includes('Parent Name 1') ? '*' : ''}
+                                        </label>
                                         <input
-                                            type="tel"
-                                            data-testid="missing-data-parent1-phone"
-                                            value={formData.parentPhone1 || ''}
-                                            onChange={(e) => {
-                                                const value = e.target.value.replace(/\D/g, '').slice(0, 10)
-                                                handleInputChange('parentPhone1', value)
-                                            }}
-                                            maxLength="10"
-                                            className={`flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 dark:bg-gray-700 dark:text-white ${isFieldInvalid('Parent Phone 1')
-                                                ? 'border-red-500 focus:ring-red-500 bg-red-50 dark:bg-red-900/10'
-                                                : 'border-gray-300 dark:border-gray-600 focus:ring-primary-500'
+                                            type="text"
+                                            data-testid="missing-data-parent1-name"
+                                            value={formData.parentName1 || ''}
+                                            onChange={(e) => handleInputChange('parentName1', e.target.value)}
+                                            className={`w-full rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 dark:bg-gray-700 dark:text-white ${isFieldInvalid('Parent Name 1')
+                                                ? 'border-red-500 bg-red-50 focus:ring-red-500 dark:bg-red-900/10'
+                                                : 'border-gray-300 focus:ring-primary-500 dark:border-gray-600'
                                                 }`}
-                                            placeholder="Enter 10-digit phone number"
+                                            placeholder="Enter parent/guardian name"
                                         />
-                                        <button
-                                            type="button"
-                                            onClick={() => handleInputChange('parentPhone1', '0000000000')}
-                                            className="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg text-sm font-medium transition-colors"
-                                        >
-                                            No Phone
-                                        </button>
+                                        {isFieldInvalid('Parent Name 1') && (
+                                            <p className="mt-1 text-xs text-red-600 dark:text-red-400">Parent name is required</p>
+                                        )}
                                     </div>
-                                    {formData.parentPhone1 && formData.parentPhone1.length !== 10 && (
-                                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">Must be exactly 10 digits</p>
-                                    )}
-                                    {isFieldInvalid('Parent Phone 1') && !formData.parentPhone1 && (
-                                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">Parent phone is required</p>
-                                    )}
+
+                                    <div>
+                                        <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                            Parent/Guardian Phone {missingFields.includes('Parent Phone 1') ? '* ' : ''}(10 digits)
+                                        </label>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="tel"
+                                                data-testid="missing-data-parent1-phone"
+                                                value={formData.parentPhone1 || ''}
+                                                onChange={(e) => handleInputChange('parentPhone1', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                                                maxLength="10"
+                                                className={`min-w-0 flex-1 rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 dark:bg-gray-700 dark:text-white ${isFieldInvalid('Parent Phone 1')
+                                                    ? 'border-red-500 bg-red-50 focus:ring-red-500 dark:bg-red-900/10'
+                                                    : 'border-gray-300 focus:ring-primary-500 dark:border-gray-600'
+                                                    }`}
+                                                placeholder="Enter 10-digit phone number"
+                                            />
+                                            <button type="button" onClick={() => handleInputChange('parentPhone1', '0000000000')} className="rounded-lg bg-gray-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600">
+                                                No Phone
+                                            </button>
+                                        </div>
+                                        {formData.parentPhone1 && formData.parentPhone1.length !== 10 && (
+                                            <p className="mt-1 text-xs text-red-600 dark:text-red-400">Must be exactly 10 digits</p>
+                                        )}
+                                    </div>
+
+                                    <div className="border-t border-gray-200 pt-3 dark:border-gray-600">
+                                        <p className="mb-3 text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Second guardian (optional)</p>
+                                        <div className="space-y-3">
+                                            <input type="text" data-testid="missing-data-parent2-name" value={formData.parentName2 || ''} onChange={(e) => handleInputChange('parentName2', e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" placeholder="Second guardian name" />
+                                            <div className="flex gap-2">
+                                                <input type="tel" data-testid="missing-data-parent2-phone" value={formData.parentPhone2 || ''} onChange={(e) => handleInputChange('parentPhone2', e.target.value.replace(/\D/g, '').slice(0, 10))} maxLength="10" className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" placeholder="Second guardian phone" />
+                                                <button type="button" onClick={() => handleInputChange('parentPhone2', '0000000000')} className="rounded-lg bg-gray-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600">No Phone</button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            )}
-                                </GuidedField>
-                            )}
+                            </GuidedField>
                         </div>
                     )}
 

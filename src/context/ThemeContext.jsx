@@ -80,19 +80,11 @@ export const ThemeProvider = ({ children }) => {
     }
   }, [preferences, preferencesLoaded, user])
 
-  // Reset on Logout
+  // Keep the last resolved device theme through session refresh/resume. A
+  // temporary null auth session must never flash the UI back to system theme.
   useEffect(() => {
     if (!loading && !user) {
-      setThemeMode('system')
-      setFontSize('16')
-      setFontFamily('system')
       setPreferencesLoaded(false)
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('themeMode')
-        localStorage.removeItem('fontSize')
-        localStorage.removeItem('fontFamily')
-        localStorage.removeItem('theme')
-      }
     }
   }, [user, loading])
 

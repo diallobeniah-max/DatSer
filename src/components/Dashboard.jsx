@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspens
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
-import { Search, Users, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine } from 'lucide-react'
+import { Search, Users, UserX, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine } from 'lucide-react'
 import QRCode from 'qrcode'
 import DateSelector from './DateSelector'
 import ConfirmModal from './ConfirmModal'
@@ -397,6 +397,7 @@ const Dashboard = ({ isAdmin = false }) => {
     loading,
     searchTerm,
     setSearchTerm,
+    searchResultSections,
     forceRefreshMembers,
     forceRefreshMembersSilent,
     searchMemberAcrossAllTables,
@@ -455,6 +456,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const [isQuickPassClosing, setIsQuickPassClosing] = useState(false)
   const [isQuickPassQrExpanded, setIsQuickPassQrExpanded] = useState(false)
   const [isQuickPassQrAnimating, setIsQuickPassQrAnimating] = useState(false)
+  const [historicalSearchResults, setHistoricalSearchResults] = useState([])
   const [memberPassSharePreview, setMemberPassSharePreview] = useState(null)
   const turboCheckInRef = useRef({ key: '', running: false })
 
@@ -1039,16 +1041,6 @@ const Dashboard = ({ isAdmin = false }) => {
       filteredMembers = filteredMembers.filter(member => {
         const memberTagIds = getMemberTagIdSet(member.id)
         return selectedTagFilters.some(tagId => memberTagIds.has(String(tagId)))
-      })
-    }
-
-    // If AppContext has not produced search results yet, keep a local fallback.
-    // Otherwise search, tag, gender, level, and visitor filters compose above.
-    if (searchTerm && searchTerm.trim() && (!contextFilteredMembers || contextFilteredMembers.length === 0)) {
-      const lowerTerm = searchTerm.toLowerCase()
-      filteredMembers = filteredMembers.filter(member => {
-        const name = (member['full_name'] || member['Full Name'] || '').toLowerCase()
-        return name.includes(lowerTerm)
       })
     }
 
@@ -2242,37 +2234,19 @@ const Dashboard = ({ isAdmin = false }) => {
       return
     }
   }, [buildMemberPassSharePreview])
-  const searchSuggestionMembers = pendingSearchTerm
-    ? (() => {
-        const lowerTerm = pendingSearchTerm.toLowerCase()
-        const sourceMembers = dashboardTab === 'edited'
-          ? members.filter(member => isEditedMember(member) || isRecentlyChangedMember(member))
-          : dashboardTab === 'duplicates'
-            ? duplicateGroups.flatMap(group => group.members)
-            : members
-        const seen = new Set()
-        return sourceMembers
-          .filter(member => {
-            if (!member?.id || seen.has(member.id)) return false
-            seen.add(member.id)
-            return getMemberSearchName(member).toLowerCase().includes(lowerTerm) || memberMatchesIndexCode(member, memberIndexCodeMap, pendingSearchTerm)
-          })
-          .sort((a, b) => {
-            const nameA = getMemberSearchName(a).toLowerCase()
-            const nameB = getMemberSearchName(b).toLowerCase()
-            const codeA = getMemberIndexCode(a, memberIndexCodeMap).toLowerCase()
-            const codeB = getMemberIndexCode(b, memberIndexCodeMap).toLowerCase()
-            const aCodeStarts = codeA.startsWith(lowerTerm) ? 0 : 1
-            const bCodeStarts = codeB.startsWith(lowerTerm) ? 0 : 1
-            if (aCodeStarts !== bCodeStarts) return aCodeStarts - bCodeStarts
-            const aStarts = nameA.startsWith(lowerTerm) ? 0 : 1
-            const bStarts = nameB.startsWith(lowerTerm) ? 0 : 1
-            if (aStarts !== bStarts) return aStarts - bStarts
-            return nameA.localeCompare(nameB)
-          })
-          .slice(0, 10)
-      })()
-    : []
+  const searchSuggestionMembers = pendingSearchTerm ? (searchResultSections?.visible || []).slice(0, 10) : []
+  const possibleSearchMatches = pendingSearchTerm ? (searchResultSections?.suggestions || []).slice(0, 5) : []
+  const showSearchDebug = import.meta.env.DEV && import.meta.env.VITE_ENABLE_SEARCH_DEBUG === 'true'
+
+  useEffect(() => {
+    setHistoricalSearchResults([])
+  }, [searchTerm, currentTable])
+
+  const handleSearchAllMonths = async () => {
+    if (!searchTerm.trim()) return
+    const results = await searchMemberAcrossAllTables(searchTerm)
+    setHistoricalSearchResults(results || [])
+  }
 
   useEffect(() => {
     const normalizedCode = pendingSearchTerm.trim().toUpperCase()
@@ -2410,8 +2384,27 @@ const Dashboard = ({ isAdmin = false }) => {
               )
             })
           ) : (
-            <div className="px-4 py-8 text-center text-sm font-semibold text-gray-400 md:col-span-2 xl:col-span-3">
-              No matching names yet
+            <div className="px-4 py-6 text-center md:col-span-2 xl:col-span-3">
+              <UserX className="mx-auto mb-2 h-8 w-8 text-orange-500" />
+              <p className="font-bold text-gray-900 dark:text-white">
+                {searchResultSections?.status === 'deleted' ? 'This member was deleted' : 'No current member found'}
+              </p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">No active member matches “{pendingSearchTerm}”.</p>
+              {possibleSearchMatches.length > 0 && (
+                <div className="mx-auto mt-3 max-w-xl text-left">
+                  <p className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-gray-500">Possible matches</p>
+                  <div className="flex flex-wrap gap-2">
+                    {possibleSearchMatches.map((member) => (
+                      <button key={member.id} type="button" onClick={() => applySearchSelection(getMemberSearchName(member))} className="min-h-10 rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold dark:border-gray-600 dark:bg-gray-900">
+                        {getMemberSearchName(member)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button type="button" onClick={() => { setSearchTerm(''); setLocalSearchTerm('') }} className="mt-4 min-h-10 rounded-xl bg-orange-600 px-4 text-sm font-bold text-white">
+                Clear Search
+              </button>
             </div>
           )}
         </div>
@@ -2966,42 +2959,79 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {/* Empty State - use the same getTabFilteredMembers() for consistency */}
       {!isShortSearchDisplayActive && getTabFilteredMembers().length === 0 && !loading && (
-        <div className="text-center py-12">
-          <Users className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No members found</h3>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">
+        <div className="mx-auto my-6 max-w-2xl rounded-3xl border border-orange-200/80 bg-white/90 px-5 py-9 text-center shadow-sm dark:border-orange-500/25 dark:bg-gray-900/85 sm:px-8">
+          {searchTerm ? <UserX className="mx-auto mb-4 h-12 w-12 text-orange-500" /> : <Users className="mx-auto mb-4 h-12 w-12 text-gray-400 dark:text-gray-500" />}
+          <h3 className="mb-2 text-lg font-bold text-gray-900 dark:text-white">
             {dashboardTab === 'edited'
-              ? 'No edited members yet. Mark Present or Absent to see them here.'
+              ? 'No marked members yet'
+              : searchResultSections?.status === 'deleted'
+                ? 'This member was deleted'
+                : searchTerm
+                  ? 'No current member found'
+                  : 'No members yet'}
+          </h3>
+          <p className="mx-auto mb-5 max-w-lg text-sm leading-6 text-gray-600 dark:text-gray-300">
+            {dashboardTab === 'edited'
+              ? 'Mark someone Present or Absent to see them here.'
               : searchTerm
-                ? 'Try adjusting your search terms'
-                : 'Get started by adding your first member'}
+                ? searchResultSections?.status === 'deleted'
+                  ? `“${searchTerm}” is no longer an active member in ${getMonthDisplayName(currentTable)}.`
+                  : `We could not find an active member matching “${searchTerm}” in ${getMonthDisplayName(currentTable)}.`
+                : 'Add the first member to begin tracking attendance.'}
           </p>
 
-          {/* Debug Information for Search Issues */}
-          {searchTerm && members.length > 0 && (
-            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 max-w-md mx-auto text-left">
-              <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">Debug Info</h4>
-              <div className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
-                <p><strong>Search term:</strong> "{searchTerm}"</p>
-                <p><strong>Total members:</strong> {members.length}</p>
-                <p><strong>Filtered results:</strong> {contextFilteredMembers.length}</p>
-                <p><strong>Current table:</strong> {currentTable}</p>
-                <p><strong>Supabase status:</strong> {isSupabaseConfigured() ? 'Connected' : 'Not configured (showing mock data)'}</p>
+          {possibleSearchMatches.length > 0 && (
+            <div className="mx-auto mb-5 max-w-lg rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left dark:border-gray-700 dark:bg-gray-800/70">
+              <p className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">Possible matches</p>
+              <div className="flex flex-wrap gap-2">
+                {possibleSearchMatches.map((member) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => applySearchSelection(getMemberSearchName(member))}
+                    className="min-h-10 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 transition-colors hover:border-orange-400 hover:text-orange-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                  >
+                    {getMemberSearchName(member)}
+                  </button>
+                ))}
               </div>
+            </div>
+          )}
+
+          {searchTerm && (
+            <div className="flex flex-col justify-center gap-2 sm:flex-row">
               <button
-                onClick={() => searchMemberAcrossAllTables(searchTerm)}
-                className="mt-2 w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded text-sm font-medium transition-colors duration-200 flex items-center justify-center gap-2"
-                disabled={!searchTerm.trim()}
+                type="button"
+                onClick={() => { setSearchTerm(''); setLocalSearchTerm(''); setHistoricalSearchResults([]) }}
+                className="min-h-11 rounded-xl border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:border-orange-400 dark:border-gray-600 dark:text-gray-200"
               >
-                <Search className="w-4 h-4" />
-                Search All Tables
+                Clear Search
               </button>
-              {!isSupabaseConfigured() && (
-                <div className="mt-3 text-xs text-yellow-700 dark:text-yellow-300">
-                  Tip: Configure <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> to search real data.
-                </div>
+              {isSupabaseConfigured() && (
+                <button
+                  type="button"
+                  onClick={handleSearchAllMonths}
+                  className="min-h-11 rounded-xl bg-orange-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-orange-700"
+                >
+                  Search all months
+                </button>
               )}
             </div>
+          )}
+
+          {historicalSearchResults.length > 0 && (
+            <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-left text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950/35 dark:text-blue-100">
+              <p className="font-bold">Available in another month</p>
+              <p className="mt-1">{historicalSearchResults.map((result) => getMonthDisplayName(result.table)).join(', ')}</p>
+            </div>
+          )}
+
+          {showSearchDebug && searchTerm && (
+            <details className="mt-5 rounded-xl border border-yellow-300 bg-yellow-50 p-3 text-left text-xs text-yellow-900 dark:border-yellow-800 dark:bg-yellow-950/30 dark:text-yellow-100">
+              <summary className="cursor-pointer font-bold">Debug Info</summary>
+              <p className="mt-2">Visible results: {searchResultSections?.visibleCount || 0}</p>
+              <p>Status: {searchResultSections?.status || 'none'}</p>
+            </details>
           )}
         </div>
       )}

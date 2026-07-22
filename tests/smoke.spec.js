@@ -333,8 +333,6 @@ test.describe('Preflight smoke', () => {
     await expect(nameInput).not.toBeFocused()
     await nameInput.focus()
     await addBody.evaluate((element) => { element.scrollTop = element.scrollHeight })
-    await addModal.getByTestId('member-form-parent-toggle').click()
-    await expect(nameInput).not.toBeFocused()
     const parentName = addModal.getByTestId('member-form-parent1-name')
     await expect(parentName).toBeVisible()
     await parentName.focus()

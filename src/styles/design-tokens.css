@@ -2,8 +2,12 @@
   /* Brand and semantic colors */
   --ds-color-primary: #f2550a;
   --ds-color-primary-hover: #d94805;
-  --ds-color-present: #16a34a;
-  --ds-color-present-strong: #15803d;
+  --ds-color-present-action: #f2550a;
+  --ds-color-present-action-strong: #d94805;
+  --ds-color-present-confirmed: #16a34a;
+  --ds-color-present-confirmed-strong: #15803d;
+  --ds-color-present: var(--ds-color-present-confirmed);
+  --ds-color-present-strong: var(--ds-color-present-confirmed-strong);
   --ds-color-absent: #dc2626;
   --ds-color-absent-strong: #b91c1c;
   --ds-color-clear: #f3f4f6;
@@ -28,6 +32,12 @@
   --ds-control-sm: 2.5rem;
   --ds-control-md: 2.75rem;
   --ds-control-lg: 3rem;
+  --ds-attendance-height: 2.75rem;
+  --ds-attendance-gap: 0.5rem;
+  --ds-attendance-radius: 0.75rem;
+  --ds-attendance-focus-ring: #f97316;
+  --ds-attendance-disabled-opacity: 0.58;
+  --ds-attendance-pressed-scale: 0.98;
 
   /* Shape and depth */
   --ds-radius-sm: 0.5rem;

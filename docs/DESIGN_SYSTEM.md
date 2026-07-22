@@ -37,7 +37,7 @@ Do not scale the entire UI to create density. Use compact layouts that remove se
 
 - Base spacing steps: 4, 8, 12, 16, 24, and 32px.
 - Minimum touch target: 44px; primary mobile actions should be 48px where space permits.
-- Attendance controls always appear in the order Present, Absent, Clear with equal widths.
+- Attendance controls use equal-width columns. Member cards show Present and Absent; editable forms show Present, Absent, and Clear.
 - Inputs, buttons, and compact cards use 8–12px radii. Major cards use 16px. Mobile sheets use 24px top corners.
 - Borders separate controls; shadows communicate elevation, not decoration.
 
@@ -46,6 +46,22 @@ Do not scale the entire UI to create density. Use compact layouts that remove se
 - `AttendanceChoice`: the only Present/Absent/Clear control for Add, Edit, Complete Missing Info, and expanded member attendance. Supports selected, disabled, saving, queued, and error states.
 - Keyboard-safe sheets: fixed shell, fixed header/footer, and one internally scrolling body.
 - Notifications: concise status, action context, and retry when failure is recoverable.
+
+## Attendance Controls
+
+Member Card Variant:
+- Two equal `minmax(0, 1fr)` columns that fill the available row.
+- Present uses the DatSer orange action token and Absent uses the red action token.
+- Clear is not shown. Destructive member actions belong inside expanded details, not in the attendance row.
+
+Editable Attendance Variant:
+- Three equal `minmax(0, 1fr)` columns for Present, Absent, and Clear.
+- Selected Present uses confirmed green, selected Absent uses red, and Clear remains neutral.
+
+Compact Search Variant:
+- Uses the same two-column member-card contract with tighter spacing, without reducing labels below a readable size.
+
+All variants share attendance height, gap, radius, focus ring, disabled opacity, pressed motion, queued/error outlines, and reduced-motion tokens from `design-tokens.css`.
 
 ## Responsive rules
 

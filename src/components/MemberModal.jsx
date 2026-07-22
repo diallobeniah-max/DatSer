@@ -16,6 +16,7 @@ import CurrentLevelPicker from './CurrentLevelPicker'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard, scrollControlIntoModalView } from '../hooks/useKeyboardSafeModal'
 import AttendanceChoice from './AttendanceChoice'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
+import GuardianSectionHeader from './GuardianSectionHeader'
 
 const MemberModal = ({ isOpen, onClose }) => {
   const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById } = useApp()
@@ -98,8 +99,6 @@ const MemberModal = ({ isOpen, onClose }) => {
   const [sundayAttendance, setSundayAttendance] = useState(() => initializeSundayAttendance())
   const [previousIsOpen, setPreviousIsOpen] = useState(false)
   const [selectedTags, setSelectedTags] = useState([]) // ['member','regular','newcomer']
-  const [showSecondParent, setShowSecondParent] = useState(false)
-  const [showParentSection, setShowParentSection] = useState(false)
   const [parentInfo, setParentInfo] = useState({
     parent_name_1: '',
     parent_phone_1: '',
@@ -246,10 +245,6 @@ const MemberModal = ({ isOpen, onClose }) => {
     if (!firstMissingTarget) return
 
     setShowErrors(true)
-    if (firstMissingTarget === guideRefs.parent) {
-      setShowParentSection(true)
-    }
-
     requestAnimationFrame(() => {
       scrollControlIntoModalView(scrollContainerRef.current, firstMissingTarget.current)
     })
@@ -309,7 +304,6 @@ const MemberModal = ({ isOpen, onClose }) => {
       }
       if (!hasParentInfo) {
         setShowErrors(true)
-        setShowParentSection(true)
         revealMissingRequiredFields()
         toast.error('Please provide at least one parent/guardian contact')
         return
@@ -448,7 +442,6 @@ const MemberModal = ({ isOpen, onClose }) => {
       setSelectedTags([])
       setSelectedTagIds(new Set())
       setParentInfo({ parent_name_1: '', parent_phone_1: '', parent_name_2: '', parent_phone_2: '' })
-      setShowSecondParent(false)
       setShowErrors(false)
 
     } catch (error) {
@@ -518,7 +511,6 @@ const MemberModal = ({ isOpen, onClose }) => {
       label: 'Parent/Guardian Info',
       targetRef: guideRefs.parent,
       isComplete: () => Boolean((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim())),
-      onActive: () => setShowParentSection(true)
     },
     { id: 'tags', label: 'Tags', targetRef: guideRefs.tags, enabled: guidedFormSettings?.highlightTags && workspaceTags.length > 0, isComplete: () => selectedTagIds.size > 0 },
     { id: 'notes', label: 'Notes', targetRef: guideRefs.notes, enabled: guidedFormSettings?.highlightNotes, isComplete: () => Boolean(formData.notes?.trim()) }
@@ -828,46 +820,15 @@ const MemberModal = ({ isOpen, onClose }) => {
                 </div>
               </GuidedField>
 
-              {/* Collapsible Parent/Guardian Info Section */}
+              {/* Parent/Guardian Info is intentionally always visible. */}
               <GuidedField ref={guideRefs.parent} active={activeStepId === 'parent'} className={`border rounded-xl overflow-hidden transition-all duration-300 ${showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
                 ? 'border-red-500 ring-4 ring-red-50 dark:ring-red-900/30'
                 : 'border-gray-200 dark:border-gray-600'
                 }`}>
-                <button
-                  type="button"
-                  onClick={() => { selection(); setShowParentSection(!showParentSection) }}
-                  data-testid="member-form-parent-toggle"
-                  className={`w-full flex items-center justify-between p-3 transition-colors ${showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                    ? 'bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30'
-                    : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'
-                    }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Users className={`w-4 h-4 ${showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                      ? 'text-red-500 dark:text-red-400'
-                      : 'text-gray-500 dark:text-gray-400'
-                      }`} />
-                    <span className={`text-sm font-medium ${showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                      ? 'text-red-700 dark:text-red-300'
-                      : 'text-gray-700 dark:text-gray-300'
-                      }`}>
-                      Parent/Guardian Info {showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim())) ? '(Required)' : '(one needed)'}
-                    </span>
-                  </div>
-                  {showParentSection ? (
-                    <ChevronUp className={`w-4 h-4 ${showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                      ? 'text-red-500 dark:text-red-400'
-                      : 'text-gray-500 dark:text-gray-400'
-                      }`} />
-                  ) : (
-                    <ChevronDown className={`w-4 h-4 ${showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))
-                      ? 'text-red-500 dark:text-red-400'
-                      : 'text-gray-500 dark:text-gray-400'
-                      }`} />
-                  )}
-                </button>
-
-                {showParentSection && (
+                <GuardianSectionHeader
+                  invalid={showErrors && !((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim()))}
+                  complete={Boolean(parentInfo.parent_name_1 || parentInfo.parent_phone_1)}
+                />
                   <div className="p-3 space-y-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-600">
                     {/* Parent 1 */}
                     <div>
@@ -910,8 +871,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                       </div>
                     </div>
 
-                    {showSecondParent ? (
-                      <div>
+                    <div>
                         <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
                           Additional Parent/Guardian
                         </label>
@@ -920,6 +880,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                             <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input
                               type="text"
+                              data-testid="member-form-parent2-name"
                               value={parentInfo.parent_name_2}
                               onChange={(e) => setParentInfo(prev => ({ ...prev, parent_name_2: e.target.value }))}
                               placeholder="Name"
@@ -930,6 +891,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                             <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input
                               type="tel"
+                              data-testid="member-form-parent2-phone"
                               value={parentInfo.parent_phone_2}
                               onChange={(e) => setParentInfo(prev => ({ ...prev, parent_phone_2: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
                               placeholder="Phone Number"
@@ -948,17 +910,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                           </div>
                         </div>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => { selection(); setShowSecondParent(true) }}
-                        className="w-full rounded-lg border border-dashed border-gray-300 dark:border-gray-600 px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                      >
-                        Add another guardian
-                      </button>
-                    )}
                   </div>
-                )}
               </GuidedField>
 
               {/* Visitor Toggle */}
