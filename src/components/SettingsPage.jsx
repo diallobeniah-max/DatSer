@@ -701,7 +701,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         }
         setHighlightedSettingId(settingId)
         window.setTimeout(() => {
-            const target = document.querySelector(`[data-setting-id="${settingId}"]`)
+            const targets = document.querySelectorAll(`[data-setting-id="${settingId}"]`)
+            const target = Array.from(targets).find(el => el.offsetParent !== null) || targets[0]
             if (target) {
                 target.scrollIntoView({ behavior: 'smooth', block: 'center' })
                 if (typeof target.focus === 'function') {

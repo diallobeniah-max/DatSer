@@ -103,7 +103,7 @@ test.describe('Settings Search and Tag Visibility', () => {
     await page.waitForTimeout(500)
 
     // The Show Tags row must exist with data-setting-id
-    const showTagsRow = page.locator('[data-setting-id="show_tags"]').first()
+    const showTagsRow = page.locator('[data-setting-id="show_tags"]').locator('visible=true')
     await expect(showTagsRow).toBeAttached({ timeout: 8000 })
 
     // Toggle within it must default to OFF
@@ -123,7 +123,7 @@ test.describe('Settings Search and Tag Visibility', () => {
     await page.waitForTimeout(500)
 
     for (const id of ['show_tags', 'show_visitor', 'show_notes']) {
-      const row = page.locator(`[data-setting-id="${id}"]`).first()
+      const row = page.locator(`[data-setting-id="${id}"]`).locator('visible=true')
       await expect(row, `${id} row should be in the DOM`).toBeAttached({ timeout: 6000 })
     }
   })
@@ -143,7 +143,7 @@ test.describe('Settings Search and Tag Visibility', () => {
     await clickSettingsSection(page, 'Forms')
     await page.waitForTimeout(500)
 
-    const showTagsRow = page.locator('[data-setting-id="show_tags"]').first()
+    const showTagsRow = page.locator('[data-setting-id="show_tags"]').locator('visible=true')
     await expect(showTagsRow).toBeAttached({ timeout: 6000 })
     const toggle = showTagsRow.locator('button[aria-pressed]').first()
 
@@ -251,7 +251,7 @@ test.describe('Settings Search and Tag Visibility', () => {
     await page.waitForTimeout(400)
 
     // Record initial toggle state
-    const showTagsRow = page.locator('[data-setting-id="show_tags"]').first()
+    const showTagsRow = page.locator('[data-setting-id="show_tags"]').locator('visible=true')
     await expect(showTagsRow).toBeAttached({ timeout: 6000 })
     const toggle = showTagsRow.locator('button[aria-pressed]').first()
     const initialState = await toggle.getAttribute('aria-pressed')
@@ -283,7 +283,7 @@ test.describe('Settings Search and Tag Visibility', () => {
     await page.waitForTimeout(800)
 
     // Show Tags row should now be visible and its value unchanged
-    const showTagsRowAfter = page.locator('[data-setting-id="show_tags"]').first()
+    const showTagsRowAfter = page.locator('[data-setting-id="show_tags"]').locator('visible=true')
     await expect(showTagsRowAfter).toBeAttached({ timeout: 8000 })
     const toggleAfter = showTagsRowAfter.locator('button[aria-pressed]').first()
     const finalState = await toggleAfter.getAttribute('aria-pressed')
