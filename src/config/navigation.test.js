@@ -23,7 +23,13 @@ describe('settings search index', () => {
         ['android phone qr camera blurry', 'member_code_qr_scanner'],
         ['where do I turn on code lookup', 'member_code_lookup'],
         ['share member pass message', 'member_code_share_message'],
-        ['settings', 'help_center']
+        ['settings', 'help_center'],
+        ['tags', 'show_tags'],
+        ['show tags', 'show_tags'],
+        ['member tags', 'show_tags'],
+        ['tag visibility', 'show_tags'],
+        ['show notes', 'show_notes'],
+        ['visitor option', 'show_visitor']
     ])('finds %s', (query, expectedId) => {
         const results = searchSettingsIndex(query, getVisibleSettingsSearchItems(true), SETTINGS_SECTIONS)
         expect(results.map(item => item.id)).toContain(expectedId)

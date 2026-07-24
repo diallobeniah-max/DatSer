@@ -1224,37 +1224,55 @@ export const AppProvider = ({ children }) => {
   const missingInfoPromptEnabled = missingInfoPromptEnabledState
 
   const [guidedFormSettingsState, setGuidedFormSettingsState] = useState(() => readGuidedFormSettings())
-  const setGuidedFormSetting = useCallback((key, value) => {
+
+  useEffect(() => {
+    setGuidedFormSettingsState(readGuidedFormSettings(workspaceCacheScope))
+  }, [workspaceCacheScope])
+  const setGuidedFormSetting = useCallback(async (key, value) => {
     const resolvedValue = typeof value === 'function'
       ? value(guidedFormSettingsState[key])
       : value
+    const previousSettings = guidedFormSettingsState
     const nextSettings = {
       ...guidedFormSettingsState,
       [key]: key === 'guidedOrder' ? normalizeGuidedOrder(resolvedValue) : resolvedValue
     }
     setGuidedFormSettingsState(nextSettings)
-    writeGuidedFormSettings(nextSettings)
+    writeGuidedFormSettings(nextSettings, workspaceCacheScope)
 
-    if (user?.id) {
-      const persistSettings = isCollaborator && dataOwnerId
-        ? executeSupabaseWrite(
-          () => supabase
-            .from('user_preferences')
-            .update({ guided_form_settings: nextSettings, updated_at: new Date().toISOString() })
-            .eq('user_id', dataOwnerId)
-            .select('user_id'),
-          { action: 'Save workspace form visibility settings' }
-        ).then((result) => assertSupabaseMutationAffected(result, 'Form settings update'))
-        : authContext?.updatePreference?.('guided_form_settings', nextSettings)
-
-      Promise.resolve(persistSettings).catch((error) => {
-          console.error('Unable to save workspace form visibility settings:', error)
-          notify.error('Form settings were kept on this device but could not sync.', {
-            title: 'Settings sync failed'
-          })
-        })
+    try {
+      if (user?.id) {
+        if (isCollaborator && dataOwnerId) {
+          if (!isAdminCollaborator) {
+            throw new Error('Only a workspace owner or admin collaborator can change shared form visibility')
+          }
+          const result = await executeSupabaseWrite(
+            () => supabase
+              .from('user_preferences')
+              .update({
+                guided_form_settings: nextSettings,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', dataOwnerId)
+              .select('user_id'),
+            { action: 'Save workspace form visibility settings' }
+          )
+          assertSupabaseMutationAffected(result, 'Form settings update')
+        } else {
+          await authContext?.updatePreference?.('guided_form_settings', nextSettings, { throwOnError: true })
+        }
+      }
+      return nextSettings
+    } catch (error) {
+      setGuidedFormSettingsState(previousSettings)
+      writeGuidedFormSettings(previousSettings, workspaceCacheScope)
+      console.error('Unable to save workspace form visibility settings:', error)
+      notify.error('The previous form setting was restored. Please retry.', {
+        title: 'Settings sync failed'
+      })
+      throw error
     }
-  }, [authContext, dataOwnerId, guidedFormSettingsState, isCollaborator, user?.id])
+  }, [authContext, dataOwnerId, guidedFormSettingsState, isAdminCollaborator, isCollaborator, user?.id, workspaceCacheScope])
   const guidedFormSettings = guidedFormSettingsState
 
   useEffect(() => {
@@ -1266,10 +1284,10 @@ export const AppProvider = ({ children }) => {
         ...remoteSettings,
         guidedOrder: normalizeGuidedOrder(remoteSettings.guidedOrder || currentSettings.guidedOrder)
       }
-      writeGuidedFormSettings(nextSettings)
+      writeGuidedFormSettings(nextSettings, workspaceCacheScope)
       return nextSettings
     })
-  }, [preferences?.guided_form_settings])
+  }, [preferences?.guided_form_settings, workspaceCacheScope])
 
   useEffect(() => {
     const workspaceSettings = ownerMemberCodePreferences?.guided_form_settings
@@ -1280,10 +1298,10 @@ export const AppProvider = ({ children }) => {
         ...workspaceSettings,
         guidedOrder: normalizeGuidedOrder(workspaceSettings.guidedOrder || currentSettings.guidedOrder)
       }
-      writeGuidedFormSettings(nextSettings)
+      writeGuidedFormSettings(nextSettings, workspaceCacheScope)
       return nextSettings
     })
-  }, [ownerMemberCodePreferences?.guided_form_settings])
+  }, [ownerMemberCodePreferences?.guided_form_settings, workspaceCacheScope])
 
   useEffect(() => {
     document.documentElement.classList.toggle(

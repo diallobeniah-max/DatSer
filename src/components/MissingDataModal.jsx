@@ -5,12 +5,19 @@ import ExpandedSelect from './ExpandedSelect'
 import CombinedDatePicker from './CombinedDatePicker'
 import { X, AlertCircle, ChevronDown } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import { toast } from 'react-toastify'
+import { supabase } from '../lib/supabase'
+import { executeSupabaseWrite } from '../utils/supabaseWrite'
+import { getMemberSourceTable } from '../utils/memberIdentity'
+import { areOptionalTagsVisible, getTagSelectionDelta } from '../utils/tagVisibility'
 import useBottomSheetDrag from '../hooks/useBottomSheetDrag'
 import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 import AttendanceChoice from './AttendanceChoice'
 import GuardianSectionHeader from './GuardianSectionHeader'
+import TagSelector from './TagSelector'
 
 const MissingDataModal = ({
     member,
@@ -29,7 +36,9 @@ const MissingDataModal = ({
     console.log('pendingAttendanceAction:', pendingAttendanceAction)
     console.log('selectedAttendanceDate:', selectedAttendanceDate)
     
-    const { updateMember, markAttendance, selectedAttendanceDate: contextAttendanceDate, guidedFormSettings } = useApp()
+    const { updateMember, markAttendance, selectedAttendanceDate: contextAttendanceDate, guidedFormSettings, currentTable, dataOwnerId } = useApp()
+    const { user } = useAuth()
+    const { isDarkMode } = useTheme()
     const [formData, setFormData] = useState({})
     const [attendanceData, setAttendanceData] = useState({})
     const [isSaving, setIsSaving] = useState(false)
@@ -38,6 +47,8 @@ const MissingDataModal = ({
     const [isOverrideMode, setIsOverrideMode] = useState(false)
     const [isDismissing, setIsDismissing] = useState(false)
     const [showLevelDropdown, setShowLevelDropdown] = useState(false)
+    const [selectedTagIds, setSelectedTagIds] = useState(new Set())
+    const [initialTagIds, setInitialTagIds] = useState(new Set())
     const isSaveInFlightRef = useRef(false)
     // Tracks whether we have already initiated closing to block ghost-click re-opens
     const isClosingRef = useRef(false)
@@ -50,6 +61,7 @@ const MissingDataModal = ({
         age: useRef(null),
         level: useRef(null),
         parent: useRef(null),
+        tags: useRef(null),
         attendance: useRef(null)
     }
     const { dragHandleProps, sheetStyle } = useBottomSheetDrag({
@@ -63,6 +75,37 @@ const MissingDataModal = ({
     ]
     const [showGenderDropdown, setShowGenderDropdown] = useState(false)
     const genderOptions = ['Male', 'Female']
+    const showOptionalTags = areOptionalTagsVisible(guidedFormSettings)
+    const tagTableName = getMemberSourceTable(member, currentTable)
+
+    useEffect(() => {
+        let cancelled = false
+
+        const loadMemberTags = async () => {
+            if (!showOptionalTags || !member?.id || !tagTableName) {
+                setSelectedTagIds(new Set())
+                setInitialTagIds(new Set())
+                return
+            }
+
+            try {
+                const { data, error } = await supabase.rpc('get_member_tags', {
+                    p_member_id: member.id,
+                    p_table_name: tagTableName
+                })
+                if (error) throw error
+                if (cancelled) return
+                const ids = new Set((data || []).map((tag) => String(tag.id)))
+                setSelectedTagIds(ids)
+                setInitialTagIds(new Set(ids))
+            } catch (error) {
+                console.error('Unable to load member tags for missing-info form:', error)
+            }
+        }
+
+        loadMemberTags()
+        return () => { cancelled = true }
+    }, [member?.id, showOptionalTags, tagTableName])
 
     const getLocalDateKey = (date) => {
         if (!date) return null
@@ -270,6 +313,36 @@ const MissingDataModal = ({
                 console.log('Updating member with:', updates)
                 await updateMember(member.id, updates, { silent: true, skipRefresh: true })
                 console.log('Member updated successfully')
+
+                if (showOptionalTags) {
+                    const ownerId = dataOwnerId || user?.id
+                    const { added, removed } = getTagSelectionDelta(initialTagIds, selectedTagIds)
+                    if ((added.length > 0 || removed.length > 0) && !ownerId) {
+                        throw new Error('Unable to determine the workspace owner for tag changes')
+                    }
+
+                    await Promise.all([
+                        ...removed.map((tagId) => executeSupabaseWrite(
+                            () => supabase.rpc('remove_tag_from_member', {
+                                p_tag_id: tagId,
+                                p_member_id: member.id,
+                                p_table_name: tagTableName,
+                                p_owner_id: ownerId
+                            }),
+                            { action: `Remove tag ${tagId} from completed member` }
+                        )),
+                        ...added.map((tagId) => executeSupabaseWrite(
+                            () => supabase.rpc('assign_tag_to_member', {
+                                p_tag_id: tagId,
+                                p_member_id: member.id,
+                                p_table_name: tagTableName,
+                                p_owner_id: ownerId
+                            }),
+                            { action: `Assign tag ${tagId} to completed member` }
+                        ))
+                    ])
+                    setInitialTagIds(new Set(selectedTagIds))
+                }
             }
 
             // Helper functions for date handling
@@ -429,13 +502,19 @@ const MissingDataModal = ({
                 (!missingFields.includes('Parent Phone 1') || (formData.parentPhone1 && formData.parentPhone1.length === 10))
             )
         },
+        showOptionalTags && {
+            id: 'tags',
+            label: 'Tags',
+            targetRef: guideRefs.tags,
+            isComplete: () => selectedTagIds.size > 0
+        },
         missingDates.length > 0 && {
             id: 'attendance',
             label: 'Sunday Attendance',
             targetRef: guideRefs.attendance,
             isComplete: () => Object.values(attendanceData).every(value => value !== null && value !== undefined)
         }
-    ]), [missingFields, missingDates.length, formData, attendanceData])
+    ]), [missingFields, missingDates.length, formData, attendanceData, selectedTagIds, showOptionalTags])
 
     const { activeStepId } = useGuidedFormAssistant({
         steps: guideSteps,
@@ -786,6 +865,20 @@ const MissingDataModal = ({
                                 </div>
                             </GuidedField>
                         </div>
+                    )}
+
+                    {showOptionalTags && (
+                        <GuidedField ref={guideRefs.tags} active={activeStepId === 'tags'} className="rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-600 dark:bg-gray-800">
+                            <TagSelector
+                                ownerId={dataOwnerId || user?.id}
+                                memberId={member?.id}
+                                tableName={tagTableName}
+                                isDarkMode={isDarkMode}
+                                selectedTagIds={selectedTagIds}
+                                onSelectionChange={setSelectedTagIds}
+                                deferSave
+                            />
+                        </GuidedField>
                     )}
 
                     {/* Missing Attendance Dates */}

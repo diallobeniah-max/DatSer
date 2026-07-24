@@ -22,6 +22,7 @@ import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
 import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
+import { areOptionalTagsVisible } from '../utils/tagVisibility'
 
 
 // Lazy load heavy modals for better initial load performance
@@ -486,6 +487,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const [workspaceTags, setWorkspaceTags] = useState([])
   const [tagFilter, setTagFilter] = useState(null) // Selected tag ID for filtering
   const [allMemberTags, setAllMemberTags] = useState({}) // memberId -> array of tag IDs
+  const showOptionalTags = areOptionalTagsVisible(guidedFormSettings)
 
 
   // Track the timestamp of each attendance action for chronological sorting (most recent first)
@@ -653,7 +655,7 @@ const Dashboard = ({ isAdmin = false }) => {
       ? tagFilter.filter(Boolean)
       : (tagFilter ? [tagFilter] : [])
   ), [tagFilter])
-  const hasTagFilters = selectedTagFilters.length > 0
+  const hasTagFilters = showOptionalTags && selectedTagFilters.length > 0
 
   const getTagIdFromEntry = (entry) => {
     if (!entry) return null
@@ -688,6 +690,14 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   const refreshTagFilters = useCallback(async () => {
+    if (!showOptionalTags) {
+      setWorkspaceTags([])
+      setMemberTags({})
+      setAllMemberTags({})
+      setTagFilter(null)
+      return
+    }
+
     const ownerId = dataOwnerId || user?.id
     if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) {
       setWorkspaceTags([])
@@ -763,7 +773,7 @@ const Dashboard = ({ isAdmin = false }) => {
     } catch (error) {
       console.error('Error fetching tags for filter:', error)
     }
-  }, [dataOwnerId, user?.id, currentTable, isDeveloperBypass, isSupabaseConfigured, members, contextFilteredMembers, searchTerm, hasTagFilters])
+  }, [showOptionalTags, dataOwnerId, user?.id, currentTable, isDeveloperBypass, isSupabaseConfigured, members, contextFilteredMembers, searchTerm, hasTagFilters])
 
   // Fetch workspace tags and member tags for filtering.
   useEffect(() => {
@@ -1037,7 +1047,7 @@ const Dashboard = ({ isAdmin = false }) => {
     }
 
     // Tag filter - use existing memberTags state
-    if (hasTagFilters) {
+    if (showOptionalTags && hasTagFilters) {
       filteredMembers = filteredMembers.filter(member => {
         const memberTagIds = getMemberTagIdSet(member.id)
         return selectedTagFilters.some(tagId => memberTagIds.has(String(tagId)))
@@ -1630,6 +1640,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
   // Function to fetch tags for a member
   const fetchMemberTags = async (memberId) => {
+    if (!showOptionalTags) return
     try {
       const { data, error } = await supabase.rpc('get_member_tags', {
         p_member_id: memberId,
@@ -1660,7 +1671,7 @@ const Dashboard = ({ isAdmin = false }) => {
       [memberId]: isExpanding
     }))
     // Fetch tags when expanding
-    if (isExpanding) {
+    if (isExpanding && showOptionalTags) {
       fetchMemberTags(memberId)
     }
   }
@@ -2376,7 +2387,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   monthSundays={sundayDates}
                   attendanceData={attendanceData}
                   memberTags={memberTags[member.id]}
-                  showTags={guidedFormSettings?.showTagsField === true}
+                  showTags={showOptionalTags}
                   currentTable={currentTable}
                   getMonthDisplayName={getMonthDisplayName}
                   showDeleteActions={showSearchTrayDelete}
@@ -2866,7 +2877,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     monthSundays={sundayDates}
                     attendanceData={attendanceData}
                     memberTags={memberTags[member.id]}
-                    showTags={guidedFormSettings?.showTagsField === true}
+                    showTags={showOptionalTags}
                     currentTable={currentTable}
                     getMonthDisplayName={getMonthDisplayName}
                   />
@@ -3511,7 +3522,7 @@ const Dashboard = ({ isAdmin = false }) => {
               </div>
 
               {/* Tag Filter */}
-              {workspaceTags.length > 0 && (
+              {showOptionalTags && workspaceTags.length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tags</label>
                   <div className="grid grid-cols-2 gap-2">

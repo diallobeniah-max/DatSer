@@ -1,5 +1,9 @@
 export const GUIDED_FORM_SETTINGS_KEY = 'datserGuidedFormAssistantSettings'
 
+const getGuidedFormSettingsKey = (scope) => (
+  scope ? `${GUIDED_FORM_SETTINGS_KEY}:${scope}` : null
+)
+
 export const GUIDED_FORM_FIELD_ORDER = [
   'full-name',
   'gender',
@@ -69,11 +73,12 @@ export const sortGuidedSteps = (steps = [], settings = DEFAULT_GUIDED_FORM_SETTI
     .map(({ step }) => step)
 }
 
-export const readGuidedFormSettings = () => {
+export const readGuidedFormSettings = (scope = null) => {
   if (typeof window === 'undefined') return DEFAULT_GUIDED_FORM_SETTINGS
 
   try {
-    const raw = window.localStorage.getItem(GUIDED_FORM_SETTINGS_KEY)
+    const storageKey = getGuidedFormSettingsKey(scope)
+    const raw = storageKey ? window.localStorage.getItem(storageKey) : null
     const parsed = raw ? JSON.parse(raw) : {}
     return {
       ...DEFAULT_GUIDED_FORM_SETTINGS,
@@ -85,7 +90,7 @@ export const readGuidedFormSettings = () => {
   }
 }
 
-export const writeGuidedFormSettings = (settings) => {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(GUIDED_FORM_SETTINGS_KEY, JSON.stringify(settings))
+export const writeGuidedFormSettings = (settings, scope = null) => {
+  if (typeof window === 'undefined' || !scope) return
+  window.localStorage.setItem(getGuidedFormSettingsKey(scope), JSON.stringify(settings))
 }

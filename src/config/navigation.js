@@ -269,6 +269,30 @@ export const SETTINGS_SEARCH_INDEX = [
         icon: Zap
     },
     {
+        id: 'show_tags',
+        section: 'forms',
+        label: 'Show Tags',
+        description: 'Show optional workspace tags in member forms, lists, search, and details',
+        keywords: 'tags show hide member tags workspace tags optional tag visibility toggle enable disable forms list details search',
+        icon: UserPlus
+    },
+    {
+        id: 'show_visitor',
+        section: 'forms',
+        label: 'Show Visitor Option',
+        description: 'Show the Mark as Visitor control in Add and Edit Member',
+        keywords: 'visitor mark visitor option show hide forms add edit member guest',
+        icon: UserPlus
+    },
+    {
+        id: 'show_notes',
+        section: 'forms',
+        label: 'Show Notes',
+        description: 'Show the optional notes field in Add and Edit Member',
+        keywords: 'notes show hide optional notes field forms add edit member text',
+        icon: UserPlus
+    },
+    {
         id: 'member_codes_enabled',
         section: 'member_codes',
         label: 'Member Codes',
@@ -578,6 +602,10 @@ const SEARCH_TOKEN_ALIASES = {
     edits: ['edits', 'changes', 'recent', 'activity'],
     light: ['light', 'theme', 'appearance'],
     dark: ['dark', 'theme', 'appearance'],
+    tag: ['tag', 'tags', 'label', 'category'],
+    tags: ['tags', 'tag', 'label', 'category'],
+    notes: ['notes', 'note', 'text', 'optional'],
+    visitor: ['visitor', 'guest', 'visit'],
     searhc: ['search'],
     memebr: ['member'],
     memberb: ['member'],

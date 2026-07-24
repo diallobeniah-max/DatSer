@@ -343,6 +343,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         [optimisticPreferencePatch, preferences]
     )
     const [guidedOrderDragId, setGuidedOrderDragId] = useState(null)
+    const [guidedSettingPendingKey, setGuidedSettingPendingKey] = useState(null)
     const highlightTimerRef = useRef(null)
     const activeSectionRef = useRef(null)
     const showHelpCenterRef = useRef(false)
@@ -764,10 +765,18 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         }
     }
 
-    const toggleGuidedFormSetting = (key, label) => {
+    const toggleGuidedFormSetting = async (key, label) => {
+        if (guidedSettingPendingKey) return
         const newValue = !guidedFormSettings?.[key]
-        setGuidedFormSetting(key, newValue)
-        toast.info(`${label} ${newValue ? 'enabled' : 'disabled'}`)
+        setGuidedSettingPendingKey(key)
+        try {
+            await setGuidedFormSetting(key, newValue)
+            toast.info(`${label} ${newValue ? 'enabled' : 'disabled'}`)
+        } catch {
+            // AppContext restores the confirmed value and presents the sync error.
+        } finally {
+            setGuidedSettingPendingKey(null)
+        }
     }
 
     const guidedOrder = useMemo(
@@ -776,7 +785,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     )
 
     const saveGuidedOrder = useCallback((nextOrder) => {
-        setGuidedFormSetting('guidedOrder', normalizeGuidedOrder(nextOrder))
+        void setGuidedFormSetting('guidedOrder', normalizeGuidedOrder(nextOrder)).catch(() => {
+            // AppContext restores the confirmed order and presents the sync error.
+        })
     }, [setGuidedFormSetting])
 
     const moveGuidedOrderItem = useCallback((fieldId, direction) => {
@@ -1998,13 +2009,13 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                 </button>
                             </div>
                             {[
-                                { key: 'showVisitorField', title: 'Show Visitor Option', description: 'Show the Mark as Visitor control in Add and Edit Member.' },
-                                { key: 'showTagsField', title: 'Show Tags', description: 'Show optional workspace tags consistently in member forms, lists, search, and details.' },
-                                { key: 'showNotesField', title: 'Show Notes', description: 'Show the optional notes field in Add and Edit Member.' }
+                                { key: 'showVisitorField', settingId: 'show_visitor', title: 'Show Visitor Option', description: 'Show the Mark as Visitor control in Add and Edit Member.' },
+                                { key: 'showTagsField', settingId: 'show_tags', title: 'Show Tags', description: 'Show optional workspace tags consistently in member forms, lists, search, and details.' },
+                                { key: 'showNotesField', settingId: 'show_notes', title: 'Show Notes', description: 'Show the optional notes field in Add and Edit Member.' }
                             ].map((setting) => {
                                 const enabled = guidedFormSettings?.[setting.key] === true
                                 return (
-                                    <div key={setting.key} className="p-4 flex items-center justify-between gap-4">
+                                    <div key={setting.key} data-setting-id={setting.settingId} tabIndex={-1} className={`p-4 flex items-center justify-between gap-4 ${getSettingTargetClass(setting.settingId)}`}>
                                         <div className="min-w-0">
                                             <h4 className="font-semibold text-gray-900 dark:text-white">{setting.title}</h4>
                                             <p className="text-xs text-gray-500 dark:text-gray-400">{setting.description}</p>
@@ -2012,8 +2023,10 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                         <button
                                             type="button"
                                             onClick={() => toggleGuidedFormSetting(setting.key, setting.title)}
+                                            disabled={guidedSettingPendingKey !== null}
                                             aria-pressed={enabled}
-                                            className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors ${enabled ? 'bg-orange-600' : 'bg-gray-300 dark:bg-gray-700'}`}
+                                            aria-busy={guidedSettingPendingKey === setting.key}
+                                            className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-70 ${enabled ? 'bg-orange-600' : 'bg-gray-300 dark:bg-gray-700'}`}
                                         >
                                             <span className={`inline-block h-6 w-6 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-7' : 'translate-x-1'}`} />
                                         </button>

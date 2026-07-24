@@ -443,7 +443,8 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       })
       const normalizeTagSet = (tags) => [...tags].sort().join('|')
       const badgeSelectionChanged = normalizeTagSet(selectedTags) !== normalizeTagSet(existingBadgeTags)
-      const tagSelectionChanged = normalizeTagSet(Array.from(selectedWorkspaceTagIds)) !== normalizeTagSet(Array.from(initialWorkspaceTagIds))
+      const tagSelectionChanged = areOptionalTagsVisible(guidedFormSettings)
+        && normalizeTagSet(Array.from(selectedWorkspaceTagIds)) !== normalizeTagSet(Array.from(initialWorkspaceTagIds))
 
       if (Object.keys(changedPayload).length === 0 && attendanceUpdates.length === 0 && !badgeSelectionChanged && !tagSelectionChanged) {
         toast.info('No changes to save')
@@ -688,7 +689,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       targetRef: guideRefs.parent,
       isComplete: () => Boolean((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim())),
     },
-    { id: 'tags', label: 'Tags', targetRef: guideRefs.tags, enabled: guidedFormSettings?.highlightTags, isComplete: () => selectedWorkspaceTagIds.size > 0 },
+    { id: 'tags', label: 'Tags', targetRef: guideRefs.tags, enabled: areOptionalTagsVisible(guidedFormSettings) && guidedFormSettings?.highlightTags, isComplete: () => selectedWorkspaceTagIds.size > 0 },
     { id: 'notes', label: 'Notes', targetRef: guideRefs.notes, enabled: guidedFormSettings?.highlightNotes, isComplete: () => Boolean(formData.notes?.trim()) }
   ]), [formData, parentInfo, phoneDigits, selectedWorkspaceTagIds, sundayAttendance, sundayDates, guidedFormSettings])
 
@@ -981,9 +982,10 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
             )}
           </GuidedField>
 
-          {/* Tags */}
-          <GuidedField ref={guideRefs.tags} active={activeStepId === 'tags'} className="pt-2 border-t border-gray-200 dark:border-gray-600">
-            <TagSelector 
+          {/* Optional workspace tags */}
+          {areOptionalTagsVisible(guidedFormSettings) && (
+            <GuidedField ref={guideRefs.tags} active={activeStepId === 'tags'} className="pt-2 border-t border-gray-200 dark:border-gray-600">
+              <TagSelector
                 ownerId={dataOwnerId || user?.id}
                 memberId={member?.id}
                 tableName={currentTable}
@@ -992,7 +994,8 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
                 onSelectionChange={setSelectedWorkspaceTagIds}
                 deferSave={true}
               />
-          </GuidedField>
+            </GuidedField>
+          )}
 
           {/* Sunday Attendance */}
           <GuidedField ref={guideRefs.attendance} active={activeStepId === 'attendance'}>

@@ -136,9 +136,14 @@
 - Use the shared `AttendanceChoice` component for Present, Absent, and Clear interactions.
 - Preserve instant selected feedback, per-item saving/queued/error states, keyboard dismissal, accessibility labels, and reduced-motion behavior.
 
-## Global Tag Visibility
-- Every applicable Add, Edit, Complete Missing Info, member-card, and collaborator view must use the same owner-workspace Show Tags source of truth.
-- A collaborator's local preference must not override an owner-disabled workspace tag setting.
+## Global Tag Visibility Rule
+- The Show Tags setting is the single source of truth for optional member-tag visibility.
+- Show Tags defaults to OFF when no saved preference exists.
+- Add Member, Edit Member, Complete Missing Info, Members, Marked, Member Details, Search, and all other applicable views must follow the same setting.
+- Turning tags off hides tag controls and displays but must never delete saved tag assignments.
+- Turning tags back on must restore previously saved tags.
+- Individual components must not use separate or hardcoded tag visibility defaults.
+- Essential member codes, attendance states, validation messages, and system labels must not be treated as optional tags.
 
 ## Mobile Keyboard Safety
 - Preserve the fixed app shell and the single central visual viewport system.

@@ -626,7 +626,7 @@ export const AuthProvider = ({ children }) => {
   }
 
   // Update a single preference
-  const updatePreference = async (key, value) => {
+  const updatePreference = async (key, value, options = {}) => {
     if (!user) {
       // If not logged in, just save to localStorage
       return
@@ -657,6 +657,7 @@ export const AuthProvider = ({ children }) => {
       return await saveUserPreferences(nextPreferences)
     } catch (error) {
       console.error('Error updating preference:', error)
+      if (options?.throwOnError) throw error
     }
   }
 

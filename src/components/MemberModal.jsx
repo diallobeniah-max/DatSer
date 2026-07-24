@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { useAuth } from '../context/AuthContext'
-import { X, User, Phone, ChevronDown, ChevronUp, Info, Users, StickyNote, Tag } from 'lucide-react'
+import { X, User, Phone, ChevronDown, ChevronUp, Info, Users, StickyNote } from 'lucide-react'
 import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { supabase } from '../lib/supabase'
@@ -107,7 +107,6 @@ const MemberModal = ({ isOpen, onClose }) => {
   })
   
   // State for TagSelector (workspace tags)
-  const [workspaceTags, setWorkspaceTags] = useState([])
   const [selectedTagIds, setSelectedTagIds] = useState(new Set())
   const scrollContainerRef = useRef(null)
   useKeyboardSafeModal({ scrollContainerRef, active: isOpen })
@@ -153,31 +152,6 @@ const MemberModal = ({ isOpen, onClose }) => {
       document.documentElement.style.overflow = ''
     }
   }, [isOpen])
-
-  // Fetch workspace tags when modal opens
-  React.useEffect(() => {
-    const fetchWorkspaceTags = async () => {
-      const ownerId = dataOwnerId || user?.id
-      if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) return
-      
-      try {
-        const { data, error } = await supabase.rpc('get_workspace_tags', {
-          p_owner_id: ownerId
-        })
-        if (error) {
-          console.error('Error fetching workspace tags:', error)
-          return
-        }
-        setWorkspaceTags(data || [])
-      } catch (error) {
-        console.error('Error fetching workspace tags:', error)
-      }
-    }
-    
-    if (isOpen) {
-      fetchWorkspaceTags()
-    }
-  }, [isOpen, dataOwnerId, user?.id, isDeveloperBypass, isSupabaseConfigured])
 
   const levels = [
     'SHS1', 'SHS2', 'SHS3',
@@ -386,7 +360,7 @@ const MemberModal = ({ isOpen, onClose }) => {
             p_request_id: submitRequestIdRef.current,
             p_member: memberPayload,
             p_badges: selectedTags,
-            p_tag_ids: Array.from(selectedTagIds),
+            p_tag_ids: areOptionalTagsVisible(guidedFormSettings) ? Array.from(selectedTagIds) : [],
             p_attendance: attendancePayload
           }),
           { action: `Create member bundle in ${currentTable}` }
@@ -512,9 +486,9 @@ const MemberModal = ({ isOpen, onClose }) => {
       targetRef: guideRefs.parent,
       isComplete: () => Boolean((parentInfo.parent_name_1?.trim() || parentInfo.parent_phone_1?.trim()) || (parentInfo.parent_name_2?.trim() || parentInfo.parent_phone_2?.trim())),
     },
-    { id: 'tags', label: 'Tags', targetRef: guideRefs.tags, enabled: guidedFormSettings?.highlightTags && workspaceTags.length > 0, isComplete: () => selectedTagIds.size > 0 },
+    { id: 'tags', label: 'Tags', targetRef: guideRefs.tags, enabled: areOptionalTagsVisible(guidedFormSettings) && guidedFormSettings?.highlightTags, isComplete: () => selectedTagIds.size > 0 },
     { id: 'notes', label: 'Notes', targetRef: guideRefs.notes, enabled: guidedFormSettings?.highlightNotes, isComplete: () => Boolean(formData.notes?.trim()) }
-  ]), [formData, parentInfo, phoneDigits, selectedTagIds, sundayAttendance, guidedFormSettings, workspaceTags.length])
+  ]), [formData, parentInfo, phoneDigits, selectedTagIds, sundayAttendance, guidedFormSettings])
 
   const { activeStepId } = useGuidedFormAssistant({
     steps: guideSteps,
@@ -932,44 +906,16 @@ const MemberModal = ({ isOpen, onClose }) => {
               </div>
               )}
 
-              {/* Tags - Using TagSelector */}
-              {areOptionalTagsVisible(guidedFormSettings) && workspaceTags.length > 0 && (
+              {/* Optional workspace tags share the same selector and visibility source as Edit/Missing Info. */}
+              {areOptionalTagsVisible(guidedFormSettings) && (
                 <GuidedField ref={guideRefs.tags} active={activeStepId === 'tags'} className="pt-2 border-t border-gray-200 dark:border-gray-600">
-                  <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                    <Tag className="w-4 h-4" />
-                    Tags (Optional)
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {workspaceTags.map(tag => (
-                      <button
-                        key={tag.id}
-                        type="button"
-                        onClick={() => {
-                          selection()
-                          setSelectedTagIds(prev => {
-                            const next = new Set(prev)
-                            if (next.has(tag.id)) {
-                              next.delete(tag.id)
-                            } else {
-                              next.add(tag.id)
-                            }
-                            return next
-                          })
-                        }}
-                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
-                          selectedTagIds.has(tag.id)
-                            ? 'bg-primary-600 text-white shadow-md'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                        }`}
-                      >
-                        <span 
-                          className="w-3 h-3 rounded-full flex-shrink-0" 
-                          style={{ backgroundColor: tag.color || '#6366f1' }}
-                        />
-                        {tag.name}
-                      </button>
-                    ))}
-                  </div>
+                  <TagSelector
+                    ownerId={dataOwnerId || user?.id}
+                    isDarkMode={isDarkMode}
+                    selectedTagIds={selectedTagIds}
+                    onSelectionChange={setSelectedTagIds}
+                    deferSave
+                  />
                 </GuidedField>
               )}
 

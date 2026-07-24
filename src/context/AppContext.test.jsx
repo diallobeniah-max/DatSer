@@ -235,4 +235,36 @@ describe('AppContext collaborator sync', () => {
 
     unmount()
   })
+
+  it('applies workspace tag visibility changes to an active collaborator in realtime', async () => {
+    const { AppProvider, useApp } = await import('./AppContext.jsx')
+    const StateProbe = ({ onState }) => {
+      const { guidedFormSettings, isCollaborator } = useApp()
+      useEffect(() => {
+        onState({ guidedFormSettings, isCollaborator })
+      }, [guidedFormSettings, isCollaborator, onState])
+      return null
+    }
+
+    let latest = null
+    const { unmount } = render(
+      <AppProvider>
+        <StateProbe onState={(state) => { latest = state }} />
+      </AppProvider>
+    )
+
+    await waitFor(() => expect(latest?.isCollaborator).toBe(true))
+    expect(latest.guidedFormSettings.showTagsField).toBe(false)
+
+    emitPreferencesChange({
+      guided_form_settings: {
+        showTagsField: true,
+        showVisitorField: false,
+        showNotesField: false
+      }
+    })
+
+    await waitFor(() => expect(latest.guidedFormSettings.showTagsField).toBe(true))
+    unmount()
+  })
 })
