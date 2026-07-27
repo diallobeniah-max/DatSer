@@ -406,7 +406,7 @@ const Dashboard = ({ isAdmin = false }) => {
     logActivity,
     markAttendance,
     bulkAttendance,
-    fetchAttendanceForDate,
+    fetchAndApplyAttendanceForDate,
     attendanceData,
     setAttendanceData,
     currentTable,
@@ -1339,14 +1339,9 @@ const Dashboard = ({ isAdmin = false }) => {
     const targetDate = getDateString(selectedAttendanceDate)
     if (targetDate && lastFetchedTableRef.current !== `${currentTable}_${targetDate}`) {
       lastFetchedTableRef.current = `${currentTable}_${targetDate}`
-      fetchAttendanceForDate(new Date(targetDate)).then(map => {
-        setAttendanceData(prev => ({
-          ...prev,
-          [targetDate]: map
-        }))
-      })
+      fetchAndApplyAttendanceForDate(new Date(targetDate))
     }
-  }, [currentTable, selectedAttendanceDate, fetchAttendanceForDate, setAttendanceData])
+  }, [currentTable, selectedAttendanceDate, fetchAndApplyAttendanceForDate])
 
   // Preload attendance maps when switching to Edited tab
   useEffect(() => {
@@ -1366,12 +1361,11 @@ const Dashboard = ({ isAdmin = false }) => {
   useEffect(() => {
     const loadMap = async () => {
       if (selectedSundayDate && !Object.prototype.hasOwnProperty.call(attendanceData, selectedSundayDate)) {
-        const map = await fetchAttendanceForDate(new Date(selectedSundayDate))
-        setAttendanceData(prev => ({ ...prev, [selectedSundayDate]: map || {} }))
+        await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
       }
     }
     loadMap()
-  }, [selectedSundayDate, attendanceData, fetchAttendanceForDate, setAttendanceData])
+  }, [selectedSundayDate, attendanceData, fetchAndApplyAttendanceForDate])
 
   // Focus Sundays section when requested via header "Select Date"
   useEffect(() => {
@@ -1390,18 +1384,13 @@ const Dashboard = ({ isAdmin = false }) => {
     let isCancelled = false
     const load = async () => {
       for (const date of sundayDates) {
-        const map = await fetchAttendanceForDate(new Date(date))
+        await fetchAndApplyAttendanceForDate(new Date(date))
         if (isCancelled) return
-        // Always store the map, even if empty, to mark the date as loaded
-        setAttendanceData(prev => ({
-          ...prev,
-          [date]: { ...(prev[date] || {}), ...map }
-        }))
       }
     }
     load()
     return () => { isCancelled = true }
-  }, [currentTable])
+  }, [currentTable, fetchAndApplyAttendanceForDate, sundayDates])
 
   // Reset selected Sunday when month changes
   useEffect(() => {
@@ -1753,13 +1742,8 @@ const Dashboard = ({ isAdmin = false }) => {
       }
 
       // Refresh attendance data
-      const newSourceMap = await fetchAttendanceForDate(new Date(selectedSundayDate))
-      const newTargetMap = await fetchAttendanceForDate(new Date(transferTargetDate))
-      setAttendanceData(prev => ({
-        ...prev,
-        [selectedSundayDate]: newSourceMap,
-        [transferTargetDate]: newTargetMap
-      }))
+      await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
+      await fetchAndApplyAttendanceForDate(new Date(transferTargetDate))
 
       const sourceLabel = new Date(selectedSundayDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       const targetLabel = new Date(transferTargetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -2489,17 +2473,20 @@ const Dashboard = ({ isAdmin = false }) => {
               const isSelected = selectedSundayDate === dateStr
               const dateObj = new Date(dateStr)
               const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              const authoritativeValues = Object.values(attendanceData[dateStr] || {})
-              const presentCount = authoritativeValues.filter(value => value === true).length
-              const absentCount = authoritativeValues.filter(value => value === false).length
+              // Count from the same active-member canonical map used by the marked list.
+              // Raw cached maps can contain a stale/deleted member id while a background
+              // refresh is in flight; displaying those would make the date chips disagree
+              // with the detail panel until someone pressed Refresh Data.
+              const canonicalValues = Object.values(canonicalAttendanceByDate[dateStr] || {})
+              const presentCount = canonicalValues.filter(value => value === true).length
+              const absentCount = canonicalValues.filter(value => value === false).length
               return (
                 <button
                   key={dateStr}
                   onClick={async () => {
                     setSelectedSundayDate(dateStr)
                     if (!attendanceData[dateStr]) {
-                      const map = await fetchAttendanceForDate(new Date(dateStr))
-                      setAttendanceData(prev => ({ ...prev, [dateStr]: map }))
+                      await fetchAndApplyAttendanceForDate(new Date(dateStr))
                     }
                   }}
                   className={`flex-shrink-0 flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors duration-150 border ${isSelected

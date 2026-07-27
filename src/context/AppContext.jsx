@@ -8,7 +8,7 @@ import {
 } from '../utils/supabaseWrite'
 import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
-import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberIndexCode } from '../utils/memberIndexCodes'
 import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
 import {
   attachMemberIdentity,
@@ -19,7 +19,8 @@ import {
 import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
-import { classifyMemberSearch } from '../utils/memberSearch'
+import { classifyMemberSearch, normalizeSearchText } from '../utils/memberSearch'
+import { createAttendanceSnapshotVersionRegistry } from '../utils/attendanceSnapshot'
 import { createResumeSyncCoordinator } from '../utils/appResumeSync'
 import {
   isAttendanceAlreadySynced,
@@ -730,6 +731,8 @@ export const AppProvider = ({ children }) => {
   const memberPreviewSyncRef = useRef(new Map())
   const memberPreviewSchemaReadyRef = useRef(new Map())
   const memberPreviewBackgroundSyncRunnerRef = useRef(null)
+  const searchRequestRef = useRef(0)
+  const attendanceSnapshotVersionRef = useRef(createAttendanceSnapshotVersionRegistry())
   const qrCheckInRunRef = useRef({ key: '', running: false })
   const workspaceCacheScope = useMemo(() => getWorkspaceCacheScope({
     userId: user?.id,
@@ -2264,48 +2267,27 @@ export const AppProvider = ({ children }) => {
   }, [currentTable, workspaceCacheScope])
 
   const searchMemberPreviewIndex = useCallback(async (term, tableName = currentTable) => {
-    const search = String(term || '').toLowerCase().trim()
-    if (!search || !tableName) return []
+    if (!normalizeSearchText(term) || !tableName) return []
     const cachedMembers = await readMemberPreviewIndex(tableName)
     const cachedCodeMap = buildMemberIndexCodeMap(cachedMembers)
-    const matched = cachedMembers.filter(member => {
-      if (memberMatchesIndexCode(member, cachedCodeMap, term)) return true
-      const searchable = [
-        member['Full Name'],
-        member.full_name,
-        member.name,
-        member.Name,
-        member.member_code,
-        member['Phone Number'],
-        member.phone_number,
-        member.Gender,
-        member.gender,
-        member['Current Level'],
-        member.current_level
-      ].filter(Boolean).join(' ').toLowerCase()
-      return searchable.includes(search)
-    })
-    return matched.slice(0, 50)
+    return classifyMemberSearch({
+      members: cachedMembers,
+      query: term,
+      getCode: (member) => getMemberIndexCode(member, cachedCodeMap) || member?.member_code || ''
+    }).visible.slice(0, 50)
   }, [currentTable, readMemberPreviewIndex])
 
   function startMemberPreviewBackgroundSync(tableName = currentTable, options = {}) {
     if (!tableName || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
     if (offlineMode === 'online' && !isOnline) return
     const syncSince = getMemberPreviewSyncSince(tableName)
-    if (!options.force && !isMemberPreviewSyncStale(workspaceCacheScope, tableName)) {
+    const needsInitialIndex = !syncSince
+    if (!options.force && !needsInitialIndex && !isMemberPreviewSyncStale(workspaceCacheScope, tableName)) {
       setMemberPreviewSyncStatus(prev => ({
         ...prev,
         source: options.source || 'fresh',
         lastSyncedAt: readMemberPreviewSyncMeta(workspaceCacheScope, tableName)?.lastSyncAt || prev.lastSyncedAt,
         lastSyncAt: readMemberPreviewSyncMeta(workspaceCacheScope, tableName)?.lastSyncAt || prev.lastSyncAt
-      }))
-      return
-    }
-
-    if (!syncSince) {
-      setMemberPreviewSyncStatus(prev => ({
-        ...prev,
-        source: options.source || 'idle'
       }))
       return
     }
@@ -2327,19 +2309,22 @@ export const AppProvider = ({ children }) => {
       let remoteRows = []
       let latestRemoteUpdatedAt = syncSince || null
       let pageSize = MEMBER_PREVIEW_PAGE_SIZE
+      let remoteTotalCount = 0
 
       while (pageSize === MEMBER_PREVIEW_PAGE_SIZE) {
-        let query = supabase
-          .from(tableName)
-          .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
-          .order('updated_at', { ascending: true })
-        query = applyWorkspaceOwnerFilter(query)
-
-        if (syncSince) {
-          query = query.gt('updated_at', syncSince)
+        let data
+        let error
+        let count
+        if (!syncSince) {
+          ({ data, error, count } = await fetchMemberPreviewPage(tableName, offset))
+        } else {
+          let query = supabase
+            .from(tableName)
+            .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
+            .order('updated_at', { ascending: true })
+          query = applyWorkspaceOwnerFilter(query).gt('updated_at', syncSince)
+          ;({ data, error, count } = await query.range(offset, offset + MEMBER_PREVIEW_PAGE_SIZE - 1))
         }
-
-        const { data, error, count } = await query.range(offset, offset + MEMBER_PREVIEW_PAGE_SIZE - 1)
         if (error) throw error
 
         const pageRows = (data || []).map(normalizeMemberRecord)
@@ -2356,8 +2341,8 @@ export const AppProvider = ({ children }) => {
           }
         }
 
-        if (Number.isFinite(count) && count > 0) {
-          // count is the number of rows matching the incremental query, not the full table size.
+        if (needsInitialIndex && Number.isFinite(count)) {
+          remoteTotalCount = count
         }
 
         if (pageRows.length < MEMBER_PREVIEW_PAGE_SIZE) break
@@ -2389,8 +2374,8 @@ export const AppProvider = ({ children }) => {
       const cachePayload = {
         data: filteredMembers,
         ts: Date.now(),
-        totalCount: filteredMembers.length,
-        loadedAll: membersLoadedAll
+        totalCount: remoteTotalCount || filteredMembers.length,
+        loadedAll: needsInitialIndex || membersLoadedAll
       }
 
       membersCacheRef.current.set(tableName || 'default', cachePayload)
@@ -2401,7 +2386,7 @@ export const AppProvider = ({ children }) => {
           const next = mergeMemberPreviewPages(prev.filter((member) => !deletedIds.includes(String(member.id))), activeRows)
           return next
         })
-        setMembersTotalCount((prev) => Math.max(prev || 0, filteredMembers.length))
+        setMembersTotalCount(remoteTotalCount || filteredMembers.length)
       }
 
       if (activeRows.length > 0 || deletedIds.length > 0) {
@@ -2412,7 +2397,7 @@ export const AppProvider = ({ children }) => {
       const now = new Date().toISOString()
       markMemberPreviewSyncComplete(tableName, {
         cachedCount: filteredMembers.length,
-        totalCount: filteredMembers.length,
+        totalCount: remoteTotalCount || filteredMembers.length,
         source: 'background',
         lastSyncAt: now,
         lastRemoteUpdatedAt: latestRemoteUpdatedAt || now
@@ -3625,9 +3610,11 @@ export const AppProvider = ({ children }) => {
     const dateKey = getLocalDateString(effectiveDate)
     const columnName = attendanceColumn || getAttendanceColumnNameForDate(effectiveDate)
     const attendanceValue = present === null ? null : (present ? 'Present' : 'Absent')
+    const idSet = new Set(ids.map((id) => String(id)))
+    attendanceSnapshotVersionRef.current.markLocalChange(currentTable, dateKey)
 
     setMembers((prev) => prev.map((member) =>
-      ids.includes(member.id)
+      idSet.has(String(member.id))
         ? { ...member, [columnName]: attendanceValue }
         : member
     ))
@@ -3635,10 +3622,11 @@ export const AppProvider = ({ children }) => {
     setAttendanceData((prev) => {
       const dateAttendance = { ...(prev[dateKey] || {}) }
       ids.forEach((id) => {
+        const canonicalId = String(id)
         if (present === null) {
-          delete dateAttendance[id]
+          delete dateAttendance[canonicalId]
         } else {
-          dateAttendance[id] = present
+          dateAttendance[canonicalId] = present
         }
       })
 
@@ -3647,16 +3635,18 @@ export const AppProvider = ({ children }) => {
         [dateKey]: dateAttendance
       }
     })
-  }, [])
+  }, [currentTable])
 
   const rollbackLocalAttendanceState = useCallback((memberIds, effectiveDate, previousState = {}) => {
     const ids = Array.isArray(memberIds) ? memberIds : [memberIds]
     const dateKey = getLocalDateString(effectiveDate)
     const previousById = previousState.byId || {}
+    const idSet = new Set(ids.map((id) => String(id)))
+    attendanceSnapshotVersionRef.current.markLocalChange(currentTable, dateKey)
 
     setMembers((prev) => prev.map((member) => {
-      if (!ids.includes(member.id)) return member
-      const previous = previousById[member.id]
+      if (!idSet.has(String(member.id))) return member
+      const previous = previousById[member.id] || previousById[String(member.id)]
       if (!previous?.columnName) return member
 
       if (previous.hadColumn) {
@@ -3670,12 +3660,13 @@ export const AppProvider = ({ children }) => {
     setAttendanceData((prev) => {
       const dateAttendance = { ...(prev[dateKey] || {}) }
       ids.forEach((id) => {
-        const previous = previousById[id]
+        const canonicalId = String(id)
+        const previous = previousById[id] || previousById[canonicalId]
         if (!previous) return
         if (previous.hadAttendanceKey) {
-          dateAttendance[id] = previous.attendanceValue
+          dateAttendance[canonicalId] = previous.attendanceValue
         } else {
-          delete dateAttendance[id]
+          delete dateAttendance[canonicalId]
         }
       })
 
@@ -3684,7 +3675,7 @@ export const AppProvider = ({ children }) => {
         [dateKey]: dateAttendance
       }
     })
-  }, [])
+  }, [currentTable])
 
   const applyAttendanceColumnsFromMemberRows = useCallback((rows = [], tableName = currentTable) => {
     if (!Array.isArray(rows) || rows.length === 0) return
@@ -3847,15 +3838,15 @@ export const AppProvider = ({ children }) => {
       const optimisticColumn = getAttendanceColumnNameForDate(effectiveDate)
       const dateKey = getLocalDateString(effectiveDate)
       const previousDateAttendance = attendanceData?.[dateKey] || {}
-      const previousMember = members.find(m => m.id === memberId) || {}
+      const previousMember = members.find((member) => String(member.id) === String(memberId)) || {}
       optimisticRollbackState = {
         byId: {
           [memberId]: {
             columnName: optimisticColumn,
             hadColumn: Object.prototype.hasOwnProperty.call(previousMember, optimisticColumn),
             columnValue: previousMember?.[optimisticColumn],
-            hadAttendanceKey: Object.prototype.hasOwnProperty.call(previousDateAttendance, memberId),
-            attendanceValue: previousDateAttendance[memberId]
+            hadAttendanceKey: Object.prototype.hasOwnProperty.call(previousDateAttendance, String(memberId)),
+            attendanceValue: previousDateAttendance[String(memberId)]
           }
         }
       }
@@ -3882,31 +3873,52 @@ export const AppProvider = ({ children }) => {
       const attendanceUpdatedAt = new Date().toISOString()
       const canWritePreviewSyncColumns = await ensureMemberPreviewSyncColumns(currentTable)
 
+      const identityMember = members.find((member) => String(member.id) === String(memberId)) || { id: memberId }
+      const attendanceOwnerId = getMemberOwnerId(identityMember) || dataOwnerId || user?.id
+      if (!attendanceOwnerId) throw new Error('Unable to determine the workspace owner for this attendance save')
       const attendanceWrite = await executeSupabaseWrite(
-        () => supabase
-          .from(currentTable)
-          .update({
+        () => supabase.rpc('update_member_record_resilient', {
+          p_table_name: currentTable,
+          p_member_id: memberId,
+          p_updates: {
             [attendanceColumn]: present === null ? null : (present ? 'Present' : 'Absent'),
             ...(canWritePreviewSyncColumns ? { updated_at: attendanceUpdatedAt } : {})
-          })
-          .eq('id', memberId)
-          .select('id'),
+          },
+          p_owner_id: attendanceOwnerId,
+          p_identity: buildMemberIdentityHint(identityMember)
+        }),
         { action: `Save attendance in ${currentTable}` }
       )
-      assertSupabaseMutationAffected(attendanceWrite, 'Attendance save')
+      if (!attendanceWrite?.data?.success || !attendanceWrite?.data?.row) {
+        throw new Error('Attendance save could not be verified. Please retry.')
+      }
+      const resolvedMemberId = attendanceWrite.data.member_id || memberId
+      if (String(resolvedMemberId) !== String(memberId)) {
+        const recoveredMember = normalizeMemberRecord({ ...identityMember, ...attendanceWrite.data.row, id: resolvedMemberId })
+        setMembers((previous) => previous.map((member) => (
+          String(member.id) === String(memberId) ? recoveredMember : member
+        )))
+        setAttendanceData((previous) => {
+          const dateAttendance = { ...(previous[dateKey] || {}) }
+          const currentValue = dateAttendance[String(memberId)]
+          delete dateAttendance[String(memberId)]
+          if (currentValue !== undefined) dateAttendance[String(resolvedMemberId)] = currentValue
+          return { ...previous, [dateKey]: dateAttendance }
+        })
+      }
 
       // The monthly table is the source of truth. Follow-up normalization is an
       // optional secondary index and must never delay live check-in feedback.
-      syncNormalizedAttendanceRecord(memberId, effectiveDate, present).catch((error) => {
+      syncNormalizedAttendanceRecord(resolvedMemberId, effectiveDate, present).catch((error) => {
         console.warn('Background attendance follow-up sync failed:', error)
       })
 
       // Update local state for members and attendanceData (for real-time UI updates)
-      applyLocalAttendanceState(memberId, effectiveDate, present, attendanceColumn)
+      applyLocalAttendanceState(resolvedMemberId, effectiveDate, present, attendanceColumn)
 
       const attendanceValue = present === null ? null : (present ? 'Present' : 'Absent')
       const updatedAttendanceMember = normalizeMemberRecord({
-        ...(members.find(m => m.id === memberId) || { id: memberId }),
+        ...(members.find(m => String(m.id) === String(resolvedMemberId)) || { id: resolvedMemberId }),
         [attendanceColumn]: attendanceValue,
         updated_at: attendanceUpdatedAt
       })
@@ -3924,7 +3936,7 @@ export const AppProvider = ({ children }) => {
       })
 
       searchCacheRef.current.clear()
-      const changedMember = members.find(m => m.id === memberId) || { id: memberId }
+      const changedMember = members.find(m => String(m.id) === String(resolvedMemberId)) || { id: resolvedMemberId }
       recordRecentMemberEdit(changedMember, new Date().toISOString(), {
         action: 'attendance',
         summary: `Marked ${present === null ? 'clear' : present ? 'present' : 'absent'}`,
@@ -3938,7 +3950,7 @@ export const AppProvider = ({ children }) => {
       }
 
       // Log the attendance action
-      const memberName = members.find(m => m.id === memberId)?.['full_name'] || members.find(m => m.id === memberId)?.['Full Name'] || 'Unknown'
+      const memberName = members.find(m => String(m.id) === String(resolvedMemberId))?.['full_name'] || members.find(m => String(m.id) === String(resolvedMemberId))?.['Full Name'] || 'Unknown'
       const attendanceStatus = present === null ? 'Cleared' : present ? 'Present' : 'Absent'
       logActivity('MARK_ATTENDANCE', `Marked ${memberName} as ${attendanceStatus} on ${effectiveDate.toLocaleDateString()}`)
 
@@ -4276,6 +4288,29 @@ export const AppProvider = ({ children }) => {
       return attendanceData[dateKey] || {}
     }
   }, [attendanceData, dataOwnerId, findAttendanceColumnForDateInTable, isSupabaseConfigured, user?.id])
+
+  // All UI refreshes go through one guarded apply path. A slow request is not
+  // allowed to replace a newer read or an optimistic choice for the same
+  // workspace table and Sunday.
+  const fetchAndApplyAttendanceForDate = useCallback(async (date, tableName = currentTable) => {
+    const dateKey = getLocalDateString(date)
+    if (!dateKey || !tableName) return null
+
+    const readVersion = attendanceSnapshotVersionRef.current.startRead(tableName, dateKey)
+    const attendanceMap = tableName === currentTable
+      ? await fetchAttendanceForDate(date)
+      : await fetchAttendanceForDateInTable(date, tableName)
+
+    if (!attendanceSnapshotVersionRef.current.canApplyRead(tableName, dateKey, readVersion)) {
+      return null
+    }
+
+    setAttendanceData((previous) => ({
+      ...previous,
+      [dateKey]: attendanceMap || {}
+    }))
+    return attendanceMap || {}
+  }, [currentTable, fetchAttendanceForDateInTable])
 
   // Update member.
   // skipRefresh keeps optimistic local state without triggering the dashboard skeleton.
@@ -5563,6 +5598,8 @@ export const AppProvider = ({ children }) => {
 
   const performServerSearch = useCallback(async (term) => {
     const trimmed = term.trim()
+    const requestId = ++searchRequestRef.current
+    const isCurrentRequest = () => searchRequestRef.current === requestId
     if (!trimmed) {
       setServerSearchResults(null)
       return
@@ -5572,7 +5609,7 @@ export const AppProvider = ({ children }) => {
     const kw = trimmed.toLowerCase()
     if (kw === 'present' || kw === 'absent') {
       await quickMarkAttendanceFromKeyword(kw)
-      setServerSearchResults(null)
+      if (isCurrentRequest()) setServerSearchResults(null)
       return
     }
 
@@ -5581,11 +5618,12 @@ export const AppProvider = ({ children }) => {
     const hit = searchCacheRef.current.get(cacheKey)
     const now = Date.now()
     if (hit && now - hit.timestamp < CACHE_DURATION) {
-      setServerSearchResults(hit.data || [])
+      if (isCurrentRequest()) setServerSearchResults(hit.data || [])
       return
     }
 
     const localMatches = await searchMemberPreviewIndex(trimmed, currentTable)
+    if (!isCurrentRequest()) return
     if (localMatches.length > 0) {
       searchCacheRef.current.set(cacheKey, { timestamp: now, data: localMatches })
       setServerSearchResults(localMatches)
@@ -5596,91 +5634,50 @@ export const AppProvider = ({ children }) => {
     }
 
     if (!isSupabaseConfigured() || !isOnline || shouldUseOfflineData) {
-      setServerSearchResults([])
+      if (isCurrentRequest()) setServerSearchResults([])
       return
     }
 
-    const isAge = /^\d{1,3}$/.test(trimmed)
-    const safe = trimmed.replace(/%/g, '').replace(/_/g, '').replace(/\s+/g, ' ').trim()
-    await ensureMemberPreviewSyncColumns(currentTable)
-    let query = applyDeletedAtFilter(supabase.from(currentTable).select(MEMBER_PREVIEW_SELECT)).limit(20)
-    if (isAge) {
-      query = query.eq('Age', parseInt(trimmed, 10))
-    } else {
-      const orExpr = [
-        `"Full Name".ilike.%${safe}%`,
-        `full_name.ilike.%${safe}%`,
-        `name.ilike.%${safe}%`,
-        `"Name".ilike.%${safe}%`,
-        `member_code.ilike.%${safe}%`,
-        `"Phone Number".ilike.%${safe}%`,
-        `phone_number.ilike.%${safe}%`
-      ].join(',')
-      query = query.or(orExpr)
-    }
-    let { data, error } = await query
-    if (error && !isAge) {
-      const nameCol = await resolveNameColumn(currentTable)
-      const fallback = await applyDeletedAtFilter(
-        supabase
-          .from(currentTable)
-          .select(MEMBER_PREVIEW_SELECT)
-      )
-        .ilike(nameCol, `%${safe}%`)
-        .limit(20)
-      data = fallback.data
-      error = fallback.error
-    }
-    if (error) {
-      const message = error.message?.toLowerCase() || ''
-      const missingColumn =
-        error.code === 'PGRST100' ||
-        error.code === '42703' ||
-        message.includes('failed to parse') ||
-        message.includes('does not exist') ||
-        message.includes('column')
-
-      if (missingColumn) {
-        const nameCol = await resolveNameColumn(currentTable)
-        const fallback = isAge
-          ? await applyDeletedAtFilter(
-              supabase
-                .from(currentTable)
-                .select(MEMBER_PREVIEW_SELECT)
-            )
-              .eq('Age', parseInt(trimmed, 10))
-              .limit(20)
-          : await applyDeletedAtFilter(
-              supabase
-                .from(currentTable)
-                .select(MEMBER_PREVIEW_SELECT)
-            )
-              .ilike(nameCol, `%${safe}%`)
-              .limit(20)
-        data = fallback.data
-        error = fallback.error
+    // A new device only has the first visible page in memory. Hydrate a narrow
+    // read-only search index before declaring a name or guardian phone missing.
+    // This keeps desktop, Android tablet, and compact keyboard results on the
+    // same matcher instead of relying on schema-specific ILIKE expressions.
+    let offset = 0
+    const candidates = []
+    while (true) {
+      const { data, error } = await fetchMemberPreviewPage(currentTable, offset)
+      if (!isCurrentRequest()) return
+      if (error) {
+        console.error('Server search index fetch failed', error)
+        setServerSearchResults(null)
+        return
       }
+      const page = (data || []).map(normalizeMemberRecord)
+      candidates.push(...page)
+      if (page.length < MEMBER_PREVIEW_PAGE_SIZE) break
+      offset += MEMBER_PREVIEW_PAGE_SIZE
     }
-    if (error) {
-      console.error('Server search error', error)
-      setServerSearchResults(null)
-      return
-    }
-    const sorted = (data || []).map(normalizeMemberRecord).slice().sort((a, b) => {
+    const candidateCodeMap = buildMemberIndexCodeMap(candidates)
+    const sorted = classifyMemberSearch({
+      members: candidates,
+      query: trimmed,
+      getCode: (member) => getMemberIndexCode(member, candidateCodeMap) || member?.member_code || ''
+    }).visible.slice().sort((a, b) => {
       const an = (getMemberDisplayNameForRecentEdit(a) || '').toString().toLowerCase()
       const bn = (getMemberDisplayNameForRecentEdit(b) || '').toString().toLowerCase()
       if (an < bn) return -1
       if (an > bn) return 1
       return 0
     })
+    if (!isCurrentRequest()) return
     searchCacheRef.current.set(cacheKey, { timestamp: now, data: sorted })
-    await persistMemberPreviewIndex(currentTable, sorted, {
-      cachedCount: sorted.length,
-      totalCount: membersTotalCount,
-      source: 'search'
+    await persistMemberPreviewIndex(currentTable, candidates, {
+      cachedCount: candidates.length,
+      totalCount: candidates.length,
+      source: 'search-index'
     })
-    setServerSearchResults(sorted)
-  }, [currentTable, isOnline, membersTotalCount, persistMemberPreviewIndex, resolveNameColumn, searchMemberPreviewIndex, shouldUseOfflineData])
+    if (isCurrentRequest()) setServerSearchResults(sorted)
+  }, [currentTable, isOnline, membersTotalCount, persistMemberPreviewIndex, searchMemberPreviewIndex, shouldUseOfflineData])
 
   useEffect(() => {
     performServerSearch(searchTerm)
@@ -7740,10 +7737,14 @@ export const AppProvider = ({ children }) => {
       }
       realtimeAttendanceRefreshTimerRef.current = setTimeout(async () => {
         if (disposed) return
+        const snapshotVersion = attendanceSnapshotVersionRef.current.startRead(currentTable, targetDateKey)
         signalRealtimeSyncStatus(source)
         const date = new Date(`${targetDateKey}T12:00:00`)
         const remoteAttendance = await fetchAttendanceForDateInTable(date, currentTable)
         if (disposed) return
+        // A local selection or rollback happened while this request was in flight.
+        // Keep that newer state; a later realtime event will schedule a fresh read.
+        if (!attendanceSnapshotVersionRef.current.canApplyRead(currentTable, targetDateKey, snapshotVersion)) return
         const mergedAttendance = mergeAttendanceMapWithPending(
           remoteAttendance,
           offlinePendingChangesRef.current,
@@ -7888,6 +7889,7 @@ export const AppProvider = ({ children }) => {
     bulkAttendance,
     fetchAttendanceForDate,
     fetchAttendanceForDateInTable,
+    fetchAndApplyAttendanceForDate,
     loadAllAttendanceData,
     loadAllBadgeData,
     currentTable,
@@ -7978,7 +7980,7 @@ export const AppProvider = ({ children }) => {
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,
     refreshSearch, forceRefreshMembers, forceRefreshMembersSilent, refreshMemberPreviewById,
     searchMemberAcrossAllTables, addMember, updateMember, deleteMember,
-    fetchMembers, fetchMoreMembers, markAttendance, bulkAttendance, fetchAttendanceForDate, fetchAttendanceForDateInTable,
+    fetchMembers, fetchMoreMembers, markAttendance, bulkAttendance, fetchAttendanceForDate, fetchAttendanceForDateInTable, fetchAndApplyAttendanceForDate,
     loadAllAttendanceData, loadAllBadgeData, changeCurrentTable, createNewMonth,
     deleteMonthTable, fetchMonthlyTables, getAttendanceColumns, getAvailableAttendanceDates,
     findAttendanceColumnForDate, calculateAttendanceRate, calculateMemberBadge,

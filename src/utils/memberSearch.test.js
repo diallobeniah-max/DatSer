@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { classifyMemberSearch, shouldShowSearchDebug } from './memberSearch'
 
 const members = [
-  { id: '1', full_name: 'Beniah Diallo', member_code: 'B01' },
+  { id: '1', full_name: 'Beniah Opong Diallo', member_code: 'B01', phone_number: '024 430 7261', parent_phone_1: '+233 24 111 7261', parent_phone_2: '024-999-5555' },
   { id: '2', full_name: 'Benedicta Mensah', member_code: 'B02' },
   { id: '3', full_name: 'Ama Serwaa', member_code: 'A03' }
 ]
@@ -44,6 +44,29 @@ describe('classifyMemberSearch', () => {
     const renamed = { id: '1', full_name: 'Yaw Diallo', member_code: 'B01' }
     expect(classifyMemberSearch({ members: [renamed], query: 'Beniah' }).visible).toEqual([])
     expect(classifyMemberSearch({ members: [renamed], query: 'Yaw' }).visible.map((member) => member.id)).toEqual(['1'])
+  })
+
+  it('finds every meaningful name part in either token order', () => {
+    for (const query of ['Beniah', 'Opong', 'Diallo', 'Beniah Diallo', 'Diallo Beniah', '  opong  ']) {
+      expect(classifyMemberSearch({ members, query }).visible.map((member) => member.id)).toContain('1')
+    }
+  })
+
+  it('normalizes punctuation and Unicode without treating unrelated fuzzy matches as results', () => {
+    const specialMembers = [
+      { id: '4', full_name: "Esi O’Fori", member_code: 'E04' },
+      { id: '5', full_name: 'Nana-Kofi Osei', member_code: 'N05' }
+    ]
+    expect(classifyMemberSearch({ members: specialMembers, query: 'esi ofori' }).visible.map((member) => member.id)).toEqual(['4'])
+    expect(classifyMemberSearch({ members: specialMembers, query: 'nana kofi' }).visible.map((member) => member.id)).toEqual(['5'])
+    expect(classifyMemberSearch({ members: specialMembers, query: 'random unrelated name' }).visible).toEqual([])
+  })
+
+  it('matches member and guardian phones across safe Ghana local and country-code formats', () => {
+    expect(classifyMemberSearch({ members, query: '0244307261' }).visible.map((member) => member.id)).toContain('1')
+    expect(classifyMemberSearch({ members, query: '+233244307261' }).visible.map((member) => member.id)).toContain('1')
+    expect(classifyMemberSearch({ members, query: '0241117261' }).visible.map((member) => member.id)).toContain('1')
+    expect(classifyMemberSearch({ members, query: '0249995555' }).visible.map((member) => member.id)).toContain('1')
   })
 })
 

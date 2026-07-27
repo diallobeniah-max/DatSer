@@ -1,17 +1,47 @@
-const normalizeSearchText = (value) => String(value || '')
+export const normalizeSearchText = (value) => String(value || '')
   .normalize('NFKD')
   .replace(/[\u0300-\u036f]/g, '')
   .toLowerCase()
+  .replace(/[\u2018\u2019'`]/g, '')
   .replace(/[^a-z0-9+]+/g, ' ')
+  .replace(/\s+/g, ' ')
   .trim()
+
+export const normalizePhoneForSearch = (value) => String(value || '').replace(/\D/g, '')
+
+const getPhoneVariants = (value) => {
+  const digits = normalizePhoneForSearch(value)
+  if (!digits) return []
+
+  const variants = new Set([digits])
+  // Ghana's national format is 0 + 9 digits; only add the country-code
+  // equivalent when the input has that exact, unambiguous shape.
+  if (/^0\d{9}$/.test(digits)) variants.add(`233${digits.slice(1)}`)
+  if (/^233\d{9}$/.test(digits)) variants.add(`0${digits.slice(3)}`)
+  return [...variants]
+}
 
 export const getSearchableMemberName = (member = {}) => (
   member.full_name || member['Full Name'] || member.name || member.Name || ''
 ).toString().trim()
 
-const getSearchablePhone = (member = {}) => (
-  member.phone_number || member['Phone Number'] || member.phone || ''
-).toString().trim()
+const PHONE_FIELDS = [
+  ['phone_number', 'member'], ['Phone Number', 'member'], ['phone', 'member'], ['Phone', 'member'],
+  ['parent_phone_1', 'guardian'], ['Parent Phone 1', 'guardian'], ['parentPhone1', 'guardian'],
+  ['parent_phone_2', 'guardian'], ['Parent Phone 2', 'guardian'], ['parentPhone2', 'guardian'],
+  ['parent_phone_number', 'guardian'], ['Parent Phone Number', 'guardian'],
+  ['guardian_phone_1', 'guardian'], ['Guardian Phone 1', 'guardian'],
+  ['guardian_phone_2', 'guardian'], ['Guardian Phone 2', 'guardian']
+]
+
+export const getSearchablePhones = (member = {}) => PHONE_FIELDS
+  .map(([field, kind]) => ({ value: member[field], kind }))
+  .filter(({ value }) => value !== undefined && value !== null && String(value).trim() !== '')
+  .map(({ value, kind }) => ({
+    kind,
+    raw: String(value).trim(),
+    variants: getPhoneVariants(value)
+  }))
 
 const editDistance = (left, right) => {
   if (!left) return right.length
@@ -33,18 +63,32 @@ const editDistance = (left, right) => {
 }
 
 const uniqueActiveMembers = (...sources) => {
+  const deletedIds = new Set(sources.flat()
+    .filter((member) => member?.id && member.deleted_at)
+    .map((member) => String(member.id)))
   const byId = new Map()
   sources.flat().forEach((member) => {
-    if (!member?.id || member.deleted_at) return
+    if (!member?.id || member.deleted_at || deletedIds.has(String(member.id))) return
     byId.set(String(member.id), { ...(byId.get(String(member.id)) || {}), ...member })
   })
   return [...byId.values()]
 }
 
-const isPartialMatch = (haystack, query) => {
-  if (!haystack || !query) return false
-  const tokens = query.split(/\s+/).filter(Boolean)
-  return tokens.length > 0 && tokens.every((token) => haystack.includes(token))
+const hasNameTokenMatch = (name, query) => {
+  if (!name || !query) return false
+  const queryTokens = query.split(' ').filter(Boolean)
+  const nameTokens = name.split(' ').filter(Boolean)
+  return queryTokens.length > 0 && queryTokens.every((queryToken) => (
+    nameTokens.some((nameToken) => nameToken.includes(queryToken))
+  ))
+}
+
+const hasPhoneMatch = (member, query) => {
+  const queryVariants = getPhoneVariants(query)
+  if (queryVariants.length === 0) return false
+  return getSearchablePhones(member).some(({ variants }) => (
+    variants.some((phone) => queryVariants.some((candidate) => phone.includes(candidate)))
+  ))
 }
 
 const isSuggestedMatch = (name, query) => {
@@ -68,14 +112,8 @@ export const classifyMemberSearch = ({
   const activeMembers = uniqueActiveMembers(members, remoteMembers)
   if (!normalizedQuery) {
     return {
-      query: '',
-      exact: [],
-      partial: activeMembers,
-      suggestions: [],
-      visible: activeMembers,
-      deletedMatches: [],
-      status: 'idle',
-      visibleCount: activeMembers.length
+      query: '', exact: [], partial: activeMembers, suggestions: [], visible: activeMembers,
+      deletedMatches: [], status: 'idle', visibleCount: activeMembers.length
     }
   }
 
@@ -85,13 +123,18 @@ export const classifyMemberSearch = ({
   activeMembers.forEach((member) => {
     const name = normalizeSearchText(getSearchableMemberName(member))
     const code = normalizeSearchText(getCode(member))
-    const phone = normalizeSearchText(getSearchablePhone(member))
-    const isExact = [name, code, phone].some((candidate) => candidate && candidate === normalizedQuery)
+    const nameTokens = name.split(' ').filter(Boolean)
+    const isExact = name === normalizedQuery || code === normalizedQuery || getSearchablePhones(member)
+      .some(({ variants }) => getPhoneVariants(query).some((candidate) => variants.includes(candidate)))
+
     if (isExact) {
       exact.push(member)
       return
     }
-    if (isPartialMatch(name, normalizedQuery) || code.includes(normalizedQuery) || phone.includes(normalizedQuery)) {
+
+    const exactNamePart = normalizedQuery.split(' ').length === 1 && nameTokens.includes(normalizedQuery)
+    const phraseMatch = name.includes(normalizedQuery)
+    if (exactNamePart || phraseMatch || hasNameTokenMatch(name, normalizedQuery) || code.includes(normalizedQuery) || hasPhoneMatch(member, query)) {
       partial.push(member)
       return
     }
@@ -101,29 +144,12 @@ export const classifyMemberSearch = ({
   const deletedMatches = (deletedMembers || []).filter((member) => {
     const name = normalizeSearchText(getSearchableMemberName(member))
     const code = normalizeSearchText(getCode(member))
-    return name === normalizedQuery || code === normalizedQuery || isPartialMatch(name, normalizedQuery)
+    return name === normalizedQuery || code === normalizedQuery || hasNameTokenMatch(name, normalizedQuery)
   })
   const visible = [...exact, ...partial]
-  const status = exact.length
-    ? 'exact'
-    : partial.length
-      ? 'partial'
-      : deletedMatches.length
-        ? 'deleted'
-        : suggestions.length
-          ? 'suggested'
-          : 'none'
+  const status = exact.length ? 'exact' : partial.length ? 'partial' : deletedMatches.length ? 'deleted' : suggestions.length ? 'suggested' : 'none'
 
-  return {
-    query: normalizedQuery,
-    exact,
-    partial,
-    suggestions,
-    visible,
-    deletedMatches,
-    status,
-    visibleCount: visible.length
-  }
+  return { query: normalizedQuery, exact, partial, suggestions, visible, deletedMatches, status, visibleCount: visible.length }
 }
 
 export const shouldShowSearchDebug = ({ isDevelopment, flag }) => (

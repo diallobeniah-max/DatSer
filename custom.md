@@ -172,6 +172,24 @@
 - Debug information must remain development-only.
 - Stale cache must never reintroduce deleted members.
 
+## Member Search Rule
+- Search must match any meaningful part of a member's full name, including first, middle, and surname tokens in any order.
+- Member and guardian phone numbers must be searchable through normalized digits without exposing private numbers in results.
+- Phone, tablet, and desktop must use the same authoritative active-member search dataset.
+- Deleted members and stale cached records must never appear, and result counts must match the visible cards.
+
+## Attendance Count Consistency Rule
+- Attendance totals must derive from deduplicated active canonical members, not raw cached map entries.
+- Local optimistic attendance updates must update totals immediately; stale refresh responses must never overwrite newer state.
+- Realtime events must merge idempotently, and Manual Refresh Data must produce the same final total.
+- Cached and remote copies must never be double-counted.
+
+## Android Attendance Interaction Rule
+- Present and Absent must use one canonical mutation path across Android, tablet, desktop, and compact cards.
+- No overlay may block attendance controls, and competing touch and click handlers must never submit twice.
+- Failed mutations must reset loading state and preserve a retryable action.
+- Zero-row updates perform one safe canonical recovery and never create duplicates.
+
 ## PWA Resume Stability Rule
 - Returning from another app must preserve the visible DatSer interface.
 - Resume/focus must not clear state, remount the app, flash themes, or show full-page loaders.
