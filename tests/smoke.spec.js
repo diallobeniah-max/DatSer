@@ -275,8 +275,7 @@ test.describe('Preflight smoke', () => {
         addHeight: addButton.getBoundingClientRect().height,
       }
     })
-    expect(normalDockLayout.inputHeight).toBeGreaterThanOrEqual(48)
-    expect(normalDockLayout.inputHeight).toBeLessThanOrEqual(56)
+    expect(normalDockLayout.inputHeight).toBe(44)
     expect(normalDockLayout.scannerHeight).toBe(normalDockLayout.inputHeight)
     expect(normalDockLayout.addHeight).toBe(normalDockLayout.inputHeight)
     await search.focus()

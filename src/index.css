@@ -1834,7 +1834,10 @@ body.dashboard-shell-active {
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   padding-top: 0 !important;
-  padding-bottom: calc(4.75rem + var(--app-safe-bottom)) !important;
+  padding-bottom: calc(
+    var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
+    var(--app-safe-bottom)
+  ) !important;
 }
 
 .dashboard-app-shell .app-bottom-dock {
@@ -1844,16 +1847,29 @@ body.dashboard-shell-active {
   contain: layout paint;
 }
 
-/* The anchored Member/Marked dock uses one control contract. This keeps the
-   input and both icon actions aligned while preserving a 52px touch target. */
-.member-search-dock-controls {
-  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
+.dashboard-app-shell .bottom-search-bar {
+  padding-bottom: max(var(--ds-space-1), var(--app-safe-bottom)) !important;
+  background-clip: padding-box;
+}
+
+.dashboard-app-shell .bottom-search-bar > div {
+  padding-top: var(--ds-space-1) !important;
+  padding-bottom: var(--ds-space-1) !important;
+}
+
+/* All anchored search docks use the compact design-system control size. Keeping
+   this shared prevents Settings and Members/Marked drifting apart again. */
+.member-search-dock-controls,
+.settings-search-dock-controls {
+  min-height: var(--ds-control-md);
 }
 
 .member-search-dock-input,
-.member-search-dock-control {
-  height: calc(var(--ds-control-lg) + var(--ds-space-1)) !important;
-  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
+.member-search-dock-control,
+.settings-search-dock-input,
+.settings-search-dock-control {
+  height: var(--ds-control-md) !important;
+  min-height: var(--ds-control-md);
 }
 
 .member-search-dock-input {
@@ -1864,17 +1880,6 @@ body.dashboard-shell-active {
 
 .member-search-dock-control {
   align-items: center;
-}
-
-/* Settings uses the same compact control contract as the Member and Marked docks. */
-.settings-search-dock-controls {
-  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
-}
-
-.settings-search-dock-input,
-.settings-search-dock-control {
-  height: calc(var(--ds-control-lg) + var(--ds-space-1)) !important;
-  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
 }
 
 .settings-search-dock-input {
@@ -1889,7 +1894,10 @@ body.dashboard-shell-active {
 
 .dashboard-app-shell .search-suggestion-tray {
   position: absolute !important;
-  bottom: calc(4.35rem + var(--app-safe-bottom)) !important;
+  bottom: calc(
+    var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
+    var(--app-safe-bottom)
+  ) !important;
 }
 
 @media (max-width: 1279px) {
@@ -1967,7 +1975,7 @@ body.dashboard-shell-active {
     width: 100%;
     transform: translateZ(0);
     contain: layout paint;
-    padding-top: var(--ds-space-2) !important;
+    padding-top: var(--ds-space-1) !important;
     padding-bottom: max(var(--ds-space-1), var(--app-safe-bottom)) !important;
   }
 
@@ -1982,7 +1990,7 @@ body.dashboard-shell-active {
   .settings-search-results-content {
     min-height: 0 !important;
     padding-bottom: calc(
-      var(--ds-control-lg) + var(--ds-space-1) + var(--ds-space-2) +
+      var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
       var(--ds-space-1) + var(--app-safe-bottom)
     ) !important;
   }
@@ -2102,7 +2110,10 @@ body.dashboard-shell-active {
 
 @media (min-width: 768px) {
   .dashboard-app-shell > .dashboard-app-content {
-    padding-bottom: 4.75rem !important;
+    padding-bottom: calc(
+      var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
+      var(--app-safe-bottom)
+    ) !important;
   }
 }
 
@@ -2536,13 +2547,15 @@ body.dashboard-shell-active {
     min-width: 44px !important;
   }
 
-  /* Tighter, nicer bottom search bar on mobile */
+  /* The dock owns the iPhone safe-area background. The controls stay compact
+     while the panel itself reaches the true visual-viewport bottom. */
   .bottom-search-bar {
-    padding-bottom: calc(var(--app-safe-bottom) + 2px);
+    padding-bottom: max(var(--ds-space-1), var(--app-safe-bottom)) !important;
+    background-clip: padding-box;
   }
 
   .bottom-search-bar > div {
-    padding-top: var(--ds-space-2) !important;
+    padding-top: var(--ds-space-1) !important;
     padding-bottom: var(--ds-space-1) !important;
   }
 
