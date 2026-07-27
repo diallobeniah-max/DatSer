@@ -1791,9 +1791,9 @@ details[open] summary~* {
 
 /* Dashboard app shell
    -------------------
-   Scope the fixed application viewport to the Members/Marked screen only.
-   Settings, Export Center, Admin, and modal routes keep their existing
-   document-scrolling behavior. */
+   Scope the fixed application viewport to the Members/Marked screen. Settings
+   uses the same visual-viewport contract on phone and tablet so its compact
+   search dock remains a footer rather than a floating document layer. */
 html.dashboard-shell-active,
 body.dashboard-shell-active {
   height: 100%;
@@ -1866,9 +1866,126 @@ body.dashboard-shell-active {
   align-items: center;
 }
 
+/* Settings uses the same compact control contract as the Member and Marked docks. */
+.settings-search-dock-controls {
+  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
+}
+
+.settings-search-dock-input,
+.settings-search-dock-control {
+  height: calc(var(--ds-control-lg) + var(--ds-space-1)) !important;
+  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
+}
+
+.settings-search-dock-input {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: var(--ds-leading-body);
+}
+
+.settings-search-dock-control {
+  align-items: center;
+}
+
 .dashboard-app-shell .search-suggestion-tray {
   position: absolute !important;
   bottom: calc(4.35rem + var(--app-safe-bottom)) !important;
+}
+
+@media (max-width: 1279px) {
+  html.settings-shell-active,
+  body.settings-shell-active {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .app-main-settings-safe {
+    position: fixed;
+    top: var(--app-visual-offset-top, 0px);
+    right: 0;
+    bottom: auto;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: var(--app-visual-height, var(--app-vh));
+    min-height: 0;
+    overflow: hidden !important;
+    padding-bottom: 0 !important;
+  }
+
+  .app-main-settings-safe > .settings-page-scroll-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .settings-page-root {
+    height: 100%;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .settings-split-shell {
+    height: 100% !important;
+    min-height: 0;
+  }
+
+  .settings-mobile-main {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .settings-main-shell {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .settings-main-scroll {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .settings-main-list {
+    padding-bottom: var(--ds-space-2) !important;
+  }
+
+  .settings-search-dock.fixed {
+    position: relative !important;
+    inset: auto !important;
+    width: 100%;
+    transform: translateZ(0);
+    contain: layout paint;
+    padding-top: var(--ds-space-2) !important;
+    padding-bottom: max(var(--ds-space-1), var(--app-safe-bottom)) !important;
+  }
+
+  .settings-search-results-overlay {
+    top: var(--app-visual-offset-top, 0px) !important;
+    bottom: auto !important;
+    height: var(--app-visual-height, var(--app-vh));
+    min-height: 0;
+    overflow-x: hidden;
+  }
+
+  .settings-search-results-content {
+    min-height: 0 !important;
+    padding-bottom: calc(
+      var(--ds-control-lg) + var(--ds-space-1) + var(--ds-space-2) +
+      var(--ds-space-1) + var(--app-safe-bottom)
+    ) !important;
+  }
 }
 
 /* Mobile form shells share the same visual viewport variables as Dashboard.

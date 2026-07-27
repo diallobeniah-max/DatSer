@@ -282,11 +282,16 @@ function AppContent({ isMobile }) {
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const dashboardActive = currentView === 'dashboard'
+    const settingsActive = currentView === 'settings'
     document.documentElement.classList.toggle('dashboard-shell-active', dashboardActive)
     document.body.classList.toggle('dashboard-shell-active', dashboardActive)
+    document.documentElement.classList.toggle('settings-shell-active', settingsActive)
+    document.body.classList.toggle('settings-shell-active', settingsActive)
     return () => {
       document.documentElement.classList.remove('dashboard-shell-active')
       document.body.classList.remove('dashboard-shell-active')
+      document.documentElement.classList.remove('settings-shell-active')
+      document.body.classList.remove('settings-shell-active')
     }
   }, [currentView])
 
@@ -650,15 +655,17 @@ function AppContent({ isMobile }) {
 
         {currentView === 'settings' && (
           <Suspense fallback={<LazyFallback />}>
-            <SettingsPage
-              onBack={() => {
-                setCurrentView('dashboard')
-                setNavigateToSettingsSection(null)
-              }}
-              navigateToSection={navigateToSettingsSection}
-              onOpenAddMember={() => setShowMemberModal(true)}
-              onCreateMonth={() => setShowMonthModal(true)}
-            />
+            <div className="settings-page-scroll-shell">
+              <SettingsPage
+                onBack={() => {
+                  setCurrentView('dashboard')
+                  setNavigateToSettingsSection(null)
+                }}
+                navigateToSection={navigateToSettingsSection}
+                onOpenAddMember={() => setShowMemberModal(true)}
+                onCreateMonth={() => setShowMonthModal(true)}
+              />
+            </div>
           </Suspense>
         )}
 

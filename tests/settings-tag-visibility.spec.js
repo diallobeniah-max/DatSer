@@ -366,6 +366,72 @@ test.describe('Settings Search and Tag Visibility', () => {
     }
   })
 
+  test('Settings: mobile search dock shares the compact visual-viewport footer contract', async ({ page }) => {
+    await loginWithViewport(page, 390, 844)
+    await openSettingsPage(page)
+
+    const dock = page.locator('.settings-search-dock')
+    const dockInput = page.locator('.settings-search-dock-input')
+    const settingsScroll = page.locator('.settings-main-scroll')
+
+    await expect(dock).toBeVisible()
+    await expect(dockInput).toBeVisible()
+    await expect(settingsScroll).toBeVisible()
+
+    const initial = await page.evaluate(() => {
+      const dockElement = document.querySelector('.settings-search-dock')
+      const inputElement = document.querySelector('.settings-search-dock-input')
+      const scrollElement = document.querySelector('.settings-main-scroll')
+      if (!dockElement || !inputElement || !scrollElement) return null
+      const dockRect = dockElement.getBoundingClientRect()
+      const inputRect = inputElement.getBoundingClientRect()
+      return {
+        dockBottom: Math.round(dockRect.bottom),
+        inputHeight: Math.round(inputRect.height),
+        viewportHeight: Math.round(window.innerHeight),
+        scrollsInternally: scrollElement.scrollHeight >= scrollElement.clientHeight
+      }
+    })
+
+    expect(initial).not.toBeNull()
+    expect(initial.inputHeight).toBe(52)
+    expect(initial.dockBottom).toBe(initial.viewportHeight)
+    expect(initial.scrollsInternally).toBe(true)
+
+    await settingsScroll.evaluate((element) => { element.scrollTop = element.scrollHeight })
+    const visibility = await page.evaluate(() => {
+      const signOut = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Sign Out')
+      const dockElement = document.querySelector('.settings-search-dock')
+      if (!signOut || !dockElement) return null
+      return {
+        signOutBottom: Math.round(signOut.getBoundingClientRect().bottom),
+        dockTop: Math.round(dockElement.getBoundingClientRect().top)
+      }
+    })
+    expect(visibility).not.toBeNull()
+    expect(visibility.signOutBottom).toBeLessThanOrEqual(visibility.dockTop)
+
+    await dockInput.focus()
+    await expect(page.locator('.settings-search-results-overlay')).toBeVisible()
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--app-visual-height', '600px')
+    })
+    await page.waitForTimeout(50)
+
+    const keyboardSafe = await page.evaluate(() => {
+      const dockElement = document.querySelector('.settings-search-dock')
+      const overlay = document.querySelector('.settings-search-results-overlay')
+      if (!dockElement || !overlay) return null
+      return {
+        dockBottom: Math.round(dockElement.getBoundingClientRect().bottom),
+        overlayBottom: Math.round(overlay.getBoundingClientRect().bottom)
+      }
+    })
+    expect(keyboardSafe).not.toBeNull()
+    expect(keyboardSafe.dockBottom).toBe(600)
+    expect(keyboardSafe.overlayBottom).toBe(600)
+  })
+
   // ────────────────────────────────────────────────────────────────────────
   // Phase 7: Light mode — Settings renders without crash or overflow
   // ────────────────────────────────────────────────────────────────────────
