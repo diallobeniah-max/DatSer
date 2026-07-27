@@ -1844,6 +1844,28 @@ body.dashboard-shell-active {
   contain: layout paint;
 }
 
+/* The anchored Member/Marked dock uses one control contract. This keeps the
+   input and both icon actions aligned while preserving a 52px touch target. */
+.member-search-dock-controls {
+  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
+}
+
+.member-search-dock-input,
+.member-search-dock-control {
+  height: calc(var(--ds-control-lg) + var(--ds-space-1)) !important;
+  min-height: calc(var(--ds-control-lg) + var(--ds-space-1));
+}
+
+.member-search-dock-input {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: var(--ds-leading-body);
+}
+
+.member-search-dock-control {
+  align-items: center;
+}
+
 .dashboard-app-shell .search-suggestion-tray {
   position: absolute !important;
   bottom: calc(4.35rem + var(--app-safe-bottom)) !important;
@@ -2400,6 +2422,11 @@ body.dashboard-shell-active {
   /* Tighter, nicer bottom search bar on mobile */
   .bottom-search-bar {
     padding-bottom: calc(var(--app-safe-bottom) + 2px);
+  }
+
+  .bottom-search-bar > div {
+    padding-top: var(--ds-space-2) !important;
+    padding-bottom: var(--ds-space-1) !important;
   }
 
   /* MissingDataModal - slide up from bottom as sheet */

@@ -260,8 +260,46 @@ test.describe('Preflight smoke', () => {
     const firstCard = page.locator('.member-card').first()
     const normalCardHeight = await firstCard.evaluate((element) => element.getBoundingClientRect().height)
     const search = page.getByPlaceholder('Search members...')
+    const searchDock = page.locator('.app-bottom-dock')
+    const scanner = page.getByRole('button', { name: /scan member qr code/i })
+    const addMember = page.getByTitle('Add New Member')
+    const normalDockLayout = await page.evaluate(() => {
+      const dock = document.querySelector('.app-bottom-dock')
+      const input = document.querySelector('.member-search-dock-input')
+      const scannerButton = document.querySelector('[aria-label="Scan member QR code"]')
+      const addButton = Array.from(document.querySelectorAll('button')).find((button) => button.title === 'Add New Member')
+      return {
+        dockHeight: dock.getBoundingClientRect().height,
+        inputHeight: input.getBoundingClientRect().height,
+        scannerHeight: scannerButton.getBoundingClientRect().height,
+        addHeight: addButton.getBoundingClientRect().height,
+      }
+    })
+    expect(normalDockLayout.inputHeight).toBeGreaterThanOrEqual(48)
+    expect(normalDockLayout.inputHeight).toBeLessThanOrEqual(56)
+    expect(normalDockLayout.scannerHeight).toBe(normalDockLayout.inputHeight)
+    expect(normalDockLayout.addHeight).toBe(normalDockLayout.inputHeight)
     await search.focus()
     await expect(page.locator('.keyboard-search-active')).toBeVisible()
+    await expect(searchDock).toBeVisible()
+    await expect(scanner).toBeVisible()
+    await expect(addMember).toBeVisible()
+    const compactDockLayout = await page.evaluate(() => {
+      const dock = document.querySelector('.app-bottom-dock')
+      const input = document.querySelector('.member-search-dock-input')
+      const scannerButton = document.querySelector('[aria-label="Scan member QR code"]')
+      const addButton = Array.from(document.querySelectorAll('button')).find((button) => button.title === 'Add New Member')
+      return {
+        dockBottom: dock.getBoundingClientRect().bottom,
+        inputHeight: input.getBoundingClientRect().height,
+        scannerHeight: scannerButton.getBoundingClientRect().height,
+        addHeight: addButton.getBoundingClientRect().height,
+      }
+    })
+    expect(compactDockLayout.inputHeight).toBe(normalDockLayout.inputHeight)
+    expect(compactDockLayout.scannerHeight).toBe(normalDockLayout.inputHeight)
+    expect(compactDockLayout.addHeight).toBe(normalDockLayout.inputHeight)
+    expect(compactDockLayout.dockBottom).toBeLessThanOrEqual(844)
     const compactCardHeight = await firstCard.evaluate((element) => element.getBoundingClientRect().height)
     const joinedDisplay = await firstCard.locator('.member-card-meta').evaluate((element) => getComputedStyle(element).display)
     expect(compactCardHeight).toBeLessThan(normalCardHeight)
@@ -281,6 +319,7 @@ test.describe('Preflight smoke', () => {
       expect(await firstCard.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(110)
       expect(await firstCard.locator('.member-card-meta').evaluate((element) => getComputedStyle(element).display)).toBe('none')
     }
+
     await page.setViewportSize({ width: 390, height: 844 })
     await clickControl(firstCard.locator('.member-card-header'))
     await expect(search).not.toBeFocused()
