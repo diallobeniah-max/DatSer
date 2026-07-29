@@ -912,11 +912,16 @@ function App() {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
       viewportFrame = window.requestAnimationFrame(() => {
         viewportFrame = 0
-        const visibleHeight = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight)
-        const offsetTop = Math.round(vv?.offsetTop || 0)
         const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0)
-        const obscuredHeight = vv ? Math.max(0, Math.round(layoutHeight - vv.height - vv.offsetTop)) : 0
+        const viewportHeight = Math.round(vv?.height || layoutHeight)
+        const viewportOffsetTop = Math.round(vv?.offsetTop || 0)
+        const obscuredHeight = vv ? Math.max(0, Math.round(layoutHeight - viewportHeight - viewportOffsetTop)) : 0
         const keyboardOffset = obscuredHeight > 120 ? obscuredHeight : 0
+        // Safari can report a shorter visual viewport even after the keyboard
+        // closes. Use the full layout viewport unless the keyboard is actually
+        // obscuring it, so anchored dashboard controls return to the true bottom.
+        const visibleHeight = keyboardOffset > 0 ? viewportHeight : layoutHeight
+        const offsetTop = keyboardOffset > 0 ? viewportOffsetTop : 0
         const root = document.documentElement
 
         root.style.setProperty('--app-visual-height', `${visibleHeight}px`)

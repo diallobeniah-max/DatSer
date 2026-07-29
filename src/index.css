@@ -1861,10 +1861,29 @@ body.dashboard-shell-active {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
+  isolation: isolate;
   pointer-events: none;
 }
 
+.dashboard-app-shell .member-search-dock-float::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  content: '';
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--ds-color-surface) 94%, transparent),
+    color-mix(in srgb, var(--ds-color-surface) 58%, transparent) 64%,
+    transparent
+  );
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
 .dashboard-app-shell .member-search-dock-float > div {
+  position: relative;
+  z-index: 1;
   pointer-events: auto;
 }
 
