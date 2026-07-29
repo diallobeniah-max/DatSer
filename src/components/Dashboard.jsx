@@ -3897,7 +3897,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`member-search-dock-input w-full rounded-lg pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`member-search-dock-input w-full rounded-full pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3924,7 +3924,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`member-search-dock-input w-full rounded-lg pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`member-search-dock-input w-full rounded-full pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3963,7 +3963,7 @@ const Dashboard = ({ isAdmin = false }) => {
             <button
               type="button"
               onClick={() => { dismissMobileKeyboard(); selection(); setShowQrScanner(true) }}
-              className="member-search-dock-control inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-orange-400/40 bg-orange-500/10 text-orange-600 shadow-sm transition hover:bg-orange-500/20 active:scale-95 dark:text-orange-300 sm:h-11 sm:w-11"
+              className="member-search-dock-control member-search-dock-scan inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-orange-400/40 bg-orange-500/10 text-orange-600 shadow-sm transition hover:bg-orange-500/20 active:scale-95 dark:text-orange-300 sm:h-11 sm:w-11"
               title="Scan member QR code"
               aria-label="Scan member QR code"
             >
@@ -3971,8 +3971,9 @@ const Dashboard = ({ isAdmin = false }) => {
             </button>
             <button
               onClick={() => { dismissMobileKeyboard(); selection(); setShowMemberModal(true) }}
-              className="member-search-dock-control flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
+              className="member-search-dock-control member-search-dock-add flex h-10 w-10 shrink-0 items-center justify-center rounded-full p-0 sm:h-11 sm:w-11 sm:p-0 md:w-auto md:gap-2 md:px-4 bg-orange-600 hover:bg-orange-700 text-white transition-colors shadow-sm"
               title="Add New Member"
+              aria-label="Add new member"
             >
               <UserPlus className="w-5 h-5" />
               <span className="hidden md:inline text-sm font-medium">Add Member</span>

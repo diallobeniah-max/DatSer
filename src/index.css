@@ -1876,10 +1876,25 @@ body.dashboard-shell-active {
   padding-top: 0 !important;
   padding-bottom: 0 !important;
   line-height: var(--ds-leading-body);
+  border-radius: 999px !important;
 }
 
 .member-search-dock-control {
   align-items: center;
+  border-radius: 999px !important;
+}
+
+.member-search-dock-scan,
+.member-search-dock-add {
+  width: var(--ds-control-md) !important;
+  padding-inline: 0 !important;
+}
+
+@media (min-width: 768px) {
+  .member-search-dock-add {
+    width: auto !important;
+    padding-inline: var(--ds-space-4) !important;
+  }
 }
 
 .settings-search-dock-input {
