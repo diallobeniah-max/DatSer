@@ -3881,7 +3881,7 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Bottom Search Bar */}
-      <div className={`app-bottom-dock bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
+      <div className="app-bottom-dock bottom-search-bar bottom-control-safe member-search-dock-float fixed bottom-0 left-0 right-0 z-30 safe-area-x">
         <div className="mx-auto px-3 sm:px-4 py-2 sm:py-2.5">
           <div className="member-search-dock-controls flex items-center gap-2">
             {dashboardTab === 'edited' ? (

@@ -1857,6 +1857,17 @@ body.dashboard-shell-active {
   padding-bottom: var(--ds-space-1) !important;
 }
 
+.dashboard-app-shell .member-search-dock-float {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  pointer-events: none;
+}
+
+.dashboard-app-shell .member-search-dock-float > div {
+  pointer-events: auto;
+}
+
 /* All anchored search docks use the compact design-system control size. Keeping
    this shared prevents Settings and Members/Marked drifting apart again. */
 .member-search-dock-controls,
