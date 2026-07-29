@@ -1867,18 +1867,23 @@ body.dashboard-shell-active {
 
 .dashboard-app-shell .member-search-dock-float::before {
   position: absolute;
-  inset: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: calc(var(--ds-control-md) + var(--app-safe-bottom) + var(--ds-space-8));
   z-index: 0;
   content: '';
   pointer-events: none;
   background: linear-gradient(
     to top,
-    color-mix(in srgb, var(--ds-color-surface) 94%, transparent),
-    color-mix(in srgb, var(--ds-color-surface) 58%, transparent) 64%,
+    color-mix(in srgb, var(--ds-color-surface) 82%, transparent),
+    color-mix(in srgb, var(--ds-color-surface) 54%, transparent) 42%,
     transparent
   );
   -webkit-backdrop-filter: blur(14px) saturate(120%);
   backdrop-filter: blur(14px) saturate(120%);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 35%, transparent 100%);
+  mask-image: linear-gradient(to top, #000 0%, #000 35%, transparent 100%);
 }
 
 .dashboard-app-shell .member-search-dock-float > div {
