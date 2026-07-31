@@ -233,6 +233,9 @@
   :root {
     --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
     --app-vh: 100vh;
+    /* The largest viewport is the stable, keyboard-closed height in iOS
+       standalone mode. Dashboard uses it only for its fixed shell. */
+    --app-layout-height: 100vh;
     --app-safe-top: env(safe-area-inset-top, 0px);
     --app-safe-right: env(safe-area-inset-right, 0px);
     --app-safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -250,6 +253,12 @@
   @supports (height: 100dvh) {
     :root {
       --app-vh: 100dvh;
+    }
+  }
+
+  @supports (height: 100lvh) {
+    :root {
+      --app-layout-height: 100lvh;
     }
   }
 
@@ -282,7 +291,15 @@
     /* Belt-and-suspenders to ensure no horizontal scroll */
   }
 
+  html {
+    background: #f4efe8;
+  }
+
   .dark body {
+    background: #0d0d0d;
+  }
+
+  html.dark {
     background: #0d0d0d;
   }
 
@@ -1812,10 +1829,11 @@ body.dashboard-shell-active {
   width: 100%;
   /* Keep the shell stable when iOS resizes the visual viewport for its
      keyboard. The dock alone consumes --app-keyboard-inset. */
-  height: var(--app-shell-height, var(--app-vh));
+  height: max(var(--app-shell-height, var(--app-layout-height)), var(--app-layout-height));
   min-height: 0;
   overflow: hidden;
   isolation: isolate;
+  background: var(--ds-color-canvas);
   --dashboard-dock-safe-bottom: max(var(--ds-space-1), var(--app-safe-bottom));
 }
 
@@ -1837,6 +1855,7 @@ body.dashboard-shell-active {
   overscroll-behavior-x: none;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
+  background: var(--ds-color-canvas);
   padding-top: 0 !important;
   padding-bottom: calc(
     var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
@@ -1872,8 +1891,10 @@ body.dashboard-shell-active {
   --dashboard-dock-safe-bottom: var(--ds-space-1);
 }
 
+/* The fade moves with the dock because it is inside the dock shell. Keep it
+   visible while the keyboard is open; only its safe-area padding changes. */
 .app-keyboard-open .member-search-dock-backdrop {
-  opacity: 0;
+  opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {

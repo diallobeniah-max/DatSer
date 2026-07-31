@@ -1,4 +1,6 @@
-const CACHE_VERSION = 'datser-offline-v1'
+// Bump the shell cache when application-shell behavior changes so installed
+// Home Screen PWAs receive the latest entry HTML and dock styles on reload.
+const CACHE_VERSION = 'datser-offline-v2'
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`
 

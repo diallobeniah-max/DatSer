@@ -134,6 +134,8 @@ test.describe('Preflight smoke', () => {
         contentOverflowY: getComputedStyle(contentElement).overflowY,
         dockPosition: getComputedStyle(dockElement).position,
         inputFontSize: Number.parseFloat(getComputedStyle(inputElement).fontSize),
+        viewportHeight: window.innerHeight,
+        shellHeight: shellElement?.getBoundingClientRect().height || 0,
         headerRect: rect(headerElement),
         dockRect: rect(dockElement),
       }
@@ -146,6 +148,7 @@ test.describe('Preflight smoke', () => {
     expect(initialLayout.contentOverflowY).toBe('auto')
     expect(initialLayout.dockPosition).toBe('absolute')
     expect(initialLayout.inputFontSize).toBeGreaterThanOrEqual(16)
+    expect(initialLayout.shellHeight).toBeGreaterThanOrEqual(initialLayout.viewportHeight - 1)
     expect(initialLayout.headerRect.height).toBeGreaterThan(44)
 
     await content.evaluate((element) => {
@@ -187,6 +190,8 @@ test.describe('Preflight smoke', () => {
       dockBottom: document.querySelector('.app-bottom-dock')?.getBoundingClientRect().bottom,
       documentScrollTop: document.documentElement.scrollTop,
       bodyScrollTop: document.body.scrollTop,
+      backdropOpacity: getComputedStyle(document.querySelector('.member-search-dock-backdrop')).opacity,
+      backdropPointerEvents: getComputedStyle(document.querySelector('.member-search-dock-backdrop')).pointerEvents,
     }))
 
     expect(Math.abs(keyboardLayout.shellHeight - 844)).toBeLessThan(1)
@@ -194,6 +199,8 @@ test.describe('Preflight smoke', () => {
     expect(Math.abs(keyboardLayout.dockBottom - 520)).toBeLessThan(2)
     expect(keyboardLayout.documentScrollTop).toBe(0)
     expect(keyboardLayout.bodyScrollTop).toBe(0)
+    expect(Number.parseFloat(keyboardLayout.backdropOpacity)).toBeGreaterThan(0)
+    expect(keyboardLayout.backdropPointerEvents).toBe('none')
 
     await page.evaluate(() => {
       const root = document.documentElement
@@ -230,6 +237,7 @@ test.describe('Preflight smoke', () => {
         headerRect: headerElement?.getBoundingClientRect().toJSON(),
         contentHeight: contentElement?.getBoundingClientRect().height,
         dockRect: dockElement?.getBoundingClientRect().toJSON(),
+        contentRect: contentElement?.getBoundingClientRect().toJSON(),
       }
     })
     expect(mobileLayout.documentWidth).toBeLessThanOrEqual(mobileLayout.viewportWidth)
@@ -237,6 +245,7 @@ test.describe('Preflight smoke', () => {
     expect(mobileLayout.contentHeight).toBeGreaterThan(0)
     expect(mobileLayout.dockRect.bottom).toBeLessThanOrEqual(mobileLayout.shellRect.bottom + 1)
     expect(mobileLayout.dockRect.bottom).toBeGreaterThan(mobileLayout.shellRect.bottom - 2)
+    expect(mobileLayout.contentRect.bottom).toBeLessThanOrEqual(mobileLayout.shellRect.bottom + 1)
     await page.screenshot({ path: testInfo.outputPath('pwa-shell-mobile.png'), fullPage: false })
 
     await page.locator('button[title="Marked"]:visible').click()
@@ -345,6 +354,7 @@ test.describe('Preflight smoke', () => {
         backdropHeight: Number.parseFloat(backdrop?.height || '0'),
         backdropZIndex: Number.parseInt(backdrop?.zIndex || '0', 10),
         controlsZIndex: Number.parseInt(getComputedStyle(controls).zIndex || '0', 10),
+        backdropOpacity: Number.parseFloat(backdrop?.opacity || '0'),
       }
     })
     expect(normalDockLayout.inputHeight).toBe(52)
@@ -355,6 +365,7 @@ test.describe('Preflight smoke', () => {
     expect(normalDockLayout.backdropMaskImage).not.toBe('none')
     expect(normalDockLayout.backdropHeight).toBeGreaterThan(normalDockLayout.inputHeight)
     expect(normalDockLayout.controlsZIndex).toBeGreaterThan(normalDockLayout.backdropZIndex)
+    expect(normalDockLayout.backdropOpacity).toBeGreaterThan(0)
     await search.focus()
     await expect(page.locator('.keyboard-search-active')).toBeVisible()
     await expect(searchDock).toBeVisible()
@@ -379,6 +390,7 @@ test.describe('Preflight smoke', () => {
         inputHeight: input.getBoundingClientRect().height,
         scannerHeight: scannerButton.getBoundingClientRect().height,
         addHeight: addButton.getBoundingClientRect().height,
+        backdropOpacity: Number.parseFloat(getComputedStyle(document.querySelector('.member-search-dock-backdrop')).opacity || '0'),
       }
     })
     expect(compactDockLayout.inputHeight).toBe(normalDockLayout.inputHeight)
@@ -386,6 +398,7 @@ test.describe('Preflight smoke', () => {
     expect(compactDockLayout.addHeight).toBe(normalDockLayout.inputHeight)
     expect(Math.abs(compactDockLayout.dockBottom - 520)).toBeLessThan(2)
     expect(compactDockLayout.headerTop).toBeGreaterThanOrEqual(-1)
+    expect(compactDockLayout.backdropOpacity).toBeGreaterThan(0)
     const compactCardHeight = await firstCard.evaluate((element) => element.getBoundingClientRect().height)
     const joinedDisplay = await firstCard.locator('.member-card-meta').evaluate((element) => getComputedStyle(element).display)
     expect(compactCardHeight).toBeLessThan(normalCardHeight)

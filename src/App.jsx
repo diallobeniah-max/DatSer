@@ -907,12 +907,32 @@ function App() {
     // keeps its full layout height so the header never follows an iOS keyboard;
     // only anchored controls consume the measured keyboard inset.
     const vv = window.visualViewport
+    // `100lvh` gives the installed iOS app's largest (keyboard-closed) layout
+    // viewport. In standalone mode innerHeight can briefly report the visual
+    // viewport instead, which previously made the fixed Dashboard shell too
+    // short and exposed the page background below the dock.
+    const layoutViewportProbe = document.createElement('div')
+    layoutViewportProbe.setAttribute('aria-hidden', 'true')
+    layoutViewportProbe.style.cssText = [
+      'position:fixed',
+      'inset:0 auto auto 0',
+      'width:1px',
+      'height:100vh',
+      'height:100lvh',
+      'visibility:hidden',
+      'pointer-events:none',
+      'z-index:-1',
+    ].join(';')
+    document.body.appendChild(layoutViewportProbe)
+
     let viewportFrame = 0
     let lastViewportSignature = ''
+    const readLargestViewportHeight = () => Math.round(layoutViewportProbe.getBoundingClientRect().height || 0)
     let stableLayoutHeight = Math.max(
       window.innerHeight || 0,
       document.documentElement.clientHeight || 0,
-      Math.round((vv?.height || 0) + (vv?.offsetTop || 0))
+      Math.round((vv?.height || 0) + (vv?.offsetTop || 0)),
+      readLargestViewportHeight()
     )
     let lastViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
     let resetStableLayoutHeight = false
@@ -921,10 +941,11 @@ function App() {
       viewportFrame = window.requestAnimationFrame(() => {
         viewportFrame = 0
         const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0)
+        const largestViewportHeight = readLargestViewportHeight()
         const viewportHeight = Math.round(vv?.height || layoutHeight)
         const viewportOffsetTop = Math.round(vv?.offsetTop || 0)
         const visibleBottom = viewportHeight + viewportOffsetTop
-        const currentLayoutHeight = Math.max(layoutHeight, visibleBottom)
+        const currentLayoutHeight = Math.max(layoutHeight, largestViewportHeight, visibleBottom)
         const currentViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
         const didRotate = Math.abs(currentViewportWidth - lastViewportWidth) > 80
         lastViewportWidth = currentViewportWidth
@@ -933,14 +954,10 @@ function App() {
           stableLayoutHeight = currentLayoutHeight
           resetStableLayoutHeight = false
         } else {
-          const candidateInset = Math.max(0, stableLayoutHeight - visibleBottom)
-          // A shorter viewport without a meaningful obstruction is a browser
-          // chrome transition, not a keyboard. It is safe to refresh the
-          // baseline in that case. Keeping the prior baseline while the inset
-          // is meaningful also handles iOS PWAs whose innerHeight shrinks.
-          if (candidateInset <= 120) {
-            stableLayoutHeight = currentLayoutHeight
-          }
+          // Never shrink the closed-layout baseline during iOS toolbar or
+          // keyboard animation. A new larger browser layout can safely expand
+          // it, while orientation changes explicitly reset the baseline above.
+          stableLayoutHeight = Math.max(stableLayoutHeight, currentLayoutHeight)
         }
 
         const keyboardInset = vv
@@ -959,16 +976,48 @@ function App() {
         // sheets while new app-shell consumers use the explicit inset name.
         root.style.setProperty('--keyboard-offset', `${appliedKeyboardInset}px`)
         root.classList.toggle('app-keyboard-open', isKeyboardOpen)
-        const nextSignature = `${stableLayoutHeight}:${visibleHeight}:${appliedKeyboardInset}`
+        // Keep accidental iOS focus panning on the document from carrying the
+        // header away. The member scroller is deliberately untouched.
+        if (root.classList.contains('dashboard-shell-active')) {
+          const scrollingElement = document.scrollingElement
+          if ((scrollingElement?.scrollTop || 0) !== 0 || root.scrollTop !== 0 || document.body.scrollTop !== 0) {
+            if (scrollingElement) scrollingElement.scrollTop = 0
+            root.scrollTop = 0
+            document.body.scrollTop = 0
+          }
+        }
+
+        const standalone = Boolean(window.navigator.standalone) || window.matchMedia?.('(display-mode: standalone)').matches
+        const activeElement = document.activeElement
+        const activeElementType = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
+          ? activeElement.type || activeElement.tagName.toLowerCase()
+          : activeElement?.tagName?.toLowerCase() || 'none'
+        const searchFocused = Boolean(activeElement?.matches?.('.member-search-dock-input'))
+        const nextSignature = `${stableLayoutHeight}:${visibleHeight}:${appliedKeyboardInset}:${viewportOffsetTop}`
         if (nextSignature !== lastViewportSignature) {
           lastViewportSignature = nextSignature
-          window.dispatchEvent(new CustomEvent('datser:visual-viewport', {
-            detail: {
-              layoutHeight: stableLayoutHeight,
-              visibleHeight,
-              keyboardInset: appliedKeyboardInset,
-            }
-          }))
+          const detail = {
+            layoutHeight: stableLayoutHeight,
+            visualViewportHeight: viewportHeight,
+            visualViewportOffsetTop: viewportOffsetTop,
+            visualViewportPageTop: Math.round(vv?.pageTop || 0),
+            visualViewportScale: vv?.scale || 1,
+            windowInnerHeight: window.innerHeight || 0,
+            documentClientHeight: document.documentElement.clientHeight || 0,
+            largestViewportHeight,
+            visibleHeight,
+            keyboardInset: appliedKeyboardInset,
+            standalone,
+            navigatorStandalone: Boolean(window.navigator.standalone),
+            activeElementType,
+            searchFocused,
+          }
+          window.dispatchEvent(new CustomEvent('datser:visual-viewport', { detail }))
+          // Optional real-device diagnostics: developers can enable this in a
+          // local session without exposing a production overlay or changing UI.
+          if (import.meta.env.DEV && window.localStorage.getItem('datser:viewport-debug') === '1') {
+            console.debug('[DatSer viewport]', detail)
+          }
         }
       })
     }
@@ -990,6 +1039,7 @@ function App() {
       window.removeEventListener('orientationchange', onOrientationChange)
       coarseMedia?.removeEventListener('change', onMediaChange)
       widthMedia?.removeEventListener('change', onMediaChange)
+      layoutViewportProbe.remove()
       document.documentElement.classList.remove('app-keyboard-open')
     }
   }, [])
