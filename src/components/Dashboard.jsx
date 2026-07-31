@@ -17,7 +17,7 @@ import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
 import MissingDataModal from './MissingDataModal'
 import { resolveMemberAttendanceForDate } from '../utils/attendanceRecords'
-import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode, normalizeMemberCode } from '../utils/memberIndexCodes'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
@@ -411,6 +411,7 @@ const Dashboard = ({ isAdmin = false }) => {
     setAttendanceData,
     currentTable,
     members,
+    memberCodeMap,
     membersTotalCount,
     membersLoadedAll,
     fetchMoreMembers,
@@ -2047,7 +2048,8 @@ const Dashboard = ({ isAdmin = false }) => {
   }, [])
 
   const pendingSearchTerm = localSearchTerm.trim()
-  const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+  const legacyMemberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+  const memberIndexCodeMap = useMemo(() => ({ ...legacyMemberIndexCodeMap, ...(memberCodeMap || {}) }), [legacyMemberIndexCodeMap, memberCodeMap])
   const isShortSearchView = searchSuggestionView !== 'full'
   const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
   const isShortSearchActive = isShortSearchView && showSearchSuggestions
@@ -2076,7 +2078,8 @@ const Dashboard = ({ isAdmin = false }) => {
   const quickPassCheckInUrl = quickPassMember
     ? buildMemberCheckInUrl({
       memberId: quickPassMember.id,
-      code: quickPassCode
+      code: quickPassCode,
+      workspaceId: dataOwnerId || user?.id
     })
     : ''
   const [quickPassQrImageUrl, setQuickPassQrImageUrl] = useState('')
@@ -2120,7 +2123,8 @@ const Dashboard = ({ isAdmin = false }) => {
 
     const shareCheckInUrl = buildMemberCheckInUrl({
       memberId: member.id,
-      code
+      code,
+      workspaceId: dataOwnerId || user?.id
     })
     const qrImageUrl = await createQrImageUrl(shareCheckInUrl)
     const imageUrl = await createMemberPassShareImage({
@@ -2148,7 +2152,7 @@ const Dashboard = ({ isAdmin = false }) => {
       churchName: memberCodeChurchName,
       imageUrl
     })
-  }, [isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap])
+  }, [dataOwnerId, isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap, user?.id])
 
   const sendMemberPassShare = useCallback(async () => {
     if (!memberPassSharePreview) return
@@ -2244,7 +2248,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   useEffect(() => {
-    const normalizedCode = pendingSearchTerm.trim().toUpperCase()
+    const normalizedCode = normalizeMemberCode(pendingSearchTerm)
     if (!memberCodeTurboEnabled || !normalizedCode || normalizedCode.length < 2) {
       turboCheckInRef.current.key = ''
       return undefined
@@ -2259,7 +2263,8 @@ const Dashboard = ({ isAdmin = false }) => {
         member?.Code,
         member?.['Member Code']
       ].filter(Boolean)
-      return candidateCodes.some((candidate) => String(candidate).trim().toUpperCase() === normalizedCode)
+      const aliases = memberIndexCodeMap?.[member.id]?.aliases || []
+      return [...candidateCodes, ...aliases].some((candidate) => normalizeMemberCode(candidate) === normalizedCode)
     })
     if (!exactMember) return undefined
 
@@ -3881,7 +3886,7 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Bottom Search Bar */}
-      <div className="app-bottom-dock bottom-search-bar bottom-control-safe member-search-dock fixed bottom-0 left-0 right-0 z-30 safe-area-x">
+      <div className="app-bottom-dock bottom-search-bar member-search-dock fixed bottom-0 left-0 right-0 z-30 safe-area-x">
         <div className="member-search-dock-backdrop" aria-hidden="true" />
         <div className="member-search-dock-inner relative z-[1] mx-auto">
           <div className="member-search-dock-controls flex items-center gap-2">

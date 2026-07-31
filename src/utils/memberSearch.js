@@ -1,3 +1,5 @@
+import { normalizeMemberCode } from './memberIndexCodes'
+
 export const normalizeSearchText = (value) => String(value || '')
   .normalize('NFKD')
   .replace(/[\u0300-\u036f]/g, '')
@@ -106,9 +108,11 @@ export const classifyMemberSearch = ({
   remoteMembers = [],
   deletedMembers = [],
   query = '',
-  getCode = (member) => member?.member_code || member?.memberCode || member?.code || member?.Code || ''
+  getCode = (member) => member?.member_code || member?.memberCode || member?.code || member?.Code || '',
+  getCodeAliases = () => []
 } = {}) => {
   const normalizedQuery = normalizeSearchText(query)
+  const normalizedCodeQuery = normalizeMemberCode(query)
   const activeMembers = uniqueActiveMembers(members, remoteMembers)
   if (!normalizedQuery) {
     return {
@@ -118,23 +122,28 @@ export const classifyMemberSearch = ({
   }
 
   const exact = []
+  const exactCode = []
   const partial = []
   const suggestions = []
   activeMembers.forEach((member) => {
     const name = normalizeSearchText(getSearchableMemberName(member))
-    const code = normalizeSearchText(getCode(member))
+    const normalizedCode = normalizeMemberCode(getCode(member))
+    const normalizedAliases = (getCodeAliases(member) || []).map(normalizeMemberCode).filter(Boolean)
     const nameTokens = name.split(' ').filter(Boolean)
-    const isExact = name === normalizedQuery || code === normalizedQuery || getSearchablePhones(member)
+    const isExactCode = normalizedCodeQuery && (normalizedCode === normalizedCodeQuery || normalizedAliases.includes(normalizedCodeQuery))
+    const isExact = name === normalizedQuery || isExactCode || getSearchablePhones(member)
       .some(({ variants }) => getPhoneVariants(query).some((candidate) => variants.includes(candidate)))
 
     if (isExact) {
       exact.push(member)
+      if (isExactCode) exactCode.push(member)
       return
     }
 
     const exactNamePart = normalizedQuery.split(' ').length === 1 && nameTokens.includes(normalizedQuery)
     const phraseMatch = name.includes(normalizedQuery)
-    if (exactNamePart || phraseMatch || hasNameTokenMatch(name, normalizedQuery) || code.includes(normalizedQuery) || hasPhoneMatch(member, query)) {
+    const codePrefixMatch = normalizedCodeQuery && (normalizedCode.startsWith(normalizedCodeQuery) || normalizedAliases.some((alias) => alias.startsWith(normalizedCodeQuery)))
+    if (exactNamePart || phraseMatch || hasNameTokenMatch(name, normalizedQuery) || codePrefixMatch || hasPhoneMatch(member, query)) {
       partial.push(member)
       return
     }
@@ -143,13 +152,15 @@ export const classifyMemberSearch = ({
 
   const deletedMatches = (deletedMembers || []).filter((member) => {
     const name = normalizeSearchText(getSearchableMemberName(member))
-    const code = normalizeSearchText(getCode(member))
-    return name === normalizedQuery || code === normalizedQuery || hasNameTokenMatch(name, normalizedQuery)
+    const normalizedCode = normalizeMemberCode(getCode(member))
+    return name === normalizedQuery || (normalizedCodeQuery && normalizedCode === normalizedCodeQuery) || hasNameTokenMatch(name, normalizedQuery)
   })
-  const visible = [...exact, ...partial]
-  const status = exact.length ? 'exact' : partial.length ? 'partial' : deletedMatches.length ? 'deleted' : suggestions.length ? 'suggested' : 'none'
+  // A complete member-code lookup identifies one record, even when another
+  // member's name or a partial code happens to match the same text.
+  const visible = exactCode.length ? exactCode : [...exact, ...partial]
+  const status = exactCode.length || exact.length ? 'exact' : partial.length ? 'partial' : deletedMatches.length ? 'deleted' : suggestions.length ? 'suggested' : 'none'
 
-  return { query: normalizedQuery, exact, partial, suggestions, visible, deletedMatches, status, visibleCount: visible.length }
+  return { query: normalizedQuery, exact: exactCode.length ? exactCode : exact, partial, suggestions, visible, deletedMatches, status, visibleCount: visible.length }
 }
 
 export const shouldShowSearchDebug = ({ isDevelopment, flag }) => (

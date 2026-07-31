@@ -904,66 +904,84 @@ function App() {
     widthMedia?.addEventListener('change', onMediaChange)
 
     // One authoritative visual viewport contract. The dashboard shell always
-    // keeps its full layout height so the header never follows an iOS keyboard;
-    // only anchored controls consume the measured keyboard inset.
+    // keeps its real, keyboard-closed layout height so the header never follows
+    // an iOS keyboard; only anchored controls consume the measured inset.
     const vv = window.visualViewport
-    // `100lvh` gives the installed iOS app's largest (keyboard-closed) layout
-    // viewport. In standalone mode innerHeight can briefly report the visual
-    // viewport instead, which previously made the fixed Dashboard shell too
-    // short and exposed the page background below the dock.
-    const layoutViewportProbe = document.createElement('div')
-    layoutViewportProbe.setAttribute('aria-hidden', 'true')
-    layoutViewportProbe.style.cssText = [
-      'position:fixed',
-      'inset:0 auto auto 0',
-      'width:1px',
-      'height:100vh',
-      'height:100lvh',
-      'visibility:hidden',
-      'pointer-events:none',
-      'z-index:-1',
-    ].join(';')
-    document.body.appendChild(layoutViewportProbe)
-
     let viewportFrame = 0
     let lastViewportSignature = ''
-    const readLargestViewportHeight = () => Math.round(layoutViewportProbe.getBoundingClientRect().height || 0)
-    let stableLayoutHeight = Math.max(
-      window.innerHeight || 0,
-      document.documentElement.clientHeight || 0,
-      Math.round((vv?.height || 0) + (vv?.offsetTop || 0)),
-      readLargestViewportHeight()
+    const readVisibleBottom = () => Math.round(
+      (vv?.height || window.innerHeight || document.documentElement.clientHeight || 0) + (vv?.offsetTop || 0)
     )
+    // Do not use 100lvh here. In a physical standalone PWA it can describe a
+    // viewport larger than the visible app canvas and place an overflow-hidden
+    // shell over the bottom dock. The visual viewport is the authoritative
+    // closed size; it is frozen while a focused text field opens the keyboard.
+    let stableLayoutHeight = readVisibleBottom()
     let lastViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
     let resetStableLayoutHeight = false
+    let textEntrySessionActive = false
+    let waitingForKeyboardClose = false
+    const isTextEntry = (element) => (
+      element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+    )
+    // Capture the keyboard-closed height synchronously when a text field gains
+    // focus. iOS then emits several intermediate visualViewport sizes while the
+    // keyboard animates; none of those frames may become a new shell baseline.
+    const onFocusIn = (event) => {
+      if (!isTextEntry(event.target)) return
+      textEntrySessionActive = true
+      waitingForKeyboardClose = false
+      stableLayoutHeight = readVisibleBottom()
+      applyViewport()
+    }
+    const onFocusOut = () => {
+      // iOS reports focusout before the visual viewport has expanded again.
+      // Keep the keyboard-closed baseline through that short native animation
+      // instead of briefly shrinking the shell and clipping its dock.
+      waitingForKeyboardClose = textEntrySessionActive
+      applyViewport()
+    }
     const applyViewport = () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
       viewportFrame = window.requestAnimationFrame(() => {
         viewportFrame = 0
-        const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0)
-        const largestViewportHeight = readLargestViewportHeight()
-        const viewportHeight = Math.round(vv?.height || layoutHeight)
+        const viewportHeight = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 0)
         const viewportOffsetTop = Math.round(vv?.offsetTop || 0)
         const visibleBottom = viewportHeight + viewportOffsetTop
-        const currentLayoutHeight = Math.max(layoutHeight, largestViewportHeight, visibleBottom)
         const currentViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
         const didRotate = Math.abs(currentViewportWidth - lastViewportWidth) > 80
         lastViewportWidth = currentViewportWidth
 
+        const activeElement = document.activeElement
+        const isTextEntryFocused = isTextEntry(activeElement)
+        // A focused field and a meaningful viewport reduction signal the start
+        // of keyboard animation. Keep the prior closed baseline from the first
+        // reduced frame onward so the dock never learns a series of temporary
+        // heights while iOS animates its keyboard.
+        const viewportIsReduced = visibleBottom < stableLayoutHeight - 24
+        const keyboardStarting = (textEntrySessionActive || waitingForKeyboardClose) && viewportIsReduced
         if (resetStableLayoutHeight || didRotate) {
-          stableLayoutHeight = currentLayoutHeight
+          stableLayoutHeight = visibleBottom
           resetStableLayoutHeight = false
-        } else {
-          // Never shrink the closed-layout baseline during iOS toolbar or
-          // keyboard animation. A new larger browser layout can safely expand
-          // it, while orientation changes explicitly reset the baseline above.
-          stableLayoutHeight = Math.max(stableLayoutHeight, currentLayoutHeight)
+          textEntrySessionActive = false
+          waitingForKeyboardClose = false
+        } else if (waitingForKeyboardClose && !viewportIsReduced) {
+          // The keyboard has actually closed. Only now adopt the restored
+          // standalone-PWA canvas and return the dock to its safe-area edge.
+          stableLayoutHeight = visibleBottom
+          textEntrySessionActive = false
+          waitingForKeyboardClose = false
+        } else if (!keyboardStarting && !textEntrySessionActive && !waitingForKeyboardClose) {
+          // The keyboard is closed: accept the real visible canvas directly.
+          // This also handles standalone-PWA toolbars without ever growing the
+          // app shell beyond what the physical device can display.
+          stableLayoutHeight = visibleBottom
         }
 
         const keyboardInset = vv
           ? Math.max(0, Math.round(stableLayoutHeight - visibleBottom))
           : 0
-        const isKeyboardOpen = keyboardInset > 120
+        const isKeyboardOpen = keyboardInset > 48 && (isTextEntryFocused || textEntrySessionActive || waitingForKeyboardClose)
         const appliedKeyboardInset = isKeyboardOpen ? keyboardInset : 0
         const visibleHeight = isKeyboardOpen ? viewportHeight : stableLayoutHeight
         const root = document.documentElement
@@ -988,7 +1006,6 @@ function App() {
         }
 
         const standalone = Boolean(window.navigator.standalone) || window.matchMedia?.('(display-mode: standalone)').matches
-        const activeElement = document.activeElement
         const activeElementType = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
           ? activeElement.type || activeElement.tagName.toLowerCase()
           : activeElement?.tagName?.toLowerCase() || 'none'
@@ -1004,7 +1021,6 @@ function App() {
             visualViewportScale: vv?.scale || 1,
             windowInnerHeight: window.innerHeight || 0,
             documentClientHeight: document.documentElement.clientHeight || 0,
-            largestViewportHeight,
             visibleHeight,
             keyboardInset: appliedKeyboardInset,
             standalone,
@@ -1024,6 +1040,8 @@ function App() {
     vv?.addEventListener('resize', applyViewport)
     vv?.addEventListener('scroll', applyViewport)
     window.addEventListener('resize', applyViewport)
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
     const onOrientationChange = () => {
       resetStableLayoutHeight = true
       applyViewport()
@@ -1036,10 +1054,11 @@ function App() {
       vv?.removeEventListener('resize', applyViewport)
       vv?.removeEventListener('scroll', applyViewport)
       window.removeEventListener('resize', applyViewport)
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
       window.removeEventListener('orientationchange', onOrientationChange)
       coarseMedia?.removeEventListener('change', onMediaChange)
       widthMedia?.removeEventListener('change', onMediaChange)
-      layoutViewportProbe.remove()
       document.documentElement.classList.remove('app-keyboard-open')
     }
   }, [])

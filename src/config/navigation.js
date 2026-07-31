@@ -309,6 +309,14 @@ export const SETTINGS_SEARCH_INDEX = [
         icon: BadgeCheck
     },
     {
+        id: 'member_code_format',
+        section: 'member_codes',
+        label: 'Member Code Format',
+        description: 'Choose letters only or letters and numbers for the whole workspace',
+        keywords: 'member code format letters only alphabet a z aa alphanumeric numbers workspace collaborator admin qr pass search',
+        icon: BadgeCheck
+    },
+    {
         id: 'member_code_quick_pass',
         section: 'member_codes',
         label: 'Quick Pass',

@@ -664,6 +664,7 @@ const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
   'member_code_auto_cycle_minutes',
   'member_code_lookup_enabled',
   'member_code_share_message_template',
+  'member_code_format',
   'guided_form_settings'
 ]
 
@@ -702,6 +703,7 @@ export const AppProvider = ({ children }) => {
   const isDeveloperBypassActive = isDeveloperBypass || isDeveloperBypassStorageEnabled()
   const isAdminCodeLogin = authContext?.preferences?.admin_code_login === true || user?.app_metadata?.provider === 'admin-code'
   const [members, setMembers] = useState([])
+  const [workspaceMemberCodeRecords, setWorkspaceMemberCodeRecords] = useState({})
   const [membersTotalCount, setMembersTotalCount] = useState(0)
   const [membersLoadedAll, setMembersLoadedAll] = useState(false)
   const [memberPreviewSyncStatus, setMemberPreviewSyncStatus] = useState({
@@ -2084,6 +2086,80 @@ export const AppProvider = ({ children }) => {
     return query
   }, [])
 
+  const legacyMemberCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+  const memberCodeMap = useMemo(() => ({
+    ...legacyMemberCodeMap,
+    ...workspaceMemberCodeRecords
+  }), [legacyMemberCodeMap, workspaceMemberCodeRecords])
+  const getWorkspaceMemberCode = useCallback((member) => (
+    getMemberIndexCode(member, memberCodeMap) || member?.member_code || ''
+  ), [memberCodeMap])
+  const getWorkspaceMemberCodeAliases = useCallback((member) => {
+    const record = memberCodeMap?.[member?.id]
+    return Array.isArray(record?.aliases) ? record.aliases : []
+  }, [memberCodeMap])
+
+  const refreshWorkspaceMemberCodes = useCallback(async () => {
+    const ownerId = dataOwnerId || user?.id
+    const active = members.filter((member) => member?.id && !member.deleted_at)
+    if (!ownerId || active.length === 0 || isDeveloperBypass || !isSupabaseConfigured()) return []
+    const { data, error } = await supabase.rpc('ensure_workspace_member_codes', {
+      p_owner_id: ownerId,
+      p_members: active.map((member) => ({
+        member_id: member.id,
+        fallback_code: legacyMemberCodeMap[member.id] || member.member_code || ''
+      }))
+    })
+    if (error) throw error
+    // `ensure_workspace_member_codes` only receives the currently hydrated
+    // member page. Read the workspace registry immediately afterwards so an
+    // exact code lookup is reliable for every collaborator and every member,
+    // not only the rows that happen to be visible in the dashboard preview.
+    const { data: registryData, error: registryError } = await supabase
+      .from('workspace_member_codes')
+      .select('member_id, current_code, aliases')
+      .eq('workspace_owner_id', ownerId)
+    if (registryError) throw registryError
+
+    const records = registryData || data || []
+    const next = records.reduce((result, record) => {
+      if (record?.member_id && record?.current_code) {
+        result[record.member_id] = { current_code: record.current_code, aliases: record.aliases || [] }
+      }
+      return result
+    }, {})
+    if (Object.keys(next).length > 0) setWorkspaceMemberCodeRecords((current) => ({ ...current, ...next }))
+    return records
+  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, legacyMemberCodeMap, members, user?.id])
+
+  useEffect(() => {
+    refreshWorkspaceMemberCodes().catch((error) => {
+      // The app retains its deterministic legacy map until the migration is
+      // available. Do not turn a read failure into a member-list failure.
+      console.warn('Workspace member-code refresh unavailable:', error?.message || error)
+    })
+  }, [refreshWorkspaceMemberCodes])
+
+  useEffect(() => {
+    const ownerId = dataOwnerId || user?.id
+    if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) return undefined
+    const channel = supabase.channel(`workspace-member-codes-${ownerId}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'workspace_member_codes', filter: `workspace_owner_id=eq.${ownerId}`
+      }, (payload) => {
+        const row = payload.new || payload.old
+        if (!row?.member_id) return
+        setWorkspaceMemberCodeRecords((current) => {
+          const next = { ...current }
+          if (payload.eventType === 'DELETE') delete next[row.member_id]
+          else next[row.member_id] = { current_code: row.current_code, aliases: row.aliases || [] }
+          return next
+        })
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, user?.id])
+
   const applyWorkspaceOwnerFilter = useCallback((query) => {
     const ownerId = dataOwnerId || user?.id
     if (!query || !ownerId || typeof query.eq !== 'function') return query
@@ -2124,6 +2200,58 @@ export const AppProvider = ({ children }) => {
 
     return response
   }
+
+  // A code-format conversion must register every member in the active
+  // workspace table before its one server-side transaction runs. The normal
+  // dashboard intentionally loads a small preview page, so reuse the same
+  // paginated/RLS-aware reader here instead of assigning codes from a partial
+  // client list or mutating the visible member collection.
+  const hydrateWorkspaceMemberCodeRegistry = useCallback(async () => {
+    const ownerId = dataOwnerId || user?.id
+    if (!ownerId || !currentTable || isDeveloperBypass || !isSupabaseConfigured()) return []
+
+    const allMembers = new Map()
+    let offset = 0
+    let totalCount = Number.POSITIVE_INFINITY
+    while (offset < totalCount) {
+      const { data, error, count } = await fetchMemberPreviewPage(currentTable, offset)
+      if (error) throw error
+      const page = (data || [])
+        .map((member) => normalizeMemberRecord(member, { tableName: currentTable, ownerId }))
+        .filter((member) => member?.id && !member.deleted_at)
+      page.forEach((member) => allMembers.set(member.id, member))
+      totalCount = Number.isFinite(count) ? count : Number.POSITIVE_INFINITY
+      if (page.length === 0 || page.length < MEMBER_PREVIEW_PAGE_SIZE) break
+      offset += page.length
+    }
+
+    const resolvedMembers = [...allMembers.values()]
+    if (resolvedMembers.length === 0) return []
+    const fallbackCodes = buildMemberIndexCodeMap(resolvedMembers)
+    const { error } = await supabase.rpc('ensure_workspace_member_codes', {
+      p_owner_id: ownerId,
+      p_members: resolvedMembers.map((member) => ({
+        member_id: member.id,
+        fallback_code: fallbackCodes[member.id] || member.member_code || ''
+      }))
+    })
+    if (error) throw error
+
+    const { data: registryData, error: registryError } = await supabase
+      .from('workspace_member_codes')
+      .select('member_id, current_code, aliases')
+      .eq('workspace_owner_id', ownerId)
+    if (registryError) throw registryError
+
+    const next = (registryData || []).reduce((result, record) => {
+      if (record?.member_id && record?.current_code) {
+        result[record.member_id] = { current_code: record.current_code, aliases: record.aliases || [] }
+      }
+      return result
+    }, {})
+    setWorkspaceMemberCodeRecords((current) => ({ ...current, ...next }))
+    return registryData || []
+  }, [currentTable, dataOwnerId, fetchMemberPreviewPage, isDeveloperBypass, isSupabaseConfigured, user?.id])
 
   const applyMemberPreviewCache = (tableName, payload, { background = false } = {}) => {
     const normalizedMembers = (payload?.data || []).filter((member) => !member?.deleted_at).map((member) => normalizeMemberRecord(member, {
@@ -5553,15 +5681,15 @@ export const AppProvider = ({ children }) => {
 
   const activeMembers = useMemo(() => members.filter((member) => !member?.deleted_at), [members])
   const searchResultSections = useMemo(() => {
-    const codeMap = buildMemberIndexCodeMap(activeMembers)
     return classifyMemberSearch({
       members: activeMembers,
       remoteMembers: serverSearchResults || [],
       deletedMembers: deletedMemberSearchTombstones,
       query: searchTerm,
-      getCode: (member) => getMemberIndexCode(member, codeMap) || member?.member_code || ''
+      getCode: getWorkspaceMemberCode,
+      getCodeAliases: getWorkspaceMemberCodeAliases
     })
-  }, [activeMembers, deletedMemberSearchTombstones, searchTerm, serverSearchResults])
+  }, [activeMembers, deletedMemberSearchTombstones, getWorkspaceMemberCode, getWorkspaceMemberCodeAliases, searchTerm, serverSearchResults])
   const filteredMembers = searchTerm.trim()
     ? searchResultSections.visible.slice(0, 20)
     : activeMembers
@@ -5657,11 +5785,11 @@ export const AppProvider = ({ children }) => {
       if (page.length < MEMBER_PREVIEW_PAGE_SIZE) break
       offset += MEMBER_PREVIEW_PAGE_SIZE
     }
-    const candidateCodeMap = buildMemberIndexCodeMap(candidates)
     const sorted = classifyMemberSearch({
       members: candidates,
       query: trimmed,
-      getCode: (member) => getMemberIndexCode(member, candidateCodeMap) || member?.member_code || ''
+      getCode: getWorkspaceMemberCode,
+      getCodeAliases: getWorkspaceMemberCodeAliases
     }).visible.slice().sort((a, b) => {
       const an = (getMemberDisplayNameForRecentEdit(a) || '').toString().toLowerCase()
       const bn = (getMemberDisplayNameForRecentEdit(b) || '').toString().toLowerCase()
@@ -5677,7 +5805,7 @@ export const AppProvider = ({ children }) => {
       source: 'search-index'
     })
     if (isCurrentRequest()) setServerSearchResults(sorted)
-  }, [currentTable, isOnline, membersTotalCount, persistMemberPreviewIndex, searchMemberPreviewIndex, shouldUseOfflineData])
+  }, [currentTable, getWorkspaceMemberCode, getWorkspaceMemberCodeAliases, isOnline, membersTotalCount, persistMemberPreviewIndex, searchMemberPreviewIndex, shouldUseOfflineData])
 
   useEffect(() => {
     performServerSearch(searchTerm)
@@ -7467,7 +7595,13 @@ export const AppProvider = ({ children }) => {
       const consumed = consumeMemberCheckInUrl(window.location.href)
       if (!consumed) return
       if (!currentTable) return
-      const { memberId: qrMark, code: codeParam } = consumed.request
+      const { memberId: qrMark, code: codeParam, workspaceId: qrWorkspaceId } = consumed.request
+      const activeWorkspaceId = dataOwnerId || user?.id
+      if (qrWorkspaceId && activeWorkspaceId && qrWorkspaceId !== activeWorkspaceId) {
+        toast.error('This member pass belongs to a different workspace')
+        window.history.replaceState({}, document.title, consumed.cleanUrl)
+        return
+      }
       const runKey = `${currentTable}:${qrMark}:${codeParam}`
       if (qrCheckInRunRef.current.running || qrCheckInRunRef.current.key === runKey) return
       qrCheckInRunRef.current = { key: runKey, running: true }
@@ -7861,6 +7995,11 @@ export const AppProvider = ({ children }) => {
     logActivity,
     updateWorkspaceForAllTables,
     members,
+    memberCodeMap,
+    getWorkspaceMemberCode,
+    getWorkspaceMemberCodeAliases,
+    refreshWorkspaceMemberCodes,
+    hydrateWorkspaceMemberCodeRegistry,
     membersTotalCount,
     membersLoadedAll,
     memberPreviewSyncStatus,
@@ -7974,7 +8113,7 @@ export const AppProvider = ({ children }) => {
     fetchLockedDefaultDate,
     sendAdminPeriodBroadcast
   }), [
-    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, searchTerm, serverSearchResults, searchResultSections,
+    members, memberCodeMap, getWorkspaceMemberCode, getWorkspaceMemberCodeAliases, refreshWorkspaceMemberCodes, hydrateWorkspaceMemberCodeRegistry, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, searchTerm, serverSearchResults, searchResultSections,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,

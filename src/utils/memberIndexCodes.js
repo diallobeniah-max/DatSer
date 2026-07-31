@@ -14,10 +14,35 @@ export const getMemberFirstLetter = (member = {}) => {
   return /^[A-Z]$/.test(first) ? first : '#'
 }
 
+// Codes are compared without visual separators so E02, E-02 and E 02 all
+// resolve to the same member. Stored/display values remain uppercase.
+export const normalizeMemberCode = (value = '') => String(value)
+  .trim()
+  .toUpperCase()
+  .replace(/[^A-Z0-9]/g, '')
+
+export const getLettersOnlyMemberCode = (position) => {
+  let value = Number(position)
+  if (!Number.isInteger(value) || value < 1) return ''
+  let result = ''
+  while (value > 0) {
+    value -= 1
+    result = String.fromCharCode(65 + (value % 26)) + result
+    value = Math.floor(value / 26)
+  }
+  return result
+}
+
+const extractCurrentCode = (value) => {
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object') return value.current_code || value.code || ''
+  return ''
+}
+
 export const getMemberIndexCode = (member, indexMap) => {
   if (!member) return ''
-  if (indexMap instanceof Map) return indexMap.get(member.id) || ''
-  return indexMap?.[member.id] || ''
+  if (indexMap instanceof Map) return extractCurrentCode(indexMap.get(member.id))
+  return extractCurrentCode(indexMap?.[member.id])
 }
 
 export const buildMemberIndexCodeMap = (members = []) => {
@@ -55,8 +80,9 @@ export const buildMemberIndexCodeMap = (members = []) => {
 }
 
 export const memberMatchesIndexCode = (member, indexCodeMap, query) => {
-  const normalizedQuery = String(query || '').trim().toUpperCase()
+  const normalizedQuery = normalizeMemberCode(query)
   if (!normalizedQuery) return false
-  const code = getMemberIndexCode(member, indexCodeMap)
-  return code.toUpperCase().includes(normalizedQuery)
+  const entry = indexCodeMap instanceof Map ? indexCodeMap.get(member?.id) : indexCodeMap?.[member?.id]
+  const candidates = [getMemberIndexCode(member, indexCodeMap), ...(entry?.aliases || [])]
+  return candidates.some((code) => normalizeMemberCode(code).includes(normalizedQuery))
 }

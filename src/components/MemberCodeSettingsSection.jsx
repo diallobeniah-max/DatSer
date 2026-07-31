@@ -3,7 +3,7 @@ import { AlertCircle, BadgeCheck, BellRing, CheckCircle, Church, Edit3, ImagePlu
 import { useApp } from '../context/AppContext'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
-import { buildMemberIndexCodeMap, getMemberIndexCode } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberIndexCode, normalizeMemberCode } from '../utils/memberIndexCodes'
 import MemberCodeBadge, { normalizeBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, {
     MEMBER_CODE_CARD_STYLE_OPTIONS,
@@ -69,7 +69,7 @@ const optionClass = (active) => (
 )
 
 const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
-    const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator } = useApp()
+    const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator, memberCodeMap = {}, refreshWorkspaceMemberCodes, hydrateWorkspaceMemberCodeRegistry } = useApp()
     const workspaceEnabled = preferences?.workspace_member_codes_enabled !== false
     const memberCodesEnabled = preferences?.member_codes_enabled !== false
     const enabled = workspaceEnabled && memberCodesEnabled
@@ -88,6 +88,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const turboCheckInEnabled = preferences?.member_code_turbo_enabled === true
     const turboNotificationEnabled = preferences?.member_code_turbo_notification_enabled !== false
     const codeLookupEnabled = preferences?.member_code_lookup_enabled !== false
+    const memberCodeFormat = preferences?.member_code_format === 'letters' ? 'letters' : 'alphanumeric'
     const shareMessageTemplate = preferences?.member_code_share_message_template || DEFAULT_SHARE_MESSAGE_TEMPLATE
     const [editingChurchName, setEditingChurchName] = useState(false)
     const [draftChurchName, setDraftChurchName] = useState(churchName)
@@ -98,9 +99,10 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const [saveStatus, setSaveStatus] = useState(null)
     const logoInputRef = useRef(null)
 
-    const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+    const legacyMemberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+    const memberIndexCodeMap = useMemo(() => ({ ...legacyMemberIndexCodeMap, ...memberCodeMap }), [legacyMemberIndexCodeMap, memberCodeMap])
     const lookupResult = useMemo(() => {
-        const normalizedCode = lookupCode.trim().toUpperCase()
+        const normalizedCode = normalizeMemberCode(lookupCode)
         if (!normalizedCode || !codeLookupEnabled) return null
 
         return members.find((member) => {
@@ -114,7 +116,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                 member?.['Member Code']
             ].filter(Boolean)
 
-            return candidateCodes.some((candidate) => String(candidate).trim().toUpperCase() === normalizedCode)
+            const record = memberIndexCodeMap[member.id]
+            return [...candidateCodes, ...(record?.aliases || [])].some((candidate) => normalizeMemberCode(candidate) === normalizedCode)
         }) || null
     }, [codeLookupEnabled, lookupCode, memberIndexCodeMap, members])
 
@@ -186,6 +189,45 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
             console.error('Workspace member code save failed:', error)
             setSaveStatus({ type: 'error', message: 'Workspace Member Codes could not be saved.' })
             return null
+        } finally {
+            setSavingKey('')
+        }
+    }
+    const setMemberCodeFormat = async (nextFormat) => {
+        if (!isAdminAccess || nextFormat === memberCodeFormat) return
+        if (!navigator.onLine) {
+            setSaveStatus({ type: 'error', message: 'Connect to the internet before changing workspace code format.' })
+            return
+        }
+        const label = nextFormat === 'letters' ? 'Letters Only' : 'Letters + Numbers'
+        if (!window.confirm(`Change this workspace to ${label} member codes? Visible badges and new QR passes will change. Existing codes remain available as safe aliases.`)) return
+        const ownerId = dataOwnerId || user?.id
+        if (!ownerId) return
+        setSavingKey('member_code_format')
+        setSaveStatus(null)
+        try {
+            // The dashboard normally keeps only a small preview page in memory.
+            // Hydrate the registry from all active workspace members first so a
+            // confirmed conversion cannot leave unseen members in the old format.
+            await hydrateWorkspaceMemberCodeRegistry?.()
+            const { error } = await supabase.rpc('convert_workspace_member_code_format', {
+                p_owner_id: ownerId,
+                p_format: nextFormat
+            })
+            if (error) throw error
+            // The conversion RPC has already persisted the workspace setting.
+            // A best-effort local preferences refresh must never turn a
+            // successful server conversion into a false failure for the admin.
+            try {
+                await updatePreferences?.({ member_code_format: nextFormat })
+            } catch (preferenceError) {
+                console.warn('Member code format persisted but local preference refresh failed:', preferenceError)
+            }
+            await refreshWorkspaceMemberCodes?.()
+            setSaveStatus({ type: 'success', message: `${label} codes are now shared across the workspace.` })
+        } catch (error) {
+            console.error('Member code format conversion failed:', error)
+            setSaveStatus({ type: 'error', message: error?.message || 'Member code format could not be changed.' })
         } finally {
             setSavingKey('')
         }
@@ -316,6 +358,18 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                 getSettingTargetClass={getSettingTargetClass}
                                 disabled={savingKey === 'workspace_member_codes_enabled'}
                                 onChange={() => setWorkspaceMemberCodesEnabled(!workspaceEnabled)}
+                            />
+                        )}
+                        {isAdminAccess && (
+                            <ToggleRow
+                                icon={Shuffle}
+                                title="Letters Only"
+                                description="Use unique alphabetical member codes such as A, B, Z, AA across this workspace."
+                                checked={memberCodeFormat === 'letters'}
+                                settingId="member_code_format"
+                                getSettingTargetClass={getSettingTargetClass}
+                                disabled={savingKey === 'member_code_format'}
+                                onChange={() => setMemberCodeFormat(memberCodeFormat === 'letters' ? 'alphanumeric' : 'letters')}
                             />
                         )}
                         <ToggleRow

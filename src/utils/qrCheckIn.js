@@ -1,6 +1,6 @@
-const CHECK_IN_PARAM_NAMES = ['member_checkin', 'qr_mark', 'code', 'date', 'table']
+const CHECK_IN_PARAM_NAMES = ['member_checkin', 'qr_mark', 'code', 'workspace', 'qr_v', 'date', 'table']
 
-export const buildMemberCheckInUrl = ({ href, memberId, code }) => {
+export const buildMemberCheckInUrl = ({ href, memberId, code, workspaceId }) => {
   if (!memberId) return ''
   try {
     const baseHref = href || (typeof window !== 'undefined' ? window.location.href : '')
@@ -10,7 +10,9 @@ export const buildMemberCheckInUrl = ({ href, memberId, code }) => {
     url.hash = ''
     url.searchParams.set('member_checkin', '1')
     url.searchParams.set('qr_mark', memberId)
+    url.searchParams.set('qr_v', '2')
     if (code) url.searchParams.set('code', code)
+    if (workspaceId) url.searchParams.set('workspace', workspaceId)
     return url.toString()
   } catch {
     return ''
@@ -25,7 +27,9 @@ export const consumeMemberCheckInUrl = (href) => {
 
     const request = {
       memberId,
-      code: url.searchParams.get('code')?.trim() || ''
+      code: url.searchParams.get('code')?.trim() || '',
+      workspaceId: url.searchParams.get('workspace')?.trim() || '',
+      version: url.searchParams.get('qr_v')?.trim() || '1'
     }
     CHECK_IN_PARAM_NAMES.forEach((name) => url.searchParams.delete(name))
     return { request, cleanUrl: url.toString() }

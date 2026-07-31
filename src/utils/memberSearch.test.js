@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { classifyMemberSearch, shouldShowSearchDebug } from './memberSearch'
+import { getLettersOnlyMemberCode } from './memberIndexCodes'
 
 const members = [
   { id: '1', full_name: 'Beniah Opong Diallo', member_code: 'B01', phone_number: '024 430 7261', parent_phone_1: '+233 24 111 7261', parent_phone_2: '024-999-5555' },
@@ -68,6 +69,34 @@ describe('classifyMemberSearch', () => {
     expect(classifyMemberSearch({ members, query: '0241117261' }).visible.map((member) => member.id)).toContain('1')
     expect(classifyMemberSearch({ members, query: '0249995555' }).visible.map((member) => member.id)).toContain('1')
   })
+
+  it('treats a normalized member code as an exact workspace lookup', () => {
+    const codeMembers = [
+      { id: '1', full_name: 'E02 Name Match', member_code: 'E02' },
+      { id: '2', full_name: 'E02 Other Member', member_code: 'E03' },
+      { id: '3', full_name: 'Another Member', member_code: 'AA' }
+    ]
+
+    for (const query of ['E02', 'e-02', 'E 02', 'aa']) {
+      const result = classifyMemberSearch({ members: codeMembers, query })
+      expect(result.status).toBe('exact')
+      expect(result.visible).toHaveLength(1)
+    }
+    expect(classifyMemberSearch({ members: codeMembers, query: 'E02' }).visible[0].id).toBe('1')
+    expect(classifyMemberSearch({ members: codeMembers, query: 'AA' }).visible[0].id).toBe('3')
+  })
+
+  it('keeps retired member-code aliases searchable without leaking unrelated rows', () => {
+    const result = classifyMemberSearch({
+      members: [
+        { id: '1', full_name: 'First Member', member_code: 'A' },
+        { id: '2', full_name: 'Second Member', member_code: 'B' }
+      ],
+      query: 'E02',
+      getCodeAliases: (member) => member.id === '1' ? ['E02'] : []
+    })
+    expect(result.visible.map((member) => member.id)).toEqual(['1'])
+  })
 })
 
 describe('shouldShowSearchDebug', () => {
@@ -75,5 +104,22 @@ describe('shouldShowSearchDebug', () => {
     expect(shouldShowSearchDebug({ isDevelopment: true, flag: 'true' })).toBe(true)
     expect(shouldShowSearchDebug({ isDevelopment: false, flag: 'true' })).toBe(false)
     expect(shouldShowSearchDebug({ isDevelopment: true, flag: 'false' })).toBe(false)
+  })
+})
+
+describe('getLettersOnlyMemberCode', () => {
+  it('uses a deterministic spreadsheet-style alphabet with no numeric fallback', () => {
+    expect(getLettersOnlyMemberCode(1)).toBe('A')
+    expect(getLettersOnlyMemberCode(26)).toBe('Z')
+    expect(getLettersOnlyMemberCode(27)).toBe('AA')
+    expect(getLettersOnlyMemberCode(28)).toBe('AB')
+    expect(getLettersOnlyMemberCode(52)).toBe('AZ')
+    expect(getLettersOnlyMemberCode(53)).toBe('BA')
+  })
+
+  it('rejects invalid allocation positions instead of silently assigning a duplicate code', () => {
+    expect(getLettersOnlyMemberCode(0)).toBe('')
+    expect(getLettersOnlyMemberCode(-1)).toBe('')
+    expect(getLettersOnlyMemberCode(1.5)).toBe('')
   })
 })

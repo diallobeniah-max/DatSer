@@ -1829,7 +1829,10 @@ body.dashboard-shell-active {
   width: 100%;
   /* Keep the shell stable when iOS resizes the visual viewport for its
      keyboard. The dock alone consumes --app-keyboard-inset. */
-  height: max(var(--app-shell-height, var(--app-layout-height)), var(--app-layout-height));
+  /* --app-shell-height is measured from the physical visible canvas. Do not
+     compare it with a larger viewport fallback: an oversized clipped shell is
+     what cut off the iPhone dock. */
+  height: var(--app-shell-height, var(--app-layout-height));
   min-height: 0;
   overflow: hidden;
   isolation: isolate;
@@ -1908,6 +1911,8 @@ body.dashboard-shell-active {
   bottom: var(--app-keyboard-inset, 0px) !important;
   z-index: var(--ds-z-dock) !important;
   isolation: isolate;
+  /* Keyboard geometry is intentionally a snap, never a transition. */
+  transition-property: opacity !important;
 }
 
 .dashboard-app-shell .bottom-search-bar {
@@ -2189,6 +2194,22 @@ body.dashboard-shell-active {
   .app-keyboard-open .search-suggestion-tray .datser-search-scroll {
     max-height: max(8rem, calc(var(--app-visual-height, var(--app-vh)) - 11rem));
   }
+}
+
+/* The visual viewport signal is authoritative whenever the software keyboard
+   is open. Keep this rule outside the width query: iOS standalone can retain
+   its wider layout viewport while its physical visual viewport is phone-sized. */
+.app-keyboard-open .keyboard-safe-modal-backdrop {
+  top: var(--app-visual-offset-top, 0px) !important;
+  bottom: auto !important;
+  height: var(--app-visual-height, var(--app-vh));
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-keyboard-open .keyboard-safe-modal-shell {
+  height: var(--app-visual-height, var(--app-vh)) !important;
+  max-height: var(--app-visual-height, var(--app-vh)) !important;
 }
 
 @media (min-width: 768px) and (max-width: 1024px) {

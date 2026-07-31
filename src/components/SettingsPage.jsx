@@ -294,6 +294,7 @@ const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = new Set([
     'member_code_auto_cycle_minutes',
     'member_code_lookup_enabled',
     'member_code_share_message_template',
+    'member_code_format',
     'member_code_turbo_enabled',
     'member_code_turbo_notification_enabled'
 ])
