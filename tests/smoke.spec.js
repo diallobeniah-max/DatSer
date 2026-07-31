@@ -227,6 +227,21 @@ test.describe('Preflight smoke', () => {
     expect(mobileLayout.dockRect.bottom).toBeGreaterThan(mobileLayout.shellRect.bottom - 2)
     await page.screenshot({ path: testInfo.outputPath('pwa-shell-mobile.png'), fullPage: false })
 
+    await page.locator('button[title="Marked"]:visible').click()
+    const markedSearch = dock.getByPlaceholder(/search marked members/i)
+    await expect(markedSearch).toBeVisible()
+    const markedDockLayout = await page.evaluate(() => {
+      const dockElement = document.querySelector('.app-bottom-dock')
+      const inputElement = dockElement?.querySelector('.member-search-dock-input')
+      const controls = dockElement?.querySelectorAll('.member-search-dock-control') || []
+      return {
+        inputHeight: inputElement?.getBoundingClientRect().height || 0,
+        controlHeights: Array.from(controls).map((control) => control.getBoundingClientRect().height),
+      }
+    })
+    expect(markedDockLayout.inputHeight).toBe(52)
+    expect(markedDockLayout.controlHeights).toEqual([52, 52])
+
     await page.evaluate(() => window.openSettings?.())
     await expect(page.getByRole('button', { name: /^Account\b/ })).toBeVisible()
     const settingsLayout = await page.evaluate(() => ({
@@ -265,19 +280,29 @@ test.describe('Preflight smoke', () => {
     const addMember = page.getByTitle('Add New Member')
     const normalDockLayout = await page.evaluate(() => {
       const dock = document.querySelector('.app-bottom-dock')
+      const shell = document.querySelector('.dashboard-app-shell')
       const input = document.querySelector('.member-search-dock-input')
       const scannerButton = document.querySelector('[aria-label="Scan member QR code"]')
       const addButton = Array.from(document.querySelectorAll('button')).find((button) => button.title === 'Add New Member')
+      const backdrop = shell ? getComputedStyle(shell, '::after') : null
       return {
         dockHeight: dock.getBoundingClientRect().height,
         inputHeight: input.getBoundingClientRect().height,
         scannerHeight: scannerButton.getBoundingClientRect().height,
         addHeight: addButton.getBoundingClientRect().height,
+        backdropPosition: backdrop?.position,
+        backdropPointerEvents: backdrop?.pointerEvents,
+        backdropMaskImage: backdrop?.maskImage || backdrop?.webkitMaskImage,
+        backdropHeight: Number.parseFloat(backdrop?.height || '0'),
       }
     })
-    expect(normalDockLayout.inputHeight).toBe(44)
+    expect(normalDockLayout.inputHeight).toBe(52)
     expect(normalDockLayout.scannerHeight).toBe(normalDockLayout.inputHeight)
     expect(normalDockLayout.addHeight).toBe(normalDockLayout.inputHeight)
+    expect(normalDockLayout.backdropPosition).toBe('absolute')
+    expect(normalDockLayout.backdropPointerEvents).toBe('none')
+    expect(normalDockLayout.backdropMaskImage).not.toBe('none')
+    expect(normalDockLayout.backdropHeight).toBeGreaterThan(normalDockLayout.inputHeight)
     await search.focus()
     await expect(page.locator('.keyboard-search-active')).toBeVisible()
     await expect(searchDock).toBeVisible()

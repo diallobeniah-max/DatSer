@@ -3881,8 +3881,8 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Bottom Search Bar */}
-      <div className="app-bottom-dock bottom-search-bar bottom-control-safe member-search-dock-float fixed bottom-0 left-0 right-0 z-30 safe-area-x">
-        <div className="mx-auto px-3 sm:px-4 py-2 sm:py-2.5">
+      <div className="app-bottom-dock bottom-search-bar bottom-control-safe member-search-dock fixed bottom-0 left-0 right-0 z-30 safe-area-x">
+        <div className="member-search-dock-inner mx-auto">
           <div className="member-search-dock-controls flex items-center gap-2">
             {dashboardTab === 'edited' ? (
               /* Marked tab: Search bar that only searches within Present/Absent members */
@@ -3985,8 +3985,6 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {renderSearchSuggestionTray()}
 
-      {/* Add padding to prevent content from being hidden behind bottom search bar */}
-      <div className="h-16 md:h-10" />
     </div>
   )
 }

@@ -1813,6 +1813,7 @@ body.dashboard-shell-active {
   height: var(--app-visual-height, var(--app-vh));
   min-height: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .dashboard-app-shell > .app-header {
@@ -1835,14 +1836,50 @@ body.dashboard-shell-active {
   -webkit-overflow-scrolling: touch;
   padding-top: 0 !important;
   padding-bottom: calc(
-    var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
+    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
     var(--app-safe-bottom)
   ) !important;
+}
+
+/* The bottom glass belongs to the screen edge, not the search dock. The mask
+   dissolves both tint and blur into the scrolling member content. */
+.dashboard-app-shell::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--ds-z-dock-backdrop);
+  height: calc(var(--ds-dock-backdrop-height) + var(--app-safe-bottom));
+  content: '';
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--ds-color-canvas) 86%, transparent) 0%,
+    color-mix(in srgb, var(--ds-color-canvas) 56%, transparent) 36%,
+    color-mix(in srgb, var(--ds-color-canvas) 16%, transparent) 68%,
+    transparent 100%
+  );
+  -webkit-backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(115%);
+  backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(115%);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 30%, transparent 100%);
+  mask-image: linear-gradient(to top, #000 0%, #000 30%, transparent 100%);
+  transition: opacity var(--ds-motion-fast) var(--ds-ease-standard);
+}
+
+.app-keyboard-open .dashboard-app-shell::after {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-app-shell::after {
+    transition: none;
+  }
 }
 
 .dashboard-app-shell .app-bottom-dock {
   position: absolute !important;
   bottom: 0 !important;
+  z-index: var(--ds-z-dock) !important;
   transform: translateZ(0);
   contain: layout paint;
 }
@@ -1857,54 +1894,24 @@ body.dashboard-shell-active {
   padding-bottom: var(--ds-space-1) !important;
 }
 
-.dashboard-app-shell .member-search-dock-float {
-  background: transparent !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-  isolation: isolate;
-  pointer-events: none;
-}
-
-.dashboard-app-shell .member-search-dock-float::before {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: calc(var(--ds-control-md) + var(--app-safe-bottom) + var(--ds-space-8));
-  z-index: 0;
-  content: '';
-  pointer-events: none;
-  background: linear-gradient(
-    to top,
-    color-mix(in srgb, var(--ds-color-surface) 82%, transparent),
-    color-mix(in srgb, var(--ds-color-surface) 54%, transparent) 42%,
-    transparent
-  );
-  -webkit-backdrop-filter: blur(14px) saturate(120%);
-  backdrop-filter: blur(14px) saturate(120%);
-  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 35%, transparent 100%);
-  mask-image: linear-gradient(to top, #000 0%, #000 35%, transparent 100%);
-}
-
-.dashboard-app-shell .member-search-dock-float > div {
-  position: relative;
-  z-index: 1;
-  pointer-events: auto;
+.member-search-dock-inner {
+  padding: var(--ds-space-1) var(--ds-dock-side-inset);
 }
 
 /* All anchored search docks use the compact design-system control size. Keeping
    this shared prevents Settings and Members/Marked drifting apart again. */
 .member-search-dock-controls,
 .settings-search-dock-controls {
-  min-height: var(--ds-control-md);
+  min-height: var(--ds-dock-control-height);
+  gap: var(--ds-dock-gap) !important;
 }
 
 .member-search-dock-input,
 .member-search-dock-control,
 .settings-search-dock-input,
 .settings-search-dock-control {
-  height: var(--ds-control-md) !important;
-  min-height: var(--ds-control-md);
+  height: var(--ds-dock-control-height) !important;
+  min-height: var(--ds-dock-control-height);
 }
 
 .member-search-dock-input {
@@ -1921,7 +1928,7 @@ body.dashboard-shell-active {
 
 .member-search-dock-scan,
 .member-search-dock-add {
-  width: var(--ds-control-md) !important;
+  width: var(--ds-dock-control-height) !important;
   padding-inline: 0 !important;
 }
 
@@ -1945,8 +1952,18 @@ body.dashboard-shell-active {
 .dashboard-app-shell .search-suggestion-tray {
   position: absolute !important;
   bottom: calc(
-    var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
+    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
     var(--app-safe-bottom)
+  ) !important;
+}
+
+.app-keyboard-open .dashboard-app-shell .bottom-search-bar {
+  padding-bottom: var(--ds-space-1) !important;
+}
+
+.app-keyboard-open .dashboard-app-shell .search-suggestion-tray {
+  bottom: calc(
+    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1)
   ) !important;
 }
 
@@ -2040,7 +2057,7 @@ body.dashboard-shell-active {
   .settings-search-results-content {
     min-height: 0 !important;
     padding-bottom: calc(
-      var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
+      var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
       var(--ds-space-1) + var(--app-safe-bottom)
     ) !important;
   }
@@ -2161,7 +2178,7 @@ body.dashboard-shell-active {
 @media (min-width: 768px) {
   .dashboard-app-shell > .dashboard-app-content {
     padding-bottom: calc(
-      var(--ds-control-md) + var(--ds-space-1) + var(--ds-space-1) +
+      var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
       var(--app-safe-bottom)
     ) !important;
   }
