@@ -146,6 +146,7 @@ test.describe('Preflight smoke', () => {
     expect(initialLayout.contentOverflowY).toBe('auto')
     expect(initialLayout.dockPosition).toBe('absolute')
     expect(initialLayout.inputFontSize).toBeGreaterThanOrEqual(16)
+    expect(initialLayout.headerRect.height).toBeGreaterThan(44)
 
     await content.evaluate((element) => {
       element.scrollTop = element.scrollHeight
@@ -173,21 +174,32 @@ test.describe('Preflight smoke', () => {
     await expect(search).toHaveValue('John')
 
     await page.evaluate(() => {
-      document.documentElement.style.setProperty('--app-visual-height', '520px')
+      const root = document.documentElement
+      root.classList.add('app-keyboard-open')
+      root.style.setProperty('--app-keyboard-inset', '324px')
+      root.style.setProperty('--app-visual-height', '520px')
     })
     await page.waitForTimeout(100)
 
     const keyboardLayout = await page.evaluate(() => ({
       shellHeight: document.querySelector('.dashboard-app-shell')?.getBoundingClientRect().height,
+      headerTop: document.querySelector('.app-header')?.getBoundingClientRect().top,
       dockBottom: document.querySelector('.app-bottom-dock')?.getBoundingClientRect().bottom,
-      shellBottom: document.querySelector('.dashboard-app-shell')?.getBoundingClientRect().bottom,
+      documentScrollTop: document.documentElement.scrollTop,
+      bodyScrollTop: document.body.scrollTop,
     }))
 
-    expect(Math.abs(keyboardLayout.shellHeight - 520)).toBeLessThan(1)
-    expect(Math.abs(keyboardLayout.dockBottom - keyboardLayout.shellBottom)).toBeLessThan(1)
+    expect(Math.abs(keyboardLayout.shellHeight - 844)).toBeLessThan(1)
+    expect(Math.abs(keyboardLayout.headerTop - initialLayout.headerRect.top)).toBeLessThan(1)
+    expect(Math.abs(keyboardLayout.dockBottom - 520)).toBeLessThan(2)
+    expect(keyboardLayout.documentScrollTop).toBe(0)
+    expect(keyboardLayout.bodyScrollTop).toBe(0)
 
     await page.evaluate(() => {
-      document.documentElement.style.removeProperty('--app-visual-height')
+      const root = document.documentElement
+      root.classList.remove('app-keyboard-open')
+      root.style.removeProperty('--app-keyboard-inset')
+      root.style.removeProperty('--app-visual-height')
     })
     await setControlledInput(search, '')
     const compactDismiss = page.getByRole('button', { name: /dismiss compact ui suggestion/i })
@@ -242,6 +254,42 @@ test.describe('Preflight smoke', () => {
     expect(markedDockLayout.inputHeight).toBe(52)
     expect(markedDockLayout.controlHeights).toEqual([52, 52])
 
+    const markedHeaderTop = await header.evaluate((element) => element.getBoundingClientRect().top)
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      await page.evaluate(() => {
+        const root = document.documentElement
+        root.classList.add('app-keyboard-open')
+        root.style.setProperty('--app-keyboard-inset', '324px')
+        root.style.setProperty('--app-visual-height', '520px')
+      })
+      await page.waitForTimeout(20)
+      const openCycle = await page.evaluate(() => ({
+        headerTop: document.querySelector('.app-header')?.getBoundingClientRect().top,
+        dockBottom: document.querySelector('.app-bottom-dock')?.getBoundingClientRect().bottom,
+        bodyScrollTop: document.body.scrollTop,
+        documentScrollTop: document.documentElement.scrollTop,
+      }))
+      expect(Math.abs(openCycle.headerTop - markedHeaderTop)).toBeLessThan(1)
+      expect(Math.abs(openCycle.dockBottom - 520)).toBeLessThan(2)
+      expect(openCycle.bodyScrollTop).toBe(0)
+      expect(openCycle.documentScrollTop).toBe(0)
+
+      await page.evaluate(() => {
+        const root = document.documentElement
+        root.classList.remove('app-keyboard-open')
+        root.style.removeProperty('--app-keyboard-inset')
+        root.style.removeProperty('--app-visual-height')
+      })
+      await page.waitForTimeout(20)
+      const closedCycle = await page.evaluate(() => ({
+        headerTop: document.querySelector('.app-header')?.getBoundingClientRect().top,
+        dockBottom: document.querySelector('.app-bottom-dock')?.getBoundingClientRect().bottom,
+      }))
+      expect(Math.abs(closedCycle.headerTop - markedHeaderTop)).toBeLessThan(1)
+      expect(Math.abs(closedCycle.dockBottom - 844)).toBeLessThan(2)
+    }
+    await page.screenshot({ path: testInfo.outputPath('pwa-shell-marked-mobile.png'), fullPage: false })
+
     await page.evaluate(() => window.openSettings?.())
     await expect(page.getByRole('button', { name: /^Account\b/ })).toBeVisible()
     const settingsLayout = await page.evaluate(() => ({
@@ -280,11 +328,12 @@ test.describe('Preflight smoke', () => {
     const addMember = page.getByTitle('Add New Member')
     const normalDockLayout = await page.evaluate(() => {
       const dock = document.querySelector('.app-bottom-dock')
-      const shell = document.querySelector('.dashboard-app-shell')
+      const backdropElement = document.querySelector('.member-search-dock-backdrop')
       const input = document.querySelector('.member-search-dock-input')
       const scannerButton = document.querySelector('[aria-label="Scan member QR code"]')
       const addButton = Array.from(document.querySelectorAll('button')).find((button) => button.title === 'Add New Member')
-      const backdrop = shell ? getComputedStyle(shell, '::after') : null
+      const backdrop = backdropElement ? getComputedStyle(backdropElement) : null
+      const controls = document.querySelector('.member-search-dock-inner')
       return {
         dockHeight: dock.getBoundingClientRect().height,
         inputHeight: input.getBoundingClientRect().height,
@@ -294,6 +343,8 @@ test.describe('Preflight smoke', () => {
         backdropPointerEvents: backdrop?.pointerEvents,
         backdropMaskImage: backdrop?.maskImage || backdrop?.webkitMaskImage,
         backdropHeight: Number.parseFloat(backdrop?.height || '0'),
+        backdropZIndex: Number.parseInt(backdrop?.zIndex || '0', 10),
+        controlsZIndex: Number.parseInt(getComputedStyle(controls).zIndex || '0', 10),
       }
     })
     expect(normalDockLayout.inputHeight).toBe(52)
@@ -303,18 +354,28 @@ test.describe('Preflight smoke', () => {
     expect(normalDockLayout.backdropPointerEvents).toBe('none')
     expect(normalDockLayout.backdropMaskImage).not.toBe('none')
     expect(normalDockLayout.backdropHeight).toBeGreaterThan(normalDockLayout.inputHeight)
+    expect(normalDockLayout.controlsZIndex).toBeGreaterThan(normalDockLayout.backdropZIndex)
     await search.focus()
     await expect(page.locator('.keyboard-search-active')).toBeVisible()
     await expect(searchDock).toBeVisible()
     await expect(scanner).toBeVisible()
     await expect(addMember).toBeVisible()
+    await page.evaluate(() => {
+      const root = document.documentElement
+      root.classList.add('app-keyboard-open')
+      root.style.setProperty('--app-keyboard-inset', '324px')
+      root.style.setProperty('--app-visual-height', '520px')
+    })
+    await page.waitForTimeout(50)
     const compactDockLayout = await page.evaluate(() => {
       const dock = document.querySelector('.app-bottom-dock')
+      const header = document.querySelector('.app-header')
       const input = document.querySelector('.member-search-dock-input')
       const scannerButton = document.querySelector('[aria-label="Scan member QR code"]')
       const addButton = Array.from(document.querySelectorAll('button')).find((button) => button.title === 'Add New Member')
       return {
         dockBottom: dock.getBoundingClientRect().bottom,
+        headerTop: header.getBoundingClientRect().top,
         inputHeight: input.getBoundingClientRect().height,
         scannerHeight: scannerButton.getBoundingClientRect().height,
         addHeight: addButton.getBoundingClientRect().height,
@@ -323,7 +384,8 @@ test.describe('Preflight smoke', () => {
     expect(compactDockLayout.inputHeight).toBe(normalDockLayout.inputHeight)
     expect(compactDockLayout.scannerHeight).toBe(normalDockLayout.inputHeight)
     expect(compactDockLayout.addHeight).toBe(normalDockLayout.inputHeight)
-    expect(compactDockLayout.dockBottom).toBeLessThanOrEqual(844)
+    expect(Math.abs(compactDockLayout.dockBottom - 520)).toBeLessThan(2)
+    expect(compactDockLayout.headerTop).toBeGreaterThanOrEqual(-1)
     const compactCardHeight = await firstCard.evaluate((element) => element.getBoundingClientRect().height)
     const joinedDisplay = await firstCard.locator('.member-card-meta').evaluate((element) => getComputedStyle(element).display)
     expect(compactCardHeight).toBeLessThan(normalCardHeight)
@@ -331,6 +393,13 @@ test.describe('Preflight smoke', () => {
     expect(joinedDisplay).toBe('none')
     await page.locator('.Toastify__close-button').evaluateAll((buttons) => buttons.forEach((button) => button.click()))
     await page.screenshot({ path: testInfo.outputPath('keyboard-compact-search.png'), fullPage: false })
+
+    await page.evaluate(() => {
+      const root = document.documentElement
+      root.classList.remove('app-keyboard-open')
+      root.style.removeProperty('--app-keyboard-inset')
+      root.style.removeProperty('--app-visual-height')
+    })
 
     for (const viewport of [
       { width: 320, height: 568 },

@@ -3882,7 +3882,8 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {/* Bottom Search Bar */}
       <div className="app-bottom-dock bottom-search-bar bottom-control-safe member-search-dock fixed bottom-0 left-0 right-0 z-30 safe-area-x">
-        <div className="member-search-dock-inner mx-auto">
+        <div className="member-search-dock-backdrop" aria-hidden="true" />
+        <div className="member-search-dock-inner relative z-[1] mx-auto">
           <div className="member-search-dock-controls flex items-center gap-2">
             {dashboardTab === 'edited' ? (
               /* Marked tab: Search bar that only searches within Present/Absent members */

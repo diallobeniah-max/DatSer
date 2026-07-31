@@ -1803,17 +1803,20 @@ body.dashboard-shell-active {
 
 .dashboard-app-shell {
   position: fixed;
-  top: var(--app-visual-offset-top, 0px);
+  top: 0;
   right: 0;
   bottom: auto;
   left: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: 100%;
-  height: var(--app-visual-height, var(--app-vh));
+  /* Keep the shell stable when iOS resizes the visual viewport for its
+     keyboard. The dock alone consumes --app-keyboard-inset. */
+  height: var(--app-shell-height, var(--app-vh));
   min-height: 0;
   overflow: hidden;
   isolation: isolate;
+  --dashboard-dock-safe-bottom: max(var(--ds-space-1), var(--app-safe-bottom));
 }
 
 .dashboard-app-shell > .app-header {
@@ -1837,56 +1840,58 @@ body.dashboard-shell-active {
   padding-top: 0 !important;
   padding-bottom: calc(
     var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
-    var(--app-safe-bottom)
+    var(--dashboard-dock-safe-bottom) + var(--app-keyboard-inset, 0px)
   ) !important;
 }
 
-/* The bottom glass belongs to the screen edge, not the search dock. The mask
-   dissolves both tint and blur into the scrolling member content. */
-.dashboard-app-shell::after {
+/* The dock owns its own backdrop layer. Keeping it inside the dock's isolated
+   stacking context prevents iOS backdrop-filter compositing above the controls. */
+.member-search-dock-backdrop {
   position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
-  z-index: var(--ds-z-dock-backdrop);
-  height: calc(var(--ds-dock-backdrop-height) + var(--app-safe-bottom));
-  content: '';
+  z-index: 0;
+  height: calc(100% + var(--ds-space-6));
   pointer-events: none;
   background: linear-gradient(
     to top,
-    color-mix(in srgb, var(--ds-color-canvas) 86%, transparent) 0%,
-    color-mix(in srgb, var(--ds-color-canvas) 56%, transparent) 36%,
-    color-mix(in srgb, var(--ds-color-canvas) 16%, transparent) 68%,
+    color-mix(in srgb, var(--ds-color-canvas) 72%, transparent) 0%,
+    color-mix(in srgb, var(--ds-color-canvas) 38%, transparent) 42%,
+    color-mix(in srgb, var(--ds-color-canvas) 10%, transparent) 72%,
     transparent 100%
   );
-  -webkit-backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(115%);
-  backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(115%);
-  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 30%, transparent 100%);
-  mask-image: linear-gradient(to top, #000 0%, #000 30%, transparent 100%);
+  -webkit-backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(108%);
+  backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(108%);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 38%, transparent 100%);
+  mask-image: linear-gradient(to top, #000 0%, #000 38%, transparent 100%);
   transition: opacity var(--ds-motion-fast) var(--ds-ease-standard);
 }
 
-.app-keyboard-open .dashboard-app-shell::after {
+.app-keyboard-open .dashboard-app-shell {
+  --dashboard-dock-safe-bottom: var(--ds-space-1);
+}
+
+.app-keyboard-open .member-search-dock-backdrop {
   opacity: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dashboard-app-shell::after {
+  .member-search-dock-backdrop {
     transition: none;
   }
 }
 
 .dashboard-app-shell .app-bottom-dock {
   position: absolute !important;
-  bottom: 0 !important;
+  bottom: var(--app-keyboard-inset, 0px) !important;
   z-index: var(--ds-z-dock) !important;
-  transform: translateZ(0);
-  contain: layout paint;
+  isolation: isolate;
 }
 
 .dashboard-app-shell .bottom-search-bar {
-  padding-bottom: max(var(--ds-space-1), var(--app-safe-bottom)) !important;
-  background-clip: padding-box;
+  padding-bottom: var(--dashboard-dock-safe-bottom) !important;
+  background: transparent !important;
 }
 
 .dashboard-app-shell .bottom-search-bar > div {
@@ -1953,7 +1958,7 @@ body.dashboard-shell-active {
   position: absolute !important;
   bottom: calc(
     var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
-    var(--app-safe-bottom)
+    var(--dashboard-dock-safe-bottom) + var(--app-keyboard-inset, 0px)
   ) !important;
 }
 
@@ -1963,7 +1968,8 @@ body.dashboard-shell-active {
 
 .app-keyboard-open .dashboard-app-shell .search-suggestion-tray {
   bottom: calc(
-    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1)
+    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
+    var(--app-keyboard-inset, 0px)
   ) !important;
 }
 

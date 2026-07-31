@@ -903,11 +903,19 @@ function App() {
     coarseMedia?.addEventListener('change', onMediaChange)
     widthMedia?.addEventListener('change', onMediaChange)
 
-    // Visual viewport variables keep the Dashboard shell and bottom dock tied
-    // to the visible screen while iOS/Android keyboards animate.
+    // One authoritative visual viewport contract. The dashboard shell always
+    // keeps its full layout height so the header never follows an iOS keyboard;
+    // only anchored controls consume the measured keyboard inset.
     const vv = window.visualViewport
     let viewportFrame = 0
     let lastViewportSignature = ''
+    let stableLayoutHeight = Math.max(
+      window.innerHeight || 0,
+      document.documentElement.clientHeight || 0,
+      Math.round((vv?.height || 0) + (vv?.offsetTop || 0))
+    )
+    let lastViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
+    let resetStableLayoutHeight = false
     const applyViewport = () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
       viewportFrame = window.requestAnimationFrame(() => {
@@ -915,24 +923,51 @@ function App() {
         const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0)
         const viewportHeight = Math.round(vv?.height || layoutHeight)
         const viewportOffsetTop = Math.round(vv?.offsetTop || 0)
-        const obscuredHeight = vv ? Math.max(0, Math.round(layoutHeight - viewportHeight - viewportOffsetTop)) : 0
-        const keyboardOffset = obscuredHeight > 120 ? obscuredHeight : 0
-        // Safari can report a shorter visual viewport even after the keyboard
-        // closes. Use the full layout viewport unless the keyboard is actually
-        // obscuring it, so anchored dashboard controls return to the true bottom.
-        const visibleHeight = keyboardOffset > 0 ? viewportHeight : layoutHeight
-        const offsetTop = keyboardOffset > 0 ? viewportOffsetTop : 0
+        const visibleBottom = viewportHeight + viewportOffsetTop
+        const currentLayoutHeight = Math.max(layoutHeight, visibleBottom)
+        const currentViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
+        const didRotate = Math.abs(currentViewportWidth - lastViewportWidth) > 80
+        lastViewportWidth = currentViewportWidth
+
+        if (resetStableLayoutHeight || didRotate) {
+          stableLayoutHeight = currentLayoutHeight
+          resetStableLayoutHeight = false
+        } else {
+          const candidateInset = Math.max(0, stableLayoutHeight - visibleBottom)
+          // A shorter viewport without a meaningful obstruction is a browser
+          // chrome transition, not a keyboard. It is safe to refresh the
+          // baseline in that case. Keeping the prior baseline while the inset
+          // is meaningful also handles iOS PWAs whose innerHeight shrinks.
+          if (candidateInset <= 120) {
+            stableLayoutHeight = currentLayoutHeight
+          }
+        }
+
+        const keyboardInset = vv
+          ? Math.max(0, Math.round(stableLayoutHeight - visibleBottom))
+          : 0
+        const isKeyboardOpen = keyboardInset > 120
+        const appliedKeyboardInset = isKeyboardOpen ? keyboardInset : 0
+        const visibleHeight = isKeyboardOpen ? viewportHeight : stableLayoutHeight
         const root = document.documentElement
 
         root.style.setProperty('--app-visual-height', `${visibleHeight}px`)
-        root.style.setProperty('--app-visual-offset-top', `${offsetTop}px`)
-        root.style.setProperty('--keyboard-offset', `${keyboardOffset}px`)
-        root.classList.toggle('app-keyboard-open', keyboardOffset > 0)
-        const nextSignature = `${visibleHeight}:${offsetTop}:${keyboardOffset}`
+        root.style.setProperty('--app-shell-height', `${stableLayoutHeight}px`)
+        root.style.setProperty('--app-visual-offset-top', '0px')
+        root.style.setProperty('--app-keyboard-inset', `${appliedKeyboardInset}px`)
+        // Keep the legacy custom property in sync for existing keyboard-safe
+        // sheets while new app-shell consumers use the explicit inset name.
+        root.style.setProperty('--keyboard-offset', `${appliedKeyboardInset}px`)
+        root.classList.toggle('app-keyboard-open', isKeyboardOpen)
+        const nextSignature = `${stableLayoutHeight}:${visibleHeight}:${appliedKeyboardInset}`
         if (nextSignature !== lastViewportSignature) {
           lastViewportSignature = nextSignature
           window.dispatchEvent(new CustomEvent('datser:visual-viewport', {
-            detail: { visibleHeight, offsetTop, keyboardOffset }
+            detail: {
+              layoutHeight: stableLayoutHeight,
+              visibleHeight,
+              keyboardInset: appliedKeyboardInset,
+            }
           }))
         }
       })
@@ -940,7 +975,11 @@ function App() {
     vv?.addEventListener('resize', applyViewport)
     vv?.addEventListener('scroll', applyViewport)
     window.addEventListener('resize', applyViewport)
-    window.addEventListener('orientationchange', applyViewport)
+    const onOrientationChange = () => {
+      resetStableLayoutHeight = true
+      applyViewport()
+    }
+    window.addEventListener('orientationchange', onOrientationChange)
     applyViewport()
 
     return () => {
@@ -948,7 +987,7 @@ function App() {
       vv?.removeEventListener('resize', applyViewport)
       vv?.removeEventListener('scroll', applyViewport)
       window.removeEventListener('resize', applyViewport)
-      window.removeEventListener('orientationchange', applyViewport)
+      window.removeEventListener('orientationchange', onOrientationChange)
       coarseMedia?.removeEventListener('change', onMediaChange)
       widthMedia?.removeEventListener('change', onMediaChange)
       document.documentElement.classList.remove('app-keyboard-open')
