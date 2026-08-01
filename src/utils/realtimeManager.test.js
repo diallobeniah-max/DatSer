@@ -115,3 +115,36 @@ describe('Targeted Realtime Merges', () => {
     expect(merged).toEqual({ 'm-1': true, 'm-2': false, 'm-3': true })
   })
 })
+
+describe('In-Flight Promise Deduplication', () => {
+  it('deduplicates simultaneous in-flight requests into 1 single promise', async () => {
+    const inFlightMap = new Map()
+    let networkCallCount = 0
+
+    const fetchColumns = (table) => {
+      if (inFlightMap.has(table)) {
+        return inFlightMap.get(table)
+      }
+      const promise = (async () => {
+        networkCallCount++
+        await new Promise((r) => setTimeout(r, 20))
+        return [{ column_name: 'id' }, { column_name: 'attendance_2026_08_02' }]
+      })().finally(() => {
+        inFlightMap.delete(table)
+      })
+
+      inFlightMap.set(table, promise)
+      return promise
+    }
+
+    const [res1, res2, res3] = await Promise.all([
+      fetchColumns('August_2026'),
+      fetchColumns('August_2026'),
+      fetchColumns('August_2026')
+    ])
+
+    expect(networkCallCount).toBe(1)
+    expect(res1).toEqual(res2)
+    expect(res2).toEqual(res3)
+  })
+})

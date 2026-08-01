@@ -326,3 +326,18 @@
 - Month creation automatically configures Realtime, RLS, indexes, and required columns.
 - Schema-management RPCs are never called repeatedly by ordinary page rendering or search.
 - Future month tables must not require manual publication repair.
+
+## Live Request-Count Verification Rule
+- A caching fix is incomplete until live Supabase logs confirm request counts decreased.
+- Cache both resolved metadata and in-flight Promises.
+- Use browser Network Initiator evidence to identify repeated call sites.
+- Do not claim a request loop is fixed using unit tests alone.
+- An idle authenticated session must not repeatedly fetch schema, attendance, members, or assignments.
+- Search typing generates no network traffic.
+- Add Member performs focused mutation requests and does not trigger a full workspace refresh.
+
+## PWA Build Freshness Rule
+- Every production build exposes its commit/build identifier.
+- The service worker must not leave users running obsolete application JavaScript indefinitely.
+- Updating static caches must preserve IndexedDB and offline member data.
+- Real-device testing must verify that the installed PWA is running the expected commit.

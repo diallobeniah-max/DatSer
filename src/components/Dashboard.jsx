@@ -1348,13 +1348,15 @@ const Dashboard = ({ isAdmin = false }) => {
 
   // Ensure attendance map loads when a Sunday is selected (local state)
   useEffect(() => {
-    const loadMap = async () => {
-      if (selectedSundayDate && !Object.prototype.hasOwnProperty.call(attendanceData, selectedSundayDate)) {
-        await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
-      }
+    if (selectedSundayDate && !attendanceData[selectedSundayDate]) {
+      fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
     }
-    loadMap()
-  }, [selectedSundayDate, attendanceData, fetchAndApplyAttendanceForDate])
+  }, [selectedSundayDate, currentTable, fetchAndApplyAttendanceForDate])
+
+  // Reset selected Sunday when month changes
+  useEffect(() => {
+    setSelectedSundayDate(null)
+  }, [currentTable])
 
   // Focus Sundays section when requested via header "Select Date"
   useEffect(() => {
@@ -1372,19 +1374,12 @@ const Dashboard = ({ isAdmin = false }) => {
 
     let isCancelled = false
     const load = async () => {
-      for (const date of sundayDates) {
-        await fetchAndApplyAttendanceForDate(new Date(date))
-        if (isCancelled) return
-      }
+      // Logic removed to prevent request flood
     }
     load()
     return () => { isCancelled = true }
   }, [currentTable, fetchAndApplyAttendanceForDate, sundayDates])
 
-  // Reset selected Sunday when month changes
-  useEffect(() => {
-    setSelectedSundayDate(null)
-  }, [currentTable])
 
   useEffect(() => {
     if (selectedAttendanceDate) {

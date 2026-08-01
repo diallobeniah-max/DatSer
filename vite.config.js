@@ -387,6 +387,10 @@ const createDatserApkDevPlugin = () => {
 export default defineConfig({
   plugins: [react(), createDatserApkDevPlugin()],
   base: '/',
+  define: {
+    __BUILD_COMMIT__: JSON.stringify(process.env.VITE_COMMIT_HASH || '884248df80016182ecf787efd17b3646a3c4cb06'),
+    __BUILD_TIMESTAMP__: JSON.stringify(new Date().toISOString())
+  },
   server: {
     port: 3000,
     host: true,

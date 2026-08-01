@@ -768,6 +768,8 @@ export const AppProvider = ({ children }) => {
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
   const tableColumnCacheRef = useRef(new Map())
+  const inFlightTableColumnsPromisesRef = useRef(new Map())
+  const inFlightAttendancePromisesRef = useRef(new Map())
   const realtimeChannelRef = useRef(null)
   const realtimeScopeRef = useRef('')
   const devCountersRef = useRef({
@@ -957,6 +959,10 @@ export const AppProvider = ({ children }) => {
   }, [user, authLoading, authContext?.preferences?.current_month_table, isCollaborator, dataOwnerId, ownerStickyMonth])
   const [monthlyTables, setMonthlyTables] = useState(FALLBACK_MONTHLY_TABLES)
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState(null)
+  const selectedAttendanceDateRef = useRef(selectedAttendanceDate)
+  useEffect(() => {
+    selectedAttendanceDateRef.current = selectedAttendanceDate
+  }, [selectedAttendanceDate])
   const [availableSundayDates, setAvailableSundayDates] = useState([])
   const [isOnline, setIsOnline] = useState(isBrowserOnline)
   const [offlineCacheMeta, setOfflineCacheMeta] = useState(null)
@@ -3354,22 +3360,34 @@ export const AppProvider = ({ children }) => {
     if (!force && tableColumnCacheRef.current.has(tableName)) {
       return tableColumnCacheRef.current.get(tableName)
     }
-    try {
-      const { data, error } = await supabase.rpc('get_table_columns', {
-        table_name: tableName
-      })
-      if (error) {
+    if (inFlightTableColumnsPromisesRef.current.has(tableName)) {
+      devCountersRef.current.schemaFetchDeduplicated = (devCountersRef.current.schemaFetchDeduplicated || 0) + 1
+      return inFlightTableColumnsPromisesRef.current.get(tableName)
+    }
+
+    const promise = (async () => {
+      try {
+        const { data, error } = await supabase.rpc('get_table_columns', {
+          table_name: tableName
+        })
+        if (error) {
+          console.error('Error getting table columns:', error)
+          return tableColumnCacheRef.current.get(tableName) || []
+        }
+        const columns = Array.isArray(data) ? data : []
+        tableColumnCacheRef.current.set(tableName, columns)
+        devCountersRef.current.schemaFetchCount = (devCountersRef.current.schemaFetchCount || 0) + 1
+        return columns
+      } catch (error) {
         console.error('Error getting table columns:', error)
         return tableColumnCacheRef.current.get(tableName) || []
+      } finally {
+        inFlightTableColumnsPromisesRef.current.delete(tableName)
       }
-      const columns = Array.isArray(data) ? data : []
-      tableColumnCacheRef.current.set(tableName, columns)
-      devCountersRef.current.schemaFetchCount = (devCountersRef.current.schemaFetchCount || 0) + 1
-      return columns
-    } catch (error) {
-      console.error('Error getting table columns:', error)
-      return tableColumnCacheRef.current.get(tableName) || []
-    }
+    })()
+
+    inFlightTableColumnsPromisesRef.current.set(tableName, promise)
+    return promise
   }, [isDeveloperBypass, isSupabaseConfigured])
 
   // Get all attendance columns for the current table
@@ -4583,56 +4601,71 @@ export const AppProvider = ({ children }) => {
   }
 
   const fetchAttendanceForDateInTable = useCallback(async (date, tableName) => {
-    try {
-      if (!isSupabaseConfigured()) {
-        const dateKey = getLocalDateString(date)
-        return attendanceData[dateKey] || {}
-      }
-      if (!tableName) return {}
-
-      const attendanceColumn = await findAttendanceColumnForDateInTable(date, tableName)
-
-      if (!attendanceColumn) {
-        appContextLog(`No attendance column found for this date in ${tableName}`)
-        return {}
-      }
-
-      let allRecords = []
-      let fetchOff = 0
-      const PG_SIZE = 1000
-      while (true) {
-        let query = supabase
-          .from(tableName)
-          .select(`id, "${attendanceColumn}"`)
-        const ownerId = dataOwnerId || user?.id
-        if (ownerId) query = query.eq('user_id', ownerId)
-        query = query.is('deleted_at', null)
-        const { data: pg, error: pgErr } = await query
-          .range(fetchOff, fetchOff + PG_SIZE - 1)
-
-        if (pgErr) throw pgErr
-        if (!pg || pg.length === 0) break
-        allRecords = allRecords.concat(pg)
-        if (pg.length < PG_SIZE) break
-        fetchOff += PG_SIZE
-      }
-
-      const attendanceMap = {}
-      allRecords.forEach(record => {
-        const value = record[attendanceColumn]
-        if (value === 'Present') {
-          attendanceMap[record.id] = true
-        } else if (value === 'Absent') {
-          attendanceMap[record.id] = false
-        }
-      })
-
-      return attendanceMap
-    } catch (error) {
-      console.error('Error fetching attendance:', error)
+    if (!date || !tableName || !isSupabaseConfigured()) {
       const dateKey = getLocalDateString(date)
-      return attendanceData[dateKey] || {}
+      return (dateKey && attendanceData[dateKey]) || {}
     }
+
+    const dateKey = getLocalDateString(date)
+    if (!dateKey) return {}
+
+    const key = `${tableName}:${dateKey}`
+    if (inFlightAttendancePromisesRef.current.has(key)) {
+      devCountersRef.current.attendanceFetchDeduplicated = (devCountersRef.current.attendanceFetchDeduplicated || 0) + 1
+      return inFlightAttendancePromisesRef.current.get(key)
+    }
+
+    const promise = (async () => {
+      try {
+        const attendanceColumn = await findAttendanceColumnForDateInTable(date, tableName)
+
+        if (!attendanceColumn) {
+          appContextLog(`No attendance column found for this date in ${tableName}`)
+          return {}
+        }
+
+        let allRecords = []
+        let fetchOff = 0
+        const PG_SIZE = 1000
+        while (true) {
+          let query = supabase
+            .from(tableName)
+            .select(`id, "${attendanceColumn}"`)
+          const ownerId = dataOwnerId || user?.id
+          if (ownerId) query = query.eq('user_id', ownerId)
+          query = query.is('deleted_at', null)
+          const { data: pg, error: pgErr } = await query
+            .range(fetchOff, fetchOff + PG_SIZE - 1)
+
+          if (pgErr) throw pgErr
+          if (!pg || pg.length === 0) break
+          allRecords = allRecords.concat(pg)
+          if (pg.length < PG_SIZE) break
+          fetchOff += PG_SIZE
+        }
+
+        const attendanceMap = {}
+        allRecords.forEach(record => {
+          const value = record[attendanceColumn]
+          if (value === 'Present') {
+            attendanceMap[record.id] = true
+          } else if (value === 'Absent') {
+            attendanceMap[record.id] = false
+          }
+        })
+
+        devCountersRef.current.attendanceFetchCount = (devCountersRef.current.attendanceFetchCount || 0) + 1
+        return attendanceMap
+      } catch (error) {
+        console.error('Error fetching attendance:', error)
+        return attendanceData[dateKey] || {}
+      } finally {
+        inFlightAttendancePromisesRef.current.delete(key)
+      }
+    })()
+
+    inFlightAttendancePromisesRef.current.set(key, promise)
+    return promise
   }, [attendanceData, dataOwnerId, findAttendanceColumnForDateInTable, isSupabaseConfigured, user?.id])
 
   // All UI refreshes go through one guarded apply path. A slow request is not
@@ -7953,7 +7986,7 @@ export const AppProvider = ({ children }) => {
     let disposed = false
 
     const scheduleAttendanceRefresh = (serviceDate, source = 'attendance-realtime') => {
-      const targetDateKey = serviceDate || (selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null)
+      const targetDateKey = serviceDate || (selectedAttendanceDateRef.current ? getLocalDateString(selectedAttendanceDateRef.current) : null)
       if (!targetDateKey) return
       if (realtimeAttendanceRefreshTimerRef.current) {
         clearTimeout(realtimeAttendanceRefreshTimerRef.current)
@@ -8185,7 +8218,7 @@ export const AppProvider = ({ children }) => {
         realtimeScopeRef.current = ''
       }
     }
-  }, [applyAttendanceColumnsFromMemberRows, currentTable, dataOwnerId, fetchAttendanceForDateInTable, isDeveloperBypass, isSupabaseConfigured, membersTotalCount, persistMemberPreviewIndex, prepareRealtimeMember, removeMemberFromAttendanceData, selectedAttendanceDate, shouldUseOfflineData, signalRealtimeSyncStatus, updateAdminSyncNotice, user?.id, workspaceCacheScope])
+  }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, shouldUseOfflineData, user?.id])
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)
