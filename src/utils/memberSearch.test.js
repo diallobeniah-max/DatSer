@@ -68,6 +68,32 @@ describe('classifyMemberSearch', () => {
     expect(classifyMemberSearch({ members, query: '0241117261' }).visible.map((member) => member.id)).toContain('1')
     expect(classifyMemberSearch({ members, query: '0249995555' }).visible.map((member) => member.id)).toContain('1')
   })
+
+  it('ranks current code, alias, and numeric equivalents ahead of name results', () => {
+    const codeMembers = [
+      { id: 'current', full_name: 'E02 Person', member_code: 'E02' },
+      { id: 'alias', full_name: 'Different Person', member_code: 'A', aliases: ['E02'] },
+      { id: 'numeric', full_name: 'Number Person', member_code: '001' }
+    ]
+    const options = { members: codeMembers, getCodeAliases: (member) => member.aliases || [] }
+    expect(classifyMemberSearch({ ...options, query: 'E-02' }).visible.map((member) => member.id)).toEqual(['current'])
+    expect(classifyMemberSearch({ ...options, query: 'e02' }).visible.map((member) => member.id)).toEqual(['current'])
+    expect(classifyMemberSearch({ ...options, query: '1' }).visible.map((member) => member.id)).toEqual(['numeric'])
+
+    const aliasOnly = codeMembers.filter((member) => member.id !== 'current')
+    expect(classifyMemberSearch({ members: aliasOnly, query: 'E02', getCodeAliases: (member) => member.aliases || [] }).visible.map((member) => member.id)).toEqual(['alias'])
+  })
+
+  it('puts a code prefix ahead of an equally matching name', () => {
+    const results = classifyMemberSearch({
+      members: [
+        { id: 'name', full_name: 'E Member', member_code: 'A01' },
+        { id: 'code', full_name: 'Another Member', member_code: 'E01' }
+      ],
+      query: 'E'
+    })
+    expect(results.visible.map((member) => member.id)).toEqual(['code', 'name'])
+  })
 })
 
 describe('shouldShowSearchDebug', () => {

@@ -178,6 +178,19 @@
 - Phone, tablet, and desktop must use the same authoritative active-member search dataset.
 - Deleted members and stale cached records must never appear, and result counts must match the visible cards.
 
+## Member Code Format Rule
+- Development continues from stable `main`; `search-bar-experiment` remains separate and must not be merged automatically.
+- Supported workspace member-code formats are Letters + Numbers, Letters Only, and Numbers Only.
+- Both Letters Only and Numbers Only toggles being off means Letters + Numbers.
+- Letters Only and Numbers Only are mutually exclusive.
+- Letters-only codes use a deterministic alphabetical sequence.
+- Numbers-only codes use a minimum three-digit sequence such as 001, 002 and 500, expanding beyond 999 when needed.
+- Member-code format is workspace-wide and shared by collaborators.
+- Conversions must be transactional and concurrency-safe.
+- Search, badges, QR codes, scanners, passes, exports, caches, and forms must use the same current format.
+- Exact code searches must return the exact matching member rather than the full list.
+- Changing the format must never leave a partially converted workspace.
+
 ## Attendance Count Consistency Rule
 - Attendance totals must derive from deduplicated active canonical members, not raw cached map entries.
 - Local optimistic attendance updates must update totals immediately; stale refresh responses must never overwrite newer state.

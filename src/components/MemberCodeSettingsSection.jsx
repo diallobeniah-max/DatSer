@@ -3,7 +3,7 @@ import { AlertCircle, BadgeCheck, BellRing, CheckCircle, Church, Edit3, ImagePlu
 import { useApp } from '../context/AppContext'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
-import { buildMemberIndexCodeMap, getMemberIndexCode } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberIndexCode, getMemberIndexCodeAliases, getToggledMemberCodeFormat, normalizeMemberCode, normalizeMemberCodeFormat } from '../utils/memberIndexCodes'
 import MemberCodeBadge, { normalizeBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, {
     MEMBER_CODE_CARD_STYLE_OPTIONS,
@@ -69,7 +69,7 @@ const optionClass = (active) => (
 )
 
 const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
-    const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator } = useApp()
+    const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator, memberCodeFormat: workspaceMemberCodeFormat, workspaceMemberCodeAssignments, convertWorkspaceMemberCodeFormat, workspaceMemberCodeStatus } = useApp()
     const workspaceEnabled = preferences?.workspace_member_codes_enabled !== false
     const memberCodesEnabled = preferences?.member_codes_enabled !== false
     const enabled = workspaceEnabled && memberCodesEnabled
@@ -89,6 +89,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const turboNotificationEnabled = preferences?.member_code_turbo_notification_enabled !== false
     const codeLookupEnabled = preferences?.member_code_lookup_enabled !== false
     const shareMessageTemplate = preferences?.member_code_share_message_template || DEFAULT_SHARE_MESSAGE_TEMPLATE
+    const memberCodeFormat = normalizeMemberCodeFormat(workspaceMemberCodeFormat ?? preferences?.member_code_format)
     const [editingChurchName, setEditingChurchName] = useState(false)
     const [draftChurchName, setDraftChurchName] = useState(churchName)
     const [lookupCode, setLookupCode] = useState('')
@@ -96,17 +97,22 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const [isUploadingLogo, setIsUploadingLogo] = useState(false)
     const [savingKey, setSavingKey] = useState('')
     const [saveStatus, setSaveStatus] = useState(null)
+    const [pendingFormat, setPendingFormat] = useState(null)
     const logoInputRef = useRef(null)
 
-    const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+    const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members, {
+        format: memberCodeFormat,
+        persistedCodes: workspaceMemberCodeAssignments
+    }), [memberCodeFormat, members, workspaceMemberCodeAssignments])
     const lookupResult = useMemo(() => {
-        const normalizedCode = lookupCode.trim().toUpperCase()
+        const normalizedCode = normalizeMemberCode(lookupCode)
         if (!normalizedCode || !codeLookupEnabled) return null
 
         return members.find((member) => {
             const generatedCode = getMemberIndexCode(member, memberIndexCodeMap)
             const candidateCodes = [
                 generatedCode,
+                ...getMemberIndexCodeAliases(member, memberIndexCodeMap),
                 member?.member_code,
                 member?.memberCode,
                 member?.code,
@@ -114,7 +120,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                 member?.['Member Code']
             ].filter(Boolean)
 
-            return candidateCodes.some((candidate) => String(candidate).trim().toUpperCase() === normalizedCode)
+            return candidateCodes.some((candidate) => normalizeMemberCode(candidate) === normalizedCode)
         }) || null
     }, [codeLookupEnabled, lookupCode, memberIndexCodeMap, members])
 
@@ -130,6 +136,19 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
         setDraftShareMessage(shareMessageTemplate)
     }, [shareMessageTemplate])
 
+    useEffect(() => {
+        if (!pendingFormat) return undefined
+
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape' && savingKey !== 'member_code_format') {
+                setPendingFormat(null)
+            }
+        }
+
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [pendingFormat, savingKey])
+
     const affectedMemberCount = members.length
     const adminStatusLabel = isCollaborator
         ? (isAdminCollaborator ? 'Admin collaborator' : 'Collaborator')
@@ -137,6 +156,29 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const workspaceTargetLabel = isCollaborator && dataOwnerId
         ? 'Owner workspace'
         : 'Your workspace'
+
+    const requestMemberCodeFormat = (format) => {
+        const nextFormat = normalizeMemberCodeFormat(format)
+        if (nextFormat === memberCodeFormat) return
+        setPendingFormat(nextFormat)
+    }
+
+    const confirmMemberCodeFormat = async () => {
+        if (!pendingFormat || !convertWorkspaceMemberCodeFormat) return
+        setSavingKey('member_code_format')
+        setSaveStatus(null)
+        try {
+            await convertWorkspaceMemberCodeFormat(pendingFormat)
+            const label = pendingFormat === 'letters' ? 'letters only' : pendingFormat === 'numbers' ? 'numbers only' : 'letters and numbers'
+            setSaveStatus({ type: 'success', message: `All workspace member codes now use ${label}. Previous codes remain searchable as aliases.` })
+            setPendingFormat(null)
+        } catch (error) {
+            console.error('Member-code format conversion failed:', error)
+            setSaveStatus({ type: 'error', message: error?.message || 'Member-code format could not be changed. No codes were changed.' })
+        } finally {
+            setSavingKey('')
+        }
+    }
 
     const setPreference = async (key, value, label = 'Member Codes setting') => {
         if (!updatePreferences) return null
@@ -307,16 +349,49 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             onChange={() => setMemberCodesEnabled(!memberCodesEnabled)}
                         />
                         {isAdminAccess && (
-                            <ToggleRow
-                                icon={BadgeCheck}
-                                title="Workspace Member Codes"
-                                description="Admin control for the member-code display default across this workspace."
-                                checked={workspaceEnabled}
-                                settingId="workspace_member_codes_enabled"
-                                getSettingTargetClass={getSettingTargetClass}
-                                disabled={savingKey === 'workspace_member_codes_enabled'}
-                                onChange={() => setWorkspaceMemberCodesEnabled(!workspaceEnabled)}
-                            />
+                            <>
+                                <ToggleRow
+                                    icon={BadgeCheck}
+                                    title="Workspace Member Codes"
+                                    description="Admin control for the member-code display default across this workspace."
+                                    checked={workspaceEnabled}
+                                    settingId="workspace_member_codes_enabled"
+                                    getSettingTargetClass={getSettingTargetClass}
+                                    disabled={savingKey === 'workspace_member_codes_enabled'}
+                                    onChange={() => setWorkspaceMemberCodesEnabled(!workspaceEnabled)}
+                                />
+                                <div className="bg-gray-50 p-4 dark:bg-gray-900/30" data-setting-id="member_code_format" tabIndex={-1}>
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                        <div>
+                                            <p className="font-semibold text-gray-900 dark:text-white">Workspace code format</p>
+                                            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Changing the format updates every member code together. It cannot be queued while offline.</p>
+                                        </div>
+                                        <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-orange-700 dark:bg-orange-500/15 dark:text-orange-200">
+                                            {memberCodeFormat === 'letters' ? 'Letters only' : memberCodeFormat === 'numbers' ? 'Numbers only' : 'Letters + numbers'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <ToggleRow
+                                    icon={BadgeCheck}
+                                    title="Letters Only"
+                                    description="Use A, B, C … Z, AA for every workspace member code."
+                                    checked={memberCodeFormat === 'letters'}
+                                    settingId="member_code_letters_only"
+                                    getSettingTargetClass={getSettingTargetClass}
+                                    disabled={savingKey === 'member_code_format' || workspaceMemberCodeStatus === 'converting'}
+                                    onChange={() => requestMemberCodeFormat(getToggledMemberCodeFormat(memberCodeFormat, 'letters'))}
+                                />
+                                <ToggleRow
+                                    icon={BadgeCheck}
+                                    title="Numbers Only"
+                                    description="Use 001, 002, 003 … for every workspace member code."
+                                    checked={memberCodeFormat === 'numbers'}
+                                    settingId="member_code_numbers_only"
+                                    getSettingTargetClass={getSettingTargetClass}
+                                    disabled={savingKey === 'member_code_format' || workspaceMemberCodeStatus === 'converting'}
+                                    onChange={() => requestMemberCodeFormat(getToggledMemberCodeFormat(memberCodeFormat, 'numbers'))}
+                                />
+                            </>
                         )}
                         <ToggleRow
                             icon={ScanSearch}
@@ -647,6 +722,40 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                     </p>
                 </div>
             </div>
+            {pendingFormat && (
+                <div
+                    className="fixed inset-0 z-[180] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="member-code-format-dialog-title"
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget && savingKey !== 'member_code_format') setPendingFormat(null)
+                    }}
+                >
+                    <div className="w-full max-w-lg rounded-3xl border border-orange-200 bg-white p-5 shadow-2xl dark:border-orange-500/30 dark:bg-gray-900" onMouseDown={(event) => event.stopPropagation()}>
+                        <div className="flex items-start gap-3">
+                            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                                <AlertCircle className="h-5 w-5" />
+                            </div>
+                            <div className="min-w-0">
+                                <h4 id="member-code-format-dialog-title" className="text-lg font-black text-gray-900 dark:text-white">Change member-code format?</h4>
+                                <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-gray-300">
+                                    This updates all {affectedMemberCount} member code{affectedMemberCount === 1 ? '' : 's'} across the workspace. Badges, QR codes, printed passes, search, and exports will use the new format.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                            All collaborators will see this change. Internet is required, and conversion will not begin until you confirm.
+                        </div>
+                        <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                            <button type="button" onClick={() => setPendingFormat(null)} disabled={savingKey === 'member_code_format'} className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-black text-gray-700 transition hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60 dark:border-white/10 dark:text-white dark:hover:bg-white/10">Cancel</button>
+                            <button type="button" onClick={confirmMemberCodeFormat} disabled={savingKey === 'member_code_format'} className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-wait disabled:opacity-60">
+                                {savingKey === 'member_code_format' ? 'Changing format…' : 'Change Format'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

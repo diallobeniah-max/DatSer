@@ -17,7 +17,7 @@ import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
 import MissingDataModal from './MissingDataModal'
 import { resolveMemberAttendanceForDate } from '../utils/attendanceRecords'
-import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberIndexCode, getMemberIndexCodeAliases, memberMatchesIndexCode, normalizeMemberCode } from '../utils/memberIndexCodes'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
@@ -441,6 +441,8 @@ const Dashboard = ({ isAdmin = false }) => {
     isDeveloperBypass,
     searchSuggestionView,
     preferences,
+    memberCodeFormat,
+    workspaceMemberCodeAssignments,
     guidedFormSettings,
     recentMemberEdits
   } = useApp()
@@ -2047,7 +2049,10 @@ const Dashboard = ({ isAdmin = false }) => {
   }, [])
 
   const pendingSearchTerm = localSearchTerm.trim()
-  const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
+  const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members, {
+    format: memberCodeFormat,
+    persistedCodes: workspaceMemberCodeAssignments
+  }), [memberCodeFormat, members, workspaceMemberCodeAssignments])
   const isShortSearchView = searchSuggestionView !== 'full'
   const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
   const isShortSearchActive = isShortSearchView && showSearchSuggestions
@@ -2076,7 +2081,8 @@ const Dashboard = ({ isAdmin = false }) => {
   const quickPassCheckInUrl = quickPassMember
     ? buildMemberCheckInUrl({
       memberId: quickPassMember.id,
-      code: quickPassCode
+      code: quickPassCode,
+      workspaceId: dataOwnerId || user?.id
     })
     : ''
   const [quickPassQrImageUrl, setQuickPassQrImageUrl] = useState('')
@@ -2120,7 +2126,8 @@ const Dashboard = ({ isAdmin = false }) => {
 
     const shareCheckInUrl = buildMemberCheckInUrl({
       memberId: member.id,
-      code
+      code,
+      workspaceId: dataOwnerId || user?.id
     })
     const qrImageUrl = await createQrImageUrl(shareCheckInUrl)
     const imageUrl = await createMemberPassShareImage({
@@ -2244,7 +2251,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   useEffect(() => {
-    const normalizedCode = pendingSearchTerm.trim().toUpperCase()
+    const normalizedCode = normalizeMemberCode(pendingSearchTerm)
     if (!memberCodeTurboEnabled || !normalizedCode || normalizedCode.length < 2) {
       turboCheckInRef.current.key = ''
       return undefined
@@ -2253,13 +2260,14 @@ const Dashboard = ({ isAdmin = false }) => {
     const exactMember = members.find((member) => {
       const candidateCodes = [
         getMemberIndexCode(member, memberIndexCodeMap),
+        ...getMemberIndexCodeAliases(member, memberIndexCodeMap),
         member?.member_code,
         member?.memberCode,
         member?.code,
         member?.Code,
         member?.['Member Code']
       ].filter(Boolean)
-      return candidateCodes.some((candidate) => String(candidate).trim().toUpperCase() === normalizedCode)
+      return candidateCodes.some((candidate) => normalizeMemberCode(candidate) === normalizedCode)
     })
     if (!exactMember) return undefined
 

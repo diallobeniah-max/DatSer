@@ -28,15 +28,22 @@ describe('QR check-in helpers', () => {
     expect(buildMemberCheckInUrl({
       href: 'https://datser.example/?old=1',
       memberId: '42',
-      code: 'J02'
-    })).toBe('https://datser.example/?member_checkin=1&qr_mark=42&code=J02')
+      code: 'J02',
+      workspaceId: 'workspace-7'
+    })).toBe('https://datser.example/?member_checkin=1&qr_mark=42&qr_v=2&workspace=workspace-7&code=J02')
   })
 
   it('consumes a legacy dated pass once without carrying its stale date or table forward', () => {
     expect(consumeMemberCheckInUrl('https://datser.example/?member_checkin=1&qr_mark=42&code=J02&date=2026-01-04&table=January_2026')).toEqual({
-      request: { memberId: '42', code: 'J02' },
+      request: { memberId: '42', code: 'J02', workspaceId: '', version: '1' },
       cleanUrl: 'https://datser.example/'
     })
+  })
+
+  it('uses a versioned, workspace-scoped payload without private member details', () => {
+    const payload = consumeMemberCheckInUrl('https://datser.example/?member_checkin=1&qr_mark=member-42&code=001&workspace=workspace-7&qr_v=2&phone=0244307261')
+    expect(payload?.request).toEqual({ memberId: 'member-42', code: '001', workspaceId: 'workspace-7', version: '2' })
+    expect(payload?.cleanUrl).toBe('https://datser.example/?phone=0244307261')
   })
 
   it('rejects unrelated and incomplete QR values', () => {

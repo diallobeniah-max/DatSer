@@ -309,6 +309,22 @@ export const SETTINGS_SEARCH_INDEX = [
         icon: BadgeCheck
     },
     {
+        id: 'member_code_letters_only',
+        section: 'member_codes',
+        label: 'Letters Only',
+        description: 'Generate alphabetical workspace member codes such as A, B, Z, and AA',
+        keywords: 'letters letters only alphabetical member code format code format a b aa workspace codes',
+        icon: BadgeCheck
+    },
+    {
+        id: 'member_code_numbers_only',
+        section: 'member_codes',
+        label: 'Numbers Only',
+        description: 'Generate numeric workspace member codes such as 001, 002, and 500',
+        keywords: 'numbers numbers only numeric member code format code format 001 002 workspace codes',
+        icon: BadgeCheck
+    },
+    {
         id: 'member_code_quick_pass',
         section: 'member_codes',
         label: 'Quick Pass',

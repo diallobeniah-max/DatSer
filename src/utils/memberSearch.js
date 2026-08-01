@@ -9,6 +9,17 @@ export const normalizeSearchText = (value) => String(value || '')
 
 export const normalizePhoneForSearch = (value) => String(value || '').replace(/\D/g, '')
 
+const normalizeCodeForSearch = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+const getCodeCandidates = (member, getCode, getCodeAliases) => [
+  getCode(member),
+  ...(getCodeAliases(member) || [])
+].map(normalizeCodeForSearch).filter(Boolean)
+
+const isNumericCodeEquivalent = (query, code) => {
+  if (!/^\d+$/.test(query) || !/^\d+$/.test(code)) return false
+  return Number(query) === Number(code)
+}
+
 const getPhoneVariants = (value) => {
   const digits = normalizePhoneForSearch(value)
   if (!digits) return []
@@ -106,9 +117,11 @@ export const classifyMemberSearch = ({
   remoteMembers = [],
   deletedMembers = [],
   query = '',
-  getCode = (member) => member?.member_code || member?.memberCode || member?.code || member?.Code || ''
+  getCode = (member) => member?.member_code || member?.memberCode || member?.code || member?.Code || '',
+  getCodeAliases = () => []
 } = {}) => {
   const normalizedQuery = normalizeSearchText(query)
+  const normalizedCodeQuery = normalizeCodeForSearch(query)
   const activeMembers = uniqueActiveMembers(members, remoteMembers)
   if (!normalizedQuery) {
     return {
@@ -118,13 +131,18 @@ export const classifyMemberSearch = ({
   }
 
   const exact = []
+  const exactAlias = []
   const partial = []
   const suggestions = []
   activeMembers.forEach((member) => {
     const name = normalizeSearchText(getSearchableMemberName(member))
-    const code = normalizeSearchText(getCode(member))
+    const codes = getCodeCandidates(member, getCode, getCodeAliases)
+    const [currentCode = ''] = codes
+    const aliasCodes = codes.slice(1)
     const nameTokens = name.split(' ').filter(Boolean)
-    const isExact = name === normalizedQuery || code === normalizedQuery || getSearchablePhones(member)
+    const isExactCode = Boolean(normalizedCodeQuery) && (currentCode === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, currentCode))
+    const isExactAlias = Boolean(normalizedCodeQuery) && aliasCodes.some((code) => code === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, code))
+    const isExact = name === normalizedQuery || isExactCode || getSearchablePhones(member)
       .some(({ variants }) => getPhoneVariants(query).some((candidate) => variants.includes(candidate)))
 
     if (isExact) {
@@ -132,9 +150,14 @@ export const classifyMemberSearch = ({
       return
     }
 
+    if (isExactAlias) {
+      exactAlias.push(member)
+      return
+    }
+
     const exactNamePart = normalizedQuery.split(' ').length === 1 && nameTokens.includes(normalizedQuery)
     const phraseMatch = name.includes(normalizedQuery)
-    if (exactNamePart || phraseMatch || hasNameTokenMatch(name, normalizedQuery) || code.includes(normalizedQuery) || hasPhoneMatch(member, query)) {
+    if (exactNamePart || phraseMatch || hasNameTokenMatch(name, normalizedQuery) || codes.some((code) => code.includes(normalizedCodeQuery)) || hasPhoneMatch(member, query)) {
       partial.push(member)
       return
     }
@@ -143,13 +166,40 @@ export const classifyMemberSearch = ({
 
   const deletedMatches = (deletedMembers || []).filter((member) => {
     const name = normalizeSearchText(getSearchableMemberName(member))
-    const code = normalizeSearchText(getCode(member))
-    return name === normalizedQuery || code === normalizedQuery || hasNameTokenMatch(name, normalizedQuery)
+    const codes = getCodeCandidates(member, getCode, getCodeAliases)
+    return name === normalizedQuery || codes.includes(normalizedCodeQuery) || hasNameTokenMatch(name, normalizedQuery)
   })
-  const visible = [...exact, ...partial]
-  const status = exact.length ? 'exact' : partial.length ? 'partial' : deletedMatches.length ? 'deleted' : suggestions.length ? 'suggested' : 'none'
+  // A code is a unique identifier. Do not dilute a valid exact result with name matches.
+  const exactCodes = normalizedCodeQuery && (exact.some((member) => getCodeCandidates(member, getCode, getCodeAliases)[0] === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, getCodeCandidates(member, getCode, getCodeAliases)[0])))
+    ? exact.filter((member) => {
+      const code = getCodeCandidates(member, getCode, getCodeAliases)[0]
+      return code === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, code)
+    })
+    : []
+  const exactAliasCodes = !exactCodes.length && normalizedCodeQuery ? exactAlias : []
+  const getVisibleRank = (member) => {
+    const codes = getCodeCandidates(member, getCode, getCodeAliases)
+    if (normalizedCodeQuery && codes.some((code) => code.startsWith(normalizedCodeQuery))) return 0
 
-  return { query: normalizedQuery, exact, partial, suggestions, visible, deletedMatches, status, visibleCount: visible.length }
+    const name = normalizeSearchText(getSearchableMemberName(member))
+    if (name === normalizedQuery || hasNameTokenMatch(name, normalizedQuery)) return 1
+
+    const phoneMatches = getSearchablePhones(member).filter((phone) => phoneMatchesQuery(phone.value, query))
+    if (phoneMatches.some((phone) => phone.kind === 'member')) return 2
+    if (phoneMatches.some((phone) => phone.kind === 'guardian')) return 3
+    return 4
+  }
+
+  // Current/alias exact codes always stand alone. Otherwise retain a predictable
+  // code -> name -> member phone -> guardian phone ordering across every client.
+  const visible = exactCodes.length
+    ? exactCodes
+    : exactAliasCodes.length
+      ? exactAliasCodes
+      : [...exact, ...partial].sort((left, right) => getVisibleRank(left) - getVisibleRank(right))
+  const status = exactCodes.length || exactAliasCodes.length || exact.length ? 'exact' : partial.length ? 'partial' : deletedMatches.length ? 'deleted' : suggestions.length ? 'suggested' : 'none'
+
+  return { query: normalizedQuery, exact: [...exactCodes, ...exactAliasCodes, ...exact.filter((member) => !exactCodes.includes(member))], partial, suggestions, visible, deletedMatches, status, visibleCount: visible.length }
 }
 
 export const shouldShowSearchDebug = ({ isDevelopment, flag }) => (
