@@ -4,6 +4,41 @@
 alter table public.user_preferences
   add column if not exists member_code_format text not null default 'alphanumeric';
 
+-- Some early DatSer projects predate this helper. Keep the Member Codes
+-- access contract self-contained so owners and active collaborators share
+-- one authoritative workspace format.
+create or replace function public.can_access_workspace(p_owner_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select auth.uid() is not null
+    and p_owner_id is not null
+    and (
+      auth.uid() = p_owner_id
+      or exists (
+        select 1
+        from public.collaborators collaborator
+        where collaborator.owner_id = p_owner_id
+          and collaborator.status in ('accepted', 'active')
+          and (
+            collaborator.collaborator_user_id = auth.uid()
+            or exists (
+              select 1
+              from auth.users account
+              where account.id = auth.uid()
+                and (
+                  collaborator.email = account.email
+                  or collaborator.email ilike account.email
+                )
+            )
+          )
+      )
+    );
+$$;
+
 alter table public.user_preferences
   drop constraint if exists user_preferences_member_code_format_check;
 alter table public.user_preferences
@@ -127,13 +162,20 @@ $$;
 -- and the authoritative workspace preference moves only after every row updates.
 create or replace function public.convert_workspace_member_code_format(p_owner_id uuid, p_format text)
 returns setof public.workspace_member_codes language plpgsql security definer set search_path = public as $$
-declare v_format text := coalesce(p_format, 'alphanumeric');
+declare
+  v_format text := coalesce(p_format, 'alphanumeric');
+  v_code record;
+  v_base text;
+  v_candidate text;
+  v_suffix bigint;
+  v_allocated text[] := '{}';
 begin
   if v_format not in ('alphanumeric', 'letters', 'numbers') then raise exception 'Unsupported member-code format'; end if;
   if not public.member_code_format_admin(p_owner_id) then raise exception 'Only a workspace owner or admin collaborator can convert member codes'; end if;
   perform pg_advisory_xact_lock(hashtextextended('workspace_member_codes:' || p_owner_id::text, 0));
-  -- Preserve the outgoing display code before staging values to avoid the
-  -- workspace-level unique constraint during a format-wide conversion.
+
+  -- Move every active value out of the public namespace first. This makes the
+  -- next phase safe even if a previous/legacy alphanumeric value collides.
   update public.workspace_member_codes code
   set aliases = array(
         select distinct upper(value)
@@ -143,10 +185,32 @@ begin
       current_code = '__TEMP__' || ordinal::text,
       updated_at = now()
   where workspace_owner_id = p_owner_id;
-  update public.workspace_member_codes code
-  set current_code = public.member_code_for_format(v_format, code.ordinal, code.legacy_code),
-      updated_at = now()
-  where code.workspace_owner_id = p_owner_id;
+
+  -- Assign deterministically one at a time. Letter and number formats are
+  -- naturally unique by ordinal. Alphanumeric legacy values may not be, so
+  -- append a stable suffix only when an existing legacy value conflicts.
+  for v_code in
+    select member_id, ordinal, legacy_code
+    from public.workspace_member_codes
+    where workspace_owner_id = p_owner_id
+    order by ordinal
+  loop
+    v_base := public.member_code_for_format(v_format, v_code.ordinal, v_code.legacy_code);
+    v_candidate := v_base;
+    v_suffix := 0;
+    while v_candidate = any(v_allocated) loop
+      v_suffix := v_suffix + 1;
+      v_candidate := v_base || case when v_suffix = 1 then v_code.ordinal::text else (v_code.ordinal::text || v_suffix::text) end;
+    end loop;
+
+    update public.workspace_member_codes
+    set current_code = v_candidate,
+        updated_at = now()
+    where workspace_owner_id = p_owner_id
+      and member_id = v_code.member_id;
+    v_allocated := array_append(v_allocated, v_candidate);
+  end loop;
+
   -- An alias must never shadow another member's active code in this workspace.
   update public.workspace_member_codes code
   set aliases = array(
@@ -162,6 +226,7 @@ begin
       )
   )
   where code.workspace_owner_id = p_owner_id;
+
   insert into public.user_preferences (user_id, member_code_format, updated_at)
   values (p_owner_id, v_format, now())
   on conflict (user_id) do update
@@ -170,7 +235,6 @@ begin
   return query select * from public.workspace_member_codes where workspace_owner_id = p_owner_id order by ordinal;
 end;
 $$;
-
 alter table public.workspace_member_codes replica identity full;
 do $$
 begin
@@ -190,8 +254,15 @@ $$;
 revoke all on function public.member_code_format_admin(uuid) from public, anon;
 revoke all on function public.ensure_workspace_member_codes(uuid, jsonb) from public, anon;
 revoke all on function public.convert_workspace_member_code_format(uuid, text) from public, anon;
+revoke all on function public.can_access_workspace(uuid) from public, anon;
+revoke all on function public.member_code_letters(bigint) from public, anon;
+revoke all on function public.member_code_for_format(text, bigint, text) from public, anon;
+grant execute on function public.member_code_letters(bigint) to authenticated;
+grant execute on function public.member_code_for_format(text, bigint, text) to authenticated;
+grant execute on function public.member_code_format_admin(uuid) to authenticated;
 grant execute on function public.ensure_workspace_member_codes(uuid, jsonb) to authenticated;
 grant execute on function public.convert_workspace_member_code_format(uuid, text) to authenticated;
+grant execute on function public.can_access_workspace(uuid) to authenticated;
 
 comment on table public.workspace_member_codes is 'Canonical workspace member codes with retained aliases. Recovery: revert member_code_format and re-run conversion after correcting assignments.';
 

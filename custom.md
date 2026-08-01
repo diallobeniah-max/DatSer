@@ -223,3 +223,7 @@
 - Selected Present may use confirmed green in editable forms/history.
 - Do not leave unused trailing layout space.
 - Use shared tokens and components.
+
+## Member Codes Accent Rule
+- Member Codes uses the semantic deep-blue feature accent.
+- Member Codes components must consume the shared Member Codes tokens and must not hardcode local blue, orange, yellow, or amber values for feature icons, labels, or status states.

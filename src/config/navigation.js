@@ -107,7 +107,7 @@ export const SETTINGS_SECTIONS = [
         id: 'member_codes',
         label: 'Member Codes',
         icon: BadgeCheck,
-        color: 'orange',
+        color: 'member-codes',
         content: 'Configure member index codes, workspace member codes, QR pass scanning, quick pass bottom sheet, badge style, member profile previews, and exact-match code lookup.',
         keywords: 'member codes workspace member codes index badge quick pass profile preview check in lookup attendance code number id qr pass share scanner camera scan code name'
     },

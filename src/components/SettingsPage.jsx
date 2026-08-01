@@ -908,16 +908,16 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             ...effectivePreferences,
             ...nextPreferences
         }
-        if (
-            Object.prototype.hasOwnProperty.call(nextPreferences, 'member_codes_enabled') ||
-            Object.prototype.hasOwnProperty.call(nextPreferences, 'workspace_member_codes_enabled')
-        ) {
+        const syncMemberCodeVisibility = () => {
             const enabled = areMemberCodesVisible(mergedPreferences)
             window.localStorage.setItem('datser_member_codes_enabled', String(enabled))
             window.dispatchEvent(new CustomEvent('datser-member-codes-preference-changed', {
                 detail: { enabled }
             }))
         }
+        const isMemberCodeVisibilityChange =
+            Object.prototype.hasOwnProperty.call(nextPreferences, 'member_codes_enabled') ||
+            Object.prototype.hasOwnProperty.call(nextPreferences, 'workspace_member_codes_enabled')
         setOptimisticPreferencePatch((prev) => ({
             ...prev,
             ...nextPreferences
@@ -925,35 +925,41 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         const workspacePatch = Object.fromEntries(
             Object.entries(nextPreferences).filter(([key]) => WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS.has(key))
         )
-        if (isCollaborator && isAdminCollaborator && dataOwnerId && Object.keys(workspacePatch).length > 0) {
-            try {
+        try {
+            if (isCollaborator && isAdminCollaborator && dataOwnerId && Object.keys(workspacePatch).length > 0) {
+                // Collaborators are authorized to update an existing owner row,
+                // but RLS correctly prevents them from inserting a new one.
+                // Avoid upsert here so a valid shared toggle does not look like a
+                // failed insert on an established workspace.
                 const { data } = await executeSupabaseWrite(
                     () => supabase
                         .from('user_preferences')
-                        .upsert({
-                            user_id: dataOwnerId,
+                        .update({
                             ...workspacePatch,
                             updated_at: new Date().toISOString()
-                        }, {
-                            onConflict: 'user_id'
                         })
+                        .eq('user_id', dataOwnerId)
                         .select()
                         .single(),
                     { action: 'Save workspace member-code preferences' }
                 )
+                if (isMemberCodeVisibilityChange) syncMemberCodeVisibility()
                 return data
-            } catch (error) {
-                console.error('Could not save shared member-code preferences:', error)
-                toast.error('Could not save this workspace setting')
-                return null
             }
+            const entries = Object.entries(nextPreferences)
+            const result = entries.length === 1 && typeof updatePreference === 'function'
+                ? await updatePreference(entries[0][0], entries[0][1], { throwOnError: true })
+                : await saveUserPreferences?.(nextPreferences)
+            if (isMemberCodeVisibilityChange) syncMemberCodeVisibility()
+            return result
+        } catch (error) {
+            setOptimisticPreferencePatch((prev) => {
+                const next = { ...prev }
+                Object.keys(nextPreferences).forEach((key) => delete next[key])
+                return next
+            })
+            throw error
         }
-        const entries = Object.entries(nextPreferences)
-        if (entries.length === 1 && typeof updatePreference === 'function') {
-            const [key, value] = entries[0]
-            return updatePreference(key, value)
-        }
-        return saveUserPreferences?.(nextPreferences)
     }, [dataOwnerId, effectivePreferences, isAdminCollaborator, isCollaborator, saveUserPreferences, updatePreference])
 
     const toggleWorkspacePanel = useCallback((panelKey) => {
@@ -2358,6 +2364,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             purple: 'bg-purple-100 dark:bg-purple-900/30',
             green: 'bg-green-100 dark:bg-green-900/30',
             orange: 'bg-orange-100 dark:bg-orange-900/30',
+            'member-codes': 'bg-[var(--ds-color-member-codes-accent-soft)]',
+            yellow: 'bg-amber-100 dark:bg-amber-900/30',
             pink: 'bg-pink-100 dark:bg-pink-900/30',
             cyan: 'bg-cyan-100 dark:bg-cyan-900/30',
             red: 'bg-red-100 dark:bg-red-900/30'
@@ -2371,6 +2379,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             purple: 'text-purple-600 dark:text-purple-400',
             green: 'text-green-600 dark:text-green-400',
             orange: 'text-orange-600 dark:text-orange-400',
+            'member-codes': 'text-[var(--ds-color-member-codes-accent-text)]',
+            yellow: 'text-amber-600 dark:text-amber-300',
             pink: 'text-pink-600 dark:text-pink-400',
             cyan: 'text-cyan-600 dark:text-cyan-400',
             red: 'text-red-600 dark:text-red-400'
@@ -2987,6 +2997,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                 {visibleSections.map((section) => {
                                     const Icon = section.icon
                                     const isActive = effectiveSection === section.id
+                                    const isMemberCodes = section.id === 'member_codes'
                                     return (
                                         <button
                                             key={section.id}
@@ -3005,18 +3016,20 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                                 isSidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3.5'
                                             } ${
                                                 isActive
-                                                    ? 'bg-orange-50 text-orange-700 dark:!bg-[#3a2419] dark:!text-orange-100'
+                                                    ? isMemberCodes
+                                                        ? 'bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-text)]'
+                                                        : 'bg-orange-50 text-orange-700 dark:!bg-[#3a2419] dark:!text-orange-100'
                                                     : 'bg-transparent text-gray-900 hover:bg-gray-50 dark:!text-white dark:hover:!bg-white/5'
                                             }`}
                                         >
-                                            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${isActive ? 'bg-orange-100 dark:!bg-orange-500/20' : getIconBgColor(section.color)}`}>
-                                                <Icon className={`h-5 w-5 ${isActive ? 'text-orange-600 dark:text-orange-300' : getIconColor(section.color)}`} />
+                                            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${isActive ? isMemberCodes ? 'bg-white/70 dark:bg-black/20' : 'bg-orange-100 dark:!bg-orange-500/20' : getIconBgColor(section.color)}`}>
+                                                <Icon className={`h-5 w-5 ${isActive ? isMemberCodes ? 'text-[var(--ds-color-member-codes-accent-text)]' : 'text-orange-600 dark:text-orange-300' : getIconColor(section.color)}`} />
                                             </div>
                                             <div className={`min-w-0 flex-1 ${isSidebarCollapsed ? 'hidden' : ''}`}>
                                                 <p className="font-semibold truncate">{section.label}</p>
                                                 <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">{getSectionPreview(section.id)}</p>
                                             </div>
-                                            {!isSidebarCollapsed && <ChevronRight className={`h-5 w-5 ${isActive ? 'text-orange-500' : 'text-gray-400'}`} />}
+                                            {!isSidebarCollapsed && <ChevronRight className={`h-5 w-5 ${isActive ? isMemberCodes ? 'text-[var(--ds-color-member-codes-accent-text)]' : 'text-orange-500' : 'text-gray-400'}`} />}
                                         </button>
                                     )
                                 })}

@@ -62,10 +62,10 @@ export const PreviewFrame = ({ children, className = '' }) => (
   </div>
 )
 
-export const FeaturePreviewCard = ({ icon: Icon = Sparkles, title, detail, children }) => (
+export const FeaturePreviewCard = ({ icon: Icon = Sparkles, title, detail, children, accent = 'orange' }) => (
   <div className="rounded-2xl border border-gray-200 bg-gray-50/90 p-3 dark:border-white/10 dark:bg-white/[0.04]">
     <div className="mb-2 flex items-center gap-2">
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+      <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-xl ${accent === 'member-codes' ? 'bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-text)]' : 'bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300'}`}>
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0">
@@ -146,9 +146,9 @@ const MiniMemberCard = ({ name = 'Agnes Abena Agyei', code = 'A44' }) => (
 const MemberCodesPreview = () => (
   <AutoScrollPreview className="space-y-3">
     <MiniMemberCard />
-    <FeaturePreviewCard icon={QrCode} title="Member pass" detail="Tap the code to open the QR pass">
-      <div className="grid grid-cols-[auto_1fr] items-center gap-3 rounded-2xl bg-orange-50 p-3 dark:bg-orange-500/10">
-        <div className="grid h-20 w-20 place-items-center rounded-full border-4 border-orange-300 bg-white text-[10px] font-black text-gray-900 shadow-inner">
+    <FeaturePreviewCard icon={QrCode} title="Member pass" detail="Tap the code to open the QR pass" accent="member-codes">
+      <div className="grid grid-cols-[auto_1fr] items-center gap-3 rounded-2xl bg-[var(--ds-color-member-codes-accent-soft)] p-3">
+        <div className="grid h-20 w-20 place-items-center rounded-full border-4 border-[var(--ds-color-member-codes-accent-border)] bg-white text-[10px] font-black text-gray-900 shadow-inner">
           QR
         </div>
         <div className="min-w-0">
@@ -160,12 +160,12 @@ const MemberCodesPreview = () => (
         </div>
       </div>
     </FeaturePreviewCard>
-    <FeaturePreviewCard icon={Search} title="Code lookup" detail="Exact code searches stay fast">
+    <FeaturePreviewCard icon={Search} title="Code lookup" detail="Exact code searches stay fast" accent="member-codes">
       <div className="rounded-2xl border border-gray-200 bg-white p-2 dark:border-white/10 dark:bg-[#202121]">
         {['A44 Agnes Abena', 'E79 Esther M', 'P36 PreCOMPLETEDious'].map((row) => (
           <div key={row} className="flex items-center justify-between gap-2 rounded-xl px-2 py-1.5 text-xs font-bold text-gray-700 dark:text-gray-200">
             <span className="truncate">{row}</span>
-            <ChevronRight className="h-3.5 w-3.5 text-orange-500" />
+            <ChevronRight className="h-3.5 w-3.5 text-[var(--ds-color-member-codes-accent-text)]" />
           </div>
         ))}
       </div>
@@ -302,6 +302,7 @@ const LiveFeaturePreview = ({ type = 'default', section = null, compact = false,
     if (type === 'activity') return Clock3
     return Sparkles
   }, [type])
+  const memberCodesPreview = type === 'member_codes'
 
   useEffect(() => {
     setIsOpen(defaultOpen)
@@ -312,21 +313,21 @@ const LiveFeaturePreview = ({ type = 'default', section = null, compact = false,
       {showHeader && <button
         type="button"
         onClick={() => collapsible && setIsOpen((value) => !value)}
-        className={`flex w-full items-center justify-between gap-3 border-b border-gray-200/70 px-4 py-4 text-left transition hover:bg-orange-50/70 dark:border-white/10 dark:hover:bg-orange-500/10 ${collapsible ? 'cursor-pointer' : 'cursor-default'}`}
+        className={`flex w-full items-center justify-between gap-3 border-b border-gray-200/70 px-4 py-4 text-left transition dark:border-white/10 ${memberCodesPreview ? 'hover:bg-[var(--ds-color-member-codes-accent-soft)]' : 'hover:bg-orange-50/70 dark:hover:bg-orange-500/10'} ${collapsible ? 'cursor-pointer' : 'cursor-default'}`}
         aria-expanded={isOpen}
         aria-label={`${isOpen ? 'Close' : 'Open'} ${copy.title}`}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+          <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl ${memberCodesPreview ? 'bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-text)]' : 'bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300'}`}>
             <PreviewIcon className="h-5 w-5" />
           </span>
           <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">{copy.kicker}</p>
+            <p className={`text-[11px] font-black uppercase tracking-[0.18em] ${memberCodesPreview ? 'text-[var(--ds-color-member-codes-accent-text)]' : 'text-orange-600 dark:text-orange-300'}`}>{copy.kicker}</p>
             <h3 className="truncate text-base font-black text-gray-900 dark:text-white">{copy.title}</h3>
           </div>
         </div>
         {collapsible && (
-          <span className="inline-flex shrink-0 items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-black text-orange-700 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200">
+          <span className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-black ${memberCodesPreview ? 'border-[var(--ds-color-member-codes-accent-border)] bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-text)]' : 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-200'}`}>
             {isOpen ? 'Close' : 'Open'}
             <ChevronRight className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
           </span>
@@ -336,7 +337,7 @@ const LiveFeaturePreview = ({ type = 'default', section = null, compact = false,
       {isOpen && (
         <div className="space-y-4 p-4">
           {renderPreviewBody(type, section)}
-          <p className="rounded-2xl border border-orange-200/70 bg-orange-50/70 px-3 py-2 text-xs font-semibold leading-5 text-orange-800 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-100">
+          <p className={`rounded-2xl border px-3 py-2 text-xs font-semibold leading-5 ${memberCodesPreview ? 'border-[var(--ds-color-member-codes-accent-border)] bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-strong)] dark:text-[var(--ds-color-member-codes-accent-text)]' : 'border-orange-200/70 bg-orange-50/70 text-orange-800 dark:border-orange-400/20 dark:bg-orange-500/10 dark:text-orange-100'}`}>
             {copy.description}
           </p>
         </div>

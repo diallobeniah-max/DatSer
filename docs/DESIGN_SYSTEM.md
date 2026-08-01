@@ -19,6 +19,7 @@ DatSer uses a compact, high-contrast attendance interface that must remain reada
 | Error | `#dc2626` | same | Failed action requiring attention |
 | Warning | `#d97706` | same | Queued or degraded state |
 | Information | `#2563eb` | same | Neutral status information |
+| Member Codes | `--ds-color-member-codes-accent` | same semantic token | Deep-blue Member Codes icons, labels, and feature states only |
 
 Never communicate attendance state by color alone; retain the Present, Absent, and Clear labels and `aria-pressed` state.
 

@@ -24,14 +24,18 @@ const normalizeAutoCycleMinutes = (value) => {
     return AUTO_CYCLE_INTERVALS.some((option) => option.value === numericValue) ? numericValue : 30
 }
 
-const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId, getSettingTargetClass, disabled = false }) => (
+const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId, getSettingTargetClass, disabled = false, iconTone = 'member-codes' }) => (
     <div
         data-setting-id={settingId}
         tabIndex={-1}
         className={`flex items-center justify-between gap-4 p-4 ${getSettingTargetClass?.(settingId) || ''}`}
     >
         <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300">
+            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
+                iconTone === 'member-codes'
+                    ? 'bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-text)]'
+                    : 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300'
+            }`}>
                 <Icon className="h-5 w-5" />
             </div>
             <div className="min-w-0">
@@ -46,8 +50,8 @@ const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingI
                 event.stopPropagation()
                 onChange?.()
             }}
-            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 disabled:cursor-wait disabled:opacity-60 dark:focus:ring-offset-gray-900 ${
-                checked ? 'bg-orange-600' : 'bg-gray-200 dark:bg-gray-700'
+            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ease-out focus:outline-none focus:ring-2 focus:ring-[var(--ds-color-member-codes-accent)] focus:ring-offset-2 disabled:cursor-wait disabled:opacity-60 dark:focus:ring-offset-gray-900 ${
+                checked ? 'bg-[var(--ds-color-member-codes-accent)]' : 'bg-gray-200 dark:bg-gray-700'
             }`}
             aria-pressed={checked}
         >
@@ -293,10 +297,10 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
 
     return (
         <div className="space-y-6">
-            <div className="overflow-hidden rounded-[1.75rem] border border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50 p-5 shadow-sm dark:border-orange-500/20 dark:from-[#201208] dark:via-gray-900 dark:to-[#130f0a]">
+            <div className="overflow-hidden rounded-[1.75rem] border border-[var(--ds-color-member-codes-accent-border)] bg-gradient-to-br from-[var(--ds-color-member-codes-accent-soft)] via-white to-white p-5 shadow-sm dark:via-gray-900 dark:to-gray-950">
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                     <div className="max-w-2xl">
-                        <p className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-white/80 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-orange-700 dark:border-orange-400/20 dark:bg-white/5 dark:text-orange-200">
+                        <p className="inline-flex items-center gap-2 rounded-full border border-[var(--ds-color-member-codes-accent-border)] bg-white/80 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-[var(--ds-color-member-codes-accent-text)] dark:bg-white/5">
                             <BadgeCheck className="h-3.5 w-3.5" />
                             Member Codes control room
                         </p>
@@ -307,7 +311,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                     </div>
                     <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[28rem]">
                         <div className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
-                            <Users className="h-4 w-4 text-orange-600 dark:text-orange-300" />
+                            <Users className="h-4 w-4 text-[var(--ds-color-member-codes-accent-text)]" />
                             <p className="mt-2 text-2xl font-black text-gray-950 dark:text-white">{affectedMemberCount}</p>
                             <p className="text-xs font-bold text-gray-500 dark:text-gray-400">connected members affected</p>
                         </div>
@@ -317,7 +321,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             <p className="text-xs font-bold text-gray-500 dark:text-gray-400">{workspaceTargetLabel}</p>
                         </div>
                         <div className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-sm dark:border-white/10 dark:bg-white/[0.06]">
-                            <Save className="h-4 w-4 text-orange-600 dark:text-orange-300" />
+                            <Save className="h-4 w-4 text-[var(--ds-color-member-codes-accent-text)]" />
                             <p className={`mt-2 text-sm font-black ${enabled ? 'text-emerald-700 dark:text-emerald-200' : 'text-gray-950 dark:text-white'}`}>{enabled ? 'Codes active' : 'Codes hidden'}</p>
                             <p className="text-xs font-bold text-gray-500 dark:text-gray-400">{savingKey ? 'Saving changes...' : 'Auto-saved controls'}</p>
                         </div>
@@ -346,6 +350,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             settingId="member_codes_enabled"
                             getSettingTargetClass={getSettingTargetClass}
                             disabled={savingKey === 'member_codes_enabled'}
+                            iconTone="member-codes"
                             onChange={() => setMemberCodesEnabled(!memberCodesEnabled)}
                         />
                         {isAdminAccess && (
@@ -358,6 +363,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                     settingId="workspace_member_codes_enabled"
                                     getSettingTargetClass={getSettingTargetClass}
                                     disabled={savingKey === 'workspace_member_codes_enabled'}
+                                    iconTone="member-codes"
                                     onChange={() => setWorkspaceMemberCodesEnabled(!workspaceEnabled)}
                                 />
                                 <div className="bg-gray-50 p-4 dark:bg-gray-900/30" data-setting-id="member_code_format" tabIndex={-1}>
@@ -366,7 +372,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                             <p className="font-semibold text-gray-900 dark:text-white">Workspace code format</p>
                                             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Changing the format updates every member code together. It cannot be queued while offline.</p>
                                         </div>
-                                        <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-black uppercase tracking-wide text-orange-700 dark:bg-orange-500/15 dark:text-orange-200">
+                                        <span className="rounded-full bg-[var(--ds-color-member-codes-accent-soft)] px-3 py-1 text-xs font-black uppercase tracking-wide text-[var(--ds-color-member-codes-accent-text)]">
                                             {memberCodeFormat === 'letters' ? 'Letters only' : memberCodeFormat === 'numbers' ? 'Numbers only' : 'Letters + numbers'}
                                         </span>
                                     </div>
@@ -379,6 +385,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                     settingId="member_code_letters_only"
                                     getSettingTargetClass={getSettingTargetClass}
                                     disabled={savingKey === 'member_code_format' || workspaceMemberCodeStatus === 'converting'}
+                                    iconTone="member-codes"
                                     onChange={() => requestMemberCodeFormat(getToggledMemberCodeFormat(memberCodeFormat, 'letters'))}
                                 />
                                 <ToggleRow
@@ -389,6 +396,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                     settingId="member_code_numbers_only"
                                     getSettingTargetClass={getSettingTargetClass}
                                     disabled={savingKey === 'member_code_format' || workspaceMemberCodeStatus === 'converting'}
+                                    iconTone="member-codes"
                                     onChange={() => requestMemberCodeFormat(getToggledMemberCodeFormat(memberCodeFormat, 'numbers'))}
                                 />
                             </>
@@ -401,6 +409,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             settingId="member_code_quick_pass"
                             getSettingTargetClass={getSettingTargetClass}
                             disabled={savingKey === 'member_code_quick_pass_enabled'}
+                            iconTone="member-codes"
                             onChange={() => setPreference('member_code_quick_pass_enabled', !quickPassEnabled, 'Quick Pass')}
                         />
                         <ToggleRow
@@ -411,13 +420,14 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             settingId="member_code_logo"
                             getSettingTargetClass={getSettingTargetClass}
                             disabled={savingKey === 'member_code_show_logo'}
+                            iconTone="member-codes"
                             onChange={() => setPreference('member_code_show_logo', !showLogo, 'Logo visibility')}
                         />
                         {isAdminAccess && (
                             <div data-setting-id="member_code_logo_upload" className="flex flex-wrap items-center justify-between gap-3 bg-gray-50 p-4 dark:bg-gray-900/30">
                                 <div className="flex min-w-0 items-center gap-3">
-                                    <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-orange-200 bg-white dark:border-orange-400/20 dark:bg-black/25">
-                                        {churchLogoUrl ? <img src={churchLogoUrl} alt="Workspace icon" className="h-full w-full object-contain p-1" /> : <Church className="h-6 w-6 text-orange-500" />}
+                                    <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-[var(--ds-color-member-codes-accent-border)] bg-white dark:bg-black/25">
+                                        {churchLogoUrl ? <img src={churchLogoUrl} alt="Workspace icon" className="h-full w-full object-contain p-1" /> : <Church className="h-6 w-6 text-[var(--ds-color-member-codes-accent-text)]" />}
                                     </div>
                                     <div className="min-w-0">
                                         <p className="font-semibold text-gray-900 dark:text-white">Workspace icon</p>
@@ -732,9 +742,9 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                         if (event.target === event.currentTarget && savingKey !== 'member_code_format') setPendingFormat(null)
                     }}
                 >
-                    <div className="w-full max-w-lg rounded-3xl border border-orange-200 bg-white p-5 shadow-2xl dark:border-orange-500/30 dark:bg-gray-900" onMouseDown={(event) => event.stopPropagation()}>
+                    <div className="w-full max-w-lg rounded-3xl border border-[var(--ds-color-member-codes-accent-border)] bg-white p-5 shadow-2xl dark:bg-gray-900" onMouseDown={(event) => event.stopPropagation()}>
                         <div className="flex items-start gap-3">
-                            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-text)]">
                                 <AlertCircle className="h-5 w-5" />
                             </div>
                             <div className="min-w-0">
@@ -744,12 +754,12 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                 </p>
                             </div>
                         </div>
-                        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                        <div className="mt-4 rounded-2xl border border-[var(--ds-color-member-codes-accent-border)] bg-[var(--ds-color-member-codes-accent-soft)] p-3 text-sm leading-6 text-[var(--ds-color-member-codes-accent-strong)] dark:text-[var(--ds-color-member-codes-accent-text)]">
                             All collaborators will see this change. Internet is required, and conversion will not begin until you confirm.
                         </div>
                         <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                             <button type="button" onClick={() => setPendingFormat(null)} disabled={savingKey === 'member_code_format'} className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-black text-gray-700 transition hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60 dark:border-white/10 dark:text-white dark:hover:bg-white/10">Cancel</button>
-                            <button type="button" onClick={confirmMemberCodeFormat} disabled={savingKey === 'member_code_format'} className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-wait disabled:opacity-60">
+                            <button type="button" onClick={confirmMemberCodeFormat} disabled={savingKey === 'member_code_format'} className="rounded-xl bg-[var(--ds-color-member-codes-accent)] px-4 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-[var(--ds-color-member-codes-accent-strong)] disabled:cursor-wait disabled:opacity-60">
                                 {savingKey === 'member_code_format' ? 'Changing format…' : 'Change Format'}
                             </button>
                         </div>

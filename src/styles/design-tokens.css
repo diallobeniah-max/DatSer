@@ -12,6 +12,11 @@
   --ds-color-absent-strong: #b91c1c;
   --ds-color-clear: #f3f4f6;
   --ds-color-info: #2563eb;
+  --ds-color-member-codes-accent: #1d4ed8;
+  --ds-color-member-codes-accent-strong: #1e3a8a;
+  --ds-color-member-codes-accent-soft: #dbeafe;
+  --ds-color-member-codes-accent-border: #93c5fd;
+  --ds-color-member-codes-accent-text: #1d4ed8;
   --ds-color-warning: #d97706;
   --ds-color-error: #dc2626;
   --ds-color-success: #16a34a;
@@ -68,6 +73,11 @@
   --ds-color-text: #f9fafb;
   --ds-color-text-muted: #a3a3a3;
   --ds-color-clear: #525252;
+  --ds-color-member-codes-accent: #60a5fa;
+  --ds-color-member-codes-accent-strong: #3b82f6;
+  --ds-color-member-codes-accent-soft: rgb(30 58 138 / 0.34);
+  --ds-color-member-codes-accent-border: #1d4ed8;
+  --ds-color-member-codes-accent-text: #bfdbfe;
   --ds-shadow-control: 0 1px 2px rgb(0 0 0 / 0.35);
   --ds-shadow-card: 0 12px 30px rgb(0 0 0 / 0.28);
 }

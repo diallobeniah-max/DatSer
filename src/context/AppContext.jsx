@@ -99,30 +99,28 @@ const MEMBER_PREVIEW_SYNC_META_PREFIX = 'datser_member_preview_sync_meta_v1'
 const MEMBER_PREVIEW_SELECT = [
   'id',
   '"Full Name"',
-  'full_name',
-  'name',
-  '"Name"',
   '"Phone Number"',
-  'phone_number',
   '"Gender"',
-  'gender',
   '"Age"',
-  'age',
   '"Current Level"',
-  'current_level',
   'workspace',
-  'member_code',
   '"Member"',
   '"Regular"',
   '"Newcomer"',
   '"Manual Badge"',
   '"Badge Type"',
-  '"Join Date"',
   'inserted_at',
-  'created_at',
   'updated_at',
   'deleted_at',
-  'is_visitor'
+  'is_visitor',
+  'parent_name_1',
+  'parent_phone_1',
+  'parent_name_2',
+  'parent_phone_2',
+  'notes',
+  'ministry',
+  'date_of_birth',
+  'user_id'
 ].join(',')
 const MEMBER_BADGE_SELECT = 'id,"Member","Regular","Newcomer","Manual Badge","Badge Type"'
 
@@ -5683,32 +5681,12 @@ export const AppProvider = ({ children }) => {
   const resolveNameColumn = useCallback(async (tableName) => {
     const cached = nameColumnCacheRef.current.get(tableName)
     if (cached) return cached
-    if (!isSupabaseConfigured()) return 'Full Name'
-    let nameCol = 'Full Name'
-    try {
-      const { data, error } = await supabase
-        .from(tableName)
-        .select('"Full Name",full_name,name,"Name"')
-        .limit(1)
-      if (!error && data && data.length) {
-        const row = data[0]
-        if (Object.prototype.hasOwnProperty.call(row, 'Full Name')) {
-          nameCol = 'Full Name'
-        } else if (Object.prototype.hasOwnProperty.call(row, 'full_name')) {
-          nameCol = 'full_name'
-        } else if (Object.prototype.hasOwnProperty.call(row, 'name')) {
-          nameCol = 'name'
-        } else if (Object.prototype.hasOwnProperty.call(row, 'Name')) {
-          nameCol = 'Name'
-        }
-      }
-    } catch (e) {
-      // Fall back gracefully; monthly tables commonly use "Full Name"
-      console.warn('resolveNameColumn fallback due to error:', e)
-    }
+    // The live monthly schema uses the quoted legacy column. Requesting
+    // speculative aliases together makes PostgREST reject the whole query.
+    const nameCol = 'Full Name'
     nameColumnCacheRef.current.set(tableName, nameCol)
     return nameCol
-  }, [isSupabaseConfigured])
+  }, [])
 
   const performServerSearch = useCallback(async (term) => {
     const trimmed = term.trim()
@@ -6031,7 +6009,7 @@ export const AppProvider = ({ children }) => {
               .from(tableName)
               .select(MEMBER_PREVIEW_SELECT)
           )
-            .or(`"Full Name".ilike.%${safe}%,full_name.ilike.%${safe}%,name.ilike.%${safe}%,"Name".ilike.%${safe}%,member_code.ilike.%${safe}%`)
+            .ilike('Full Name', `%${safe}%`)
             .limit(20)
 
           if (error) {
