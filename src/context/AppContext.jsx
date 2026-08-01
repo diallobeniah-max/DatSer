@@ -767,6 +767,14 @@ export const AppProvider = ({ children }) => {
   const [deletedMemberSearchTombstones, setDeletedMemberSearchTombstones] = useState([])
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
+  const tableColumnCacheRef = useRef(new Map())
+  const devCountersRef = useRef({
+    syncStarted: 0,
+    syncCoalesced: 0,
+    schemaFetchCount: 0,
+    attendanceFetchCount: 0,
+    staleResultIgnored: 0
+  })
   const membersCacheRef = useRef(new Map()) // tableName -> { data, ts }
   const memberPreviewSyncRef = useRef(new Map())
   const memberPreviewSchemaReadyRef = useRef(new Map())
@@ -3391,38 +3399,41 @@ export const AppProvider = ({ children }) => {
     return `Attendance ${day}${suffix}`
   }
 
-  // Get all attendance columns for the current table
-  const getAttendanceColumns = async () => {
+  const getTableColumnsCached = useCallback(async (tableName, { force = false } = {}) => {
+    if (!tableName || isDeveloperBypass || !isSupabaseConfigured()) return []
+    if (!force && tableColumnCacheRef.current.has(tableName)) {
+      return tableColumnCacheRef.current.get(tableName)
+    }
     try {
-      if (isDeveloperBypass || !isSupabaseConfigured()) return []
-      if (!currentTable) return []
-
       const { data, error } = await supabase.rpc('get_table_columns', {
-        table_name: currentTable
+        table_name: tableName
       })
-
       if (error) {
         console.error('Error getting table columns:', error)
-        return []
+        return tableColumnCacheRef.current.get(tableName) || []
       }
-
-      // Filter for attendance columns - support both OLD and NEW formats
-      // OLD: Attendance 7th, Attendance 14th
-      // NEW: attendance_2025_12_07
-      return data?.filter(col => {
-        const name = col.column_name
-        const nameLower = name.toLowerCase()
-        // OLD format: starts with 'Attendance '
-        const isOldFormat = name.startsWith('Attendance ')
-        // NEW format: attendance_YYYY_MM_DD
-        const isNewFormat = /^attendance_\d{4}_\d{2}_\d{2}$/.test(nameLower)
-        return isOldFormat || isNewFormat
-      }) || []
+      const columns = Array.isArray(data) ? data : []
+      tableColumnCacheRef.current.set(tableName, columns)
+      devCountersRef.current.schemaFetchCount = (devCountersRef.current.schemaFetchCount || 0) + 1
+      return columns
     } catch (error) {
-      console.error('Error getting attendance columns:', error)
-      return []
+      console.error('Error getting table columns:', error)
+      return tableColumnCacheRef.current.get(tableName) || []
     }
-  }
+  }, [isDeveloperBypass, isSupabaseConfigured])
+
+  // Get all attendance columns for the current table
+  const getAttendanceColumns = useCallback(async () => {
+    if (!currentTable) return []
+    const data = await getTableColumnsCached(currentTable)
+    return data.filter(col => {
+      const name = col.column_name
+      const nameLower = name.toLowerCase()
+      const isOldFormat = name.startsWith('Attendance ')
+      const isNewFormat = /^attendance_\d{4}_\d{2}_\d{2}$/.test(nameLower)
+      return isOldFormat || isNewFormat
+    })
+  }, [currentTable, getTableColumnsCached])
 
   // Get available attendance dates for the current table
   const getAvailableAttendanceDates = async () => {
@@ -3819,31 +3830,16 @@ export const AppProvider = ({ children }) => {
   }
 
   const getAttendanceColumnsForTable = useCallback(async (tableName) => {
-    try {
-      if (isDeveloperBypass || !isSupabaseConfigured()) return []
-      if (!tableName) return []
-
-      const { data, error } = await supabase.rpc('get_table_columns', {
-        table_name: tableName
-      })
-
-      if (error) {
-        console.error('Error getting table columns:', error)
-        return []
-      }
-
-      return data?.filter(col => {
-        const name = col.column_name
-        const nameLower = name.toLowerCase()
-        const isOldFormat = name.startsWith('Attendance ')
-        const isNewFormat = /^attendance_\d{4}_\d{2}_\d{2}$/.test(nameLower)
-        return isOldFormat || isNewFormat
-      }) || []
-    } catch (error) {
-      console.error('Error getting table columns:', error)
-      return []
-    }
-  }, [isDeveloperBypass, isSupabaseConfigured])
+    if (!tableName) return []
+    const data = await getTableColumnsCached(tableName)
+    return data.filter(col => {
+      const name = col.column_name
+      const nameLower = name.toLowerCase()
+      const isOldFormat = name.startsWith('Attendance ')
+      const isNewFormat = /^attendance_\d{4}_\d{2}_\d{2}$/.test(nameLower)
+      return isOldFormat || isNewFormat
+    })
+  }, [getTableColumnsCached])
 
   const findAttendanceColumnForDateInTable = useCallback(async (date, tableName) => {
     try {
@@ -4869,14 +4865,10 @@ export const AppProvider = ({ children }) => {
       // Get existing columns from the table to filter out non-existent fields
       let validColumns = null
       try {
-        const { data: columnRows, error: columnError } = await supabase.rpc('get_table_columns', {
-          table_name: targetTable
-        })
-        if (!columnError && Array.isArray(columnRows) && columnRows.length > 0) {
+        const columnRows = await getTableColumnsCached(targetTable)
+        if (Array.isArray(columnRows) && columnRows.length > 0) {
           validColumns = new Set(columnRows.map((column) => column.column_name).filter(Boolean))
           console.log('[updateMember] Valid columns in table:', Array.from(validColumns))
-        } else if (columnError) {
-          console.warn('Could not fetch table columns, proceeding with fallback mapping:', columnError)
         }
       } catch (e) {
         console.warn('Could not fetch table schema, proceeding with all fields:', e)
@@ -7107,6 +7099,8 @@ export const AppProvider = ({ children }) => {
         return attendanceData
       }
 
+      devCountersRef.current.attendanceFetchCount = (devCountersRef.current.attendanceFetchCount || 0) + 1
+
       // Get all attendance columns for the current table
       const attendanceColumns = await getAttendanceColumns()
 
@@ -8402,7 +8396,8 @@ export const AppProvider = ({ children }) => {
     saveLockedDefaultDate,
     setCollaboratorOverride,
     fetchLockedDefaultDate,
-    sendAdminPeriodBroadcast
+    sendAdminPeriodBroadcast,
+    getDevCounters: () => devCountersRef.current
   }), [
     members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, ensureMemberCodeAssignment, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,

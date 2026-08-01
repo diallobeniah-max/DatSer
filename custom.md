@@ -295,3 +295,18 @@
 - Collaborators use the workspace owner scope when allocating codes.
 - Temporary allocation failure enters a deduplicated automatic recovery queue.
 - Search, editing, refreshing, or reopening must never be required to create a member code.
+
+## Incremental Member Code Allocation Rule
+- Adding one member allocates only that member’s code.
+- Normal allocation must never invoke full workspace code conversion.
+- Code allocation is transaction-locked and returns only requested assignments.
+- Code length is a minimum display width and numeric codes expand safely beyond it when needed.
+- Typing a name may show a provisional next-code preview but must not reserve a code.
+- Final allocation happens only after the member is successfully saved.
+
+## Single-Flight Sync Rule
+- Mount, focus, visibility, reconnect, realtime, and manual refresh use one coalesced synchronization coordinator.
+- Schema metadata is cached and never fetched repeatedly per render.
+- State written by a sync cannot immediately trigger another identical sync.
+- Members, Marked, attendance, and code badges retain last-confirmed content during reconciliation.
+- Stale responses cannot replace newer state.
