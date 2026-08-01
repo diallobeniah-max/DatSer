@@ -30,6 +30,12 @@ const DEV_BYPASS_PREFERENCES = {
 }
 const ADMIN_CODE_SESSION_KEY = 'datser_admin_code_session'
 const ADMIN_CODE_VERIFIED_SESSION_KEY = 'datser_admin_code_verified'
+// These values are configured atomically for the entire workspace. Generic
+// preference saves must never race the configuration RPC and restore defaults.
+const WORKSPACE_MEMBER_CODE_CONFIGURATION_KEYS = new Set([
+  'member_code_format',
+  'member_code_length'
+])
 
 const devOnlyString = (codes) => (
   import.meta.env.DEV ? String.fromCharCode(...codes) : ''
@@ -159,6 +165,22 @@ const normalizePreferencePayload = (payload, userId) => {
   }
 }
 
+const omitWorkspaceMemberCodeConfiguration = (preferences, userId) => {
+  const payload = normalizePreferencePayload(preferences, userId)
+  WORKSPACE_MEMBER_CODE_CONFIGURATION_KEYS.forEach((key) => delete payload[key])
+  return payload
+}
+
+const preserveRemoteWorkspaceMemberCodeConfiguration = (preferences, remotePreferences) => {
+  const merged = { ...(preferences || {}) }
+  WORKSPACE_MEMBER_CODE_CONFIGURATION_KEYS.forEach((key) => {
+    if (remotePreferences?.[key] !== undefined && remotePreferences?.[key] !== null) {
+      merged[key] = remotePreferences[key]
+    }
+  })
+  return merged
+}
+
 export const useAuth = () => {
   const context = useContext(AuthContext)
   if (!context) {
@@ -234,7 +256,7 @@ export const AuthProvider = ({ children }) => {
         action_type: 'preferences_update',
         user_id: userId,
         preferences: {
-          ...nextPreferences,
+          ...omitWorkspaceMemberCodeConfiguration(nextPreferences, userId),
           user_id: nextPreferences.user_id || userId
         },
         created_at: new Date().toISOString(),
@@ -509,8 +531,12 @@ export const AuthProvider = ({ children }) => {
               user_id: data.user_id || userId
             }
             : mergedBasePreferences
-          setPreferences(mergedPreferences)
-          saveOfflinePreferences(userId, mergedPreferences).catch((error) => {
+          // The server is authoritative for the workspace-wide code settings.
+          // A stale personal cache must not change every collaborator back to
+          // the default format while the app is starting.
+          const confirmedPreferences = preserveRemoteWorkspaceMemberCodeConfiguration(mergedPreferences, data)
+          setPreferences(confirmedPreferences)
+          saveOfflinePreferences(userId, confirmedPreferences).catch((error) => {
             console.warn('Could not cache preferences for offline use:', error)
           })
           // Only apply database preferences if localStorage doesn't have values
@@ -521,7 +547,7 @@ export const AuthProvider = ({ children }) => {
           if (data.badge_filter && !localStorage.getItem('badgeFilter')) {
             localStorage.setItem('badgeFilter', JSON.stringify(data.badge_filter))
           }
-          return mergedPreferences
+          return confirmedPreferences
         }
       }
     } catch (error) {
@@ -581,7 +607,7 @@ export const AuthProvider = ({ children }) => {
             .from('user_preferences')
             .upsert({
               user_id: user.id,
-              ...normalizePreferencePayload(nextPreferences, user.id),
+              ...omitWorkspaceMemberCodeConfiguration(nextPreferences, user.id),
               updated_at: new Date().toISOString()
             }, {
               onConflict: 'user_id'
@@ -591,7 +617,7 @@ export const AuthProvider = ({ children }) => {
           { action: 'Save user preferences' }
         )
 
-        const savedPreferences = data || nextPreferences
+        const savedPreferences = preserveRemoteWorkspaceMemberCodeConfiguration(data || nextPreferences, data)
         setPreferences(savedPreferences)
         preferencesRef.current = savedPreferences
         await saveOfflinePreferences(user.id, savedPreferences).catch(() => {})

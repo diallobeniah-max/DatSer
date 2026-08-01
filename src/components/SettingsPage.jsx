@@ -283,6 +283,7 @@ const LazyPanelFallback = () => (
 const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = new Set([
     'workspace_member_codes_enabled',
     'member_code_format',
+    'member_code_length',
     'member_code_quick_pass_enabled',
     'member_code_show_logo',
     'member_code_show_photo',

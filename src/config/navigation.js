@@ -312,8 +312,16 @@ export const SETTINGS_SEARCH_INDEX = [
         id: 'member_code_letters_only',
         section: 'member_codes',
         label: 'Letters Only',
-        description: 'Generate alphabetical workspace member codes such as A, B, Z, and AA',
-        keywords: 'letters letters only alphabetical member code format code format a b aa workspace codes',
+        description: 'Generate fixed-width alphabetical workspace member codes such as AAA and AAB',
+        keywords: 'letters letters only alphabetical member code format code format aaa aab workspace codes',
+        icon: BadgeCheck
+    },
+    {
+        id: 'member_code_length',
+        section: 'member_codes',
+        label: 'Code Length',
+        description: 'Choose the shared member-code width from three to six characters',
+        keywords: 'code length digits characters member-code size three digits code width 3 4 5 6',
         icon: BadgeCheck
     },
     {

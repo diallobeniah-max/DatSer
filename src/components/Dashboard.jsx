@@ -442,6 +442,7 @@ const Dashboard = ({ isAdmin = false }) => {
     searchSuggestionView,
     preferences,
     memberCodeFormat,
+    memberCodeLength,
     workspaceMemberCodeAssignments,
     guidedFormSettings,
     recentMemberEdits
@@ -2051,8 +2052,9 @@ const Dashboard = ({ isAdmin = false }) => {
   const pendingSearchTerm = localSearchTerm.trim()
   const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members, {
     format: memberCodeFormat,
+    codeLength: memberCodeLength,
     persistedCodes: workspaceMemberCodeAssignments
-  }), [memberCodeFormat, members, workspaceMemberCodeAssignments])
+  }), [memberCodeFormat, memberCodeLength, members, workspaceMemberCodeAssignments])
   const isShortSearchView = searchSuggestionView !== 'full'
   const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
   const isShortSearchActive = isShortSearchView && showSearchSuggestions

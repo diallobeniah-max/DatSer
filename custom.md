@@ -191,6 +191,24 @@
 - Exact code searches must return the exact matching member rather than the full list.
 - Changing the format must never leave a partially converted workspace.
 
+## Member Code Length Rule
+- Workspace member codes use a configurable length from 3 to 6 characters and existing workspaces default to 3.
+- Letters Only starts AAA, AAB, AAC and must never create one-character active codes.
+- Numbers Only starts 001, 002, 003 and must never assign 000.
+- Format and length are shared by collaborators, capacity-checked, and changed atomically.
+- Badges, search, QR, scanner, passes, exports, and caches use the same confirmed format and length.
+
+## Search Safety Rule
+- Member search must never crash from user input; test 0, 00, and 000 explicitly.
+- Search helpers must be in scope, defensive, and always return stable result types.
+- Exact code matches rank above code prefixes, names, and phone matches.
+- Short code prefixes must not return the unrelated full member list.
+
+## Member Code Persistence Rule
+- Confirmed Supabase workspace format and length remain active until an authorized user changes them.
+- Startup must not overwrite confirmed values with temporary defaults or stale local cache.
+- Cache may improve startup, but Supabase is authoritative and realtime updates must reach collaborators without manual refresh.
+
 ## Attendance Count Consistency Rule
 - Attendance totals must derive from deduplicated active canonical members, not raw cached map entries.
 - Local optimistic attendance updates must update totals immediately; stale refresh responses must never overwrite newer state.

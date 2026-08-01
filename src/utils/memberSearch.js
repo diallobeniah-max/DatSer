@@ -10,13 +10,18 @@ export const normalizeSearchText = (value) => String(value || '')
 export const normalizePhoneForSearch = (value) => String(value || '').replace(/\D/g, '')
 
 const normalizeCodeForSearch = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
-const getCodeCandidates = (member, getCode, getCodeAliases) => [
-  getCode(member),
-  ...(getCodeAliases(member) || [])
-].map(normalizeCodeForSearch).filter(Boolean)
+const getCodeCandidates = (member, getCode, getCodeAliases) => {
+  const aliases = getCodeAliases(member)
+  return [
+    getCode(member),
+    ...(Array.isArray(aliases) ? aliases : [])
+  ].map(normalizeCodeForSearch).filter(Boolean)
+}
 
 const isNumericCodeEquivalent = (query, code) => {
   if (!/^\d+$/.test(query) || !/^\d+$/.test(code)) return false
+  // 000 is reserved as invalid and must never become an accidental exact match.
+  if (Number(query) === 0 || Number(code) === 0) return false
   return Number(query) === Number(code)
 }
 
@@ -30,6 +35,16 @@ const getPhoneVariants = (value) => {
   if (/^0\d{9}$/.test(digits)) variants.add(`233${digits.slice(1)}`)
   if (/^233\d{9}$/.test(digits)) variants.add(`0${digits.slice(3)}`)
   return [...variants]
+}
+
+// Shared by filtering and ranking. Keeping this helper in scope prevents a
+// numeric search from reaching the ranker through an undefined callback.
+const phoneMatchesQuery = (phoneValue, query) => {
+  const queryVariants = getPhoneVariants(query)
+  if (queryVariants.length === 0) return false
+  return getPhoneVariants(phoneValue).some((phone) => (
+    queryVariants.some((candidate) => phone.includes(candidate))
+  ))
 }
 
 export const getSearchableMemberName = (member = {}) => (
@@ -74,11 +89,12 @@ const editDistance = (left, right) => {
 }
 
 const uniqueActiveMembers = (...sources) => {
-  const deletedIds = new Set(sources.flat()
+  const flattenedSources = sources.filter(Array.isArray).flat()
+  const deletedIds = new Set(flattenedSources
     .filter((member) => member?.id && member.deleted_at)
     .map((member) => String(member.id)))
   const byId = new Map()
-  sources.flat().forEach((member) => {
+  flattenedSources.forEach((member) => {
     if (!member?.id || member.deleted_at || deletedIds.has(String(member.id))) return
     byId.set(String(member.id), { ...(byId.get(String(member.id)) || {}), ...member })
   })
@@ -94,13 +110,8 @@ const hasNameTokenMatch = (name, query) => {
   ))
 }
 
-const hasPhoneMatch = (member, query) => {
-  const queryVariants = getPhoneVariants(query)
-  if (queryVariants.length === 0) return false
-  return getSearchablePhones(member).some(({ variants }) => (
-    variants.some((phone) => queryVariants.some((candidate) => phone.includes(candidate)))
-  ))
-}
+const hasPhoneMatch = (member, query) => getSearchablePhones(member)
+  .some(({ raw }) => phoneMatchesQuery(raw, query))
 
 const isSuggestedMatch = (name, query) => {
   if (!name || query.length < 3) return false
@@ -118,10 +129,13 @@ export const classifyMemberSearch = ({
   deletedMembers = [],
   query = '',
   getCode = (member) => member?.member_code || member?.memberCode || member?.code || member?.Code || '',
-  getCodeAliases = () => []
+  getCodeAliases = () => [],
+  codeLength = 3
 } = {}) => {
   const normalizedQuery = normalizeSearchText(query)
   const normalizedCodeQuery = normalizeCodeForSearch(query)
+  const configuredCodeLength = [3, 4, 5, 6].includes(Number(codeLength)) ? Number(codeLength) : 3
+  const isCodePrefixQuery = normalizedCodeQuery.length >= 2
   const activeMembers = uniqueActiveMembers(members, remoteMembers)
   if (!normalizedQuery) {
     return {
@@ -140,8 +154,18 @@ export const classifyMemberSearch = ({
     const [currentCode = ''] = codes
     const aliasCodes = codes.slice(1)
     const nameTokens = name.split(' ').filter(Boolean)
-    const isExactCode = Boolean(normalizedCodeQuery) && (currentCode === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, currentCode))
-    const isExactAlias = Boolean(normalizedCodeQuery) && aliasCodes.some((code) => code === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, code))
+    const isExactCode = Boolean(normalizedCodeQuery) && (
+      (normalizedCodeQuery.length === configuredCodeLength && currentCode === normalizedCodeQuery) ||
+      isNumericCodeEquivalent(normalizedCodeQuery, currentCode)
+    )
+    // Historical one-character aliases stay searchable as partial results,
+    // but cannot take priority over a real name such as "Ophelia".
+    const isExactAlias = Boolean(normalizedCodeQuery) && aliasCodes.some((code) => (
+      code.length >= 2 && (
+        (normalizedCodeQuery.length === configuredCodeLength && code === normalizedCodeQuery) ||
+        isNumericCodeEquivalent(normalizedCodeQuery, code)
+      )
+    ))
     const isExact = name === normalizedQuery || isExactCode || getSearchablePhones(member)
       .some(({ variants }) => getPhoneVariants(query).some((candidate) => variants.includes(candidate)))
 
@@ -157,34 +181,38 @@ export const classifyMemberSearch = ({
 
     const exactNamePart = normalizedQuery.split(' ').length === 1 && nameTokens.includes(normalizedQuery)
     const phraseMatch = name.includes(normalizedQuery)
-    if (exactNamePart || phraseMatch || hasNameTokenMatch(name, normalizedQuery) || codes.some((code) => code.includes(normalizedCodeQuery)) || hasPhoneMatch(member, query)) {
+    const hasCodePrefixMatch = isCodePrefixQuery && codes.some((code) => code.startsWith(normalizedCodeQuery))
+    if (exactNamePart || phraseMatch || hasNameTokenMatch(name, normalizedQuery) || hasCodePrefixMatch || hasPhoneMatch(member, query)) {
       partial.push(member)
       return
     }
     if (isSuggestedMatch(name, normalizedQuery)) suggestions.push(member)
   })
 
-  const deletedMatches = (deletedMembers || []).filter((member) => {
+  const deletedMatches = (Array.isArray(deletedMembers) ? deletedMembers : []).filter((member) => {
     const name = normalizeSearchText(getSearchableMemberName(member))
     const codes = getCodeCandidates(member, getCode, getCodeAliases)
     return name === normalizedQuery || codes.includes(normalizedCodeQuery) || hasNameTokenMatch(name, normalizedQuery)
   })
   // A code is a unique identifier. Do not dilute a valid exact result with name matches.
-  const exactCodes = normalizedCodeQuery && (exact.some((member) => getCodeCandidates(member, getCode, getCodeAliases)[0] === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, getCodeCandidates(member, getCode, getCodeAliases)[0])))
+  const exactCodes = normalizedCodeQuery && (exact.some((member) => {
+    const code = getCodeCandidates(member, getCode, getCodeAliases)[0]
+    return (normalizedCodeQuery.length === configuredCodeLength && code === normalizedCodeQuery) || isNumericCodeEquivalent(normalizedCodeQuery, code)
+  }))
     ? exact.filter((member) => {
       const code = getCodeCandidates(member, getCode, getCodeAliases)[0]
-      return code === normalizedCodeQuery || isNumericCodeEquivalent(normalizedCodeQuery, code)
+      return (normalizedCodeQuery.length === configuredCodeLength && code === normalizedCodeQuery) || isNumericCodeEquivalent(normalizedCodeQuery, code)
     })
     : []
   const exactAliasCodes = !exactCodes.length && normalizedCodeQuery ? exactAlias : []
   const getVisibleRank = (member) => {
     const codes = getCodeCandidates(member, getCode, getCodeAliases)
-    if (normalizedCodeQuery && codes.some((code) => code.startsWith(normalizedCodeQuery))) return 0
+    if (isCodePrefixQuery && codes.some((code) => code.startsWith(normalizedCodeQuery))) return 0
 
     const name = normalizeSearchText(getSearchableMemberName(member))
     if (name === normalizedQuery || hasNameTokenMatch(name, normalizedQuery)) return 1
 
-    const phoneMatches = getSearchablePhones(member).filter((phone) => phoneMatchesQuery(phone.value, query))
+    const phoneMatches = getSearchablePhones(member).filter((phone) => phoneMatchesQuery(phone.raw, query))
     if (phoneMatches.some((phone) => phone.kind === 'member')) return 2
     if (phoneMatches.some((phone) => phone.kind === 'guardian')) return 3
     return 4

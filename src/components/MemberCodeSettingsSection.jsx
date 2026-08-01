@@ -3,7 +3,7 @@ import { AlertCircle, BadgeCheck, BellRing, CheckCircle, Church, Edit3, ImagePlu
 import { useApp } from '../context/AppContext'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
-import { buildMemberIndexCodeMap, getMemberIndexCode, getMemberIndexCodeAliases, getToggledMemberCodeFormat, normalizeMemberCode, normalizeMemberCodeFormat } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberCodeCapacity, getMemberIndexCode, getMemberIndexCodeAliases, getToggledMemberCodeFormat, MEMBER_CODE_LENGTHS, normalizeMemberCode, normalizeMemberCodeFormat, normalizeMemberCodeLength } from '../utils/memberIndexCodes'
 import MemberCodeBadge, { normalizeBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, {
     MEMBER_CODE_CARD_STYLE_OPTIONS,
@@ -73,7 +73,7 @@ const optionClass = (active) => (
 )
 
 const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingTargetClass, isAdminAccess = false }) => {
-    const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator, memberCodeFormat: workspaceMemberCodeFormat, workspaceMemberCodeAssignments, convertWorkspaceMemberCodeFormat, workspaceMemberCodeStatus } = useApp()
+    const { members = [], dataOwnerId, user, isCollaborator, isAdminCollaborator, memberCodeFormat: workspaceMemberCodeFormat, memberCodeLength: workspaceMemberCodeLength, workspaceMemberCodeAssignments, convertWorkspaceMemberCodeFormat, workspaceMemberCodeStatus } = useApp()
     const workspaceEnabled = preferences?.workspace_member_codes_enabled !== false
     const memberCodesEnabled = preferences?.member_codes_enabled !== false
     const enabled = workspaceEnabled && memberCodesEnabled
@@ -94,6 +94,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const codeLookupEnabled = preferences?.member_code_lookup_enabled !== false
     const shareMessageTemplate = preferences?.member_code_share_message_template || DEFAULT_SHARE_MESSAGE_TEMPLATE
     const memberCodeFormat = normalizeMemberCodeFormat(workspaceMemberCodeFormat ?? preferences?.member_code_format)
+    const memberCodeLength = normalizeMemberCodeLength(workspaceMemberCodeLength ?? preferences?.member_code_length)
     const [editingChurchName, setEditingChurchName] = useState(false)
     const [draftChurchName, setDraftChurchName] = useState(churchName)
     const [lookupCode, setLookupCode] = useState('')
@@ -101,13 +102,14 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const [isUploadingLogo, setIsUploadingLogo] = useState(false)
     const [savingKey, setSavingKey] = useState('')
     const [saveStatus, setSaveStatus] = useState(null)
-    const [pendingFormat, setPendingFormat] = useState(null)
+    const [pendingConfiguration, setPendingConfiguration] = useState(null)
     const logoInputRef = useRef(null)
 
     const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members, {
         format: memberCodeFormat,
+        codeLength: memberCodeLength,
         persistedCodes: workspaceMemberCodeAssignments
-    }), [memberCodeFormat, members, workspaceMemberCodeAssignments])
+    }), [memberCodeFormat, memberCodeLength, members, workspaceMemberCodeAssignments])
     const lookupResult = useMemo(() => {
         const normalizedCode = normalizeMemberCode(lookupCode)
         if (!normalizedCode || !codeLookupEnabled) return null
@@ -141,17 +143,17 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     }, [shareMessageTemplate])
 
     useEffect(() => {
-        if (!pendingFormat) return undefined
+        if (!pendingConfiguration) return undefined
 
         const handleKeyDown = (event) => {
-            if (event.key === 'Escape' && savingKey !== 'member_code_format') {
-                setPendingFormat(null)
+            if (event.key === 'Escape' && savingKey !== 'member_code_configuration') {
+                setPendingConfiguration(null)
             }
         }
 
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [pendingFormat, savingKey])
+    }, [pendingConfiguration, savingKey])
 
     const affectedMemberCount = members.length
     const adminStatusLabel = isCollaborator
@@ -161,21 +163,27 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
         ? 'Owner workspace'
         : 'Your workspace'
 
-    const requestMemberCodeFormat = (format) => {
+    const requestMemberCodeConfiguration = (format, codeLength = memberCodeLength) => {
         const nextFormat = normalizeMemberCodeFormat(format)
-        if (nextFormat === memberCodeFormat) return
-        setPendingFormat(nextFormat)
+        const nextLength = normalizeMemberCodeLength(codeLength)
+        if (nextFormat === memberCodeFormat && nextLength === memberCodeLength) return
+        const capacity = getMemberCodeCapacity(nextFormat, nextLength)
+        if (affectedMemberCount > capacity) {
+            setSaveStatus({ type: 'error', message: `This workspace has ${affectedMemberCount} members. ${nextLength}-character ${nextFormat === 'numbers' ? 'Numbers Only' : nextFormat === 'letters' ? 'Letters Only' : 'Letters + Numbers'} supports ${capacity.toLocaleString()}. Select a larger length before converting.` })
+            return
+        }
+        setPendingConfiguration({ format: nextFormat, codeLength: nextLength })
     }
 
     const confirmMemberCodeFormat = async () => {
-        if (!pendingFormat || !convertWorkspaceMemberCodeFormat) return
-        setSavingKey('member_code_format')
+        if (!pendingConfiguration || !convertWorkspaceMemberCodeFormat) return
+        setSavingKey('member_code_configuration')
         setSaveStatus(null)
         try {
-            await convertWorkspaceMemberCodeFormat(pendingFormat)
-            const label = pendingFormat === 'letters' ? 'letters only' : pendingFormat === 'numbers' ? 'numbers only' : 'letters and numbers'
-            setSaveStatus({ type: 'success', message: `All workspace member codes now use ${label}. Previous codes remain searchable as aliases.` })
-            setPendingFormat(null)
+            await convertWorkspaceMemberCodeFormat(pendingConfiguration.format, pendingConfiguration.codeLength)
+            const label = pendingConfiguration.format === 'letters' ? 'letters only' : pendingConfiguration.format === 'numbers' ? 'numbers only' : 'letters and numbers'
+            setSaveStatus({ type: 'success', message: `All workspace member codes now use ${label} at ${pendingConfiguration.codeLength} characters. Previous codes remain searchable as aliases.` })
+            setPendingConfiguration(null)
         } catch (error) {
             console.error('Member-code format conversion failed:', error)
             setSaveStatus({ type: 'error', message: error?.message || 'Member-code format could not be changed. No codes were changed.' })
@@ -376,6 +384,24 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                             {memberCodeFormat === 'letters' ? 'Letters only' : memberCodeFormat === 'numbers' ? 'Numbers only' : 'Letters + numbers'}
                                         </span>
                                     </div>
+                                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4 dark:border-white/10" data-setting-id="member_code_length" tabIndex={-1}>
+                                        <div>
+                                            <p className="font-semibold text-gray-900 dark:text-white">Code Length</p>
+                                            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Choose how many characters appear in every workspace member code.</p>
+                                        </div>
+                                        <div className="inline-flex rounded-xl border border-gray-200 bg-white p-1 shadow-sm dark:border-white/10 dark:bg-gray-950" role="group" aria-label="Member code length">
+                                            {MEMBER_CODE_LENGTHS.map((length) => (
+                                                <button key={length} type="button" onClick={() => requestMemberCodeConfiguration(memberCodeFormat, length)} disabled={savingKey === 'member_code_configuration' || workspaceMemberCodeStatus === 'converting'} className={`min-h-10 min-w-10 rounded-lg px-3 text-sm font-black transition disabled:cursor-wait disabled:opacity-60 ${memberCodeLength === length ? 'bg-[var(--ds-color-member-codes-accent)] text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/10'}`} aria-pressed={memberCodeLength === length}>
+                                                    {length}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    {workspaceMemberCodeStatus === 'converting' && (
+                                        <p className="mt-3 text-sm font-semibold text-[var(--ds-color-member-codes-accent-text)]" role="status">
+                                            Changing member codes for the workspace…
+                                        </p>
+                                    )}
                                 </div>
                                 <ToggleRow
                                     icon={BadgeCheck}
@@ -384,9 +410,9 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                     checked={memberCodeFormat === 'letters'}
                                     settingId="member_code_letters_only"
                                     getSettingTargetClass={getSettingTargetClass}
-                                    disabled={savingKey === 'member_code_format' || workspaceMemberCodeStatus === 'converting'}
+                                    disabled={savingKey === 'member_code_configuration' || workspaceMemberCodeStatus === 'converting'}
                                     iconTone="member-codes"
-                                    onChange={() => requestMemberCodeFormat(getToggledMemberCodeFormat(memberCodeFormat, 'letters'))}
+                                    onChange={() => requestMemberCodeConfiguration(getToggledMemberCodeFormat(memberCodeFormat, 'letters'))}
                                 />
                                 <ToggleRow
                                     icon={BadgeCheck}
@@ -395,9 +421,9 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                                     checked={memberCodeFormat === 'numbers'}
                                     settingId="member_code_numbers_only"
                                     getSettingTargetClass={getSettingTargetClass}
-                                    disabled={savingKey === 'member_code_format' || workspaceMemberCodeStatus === 'converting'}
+                                    disabled={savingKey === 'member_code_configuration' || workspaceMemberCodeStatus === 'converting'}
                                     iconTone="member-codes"
-                                    onChange={() => requestMemberCodeFormat(getToggledMemberCodeFormat(memberCodeFormat, 'numbers'))}
+                                    onChange={() => requestMemberCodeConfiguration(getToggledMemberCodeFormat(memberCodeFormat, 'numbers'))}
                                 />
                             </>
                         )}
@@ -732,14 +758,14 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                     </p>
                 </div>
             </div>
-            {pendingFormat && (
+            {pendingConfiguration && (
                 <div
                     className="fixed inset-0 z-[180] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="member-code-format-dialog-title"
                     onMouseDown={(event) => {
-                        if (event.target === event.currentTarget && savingKey !== 'member_code_format') setPendingFormat(null)
+                        if (event.target === event.currentTarget && savingKey !== 'member_code_configuration') setPendingConfiguration(null)
                     }}
                 >
                     <div className="w-full max-w-lg rounded-3xl border border-[var(--ds-color-member-codes-accent-border)] bg-white p-5 shadow-2xl dark:bg-gray-900" onMouseDown={(event) => event.stopPropagation()}>
@@ -750,7 +776,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             <div className="min-w-0">
                                 <h4 id="member-code-format-dialog-title" className="text-lg font-black text-gray-900 dark:text-white">Change member-code format?</h4>
                                 <p className="mt-1 text-sm leading-6 text-gray-600 dark:text-gray-300">
-                                    This updates all {affectedMemberCount} member code{affectedMemberCount === 1 ? '' : 's'} across the workspace. Badges, QR codes, printed passes, search, and exports will use the new format.
+                                    This updates all {affectedMemberCount} member code{affectedMemberCount === 1 ? '' : 's'} across the workspace to {pendingConfiguration.codeLength} characters. Badges, QR codes, printed passes, search, and exports will use the confirmed format.
                                 </p>
                             </div>
                         </div>
@@ -758,9 +784,9 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             All collaborators will see this change. Internet is required, and conversion will not begin until you confirm.
                         </div>
                         <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                            <button type="button" onClick={() => setPendingFormat(null)} disabled={savingKey === 'member_code_format'} className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-black text-gray-700 transition hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60 dark:border-white/10 dark:text-white dark:hover:bg-white/10">Cancel</button>
-                            <button type="button" onClick={confirmMemberCodeFormat} disabled={savingKey === 'member_code_format'} className="rounded-xl bg-[var(--ds-color-member-codes-accent)] px-4 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-[var(--ds-color-member-codes-accent-strong)] disabled:cursor-wait disabled:opacity-60">
-                                {savingKey === 'member_code_format' ? 'Changing format…' : 'Change Format'}
+                            <button type="button" onClick={() => setPendingConfiguration(null)} disabled={savingKey === 'member_code_configuration'} className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-black text-gray-700 transition hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60 dark:border-white/10 dark:text-white dark:hover:bg-white/10">Cancel</button>
+                            <button type="button" onClick={confirmMemberCodeFormat} disabled={savingKey === 'member_code_configuration'} className="rounded-xl bg-[var(--ds-color-member-codes-accent)] px-4 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-[var(--ds-color-member-codes-accent-strong)] disabled:cursor-wait disabled:opacity-60">
+                                {savingKey === 'member_code_configuration' ? 'Changing codes…' : 'Confirm Change'}
                             </button>
                         </div>
                     </div>

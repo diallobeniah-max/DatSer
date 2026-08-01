@@ -8,7 +8,7 @@ import {
 } from '../utils/supabaseWrite'
 import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
-import { buildMemberIndexCodeMap, getMemberIndexCode, getMemberIndexCodeAliases, normalizeMemberCodeFormat } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, DEFAULT_MEMBER_CODE_LENGTH, getMemberIndexCode, getMemberIndexCodeAliases, normalizeMemberCodeFormat, normalizeMemberCodeLength } from '../utils/memberIndexCodes'
 import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
 import {
   attachMemberIdentity,
@@ -96,6 +96,7 @@ const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 90 * 1000
 const MEMBER_PREVIEW_SYNC_OVERLAP_MS = 5000
 const MEMBER_PREVIEW_CACHE_PREFIX = 'datser_member_preview_cache_v1'
 const MEMBER_PREVIEW_SYNC_META_PREFIX = 'datser_member_preview_sync_meta_v1'
+const MEMBER_CODE_SETTINGS_CACHE_PREFIX = 'datser_member_code_settings'
 const MEMBER_PREVIEW_SELECT = [
   'id',
   '"Full Name"',
@@ -649,6 +650,7 @@ export const useApp = () => {
 const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
   'workspace_member_codes_enabled',
   'member_code_format',
+  'member_code_length',
   'member_code_quick_pass_enabled',
   'member_code_show_logo',
   'member_code_show_photo',
@@ -675,6 +677,36 @@ const OWNER_STICKY_PREFERENCE_SELECT = [
   'locked_default_date',
   ...OWNER_STICKY_MEMBER_CODE_SELECT_KEYS
 ].join(',')
+
+const getMemberCodeSettingsCacheKey = (ownerId) => `${MEMBER_CODE_SETTINGS_CACHE_PREFIX}:${ownerId || 'local'}`
+
+const readMemberCodeSettingsCache = (ownerId) => {
+  if (typeof window === 'undefined' || !ownerId) return null
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(getMemberCodeSettingsCacheKey(ownerId)) || 'null')
+    if (!cached || typeof cached !== 'object') return null
+    return {
+      format: normalizeMemberCodeFormat(cached.format),
+      length: normalizeMemberCodeLength(cached.length),
+      updatedAt: cached.updatedAt || null
+    }
+  } catch {
+    return null
+  }
+}
+
+const writeMemberCodeSettingsCache = (ownerId, { format, length, updatedAt } = {}) => {
+  if (typeof window === 'undefined' || !ownerId) return
+  try {
+    window.localStorage.setItem(getMemberCodeSettingsCacheKey(ownerId), JSON.stringify({
+      format: normalizeMemberCodeFormat(format),
+      length: normalizeMemberCodeLength(length),
+      updatedAt: updatedAt || new Date().toISOString()
+    }))
+  } catch {
+    // Storage is only a startup hint; the remote preference remains authoritative.
+  }
+}
 
 const pickWorkspaceMemberCodePreferences = (source = {}) => (
   WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS.reduce((picked, key) => {
@@ -808,7 +840,31 @@ export const AppProvider = ({ children }) => {
   }, [isCollaborator, ownerMemberCodePreferences, personalPreferences])
   const [workspaceMemberCodeAssignments, setWorkspaceMemberCodeAssignments] = useState({})
   const [workspaceMemberCodeStatus, setWorkspaceMemberCodeStatus] = useState('idle')
-  const memberCodeFormat = normalizeMemberCodeFormat(preferences?.member_code_format)
+  const workspaceMemberCodeOwnerId = dataOwnerId || user?.id
+  const [cachedMemberCodeSettings, setCachedMemberCodeSettings] = useState(() => readMemberCodeSettingsCache(workspaceMemberCodeOwnerId))
+  const hasConfirmedRemoteMemberCodeFormat = preferences?.member_code_format !== undefined && preferences?.member_code_format !== null
+  const hasConfirmedRemoteMemberCodeLength = preferences?.member_code_length !== undefined && preferences?.member_code_length !== null
+  const memberCodeFormat = normalizeMemberCodeFormat(
+    hasConfirmedRemoteMemberCodeFormat ? preferences.member_code_format : cachedMemberCodeSettings?.format
+  )
+  const memberCodeLength = normalizeMemberCodeLength(
+    hasConfirmedRemoteMemberCodeLength ? preferences.member_code_length : cachedMemberCodeSettings?.length ?? DEFAULT_MEMBER_CODE_LENGTH
+  )
+
+  useEffect(() => {
+    setCachedMemberCodeSettings(readMemberCodeSettingsCache(workspaceMemberCodeOwnerId))
+  }, [workspaceMemberCodeOwnerId])
+
+  useEffect(() => {
+    if (!workspaceMemberCodeOwnerId || !hasConfirmedRemoteMemberCodeFormat || !hasConfirmedRemoteMemberCodeLength) return
+    const next = {
+      format: normalizeMemberCodeFormat(preferences.member_code_format),
+      length: normalizeMemberCodeLength(preferences.member_code_length),
+      updatedAt: preferences.updated_at || new Date().toISOString()
+    }
+    setCachedMemberCodeSettings(next)
+    writeMemberCodeSettingsCache(workspaceMemberCodeOwnerId, next)
+  }, [hasConfirmedRemoteMemberCodeFormat, hasConfirmedRemoteMemberCodeLength, preferences?.member_code_format, preferences?.member_code_length, preferences?.updated_at, workspaceMemberCodeOwnerId])
   const [adminSyncNotice, setAdminSyncNotice] = useState(null)
   const adminBroadcastRef = useRef({ month: null, date: null })
   const adminRealtimeChannelRef = useRef(null)
@@ -1552,7 +1608,7 @@ export const AppProvider = ({ children }) => {
     const canAllocate = !isCollaborator || isAdminCollaborator
     const shouldEnsure = ensure && canAllocate
 
-    const legacyCodeMap = buildMemberIndexCodeMap(members)
+    const legacyCodeMap = buildMemberIndexCodeMap(members, { codeLength: memberCodeLength })
     const memberPayload = members
       .filter((member) => member?.id && !member?.deleted_at)
       .map((member) => ({ id: member.id, legacy_code: getMemberIndexCode(member, legacyCodeMap) }))
@@ -1582,11 +1638,12 @@ export const AppProvider = ({ children }) => {
       setWorkspaceMemberCodeStatus('unavailable')
       return []
     }
-  }, [dataOwnerId, isAdminCollaborator, isCollaborator, isDeveloperBypass, isSupabaseConfigured, members, user?.id])
+  }, [dataOwnerId, isAdminCollaborator, isCollaborator, isDeveloperBypass, isSupabaseConfigured, memberCodeLength, members, user?.id])
 
-  const convertWorkspaceMemberCodeFormat = useCallback(async (nextFormat) => {
+  const convertWorkspaceMemberCodeFormat = useCallback(async (nextFormat, nextCodeLength = memberCodeLength) => {
     const ownerId = dataOwnerId || user?.id
     const format = normalizeMemberCodeFormat(nextFormat)
+    const codeLength = normalizeMemberCodeLength(nextCodeLength)
     if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) {
       throw new Error('Member-code format changes require an authenticated workspace connection.')
     }
@@ -1600,7 +1657,7 @@ export const AppProvider = ({ children }) => {
     setWorkspaceMemberCodeStatus('converting')
     try {
       const result = await executeSupabaseWrite(
-        () => supabase.rpc('convert_workspace_member_code_format', { p_owner_id: ownerId, p_format: format }),
+        () => supabase.rpc('configure_workspace_member_codes', { p_owner_id: ownerId, p_format: format, p_code_length: codeLength }),
         { action: 'Change workspace member-code format', retries: 1 }
       )
       setWorkspaceMemberCodeAssignments(toWorkspaceMemberCodeMap(result.data || []))
@@ -1615,7 +1672,7 @@ export const AppProvider = ({ children }) => {
       setWorkspaceMemberCodeStatus('error')
       throw error
     }
-  }, [authContext, dataOwnerId, fetchOwnerStickyDefaults, isAdminCollaborator, isCollaborator, isDeveloperBypass, isOnline, isSupabaseConfigured, user?.id])
+  }, [authContext, dataOwnerId, fetchOwnerStickyDefaults, isAdminCollaborator, isCollaborator, isDeveloperBypass, isOnline, isSupabaseConfigured, memberCodeLength, user?.id])
 
   useEffect(() => {
     setWorkspaceMemberCodeAssignments({})
@@ -2375,15 +2432,17 @@ export const AppProvider = ({ children }) => {
     const cachedMembers = await readMemberPreviewIndex(tableName)
     const cachedCodeMap = buildMemberIndexCodeMap(cachedMembers, {
       format: memberCodeFormat,
+      codeLength: memberCodeLength,
       persistedCodes: workspaceMemberCodeAssignments
     })
     return classifyMemberSearch({
       members: cachedMembers,
       query: term,
       getCode: (member) => getMemberIndexCode(member, cachedCodeMap) || member?.member_code || '',
-      getCodeAliases: (member) => getMemberIndexCodeAliases(member, cachedCodeMap)
+      getCodeAliases: (member) => getMemberIndexCodeAliases(member, cachedCodeMap),
+      codeLength: memberCodeLength
     }).visible.slice(0, 50)
-  }, [currentTable, memberCodeFormat, readMemberPreviewIndex, workspaceMemberCodeAssignments])
+  }, [currentTable, memberCodeFormat, memberCodeLength, readMemberPreviewIndex, workspaceMemberCodeAssignments])
 
   function startMemberPreviewBackgroundSync(tableName = currentTable, options = {}) {
     if (!tableName || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
@@ -5663,6 +5722,7 @@ export const AppProvider = ({ children }) => {
   const searchResultSections = useMemo(() => {
     const codeMap = buildMemberIndexCodeMap(activeMembers, {
       format: memberCodeFormat,
+      codeLength: memberCodeLength,
       persistedCodes: workspaceMemberCodeAssignments
     })
     return classifyMemberSearch({
@@ -5671,9 +5731,10 @@ export const AppProvider = ({ children }) => {
       deletedMembers: deletedMemberSearchTombstones,
       query: searchTerm,
       getCode: (member) => getMemberIndexCode(member, codeMap) || member?.member_code || '',
-      getCodeAliases: (member) => getMemberIndexCodeAliases(member, codeMap)
+      getCodeAliases: (member) => getMemberIndexCodeAliases(member, codeMap),
+      codeLength: memberCodeLength
     })
-  }, [activeMembers, deletedMemberSearchTombstones, memberCodeFormat, searchTerm, serverSearchResults, workspaceMemberCodeAssignments])
+  }, [activeMembers, deletedMemberSearchTombstones, memberCodeFormat, memberCodeLength, searchTerm, serverSearchResults, workspaceMemberCodeAssignments])
   const filteredMembers = searchTerm.trim()
     ? searchResultSections.visible.slice(0, 20)
     : activeMembers
@@ -5751,13 +5812,15 @@ export const AppProvider = ({ children }) => {
     }
     const candidateCodeMap = buildMemberIndexCodeMap(candidates, {
       format: memberCodeFormat,
+      codeLength: memberCodeLength,
       persistedCodes: workspaceMemberCodeAssignments
     })
     const sorted = classifyMemberSearch({
       members: candidates,
       query: trimmed,
       getCode: (member) => getMemberIndexCode(member, candidateCodeMap) || member?.member_code || '',
-      getCodeAliases: (member) => getMemberIndexCodeAliases(member, candidateCodeMap)
+      getCodeAliases: (member) => getMemberIndexCodeAliases(member, candidateCodeMap),
+      codeLength: memberCodeLength
     }).visible.slice().sort((a, b) => {
       const an = (getMemberDisplayNameForRecentEdit(a) || '').toString().toLowerCase()
       const bn = (getMemberDisplayNameForRecentEdit(b) || '').toString().toLowerCase()
@@ -5773,7 +5836,7 @@ export const AppProvider = ({ children }) => {
       source: 'search-index'
     })
     if (isCurrentRequest()) setServerSearchResults(sorted)
-  }, [currentTable, isOnline, memberCodeFormat, membersTotalCount, persistMemberPreviewIndex, searchMemberPreviewIndex, shouldUseOfflineData, workspaceMemberCodeAssignments])
+  }, [currentTable, isOnline, memberCodeFormat, memberCodeLength, membersTotalCount, persistMemberPreviewIndex, searchMemberPreviewIndex, shouldUseOfflineData, workspaceMemberCodeAssignments])
 
   useEffect(() => {
     performServerSearch(searchTerm)
@@ -7195,11 +7258,15 @@ export const AppProvider = ({ children }) => {
           try {
             const preferenceUserId = change.user_id || user?.id
             if (!preferenceUserId) throw new Error('Missing user for preference sync.')
+            // Workspace member-code format and length are changed only through
+            // the locked configuration RPC. An older offline preference queue
+            // must never revert a confirmed workspace conversion.
+            const { member_code_format: _queuedFormat, member_code_length: _queuedLength, ...safeQueuedPreferences } = change.preferences || {}
             await executeSupabaseWrite(
               () => supabase
                 .from('user_preferences')
                 .upsert({
-                  ...(change.preferences || {}),
+                  ...safeQueuedPreferences,
                   user_id: preferenceUserId,
                   updated_at: new Date().toISOString()
                 }, {
@@ -7972,6 +8039,7 @@ export const AppProvider = ({ children }) => {
     loading,
     preferences,
     memberCodeFormat,
+    memberCodeLength,
     workspaceMemberCodeAssignments,
     workspaceMemberCodeStatus,
     loadWorkspaceMemberCodes,
@@ -8081,7 +8149,7 @@ export const AppProvider = ({ children }) => {
     fetchLockedDefaultDate,
     sendAdminPeriodBroadcast
   }), [
-    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, memberCodeFormat, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
+    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,

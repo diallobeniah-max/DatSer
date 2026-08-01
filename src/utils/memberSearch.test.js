@@ -84,15 +84,31 @@ describe('classifyMemberSearch', () => {
     expect(classifyMemberSearch({ members: aliasOnly, query: 'E02', getCodeAliases: (member) => member.aliases || [] }).visible.map((member) => member.id)).toEqual(['alias'])
   })
 
-  it('puts a code prefix ahead of an equally matching name', () => {
+  it('ranks a two-character code prefix ahead of an equally matching name', () => {
     const results = classifyMemberSearch({
       members: [
-        { id: 'name', full_name: 'E Member', member_code: 'A01' },
-        { id: 'code', full_name: 'Another Member', member_code: 'E01' }
+        { id: 'name', full_name: 'E02 Member', member_code: 'A01' },
+        { id: 'code', full_name: 'Another Member', member_code: 'E02' }
       ],
-      query: 'E'
+      query: 'E0'
     })
     expect(results.visible.map((member) => member.id)).toEqual(['code', 'name'])
+  })
+
+  it('returns stable safe results for numeric prefixes, phones, and punctuation', () => {
+    const numericMembers = [
+      { id: 'one', full_name: 'Ophelia', member_code: '001', phone_number: '0244307261' },
+      { id: 'two', full_name: 'Other', member_code: '009', parent_phone_1: '0241117261' },
+      { id: 'three', full_name: 'Unrelated', member_code: '120' }
+    ]
+    for (const query of ['0', '00', '000', '001', '024', '0244307261', '0241117261', '...']) {
+      const result = classifyMemberSearch({ members: numericMembers, query, codeLength: 3 })
+      expect(Array.isArray(result.visible)).toBe(true)
+      expect(Array.isArray(result.suggestions)).toBe(true)
+    }
+    expect(classifyMemberSearch({ members: numericMembers, query: '00', codeLength: 3 }).visible.map((member) => member.id)).toEqual(['one', 'two'])
+    expect(classifyMemberSearch({ members: numericMembers, query: '001', codeLength: 3 }).visible.map((member) => member.id)).toEqual(['one'])
+    expect(classifyMemberSearch({ members: numericMembers, query: 'Ophelia', codeLength: 3 }).visible.map((member) => member.id)).toEqual(['one'])
   })
 })
 
