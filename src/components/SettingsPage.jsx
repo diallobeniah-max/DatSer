@@ -294,7 +294,6 @@ const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = new Set([
     'member_code_auto_cycle_minutes',
     'member_code_lookup_enabled',
     'member_code_share_message_template',
-    'member_code_format',
     'member_code_turbo_enabled',
     'member_code_turbo_notification_enabled'
 ])
@@ -2441,9 +2440,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
     // Render main settings list (when no section is active)
     const renderMainList = () => (
-        <div className="settings-main-shell min-h-0">
-            <div className="settings-main-scroll">
-                <div className="settings-main-list max-w-4xl mx-auto px-3 sm:px-4 pt-5 pb-2 xl:pb-2 space-y-3">
+        <div className="min-h-0">
+            <div className="max-w-4xl mx-auto px-3 sm:px-4 pt-5 pb-2 xl:pb-2 space-y-3">
 
                 {/* Profile Card */}
                 <div className="w-full bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
@@ -2624,12 +2622,11 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     Sign Out
                 </button>
             </div>
-            </div>
 
             {isSettingsSearchFocused && (
-                <div className="settings-search-results-overlay fixed inset-0 z-[90] bg-white/95 dark:bg-black/95 backdrop-blur-2xl overflow-y-auto overscroll-contain md:grid md:grid-cols-[minmax(300px,42vw)_minmax(420px,1fr)]">
+                <div className="fixed inset-0 z-[90] bg-white/95 dark:bg-black/95 backdrop-blur-2xl overflow-y-auto overscroll-contain md:grid md:grid-cols-[minmax(300px,42vw)_minmax(420px,1fr)]">
                     <div className="hidden md:block" onClick={() => setIsSettingsSearchFocused(false)} />
-                    <div className="settings-search-results-content flex min-h-screen flex-col gap-5 px-4 pb-28 pt-5 md:px-8 md:pt-6">
+                    <div className="flex min-h-screen flex-col gap-5 px-4 pb-28 pt-5 md:px-8 md:pt-6">
                         <div className="mb-1 hidden items-center gap-3 md:flex">
                             <button
                                 type="button"
@@ -2749,8 +2746,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 </div>
             )}
 
-            <div className="settings-search-dock fixed inset-x-0 bottom-0 z-[100] border-t border-gray-200/60 dark:border-gray-800/60 bg-white/65 dark:bg-black/45 backdrop-blur-2xl px-3 py-2 shadow-[0_-18px_45px_rgba(0,0,0,0.16)] xl:hidden">
-                <div className="settings-search-dock-controls max-w-4xl mx-auto flex items-center gap-3">
+            <div className="fixed inset-x-0 bottom-0 z-[100] border-t border-gray-200/60 dark:border-gray-800/60 bg-white/65 dark:bg-black/45 backdrop-blur-2xl px-3 py-2 shadow-[0_-18px_45px_rgba(0,0,0,0.16)] xl:hidden">
+                <div className="max-w-4xl mx-auto flex items-center gap-3">
                     <div className={`relative flex-1 transition-all duration-300 ease-out ${isSettingsSearchFocused ? 'translate-x-0' : 'translate-x-0'}`}>
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                         <input
@@ -2760,7 +2757,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             onChange={(e) => setSearchQuery(e.target.value)}
                             onKeyDown={handleSettingsSearchEnter}
                             onFocus={() => setIsSettingsSearchFocused(true)}
-                            className="settings-search-dock-input h-11 w-full rounded-2xl border border-gray-200/80 bg-white/58 pl-12 pr-4 text-base text-gray-900 outline-none shadow-inner backdrop-blur-2xl transition-all duration-300 ease-out focus:border-orange-500 focus:bg-white/75 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700/80 dark:bg-white/5 dark:text-white dark:placeholder-gray-500 dark:focus:bg-white/8"
+                            className="h-11 w-full rounded-2xl border border-gray-200/80 bg-white/58 pl-12 pr-4 text-base text-gray-900 outline-none shadow-inner backdrop-blur-2xl transition-all duration-300 ease-out focus:border-orange-500 focus:bg-white/75 focus:ring-2 focus:ring-orange-500/20 dark:border-gray-700/80 dark:bg-white/5 dark:text-white dark:placeholder-gray-500 dark:focus:bg-white/8"
                         />
                     </div>
                     <button
@@ -2769,7 +2766,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             setSearchQuery('')
                             setIsSettingsSearchFocused(false)
                         }}
-                        className={`settings-search-dock-control grid h-11 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 transition-all duration-300 ease-out hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 ${
+                        className={`grid h-11 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 transition-all duration-300 ease-out hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 ${
                             isSettingsSearchFocused
                                 ? 'w-11 translate-x-0 scale-100 opacity-100'
                                 : 'w-0 translate-x-4 scale-75 opacity-0 pointer-events-none'
@@ -2960,7 +2957,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         const isSidebarCollapsed = settingsSidebarWidth <= 120
         return (
             <>
-                <div className="settings-split-shell hidden h-[calc(100vh-var(--app-settings-main-top-offset,64px))] overflow-hidden px-4 py-4 md:flex md:flex-col">
+                <div className="hidden h-[calc(100vh-var(--app-settings-main-top-offset,64px))] overflow-hidden px-4 py-4 md:flex md:flex-col">
                     <div
                         ref={splitContainerRef}
                         className="settings-live-preview-grid grid min-h-0 flex-1"
@@ -3073,7 +3070,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         </div>
                     )}
                 </div>
-                <div className="settings-mobile-main md:hidden">
+                <div className="md:hidden">
                     {activeSection === null ? renderMainList() : renderDetailView({ sectionId: effectiveSection })}
                 </div>
             </>
@@ -3082,7 +3079,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
 
     // Main render
     return (
-        <div className={`${profileSettingsArriving ? 'settings-profile-arrival ' : ''}settings-page-root`}>
+        <div className={profileSettingsArriving ? 'settings-profile-arrival' : ''}>
             {compactMode ? renderSplitSettingsView() : (activeSection === null ? renderMainList() : renderDetailView())}
 
             {isLivePreviewOpen && (

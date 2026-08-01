@@ -282,16 +282,11 @@ function AppContent({ isMobile }) {
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const dashboardActive = currentView === 'dashboard'
-    const settingsActive = currentView === 'settings'
     document.documentElement.classList.toggle('dashboard-shell-active', dashboardActive)
     document.body.classList.toggle('dashboard-shell-active', dashboardActive)
-    document.documentElement.classList.toggle('settings-shell-active', settingsActive)
-    document.body.classList.toggle('settings-shell-active', settingsActive)
     return () => {
       document.documentElement.classList.remove('dashboard-shell-active')
       document.body.classList.remove('dashboard-shell-active')
-      document.documentElement.classList.remove('settings-shell-active')
-      document.body.classList.remove('settings-shell-active')
     }
   }, [currentView])
 
@@ -655,17 +650,15 @@ function AppContent({ isMobile }) {
 
         {currentView === 'settings' && (
           <Suspense fallback={<LazyFallback />}>
-            <div className="settings-page-scroll-shell">
-              <SettingsPage
-                onBack={() => {
-                  setCurrentView('dashboard')
-                  setNavigateToSettingsSection(null)
-                }}
-                navigateToSection={navigateToSettingsSection}
-                onOpenAddMember={() => setShowMemberModal(true)}
-                onCreateMonth={() => setShowMonthModal(true)}
-              />
-            </div>
+            <SettingsPage
+              onBack={() => {
+                setCurrentView('dashboard')
+                setNavigateToSettingsSection(null)
+              }}
+              navigateToSection={navigateToSettingsSection}
+              onOpenAddMember={() => setShowMemberModal(true)}
+              onCreateMonth={() => setShowMonthModal(true)}
+            />
           </Suspense>
         )}
 
@@ -903,150 +896,39 @@ function App() {
     coarseMedia?.addEventListener('change', onMediaChange)
     widthMedia?.addEventListener('change', onMediaChange)
 
-    // One authoritative visual viewport contract. The dashboard shell always
-    // keeps its real, keyboard-closed layout height so the header never follows
-    // an iOS keyboard; only anchored controls consume the measured inset.
+    // Visual viewport variables keep the Dashboard shell and bottom dock tied
+    // to the visible screen while iOS/Android keyboards animate.
     const vv = window.visualViewport
     let viewportFrame = 0
     let lastViewportSignature = ''
-    const readVisibleBottom = () => Math.round(
-      (vv?.height || window.innerHeight || document.documentElement.clientHeight || 0) + (vv?.offsetTop || 0)
-    )
-    // Do not use 100lvh here. In a physical standalone PWA it can describe a
-    // viewport larger than the visible app canvas and place an overflow-hidden
-    // shell over the bottom dock. The visual viewport is the authoritative
-    // closed size; it is frozen while a focused text field opens the keyboard.
-    let stableLayoutHeight = readVisibleBottom()
-    let lastViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
-    let resetStableLayoutHeight = false
-    let textEntrySessionActive = false
-    let waitingForKeyboardClose = false
-    const isTextEntry = (element) => (
-      element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
-    )
-    // Capture the keyboard-closed height synchronously when a text field gains
-    // focus. iOS then emits several intermediate visualViewport sizes while the
-    // keyboard animates; none of those frames may become a new shell baseline.
-    const onFocusIn = (event) => {
-      if (!isTextEntry(event.target)) return
-      textEntrySessionActive = true
-      waitingForKeyboardClose = false
-      stableLayoutHeight = readVisibleBottom()
-      applyViewport()
-    }
-    const onFocusOut = () => {
-      // iOS reports focusout before the visual viewport has expanded again.
-      // Keep the keyboard-closed baseline through that short native animation
-      // instead of briefly shrinking the shell and clipping its dock.
-      waitingForKeyboardClose = textEntrySessionActive
-      applyViewport()
-    }
     const applyViewport = () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
       viewportFrame = window.requestAnimationFrame(() => {
         viewportFrame = 0
-        const viewportHeight = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 0)
-        const viewportOffsetTop = Math.round(vv?.offsetTop || 0)
-        const visibleBottom = viewportHeight + viewportOffsetTop
-        const currentViewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
-        const didRotate = Math.abs(currentViewportWidth - lastViewportWidth) > 80
-        lastViewportWidth = currentViewportWidth
-
-        const activeElement = document.activeElement
-        const isTextEntryFocused = isTextEntry(activeElement)
-        // A focused field and a meaningful viewport reduction signal the start
-        // of keyboard animation. Keep the prior closed baseline from the first
-        // reduced frame onward so the dock never learns a series of temporary
-        // heights while iOS animates its keyboard.
-        const viewportIsReduced = visibleBottom < stableLayoutHeight - 24
-        const keyboardStarting = (textEntrySessionActive || waitingForKeyboardClose) && viewportIsReduced
-        if (resetStableLayoutHeight || didRotate) {
-          stableLayoutHeight = visibleBottom
-          resetStableLayoutHeight = false
-          textEntrySessionActive = false
-          waitingForKeyboardClose = false
-        } else if (waitingForKeyboardClose && !viewportIsReduced) {
-          // The keyboard has actually closed. Only now adopt the restored
-          // standalone-PWA canvas and return the dock to its safe-area edge.
-          stableLayoutHeight = visibleBottom
-          textEntrySessionActive = false
-          waitingForKeyboardClose = false
-        } else if (!keyboardStarting && !textEntrySessionActive && !waitingForKeyboardClose) {
-          // The keyboard is closed: accept the real visible canvas directly.
-          // This also handles standalone-PWA toolbars without ever growing the
-          // app shell beyond what the physical device can display.
-          stableLayoutHeight = visibleBottom
-        }
-
-        const keyboardInset = vv
-          ? Math.max(0, Math.round(stableLayoutHeight - visibleBottom))
-          : 0
-        const isKeyboardOpen = keyboardInset > 48 && (isTextEntryFocused || textEntrySessionActive || waitingForKeyboardClose)
-        const appliedKeyboardInset = isKeyboardOpen ? keyboardInset : 0
-        const visibleHeight = isKeyboardOpen ? viewportHeight : stableLayoutHeight
+        const visibleHeight = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight)
+        const offsetTop = Math.round(vv?.offsetTop || 0)
+        const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0)
+        const obscuredHeight = vv ? Math.max(0, Math.round(layoutHeight - vv.height - vv.offsetTop)) : 0
+        const keyboardOffset = obscuredHeight > 120 ? obscuredHeight : 0
         const root = document.documentElement
 
         root.style.setProperty('--app-visual-height', `${visibleHeight}px`)
-        root.style.setProperty('--app-shell-height', `${stableLayoutHeight}px`)
-        root.style.setProperty('--app-visual-offset-top', '0px')
-        root.style.setProperty('--app-keyboard-inset', `${appliedKeyboardInset}px`)
-        // Keep the legacy custom property in sync for existing keyboard-safe
-        // sheets while new app-shell consumers use the explicit inset name.
-        root.style.setProperty('--keyboard-offset', `${appliedKeyboardInset}px`)
-        root.classList.toggle('app-keyboard-open', isKeyboardOpen)
-        // Keep accidental iOS focus panning on the document from carrying the
-        // header away. The member scroller is deliberately untouched.
-        if (root.classList.contains('dashboard-shell-active')) {
-          const scrollingElement = document.scrollingElement
-          if ((scrollingElement?.scrollTop || 0) !== 0 || root.scrollTop !== 0 || document.body.scrollTop !== 0) {
-            if (scrollingElement) scrollingElement.scrollTop = 0
-            root.scrollTop = 0
-            document.body.scrollTop = 0
-          }
-        }
-
-        const standalone = Boolean(window.navigator.standalone) || window.matchMedia?.('(display-mode: standalone)').matches
-        const activeElementType = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
-          ? activeElement.type || activeElement.tagName.toLowerCase()
-          : activeElement?.tagName?.toLowerCase() || 'none'
-        const searchFocused = Boolean(activeElement?.matches?.('.member-search-dock-input'))
-        const nextSignature = `${stableLayoutHeight}:${visibleHeight}:${appliedKeyboardInset}:${viewportOffsetTop}`
+        root.style.setProperty('--app-visual-offset-top', `${offsetTop}px`)
+        root.style.setProperty('--keyboard-offset', `${keyboardOffset}px`)
+        root.classList.toggle('app-keyboard-open', keyboardOffset > 0)
+        const nextSignature = `${visibleHeight}:${offsetTop}:${keyboardOffset}`
         if (nextSignature !== lastViewportSignature) {
           lastViewportSignature = nextSignature
-          const detail = {
-            layoutHeight: stableLayoutHeight,
-            visualViewportHeight: viewportHeight,
-            visualViewportOffsetTop: viewportOffsetTop,
-            visualViewportPageTop: Math.round(vv?.pageTop || 0),
-            visualViewportScale: vv?.scale || 1,
-            windowInnerHeight: window.innerHeight || 0,
-            documentClientHeight: document.documentElement.clientHeight || 0,
-            visibleHeight,
-            keyboardInset: appliedKeyboardInset,
-            standalone,
-            navigatorStandalone: Boolean(window.navigator.standalone),
-            activeElementType,
-            searchFocused,
-          }
-          window.dispatchEvent(new CustomEvent('datser:visual-viewport', { detail }))
-          // Optional real-device diagnostics: developers can enable this in a
-          // local session without exposing a production overlay or changing UI.
-          if (import.meta.env.DEV && window.localStorage.getItem('datser:viewport-debug') === '1') {
-            console.debug('[DatSer viewport]', detail)
-          }
+          window.dispatchEvent(new CustomEvent('datser:visual-viewport', {
+            detail: { visibleHeight, offsetTop, keyboardOffset }
+          }))
         }
       })
     }
     vv?.addEventListener('resize', applyViewport)
     vv?.addEventListener('scroll', applyViewport)
     window.addEventListener('resize', applyViewport)
-    document.addEventListener('focusin', onFocusIn)
-    document.addEventListener('focusout', onFocusOut)
-    const onOrientationChange = () => {
-      resetStableLayoutHeight = true
-      applyViewport()
-    }
-    window.addEventListener('orientationchange', onOrientationChange)
+    window.addEventListener('orientationchange', applyViewport)
     applyViewport()
 
     return () => {
@@ -1054,9 +936,7 @@ function App() {
       vv?.removeEventListener('resize', applyViewport)
       vv?.removeEventListener('scroll', applyViewport)
       window.removeEventListener('resize', applyViewport)
-      document.removeEventListener('focusin', onFocusIn)
-      document.removeEventListener('focusout', onFocusOut)
-      window.removeEventListener('orientationchange', onOrientationChange)
+      window.removeEventListener('orientationchange', applyViewport)
       coarseMedia?.removeEventListener('change', onMediaChange)
       widthMedia?.removeEventListener('change', onMediaChange)
       document.documentElement.classList.remove('app-keyboard-open')

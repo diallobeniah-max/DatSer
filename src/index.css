@@ -233,9 +233,6 @@
   :root {
     --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
     --app-vh: 100vh;
-    /* The largest viewport is the stable, keyboard-closed height in iOS
-       standalone mode. Dashboard uses it only for its fixed shell. */
-    --app-layout-height: 100vh;
     --app-safe-top: env(safe-area-inset-top, 0px);
     --app-safe-right: env(safe-area-inset-right, 0px);
     --app-safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -253,12 +250,6 @@
   @supports (height: 100dvh) {
     :root {
       --app-vh: 100dvh;
-    }
-  }
-
-  @supports (height: 100lvh) {
-    :root {
-      --app-layout-height: 100lvh;
     }
   }
 
@@ -291,15 +282,7 @@
     /* Belt-and-suspenders to ensure no horizontal scroll */
   }
 
-  html {
-    background: #f4efe8;
-  }
-
   .dark body {
-    background: #0d0d0d;
-  }
-
-  html.dark {
     background: #0d0d0d;
   }
 
@@ -1808,9 +1791,9 @@ details[open] summary~* {
 
 /* Dashboard app shell
    -------------------
-   Scope the fixed application viewport to the Members/Marked screen. Settings
-   uses the same visual-viewport contract on phone and tablet so its compact
-   search dock remains a footer rather than a floating document layer. */
+   Scope the fixed application viewport to the Members/Marked screen only.
+   Settings, Export Center, Admin, and modal routes keep their existing
+   document-scrolling behavior. */
 html.dashboard-shell-active,
 body.dashboard-shell-active {
   height: 100%;
@@ -1820,24 +1803,16 @@ body.dashboard-shell-active {
 
 .dashboard-app-shell {
   position: fixed;
-  top: 0;
+  top: var(--app-visual-offset-top, 0px);
   right: 0;
   bottom: auto;
   left: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: 100%;
-  /* Keep the shell stable when iOS resizes the visual viewport for its
-     keyboard. The dock alone consumes --app-keyboard-inset. */
-  /* --app-shell-height is measured from the physical visible canvas. Do not
-     compare it with a larger viewport fallback: an oversized clipped shell is
-     what cut off the iPhone dock. */
-  height: var(--app-shell-height, var(--app-layout-height));
+  height: var(--app-visual-height, var(--app-vh));
   min-height: 0;
   overflow: hidden;
-  isolation: isolate;
-  background: var(--ds-color-canvas);
-  --dashboard-dock-safe-bottom: max(var(--ds-space-1), var(--app-safe-bottom));
 }
 
 .dashboard-app-shell > .app-header {
@@ -1858,241 +1833,20 @@ body.dashboard-shell-active {
   overscroll-behavior-x: none;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  background: var(--ds-color-canvas);
   padding-top: 0 !important;
-  padding-bottom: calc(
-    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
-    var(--dashboard-dock-safe-bottom) + var(--app-keyboard-inset, 0px)
-  ) !important;
-}
-
-/* The dock owns its own backdrop layer. Keeping it inside the dock's isolated
-   stacking context prevents iOS backdrop-filter compositing above the controls. */
-.member-search-dock-backdrop {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 0;
-  height: calc(100% + var(--ds-space-6));
-  pointer-events: none;
-  background: linear-gradient(
-    to top,
-    color-mix(in srgb, var(--ds-color-canvas) 72%, transparent) 0%,
-    color-mix(in srgb, var(--ds-color-canvas) 38%, transparent) 42%,
-    color-mix(in srgb, var(--ds-color-canvas) 10%, transparent) 72%,
-    transparent 100%
-  );
-  -webkit-backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(108%);
-  backdrop-filter: blur(var(--ds-dock-backdrop-blur)) saturate(108%);
-  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 38%, transparent 100%);
-  mask-image: linear-gradient(to top, #000 0%, #000 38%, transparent 100%);
-  transition: opacity var(--ds-motion-fast) var(--ds-ease-standard);
-}
-
-.app-keyboard-open .dashboard-app-shell {
-  --dashboard-dock-safe-bottom: var(--ds-space-1);
-}
-
-/* The fade moves with the dock because it is inside the dock shell. Keep it
-   visible while the keyboard is open; only its safe-area padding changes. */
-.app-keyboard-open .member-search-dock-backdrop {
-  opacity: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .member-search-dock-backdrop {
-    transition: none;
-  }
+  padding-bottom: calc(4.75rem + var(--app-safe-bottom)) !important;
 }
 
 .dashboard-app-shell .app-bottom-dock {
   position: absolute !important;
-  bottom: var(--app-keyboard-inset, 0px) !important;
-  z-index: var(--ds-z-dock) !important;
-  isolation: isolate;
-  /* Keyboard geometry is intentionally a snap, never a transition. */
-  transition-property: opacity !important;
-}
-
-.dashboard-app-shell .bottom-search-bar {
-  padding-bottom: var(--dashboard-dock-safe-bottom) !important;
-  background: transparent !important;
-}
-
-.dashboard-app-shell .bottom-search-bar > div {
-  padding-top: var(--ds-space-1) !important;
-  padding-bottom: var(--ds-space-1) !important;
-}
-
-.member-search-dock-inner {
-  padding: var(--ds-space-1) var(--ds-dock-side-inset);
-}
-
-/* All anchored search docks use the compact design-system control size. Keeping
-   this shared prevents Settings and Members/Marked drifting apart again. */
-.member-search-dock-controls,
-.settings-search-dock-controls {
-  min-height: var(--ds-dock-control-height);
-  gap: var(--ds-dock-gap) !important;
-}
-
-.member-search-dock-input,
-.member-search-dock-control,
-.settings-search-dock-input,
-.settings-search-dock-control {
-  height: var(--ds-dock-control-height) !important;
-  min-height: var(--ds-dock-control-height);
-}
-
-.member-search-dock-input {
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-  line-height: var(--ds-leading-body);
-  border-radius: 999px !important;
-}
-
-.member-search-dock-control {
-  align-items: center;
-  border-radius: 999px !important;
-}
-
-.member-search-dock-scan,
-.member-search-dock-add {
-  width: var(--ds-dock-control-height) !important;
-  padding-inline: 0 !important;
-}
-
-@media (min-width: 768px) {
-  .member-search-dock-add {
-    width: auto !important;
-    padding-inline: var(--ds-space-4) !important;
-  }
-}
-
-.settings-search-dock-input {
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-  line-height: var(--ds-leading-body);
-}
-
-.settings-search-dock-control {
-  align-items: center;
+  bottom: 0 !important;
+  transform: translateZ(0);
+  contain: layout paint;
 }
 
 .dashboard-app-shell .search-suggestion-tray {
   position: absolute !important;
-  bottom: calc(
-    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
-    var(--dashboard-dock-safe-bottom) + var(--app-keyboard-inset, 0px)
-  ) !important;
-}
-
-.app-keyboard-open .dashboard-app-shell .bottom-search-bar {
-  padding-bottom: var(--ds-space-1) !important;
-}
-
-.app-keyboard-open .dashboard-app-shell .search-suggestion-tray {
-  bottom: calc(
-    var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
-    var(--app-keyboard-inset, 0px)
-  ) !important;
-}
-
-@media (max-width: 1279px) {
-  html.settings-shell-active,
-  body.settings-shell-active {
-    height: 100%;
-    overflow: hidden;
-    overscroll-behavior: none;
-  }
-
-  .app-main-settings-safe {
-    position: fixed;
-    top: var(--app-visual-offset-top, 0px);
-    right: 0;
-    bottom: auto;
-    left: 0;
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    height: var(--app-visual-height, var(--app-vh));
-    min-height: 0;
-    overflow: hidden !important;
-    padding-bottom: 0 !important;
-  }
-
-  .app-main-settings-safe > .settings-page-scroll-shell {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .settings-page-root {
-    height: 100%;
-    min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior-x: none;
-    overscroll-behavior-y: contain;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .settings-split-shell {
-    height: 100% !important;
-    min-height: 0;
-  }
-
-  .settings-mobile-main {
-    height: 100%;
-    min-height: 0;
-  }
-
-  .settings-main-shell {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .settings-main-scroll {
-    min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .settings-main-list {
-    padding-bottom: var(--ds-space-2) !important;
-  }
-
-  .settings-search-dock.fixed {
-    position: relative !important;
-    inset: auto !important;
-    width: 100%;
-    transform: translateZ(0);
-    contain: layout paint;
-    padding-top: var(--ds-space-1) !important;
-    padding-bottom: max(var(--ds-space-1), var(--app-safe-bottom)) !important;
-  }
-
-  .settings-search-results-overlay {
-    top: var(--app-visual-offset-top, 0px) !important;
-    bottom: auto !important;
-    height: var(--app-visual-height, var(--app-vh));
-    min-height: 0;
-    overflow-x: hidden;
-  }
-
-  .settings-search-results-content {
-    min-height: 0 !important;
-    padding-bottom: calc(
-      var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
-      var(--ds-space-1) + var(--app-safe-bottom)
-    ) !important;
-  }
+  bottom: calc(4.35rem + var(--app-safe-bottom)) !important;
 }
 
 /* Mobile form shells share the same visual viewport variables as Dashboard.
@@ -2196,22 +1950,6 @@ body.dashboard-shell-active {
   }
 }
 
-/* The visual viewport signal is authoritative whenever the software keyboard
-   is open. Keep this rule outside the width query: iOS standalone can retain
-   its wider layout viewport while its physical visual viewport is phone-sized. */
-.app-keyboard-open .keyboard-safe-modal-backdrop {
-  top: var(--app-visual-offset-top, 0px) !important;
-  bottom: auto !important;
-  height: var(--app-visual-height, var(--app-vh));
-  min-height: 0;
-  overflow: hidden;
-}
-
-.app-keyboard-open .keyboard-safe-modal-shell {
-  height: var(--app-visual-height, var(--app-vh)) !important;
-  max-height: var(--app-visual-height, var(--app-vh)) !important;
-}
-
 @media (min-width: 768px) and (max-width: 1024px) {
   .app-keyboard-open .dashboard-app-content .member-card-meta {
     display: none;
@@ -2225,10 +1963,7 @@ body.dashboard-shell-active {
 
 @media (min-width: 768px) {
   .dashboard-app-shell > .dashboard-app-content {
-    padding-bottom: calc(
-      var(--ds-dock-control-height) + var(--ds-space-1) + var(--ds-space-1) +
-      var(--app-safe-bottom)
-    ) !important;
+    padding-bottom: 4.75rem !important;
   }
 }
 
@@ -2662,16 +2397,9 @@ body.dashboard-shell-active {
     min-width: 44px !important;
   }
 
-  /* The dock owns the iPhone safe-area background. The controls stay compact
-     while the panel itself reaches the true visual-viewport bottom. */
+  /* Tighter, nicer bottom search bar on mobile */
   .bottom-search-bar {
-    padding-bottom: max(var(--ds-space-1), var(--app-safe-bottom)) !important;
-    background-clip: padding-box;
-  }
-
-  .bottom-search-bar > div {
-    padding-top: var(--ds-space-1) !important;
-    padding-bottom: var(--ds-space-1) !important;
+    padding-bottom: calc(var(--app-safe-bottom) + 2px);
   }
 
   /* MissingDataModal - slide up from bottom as sheet */

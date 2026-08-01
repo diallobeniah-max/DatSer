@@ -17,7 +17,7 @@ import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
 import MissingDataModal from './MissingDataModal'
 import { resolveMemberAttendanceForDate } from '../utils/attendanceRecords'
-import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode, normalizeMemberCode } from '../utils/memberIndexCodes'
+import { buildMemberIndexCodeMap, getMemberIndexCode, memberMatchesIndexCode } from '../utils/memberIndexCodes'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
@@ -411,7 +411,6 @@ const Dashboard = ({ isAdmin = false }) => {
     setAttendanceData,
     currentTable,
     members,
-    memberCodeMap,
     membersTotalCount,
     membersLoadedAll,
     fetchMoreMembers,
@@ -2048,8 +2047,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }, [])
 
   const pendingSearchTerm = localSearchTerm.trim()
-  const legacyMemberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
-  const memberIndexCodeMap = useMemo(() => ({ ...legacyMemberIndexCodeMap, ...(memberCodeMap || {}) }), [legacyMemberIndexCodeMap, memberCodeMap])
+  const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members), [members])
   const isShortSearchView = searchSuggestionView !== 'full'
   const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
   const isShortSearchActive = isShortSearchView && showSearchSuggestions
@@ -2078,8 +2076,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const quickPassCheckInUrl = quickPassMember
     ? buildMemberCheckInUrl({
       memberId: quickPassMember.id,
-      code: quickPassCode,
-      workspaceId: dataOwnerId || user?.id
+      code: quickPassCode
     })
     : ''
   const [quickPassQrImageUrl, setQuickPassQrImageUrl] = useState('')
@@ -2123,8 +2120,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
     const shareCheckInUrl = buildMemberCheckInUrl({
       memberId: member.id,
-      code,
-      workspaceId: dataOwnerId || user?.id
+      code
     })
     const qrImageUrl = await createQrImageUrl(shareCheckInUrl)
     const imageUrl = await createMemberPassShareImage({
@@ -2152,7 +2148,7 @@ const Dashboard = ({ isAdmin = false }) => {
       churchName: memberCodeChurchName,
       imageUrl
     })
-  }, [dataOwnerId, isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap, user?.id])
+  }, [isDarkMode, memberCodeCardStyle, memberCodeChurchName, memberCodeShareMessageTemplate, memberIndexCodeMap])
 
   const sendMemberPassShare = useCallback(async () => {
     if (!memberPassSharePreview) return
@@ -2248,7 +2244,7 @@ const Dashboard = ({ isAdmin = false }) => {
   }
 
   useEffect(() => {
-    const normalizedCode = normalizeMemberCode(pendingSearchTerm)
+    const normalizedCode = pendingSearchTerm.trim().toUpperCase()
     if (!memberCodeTurboEnabled || !normalizedCode || normalizedCode.length < 2) {
       turboCheckInRef.current.key = ''
       return undefined
@@ -2263,8 +2259,7 @@ const Dashboard = ({ isAdmin = false }) => {
         member?.Code,
         member?.['Member Code']
       ].filter(Boolean)
-      const aliases = memberIndexCodeMap?.[member.id]?.aliases || []
-      return [...candidateCodes, ...aliases].some((candidate) => normalizeMemberCode(candidate) === normalizedCode)
+      return candidateCodes.some((candidate) => String(candidate).trim().toUpperCase() === normalizedCode)
     })
     if (!exactMember) return undefined
 
@@ -3886,10 +3881,9 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Bottom Search Bar */}
-      <div className="app-bottom-dock bottom-search-bar member-search-dock fixed bottom-0 left-0 right-0 z-30 safe-area-x">
-        <div className="member-search-dock-backdrop" aria-hidden="true" />
-        <div className="member-search-dock-inner relative z-[1] mx-auto">
-          <div className="member-search-dock-controls flex items-center gap-2">
+      <div className={`app-bottom-dock bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
+        <div className="mx-auto px-3 sm:px-4 py-2 sm:py-2.5">
+          <div className="flex items-center gap-2">
             {dashboardTab === 'edited' ? (
               /* Marked tab: Search bar that only searches within Present/Absent members */
               <div className="flex-1 relative">
@@ -3903,7 +3897,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`member-search-dock-input w-full rounded-full pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3930,7 +3924,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onFocus={() => setIsSearchFocused(true)}
                   onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
                   onKeyDown={(e) => { if (e.key === 'Enter') applySearchSelection(localSearchTerm) }}
-                  className={`member-search-dock-input w-full rounded-full pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`w-full rounded-lg pl-10 pr-10 py-2 text-base border bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors sm:py-2.5 ${isShortSearchActive ? 'border-orange-500 dark:border-orange-500' : 'border-gray-300 dark:border-gray-600'}`}
                 />
                 {(searchTerm || localSearchTerm) && (
                   <button
@@ -3950,7 +3944,7 @@ const Dashboard = ({ isAdmin = false }) => {
               <button
                 type="button"
                 onClick={() => { dismissMobileKeyboard(); selection(); setShowFilters(!showFilters) }}
-                className={`member-search-dock-control member-filter-toggle inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-2 sm:py-2.5 transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
+                className={`member-filter-toggle inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-2 sm:py-2.5 transition-colors ${showFilters || genderFilter || levelFilter || visitorFilter !== null || hasTagFilters
                   ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border border-primary-300 dark:border-primary-700'
                   : isShortSearchActive
                     ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600'
@@ -3969,7 +3963,7 @@ const Dashboard = ({ isAdmin = false }) => {
             <button
               type="button"
               onClick={() => { dismissMobileKeyboard(); selection(); setShowQrScanner(true) }}
-              className="member-search-dock-control member-search-dock-scan inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-orange-400/40 bg-orange-500/10 text-orange-600 shadow-sm transition hover:bg-orange-500/20 active:scale-95 dark:text-orange-300 sm:h-11 sm:w-11"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-orange-400/40 bg-orange-500/10 text-orange-600 shadow-sm transition hover:bg-orange-500/20 active:scale-95 dark:text-orange-300 sm:h-11 sm:w-11"
               title="Scan member QR code"
               aria-label="Scan member QR code"
             >
@@ -3977,9 +3971,8 @@ const Dashboard = ({ isAdmin = false }) => {
             </button>
             <button
               onClick={() => { dismissMobileKeyboard(); selection(); setShowMemberModal(true) }}
-              className="member-search-dock-control member-search-dock-add flex h-10 w-10 shrink-0 items-center justify-center rounded-full p-0 sm:h-11 sm:w-11 sm:p-0 md:w-auto md:gap-2 md:px-4 bg-orange-600 hover:bg-orange-700 text-white transition-colors shadow-sm"
+              className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors shadow-sm"
               title="Add New Member"
-              aria-label="Add new member"
             >
               <UserPlus className="w-5 h-5" />
               <span className="hidden md:inline text-sm font-medium">Add Member</span>
@@ -3991,6 +3984,8 @@ const Dashboard = ({ isAdmin = false }) => {
 
       {renderSearchSuggestionTray()}
 
+      {/* Add padding to prevent content from being hidden behind bottom search bar */}
+      <div className="h-16 md:h-10" />
     </div>
   )
 }
