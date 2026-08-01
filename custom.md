@@ -262,3 +262,36 @@
 - Automatic allocation runs only after the complete current member index is available and only for genuinely unassigned canonical members.
 - Adding a member requests a code assignment immediately after the member record is confirmed; editing a member never changes its code.
 - Loading, syncing, and assignment failures keep existing confirmed codes visible and never replace them with synthetic or partial assignments.
+
+## Immediate Member Code Allocation Rule
+- Successful Add Member completion includes a confirmed canonical member ID and confirmed member-code assignment.
+- New members appear immediately in local state and do not wait for a full refresh.
+- Editing, searching, or reopening a member must never be required to create their code.
+- Every active canonical member requiring a code must have exactly one confirmed workspace assignment.
+- Confirmed codes load from a workspace-scoped cache before background reconciliation.
+- Remote refresh must not blank last-confirmed badges.
+- Missing assignments are recovered automatically through one deduplicated batched queue.
+- Search filters existing member data and must never control code creation or hydration.
+- Realtime confirmations merge idempotently and never duplicate members or assignments.
+
+## Stable Member Search Rule
+- Search results are deduplicated only by canonical member ID, never by name.
+- Members with the same or similar names remain separate and must all appear.
+- Local name search is immediate and does not depend on code hydration.
+- Current valid results remain visible while background data reconciles.
+- Partial preview rows must never replace complete member records.
+- Stale async responses cannot replace results for a newer query.
+- The first and repeated identical query return the same canonical member IDs.
+
+## Stable Members and Marked Rule
+- Members and Marked derive from the same authoritative canonical member store.
+- Sync, realtime, attendance, and code hydration must not clear confirmed visible cards.
+- New state is applied atomically; intermediate empty lists must not flash.
+- Repeated app focus/resume events are coalesced into one synchronization pass.
+
+## Add Member Code Rule
+- Add Member completion includes the canonical member and confirmed code.
+- The final success state is not shown before code allocation confirms.
+- Collaborators use the workspace owner scope when allocating codes.
+- Temporary allocation failure enters a deduplicated automatic recovery queue.
+- Search, editing, refreshing, or reopening must never be required to create a member code.

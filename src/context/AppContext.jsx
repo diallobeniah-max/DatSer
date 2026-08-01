@@ -10,6 +10,8 @@ import { useAuth } from './AuthContext'
 import { notify } from '../utils/notify'
 import { buildMemberIndexCodeMap, DEFAULT_MEMBER_CODE_LENGTH, getMemberIndexCode, getMemberIndexCodeAliases, normalizeMemberCodeFormat, normalizeMemberCodeLength } from '../utils/memberIndexCodes'
 import {
+  mergeWorkspaceMemberCodeAssignments,
+  readAllWorkspaceMemberCodeAssignmentPages,
   readWorkspaceMemberCodeAssignmentsCache,
   toWorkspaceMemberCodeMap,
   writeWorkspaceMemberCodeAssignmentsCache
@@ -839,6 +841,11 @@ export const AppProvider = ({ children }) => {
   const [workspaceMemberCodeStatus, setWorkspaceMemberCodeStatus] = useState('idle')
   const workspaceMemberCodeRequestRef = useRef({ ownerId: null, sequence: 0 })
   const workspaceMemberCodeAssignmentsRef = useRef({})
+  const workspaceMemberCodeReadRef = useRef({ ownerId: null, promise: null })
+  const memberCodeRecoveryQueueRef = useRef(new Map())
+  const memberCodeRecoveryTimerRef = useRef(null)
+  const memberCodeRecoveryRunningRef = useRef(false)
+  const memberCodeRecoveryFlushRef = useRef(null)
   const workspaceMemberCodeOwnerId = dataOwnerId || user?.id
   const [cachedMemberCodeSettings, setCachedMemberCodeSettings] = useState(() => readMemberCodeSettingsCache(workspaceMemberCodeOwnerId))
   const hasConfirmedRemoteMemberCodeFormat = preferences?.member_code_format !== undefined && preferences?.member_code_format !== null
@@ -857,13 +864,16 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     const ownerId = workspaceMemberCodeOwnerId
     if (!ownerId || isDeveloperBypass) {
+      workspaceMemberCodeAssignmentsRef.current = {}
       setWorkspaceMemberCodeAssignments({})
       setWorkspaceMemberCodeStatus('idle')
       return
     }
 
     const cached = readWorkspaceMemberCodeAssignmentsCache(ownerId)
-    setWorkspaceMemberCodeAssignments(cached?.assignments || {})
+    const cachedAssignments = cached?.assignments || {}
+    workspaceMemberCodeAssignmentsRef.current = cachedAssignments
+    setWorkspaceMemberCodeAssignments(cachedAssignments)
     setWorkspaceMemberCodeStatus(cached?.assignments && Object.keys(cached.assignments).length > 0 ? 'loading' : 'idle')
   }, [isDeveloperBypass, workspaceMemberCodeOwnerId])
 
@@ -1617,28 +1627,74 @@ export const AppProvider = ({ children }) => {
   }, [isSupabaseConfigured])
 
   const readWorkspaceMemberCodeAssignments = useCallback(async (ownerId) => {
-    const rows = []
-    let from = 0
-    while (true) {
-      const { data, error } = await supabase
-        .from('workspace_member_codes')
-        .select('member_id, ordinal, current_code, aliases, updated_at')
-        .eq('workspace_owner_id', ownerId)
-        .order('ordinal', { ascending: true })
-        .range(from, from + MEMBER_CODE_ASSIGNMENT_PAGE_SIZE - 1)
-      if (error) throw error
-      rows.push(...(data || []))
-      if (!data || data.length < MEMBER_CODE_ASSIGNMENT_PAGE_SIZE) return rows
-      from += MEMBER_CODE_ASSIGNMENT_PAGE_SIZE
-    }
+    return readAllWorkspaceMemberCodeAssignmentPages({
+      pageSize: MEMBER_CODE_ASSIGNMENT_PAGE_SIZE,
+      fetchPage: async (from, pageSize) => {
+        const { data, error } = await supabase
+          .from('workspace_member_codes')
+          .select('member_id, ordinal, current_code, aliases, updated_at')
+          .eq('workspace_owner_id', ownerId)
+          .order('ordinal', { ascending: true })
+          .range(from, from + pageSize - 1)
+        if (error) throw error
+        return data || []
+      }
+    })
+  }, [])
+
+  const mergeConfirmedWorkspaceMemberCodeAssignments = useCallback((ownerId, rows = []) => {
+    const incoming = toWorkspaceMemberCodeMap(rows)
+    const next = mergeWorkspaceMemberCodeAssignments(workspaceMemberCodeAssignmentsRef.current, incoming)
+    workspaceMemberCodeAssignmentsRef.current = next
+    setWorkspaceMemberCodeAssignments(next)
+    writeWorkspaceMemberCodeAssignmentsCache(ownerId, next)
+    return next
+  }, [])
+
+  const readConfirmedWorkspaceMemberCodeAssignments = useCallback(async (ownerId) => {
+    const activeRead = workspaceMemberCodeReadRef.current
+    if (activeRead.ownerId === ownerId && activeRead.promise) return activeRead.promise
+
+    const promise = readWorkspaceMemberCodeAssignments(ownerId)
+      .finally(() => {
+        if (workspaceMemberCodeReadRef.current.ownerId === ownerId) {
+          workspaceMemberCodeReadRef.current = { ownerId: null, promise: null }
+        }
+      })
+    workspaceMemberCodeReadRef.current = { ownerId, promise }
+    return promise
+  }, [readWorkspaceMemberCodeAssignments])
+
+  const enqueueMemberCodeRecovery = useCallback((member, error = null) => {
+    const memberId = getMemberCanonicalId(member)
+    if (!memberId || member?.deleted_at) return
+    const key = String(memberId)
+    const existing = memberCodeRecoveryQueueRef.current.get(key)
+    const attempts = existing?.attempts || 0
+    const message = String(error?.message || '').toLowerCase()
+    const permanent = message.includes('permission') || message.includes('not allowed') || message.includes('validation') || message.includes('anonymous')
+    if (permanent || attempts >= 3) return
+
+    memberCodeRecoveryQueueRef.current.set(key, {
+      member,
+      attempts,
+      nextAttemptAt: Date.now() + (attempts === 0 ? 400 : Math.min(8000, 1000 * (2 ** attempts)))
+    })
+
+    if (memberCodeRecoveryTimerRef.current) return
+    const delay = Math.max(0, Math.min(...Array.from(memberCodeRecoveryQueueRef.current.values()).map((entry) => entry.nextAttemptAt - Date.now())))
+    memberCodeRecoveryTimerRef.current = window.setTimeout(() => {
+      memberCodeRecoveryTimerRef.current = null
+      memberCodeRecoveryFlushRef.current?.()
+    }, delay)
   }, [])
 
   const loadWorkspaceMemberCodes = useCallback(async ({ ensure = false, membersToEnsure = [] } = {}) => {
     const ownerId = dataOwnerId || user?.id
     if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) return []
-    // Standard collaborators may read authoritative assignments, but only the
-    // owner or an admin collaborator can ask the server to allocate new ones.
-    const canAllocate = !isCollaborator || isAdminCollaborator
+    // Active workspace owners and collaborators with workspace access can allocate
+    // and ensure member codes when adding members or hydrating workspace data.
+    const canAllocate = Boolean(ownerId)
     const shouldEnsure = ensure && canAllocate
 
     const canonicalMembers = (membersToEnsure || [])
@@ -1668,11 +1724,9 @@ export const AppProvider = ({ children }) => {
         const { error } = await supabase.rpc('ensure_workspace_member_codes', { p_owner_id: ownerId, p_members: memberPayload })
         if (error) throw error
       }
-      const data = await readWorkspaceMemberCodeAssignments(ownerId)
+      const data = await readConfirmedWorkspaceMemberCodeAssignments(ownerId)
       if (!isCurrentRequest()) return data
-      const assignments = toWorkspaceMemberCodeMap(data)
-      setWorkspaceMemberCodeAssignments(() => assignments)
-      writeWorkspaceMemberCodeAssignmentsCache(ownerId, assignments)
+      mergeConfirmedWorkspaceMemberCodeAssignments(ownerId, data)
       setWorkspaceMemberCodeStatus('ready')
       return data
     } catch (error) {
@@ -1680,9 +1734,100 @@ export const AppProvider = ({ children }) => {
       // recovery; never replace it with a client-generated assignment.
       console.warn('Workspace member-code assignments are unavailable:', error)
       if (isCurrentRequest()) setWorkspaceMemberCodeStatus('unavailable')
-      return []
+      throw error
     }
-  }, [dataOwnerId, isAdminCollaborator, isCollaborator, isDeveloperBypass, isSupabaseConfigured, memberCodeLength, readWorkspaceMemberCodeAssignments, user?.id])
+  }, [dataOwnerId, isAdminCollaborator, isCollaborator, isDeveloperBypass, isSupabaseConfigured, memberCodeLength, mergeConfirmedWorkspaceMemberCodeAssignments, readConfirmedWorkspaceMemberCodeAssignments, user?.id])
+
+  const ensureMemberCodeAssignment = useCallback(async (member, { queueOnFailure = true } = {}) => {
+    const ownerId = dataOwnerId || user?.id
+    const memberId = getMemberCanonicalId(member)
+    if (!ownerId || !memberId || isDeveloperBypass || !isSupabaseConfigured()) return null
+    const existing = workspaceMemberCodeAssignmentsRef.current[String(memberId)]
+    if (existing) return existing
+
+    const legacyCodeMap = buildMemberIndexCodeMap([member], { codeLength: memberCodeLength })
+    const payload = {
+      id: String(memberId),
+      legacy_code: getMemberIndexCode(member, legacyCodeMap)
+    }
+
+    try {
+      const { data } = await executeSupabaseWrite(
+        () => supabase.rpc('ensure_workspace_member_code', { p_owner_id: ownerId, p_member: payload }),
+        { action: 'Allocate member code', retries: 1 }
+      )
+      const assignment = Array.isArray(data) ? data[0] : data
+      if (!assignment?.member_id || !assignment?.current_code) {
+        throw new Error('Member code allocation did not return a confirmed assignment')
+      }
+      return mergeConfirmedWorkspaceMemberCodeAssignments(ownerId, [assignment])[String(memberId)] || null
+    } catch (error) {
+      if (queueOnFailure) enqueueMemberCodeRecovery(member, error)
+      throw error
+    }
+  }, [dataOwnerId, enqueueMemberCodeRecovery, isDeveloperBypass, isSupabaseConfigured, memberCodeLength, mergeConfirmedWorkspaceMemberCodeAssignments, user?.id])
+
+  const flushMemberCodeRecoveryQueue = useCallback(async () => {
+    if (memberCodeRecoveryRunningRef.current) return
+    if (!isBrowserOnline()) {
+      if (memberCodeRecoveryQueueRef.current.size > 0 && !memberCodeRecoveryTimerRef.current) {
+        memberCodeRecoveryTimerRef.current = window.setTimeout(() => {
+          memberCodeRecoveryTimerRef.current = null
+          memberCodeRecoveryFlushRef.current?.()
+        }, 2000)
+      }
+      return
+    }
+    const readyEntries = Array.from(memberCodeRecoveryQueueRef.current.entries())
+      .filter(([, entry]) => entry.nextAttemptAt <= Date.now())
+    if (readyEntries.length === 0) return
+
+    memberCodeRecoveryRunningRef.current = true
+    try {
+      const batch = readyEntries.map(([, entry]) => entry.member)
+      await loadWorkspaceMemberCodes({ ensure: true, membersToEnsure: batch })
+      readyEntries.forEach(([memberId]) => {
+        if (workspaceMemberCodeAssignmentsRef.current[memberId]) {
+          memberCodeRecoveryQueueRef.current.delete(memberId)
+        }
+      })
+    } catch (error) {
+      const message = String(error?.message || error?.details || '').toLowerCase()
+      const permanent = message.includes('permission') || message.includes('not allowed') || message.includes('validation') || message.includes('anonymous')
+      readyEntries.forEach(([memberId, entry]) => {
+        const attempts = entry.attempts + 1
+        if (permanent || attempts >= 3) {
+          memberCodeRecoveryQueueRef.current.delete(memberId)
+          return
+        }
+        memberCodeRecoveryQueueRef.current.set(memberId, {
+          ...entry,
+          attempts,
+          nextAttemptAt: Date.now() + Math.min(8000, 1000 * (2 ** attempts))
+        })
+      })
+    } finally {
+      memberCodeRecoveryRunningRef.current = false
+      if (memberCodeRecoveryQueueRef.current.size > 0) {
+        const nextDelay = Math.max(0, Math.min(...Array.from(memberCodeRecoveryQueueRef.current.values()).map((entry) => entry.nextAttemptAt - Date.now())))
+        if (!memberCodeRecoveryTimerRef.current) {
+          memberCodeRecoveryTimerRef.current = window.setTimeout(() => {
+            memberCodeRecoveryTimerRef.current = null
+            memberCodeRecoveryFlushRef.current?.()
+          }, nextDelay)
+        }
+      }
+    }
+  }, [loadWorkspaceMemberCodes])
+
+  useEffect(() => {
+    memberCodeRecoveryFlushRef.current = flushMemberCodeRecoveryQueue
+    return () => { memberCodeRecoveryFlushRef.current = null }
+  }, [flushMemberCodeRecoveryQueue])
+
+  useEffect(() => () => {
+    if (memberCodeRecoveryTimerRef.current) window.clearTimeout(memberCodeRecoveryTimerRef.current)
+  }, [])
 
   const convertWorkspaceMemberCodeFormat = useCallback(async (nextFormat, nextCodeLength = memberCodeLength) => {
     const ownerId = dataOwnerId || user?.id
@@ -1708,10 +1853,9 @@ export const AppProvider = ({ children }) => {
         () => supabase.rpc('configure_workspace_member_codes', { p_owner_id: ownerId, p_format: format, p_code_length: codeLength }),
         { action: 'Change workspace member-code format', retries: 1 }
       )
-      const assignments = toWorkspaceMemberCodeMap(await readWorkspaceMemberCodeAssignments(ownerId))
+      const assignments = await readConfirmedWorkspaceMemberCodeAssignments(ownerId)
       if (workspaceMemberCodeRequestRef.current.ownerId === ownerId && workspaceMemberCodeRequestRef.current.sequence === conversionRequestId) {
-        setWorkspaceMemberCodeAssignments(() => assignments)
-        writeWorkspaceMemberCodeAssignmentsCache(ownerId, assignments)
+        mergeConfirmedWorkspaceMemberCodeAssignments(ownerId, assignments)
       }
       if (isCollaborator) {
         await fetchOwnerStickyDefaults(ownerId)
@@ -1724,7 +1868,7 @@ export const AppProvider = ({ children }) => {
       setWorkspaceMemberCodeStatus('error')
       throw error
     }
-  }, [authContext, dataOwnerId, fetchOwnerStickyDefaults, isAdminCollaborator, isCollaborator, isDeveloperBypass, isOnline, isSupabaseConfigured, memberCodeLength, readWorkspaceMemberCodeAssignments, user?.id])
+  }, [authContext, dataOwnerId, fetchOwnerStickyDefaults, isAdminCollaborator, isCollaborator, isDeveloperBypass, isOnline, isSupabaseConfigured, memberCodeLength, mergeConfirmedWorkspaceMemberCodeAssignments, readConfirmedWorkspaceMemberCodeAssignments, user?.id])
 
   // Hydrate the authoritative workspace assignments as soon as the workspace
   // identity is known. This must not wait for the first preview page, otherwise
@@ -3141,20 +3285,32 @@ export const AppProvider = ({ children }) => {
         throw new Error('Member was saved but no record was returned from Supabase')
       }
 
-      // A newly confirmed member must get an authoritative code immediately;
-      // do not wait for the next full preview hydration cycle.
-      loadWorkspaceMemberCodes({ ensure: true, membersToEnsure: [createdMember] }).catch(() => {})
+      // A confirmed member is not a completed create until its authoritative
+      // workspace assignment is available. Keep the member if allocation is
+      // temporarily unavailable, but place it on the deduplicated recovery
+      // queue rather than requiring a search, edit, or full refresh.
+      let confirmedCode = null
+      try {
+        confirmedCode = await ensureMemberCodeAssignment(createdMember)
+      } catch (codeError) {
+        console.warn('Member saved; code recovery queued:', codeError)
+      }
+      const memberWithCode = {
+        ...createdMember,
+        member_code: confirmedCode?.current_code || createdMember.member_code || null,
+        __member_code_status: confirmedCode ? 'confirmed' : 'recovering'
+      }
 
       searchCacheRef.current.clear()
       setMembers(prev => {
-        const nextMembers = [createdMember, ...prev.filter(existing => existing.id !== createdMember.id)]
+        const nextMembers = [memberWithCode, ...prev.filter(existing => existing.id !== memberWithCode.id)]
         persistLoadedMemberPreview(currentTable, nextMembers, {
           totalCount: Math.max((membersTotalCount || prev.length) + 1, nextMembers.length),
           loadedAll: membersLoadedAll
         })
         return nextMembers
       })
-      await persistMemberPreviewIndex(currentTable, [createdMember], {
+      await persistMemberPreviewIndex(currentTable, [memberWithCode], {
         cachedCount: members.length + 1,
         totalCount: Math.max((membersTotalCount || members.length) + 1, members.length + 1),
         source: 'add'
@@ -3165,7 +3321,7 @@ export const AppProvider = ({ children }) => {
         source: 'add',
         lastSyncAt: new Date().toISOString()
       })
-      recordRecentMemberEdit(createdMember, new Date().toISOString(), {
+      recordRecentMemberEdit(memberWithCode, new Date().toISOString(), {
         action: 'add',
         summary: 'Added member',
         table: currentTable
@@ -3177,7 +3333,9 @@ export const AppProvider = ({ children }) => {
       logActivity('ADD_MEMBER', `Added new member: ${memberData.full_name || memberData.fullName || memberData['Full Name']}`)
 
       // Return the created member row directly
-      return createdMember
+      return {
+        ...memberWithCode
+      }
     } catch (error) {
       console.error('Error adding member:', error)
       if (transformedDataForQueue && (isTransientSupabaseError(error) || !isBrowserOnline())) {
@@ -5842,6 +6000,14 @@ export const AppProvider = ({ children }) => {
       return
     }
 
+    // When all workspace members are loaded in memory, local search on activeMembers
+    // is 100% complete and authoritative. Clear serverSearchResults to prevent
+    // partial IndexedDB preview rows from overwriting complete member records.
+    if (membersLoadedAll) {
+      if (isCurrentRequest()) setServerSearchResults(null)
+      return
+    }
+
     const CACHE_DURATION = 10 * 60 * 1000
     const cacheKey = `${currentTable}::${trimmed}`
     const hit = searchCacheRef.current.get(cacheKey)
@@ -5868,7 +6034,6 @@ export const AppProvider = ({ children }) => {
       await sleep(140)
       if (!isCurrentRequest()) return
     }
-
     if (!isSupabaseConfigured() || !isOnline || shouldUseOfflineData) {
       if (isCurrentRequest()) setServerSearchResults([])
       return
@@ -8132,6 +8297,7 @@ export const AppProvider = ({ children }) => {
     workspaceMemberCodeAssignments,
     workspaceMemberCodeStatus,
     loadWorkspaceMemberCodes,
+    ensureMemberCodeAssignment,
     convertWorkspaceMemberCodeFormat,
     searchTerm,
     setSearchTerm,
@@ -8238,7 +8404,7 @@ export const AppProvider = ({ children }) => {
     fetchLockedDefaultDate,
     sendAdminPeriodBroadcast
   }), [
-    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
+    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, ensureMemberCodeAssignment, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,

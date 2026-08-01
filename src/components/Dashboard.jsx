@@ -1062,16 +1062,7 @@ const Dashboard = ({ isAdmin = false }) => {
     if (dashboardTab === 'edited') {
       const dateKey = selectedSundayDate || getDateString(selectedAttendanceDate)
       if (!dateKey) {
-        const editedOnly = filteredMembers.filter(member => {
-          if (!isEditedMember(member)) return false
-          // Apply name search only to members who have been edited (marked on any Sunday)
-          if (searchTerm) {
-            const lowerTerm = searchTerm.toLowerCase()
-            const name = (member['full_name'] || member['Full Name'] || '').toLowerCase()
-            if (!name.includes(lowerTerm)) return false
-          }
-          return true
-        })
+        const editedOnly = filteredMembers.filter(isEditedMember)
         return editedOnly.sort((a, b) => {
           const recentDiff = getRecentMemberEditTime(b) - getRecentMemberEditTime(a)
           if (recentDiff !== 0) return recentDiff
@@ -1095,14 +1086,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       let filteredByDate = filteredMembers.filter(m => {
         const val = getVal(m)
-        if (val !== true && val !== false) return false
-        // Apply name search only to members who have been marked Present or Absent
-        if (searchTerm) {
-          const lowerTerm = searchTerm.toLowerCase()
-          const name = (m['full_name'] || m['Full Name'] || '').toLowerCase()
-          if (!name.includes(lowerTerm)) return false
-        }
-        return true
+        return val === true || val === false
       })
 
       return filteredByDate.sort((a, b) => {

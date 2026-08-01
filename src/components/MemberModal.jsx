@@ -6,7 +6,7 @@ import { X, User, Phone, ChevronDown, ChevronUp, Info, Users, StickyNote } from 
 import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { supabase } from '../lib/supabase'
-import { executeSupabaseWrite } from '../utils/supabaseWrite'
+import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabaseWrite'
 import DatePicker from './DatePicker'
 import CombinedDatePicker from './CombinedDatePicker'
 import TagSelector from './TagSelector'
@@ -19,7 +19,7 @@ import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
 
 const MemberModal = ({ isOpen, onClose }) => {
-  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById } = useApp()
+  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success } = useHapticFeedback()
@@ -375,18 +375,35 @@ const MemberModal = ({ isOpen, onClose }) => {
           localStorage.setItem('lastMemberSaveReceipt', JSON.stringify(bundleResult.receipt))
         }
 
-        setNewlyAddedMemberId(savedMemberId)
-        onClose()
-        success()
-        setIsOverrideMode(false)
+        const confirmedMember = {
+          ...memberPayload,
+          id: savedMemberId,
+          updated_at: new Date().toISOString()
+        }
+        let confirmedCode = null
+        let codeRecoveryPending = false
+        let codeAllocationError = null
+        try {
+          // The bundle RPC owns the member row; code allocation is the second
+          // required confirmation. It uses the same returned UUID the cards,
+          // cache, search, QR, and passes use as their canonical identity.
+          confirmedCode = await ensureMemberCodeAssignment?.(confirmedMember)
+          if (!confirmedCode?.current_code) {
+            throw new Error('Member code allocation did not return a confirmed code')
+          }
+        } catch (codeError) {
+          codeAllocationError = codeError
+          codeRecoveryPending = isTransientSupabaseError(codeError) || !navigator.onLine
+          console.warn('Member saved; code recovery was queued:', codeError)
+        }
 
         // Patch the saved row into the lightweight local preview/search index immediately.
         try {
           await refreshMemberPreviewById?.(savedMemberId, {
             fallbackMember: {
-              ...memberPayload,
-              id: savedMemberId,
-              updated_at: new Date().toISOString()
+              ...confirmedMember,
+              member_code: confirmedCode?.current_code || null,
+              __member_code_status: codeRecoveryPending ? 'recovering' : 'confirmed'
             },
             source: 'member-bundle-add',
             action: 'add',
@@ -399,8 +416,21 @@ const MemberModal = ({ isOpen, onClose }) => {
           toast.warning('Member was saved, but the local view could not refresh automatically.')
         }
 
+        setNewlyAddedMemberId(savedMemberId)
+        onClose()
+        success()
+        setIsOverrideMode(false)
         submitRequestIdRef.current = null
-        toast.success('Member saved')
+        if (codeRecoveryPending) {
+          toast.warning('Member saved. Their member code is recovering automatically.')
+        } else {
+          if (confirmedCode?.current_code) {
+            toast.success('Member saved with code ' + confirmedCode.current_code)
+          } else {
+            toast.warning('Member saved, but their code could not be allocated. Check workspace access and retry.')
+            console.warn('Member-code allocation needs admin attention:', codeAllocationError)
+          }
+        }
       }
 
       // Reset form (this component is unmounting but we reset for consistency if it remounts)
