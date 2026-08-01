@@ -122,7 +122,7 @@ const buildLegacyAlphanumericCodes = (members = [], codeLength = DEFAULT_MEMBER_
 
 // Persisted assignments always win. The deterministic fallback keeps legacy pages stable
 // while an older workspace is being hydrated; it is never used to allocate a new server code.
-export const buildMemberIndexCodeMap = (members = [], { format, codeLength = DEFAULT_MEMBER_CODE_LENGTH, persistedCodes = {} } = {}) => {
+export const buildMemberIndexCodeMap = (members = [], { format, codeLength = DEFAULT_MEMBER_CODE_LENGTH, persistedCodes = {}, allowLegacyFallback = true } = {}) => {
   const length = normalizeMemberCodeLength(codeLength)
   const legacyCodes = buildLegacyAlphanumericCodes(members, length)
   const normalizedFormat = normalizeMemberCodeFormat(format)
@@ -133,6 +133,7 @@ export const buildMemberIndexCodeMap = (members = [], { format, codeLength = DEF
       map[member.id] = persisted
       return map
     }
+    if (!allowLegacyFallback) return map
     const ordinal = index + 1
     map[member.id] = normalizedFormat === MEMBER_CODE_FORMATS.LETTERS
       ? getLettersOnlyMemberCode(ordinal, length)

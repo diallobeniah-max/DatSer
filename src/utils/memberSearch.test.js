@@ -69,6 +69,23 @@ describe('classifyMemberSearch', () => {
     expect(classifyMemberSearch({ members, query: '0249995555' }).visible.map((member) => member.id)).toContain('1')
   })
 
+  it('keeps the canonical active member record when a partial search preview arrives later', () => {
+    const canonical = { id: 'ama', full_name: 'Ama Serwaa', phone_number: '0244307261', member_code: 'A03' }
+    const partialPreview = { id: 'ama', full_name: 'Ama' }
+    const first = classifyMemberSearch({ members: [canonical], remoteMembers: [partialPreview], query: 'Serwaa' })
+    const repeated = classifyMemberSearch({ members: [canonical], remoteMembers: [partialPreview], query: 'Ama' })
+
+    expect(first.visible.map((member) => member.id)).toEqual(['ama'])
+    expect(first.visible[0].full_name).toBe('Ama Serwaa')
+    expect(repeated.visible.map((member) => member.id)).toEqual(['ama'])
+  })
+
+  it('keeps name and phone results visible when no code assignment exists yet', () => {
+    const pendingCodes = [{ id: 'ama', full_name: 'Ama Serwaa', parent_phone_1: '0241117261' }]
+    expect(classifyMemberSearch({ members: pendingCodes, query: 'Ama' }).visible.map((member) => member.id)).toEqual(['ama'])
+    expect(classifyMemberSearch({ members: pendingCodes, query: '0241117261' }).visible.map((member) => member.id)).toEqual(['ama'])
+  })
+
   it('ranks current code, alias, and numeric equivalents ahead of name results', () => {
     const codeMembers = [
       { id: 'current', full_name: 'E02 Person', member_code: 'E02' },

@@ -42,7 +42,8 @@ const MemberCard = memo(({
     showDeleteActions = true,
     onIndexClick,
     memberCodeBadgeStyle = 'soft',
-    memberCodeBadgeCycleSlot = 0
+    memberCodeBadgeCycleSlot = 0,
+    isMemberCodeLoading = false
 }) => {
     const name = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || 'Unnamed member'
     const regDateRaw = member.inserted_at || member.created_at
@@ -141,6 +142,14 @@ const MemberCard = memo(({
                                     title={`Member index ${memberIndexCode}`}
                                     aria-label={`Open member pass for ${name}, code ${memberIndexCode}`}
                                 />
+                            )}
+                            {!memberIndexCode && isMemberCodeLoading && (
+                                <span
+                                    aria-label="Member code loading"
+                                    className="member-index-badge inline-flex h-8 min-w-[4.75rem] items-center justify-center rounded-full border border-gray-200 bg-gray-100 px-4 text-xs font-bold text-gray-400 animate-pulse dark:border-gray-600 dark:bg-gray-700 dark:text-gray-500"
+                                >
+                                    …
+                                </span>
                             )}
                             <span className="hidden xs:inline text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0 ml-1">
                                 {isExpanded ? 'Hide details' : 'Details'}

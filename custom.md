@@ -209,6 +209,15 @@
 - Startup must not overwrite confirmed values with temporary defaults or stale local cache.
 - Cache may improve startup, but Supabase is authoritative and realtime updates must reach collaborators without manual refresh.
 
+## Member Code Hydration Rule
+- Name and phone search must not depend on member-code assignment readiness.
+- Matching members remain visible while codes are loading.
+- Member-code assignments must merge immutably and rerender badges without requiring another search input.
+- The first search and an identical repeated search must return the same canonical members.
+- Code hydration must never replace complete search results with a partial member list.
+- Format and length changes must update visible codes after confirmation without clearing valid member results.
+- Member cards use canonical member IDs as React keys, never display codes or array positions.
+
 ## Attendance Count Consistency Rule
 - Attendance totals must derive from deduplicated active canonical members, not raw cached map entries.
 - Local optimistic attendance updates must update totals immediately; stale refresh responses must never overwrite newer state.

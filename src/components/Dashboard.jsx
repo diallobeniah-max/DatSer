@@ -444,6 +444,7 @@ const Dashboard = ({ isAdmin = false }) => {
     memberCodeFormat,
     memberCodeLength,
     workspaceMemberCodeAssignments,
+    workspaceMemberCodeStatus,
     guidedFormSettings,
     recentMemberEdits
   } = useApp()
@@ -2053,8 +2054,10 @@ const Dashboard = ({ isAdmin = false }) => {
   const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members, {
     format: memberCodeFormat,
     codeLength: memberCodeLength,
-    persistedCodes: workspaceMemberCodeAssignments
+    persistedCodes: workspaceMemberCodeAssignments,
+    allowLegacyFallback: false
   }), [memberCodeFormat, memberCodeLength, members, workspaceMemberCodeAssignments])
+  const isMemberCodeHydrating = memberCodesEnabled && ['idle', 'loading', 'allocating', 'converting'].includes(workspaceMemberCodeStatus)
   const isShortSearchView = searchSuggestionView !== 'full'
   const showSearchSuggestions = pendingSearchTerm.length > 0 && (isShortSearchView || isSearchFocused)
   const isShortSearchActive = isShortSearchView && showSearchSuggestions
@@ -2359,6 +2362,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   key={member.id}
                   member={member}
                   memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
+                  isMemberCodeLoading={isMemberCodeHydrating}
                   onIndexClick={openMemberPass}
                   memberCodeBadgeStyle={memberCodeBadgeStyle}
                   memberCodeBadgeCycleSlot={memberCodeBadgeCycleSlot}
@@ -2848,6 +2852,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     key={member.id}
                     member={member}
                     memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
+                    isMemberCodeLoading={isMemberCodeHydrating}
                     onIndexClick={openMemberPass}
                     memberCodeBadgeStyle={memberCodeBadgeStyle}
                     memberCodeBadgeCycleSlot={memberCodeBadgeCycleSlot}

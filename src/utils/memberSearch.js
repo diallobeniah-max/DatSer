@@ -88,6 +88,20 @@ const editDistance = (left, right) => {
   return previous[right.length]
 }
 
+const hasMeaningfulValue = (value) => value !== undefined && value !== null && (
+  typeof value !== 'string' || value.trim() !== ''
+)
+
+// The active member list is canonical. Search-index previews may be partial, so
+// they can fill missing fields but cannot replace a complete active record.
+const mergeCanonicalMember = (current = {}, incoming = {}) => {
+  const next = { ...incoming }
+  Object.entries(current).forEach(([key, value]) => {
+    if (hasMeaningfulValue(value)) next[key] = value
+  })
+  return next
+}
+
 const uniqueActiveMembers = (...sources) => {
   const flattenedSources = sources.filter(Array.isArray).flat()
   const deletedIds = new Set(flattenedSources
@@ -96,7 +110,8 @@ const uniqueActiveMembers = (...sources) => {
   const byId = new Map()
   flattenedSources.forEach((member) => {
     if (!member?.id || member.deleted_at || deletedIds.has(String(member.id))) return
-    byId.set(String(member.id), { ...(byId.get(String(member.id)) || {}), ...member })
+    const memberId = String(member.id)
+    byId.set(memberId, mergeCanonicalMember(byId.get(memberId), member))
   })
   return [...byId.values()]
 }

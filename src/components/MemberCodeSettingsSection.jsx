@@ -108,7 +108,8 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members, {
         format: memberCodeFormat,
         codeLength: memberCodeLength,
-        persistedCodes: workspaceMemberCodeAssignments
+        persistedCodes: workspaceMemberCodeAssignments,
+        allowLegacyFallback: false
     }), [memberCodeFormat, memberCodeLength, members, workspaceMemberCodeAssignments])
     const lookupResult = useMemo(() => {
         const normalizedCode = normalizeMemberCode(lookupCode)
