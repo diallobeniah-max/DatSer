@@ -310,3 +310,19 @@
 - State written by a sync cannot immediately trigger another identical sync.
 - Members, Marked, attendance, and code badges retain last-confirmed content during reconciliation.
 - Stale responses cannot replace newer state.
+
+## Local-First Realtime Rule
+- Search always filters the local canonical member index and never performs network work while typing.
+- The initiating mutation merges its confirmed database response immediately and never waits for Realtime.
+- Realtime exists for targeted cross-device convergence.
+- Realtime events patch only affected records and do not trigger full workspace reloads.
+- One stable Realtime channel exists per active workspace.
+- Cached confirmed members, codes, and attendance remain visible during reconciliation.
+- Realtime connection failure must not clear current state.
+- Reconnect runs one coalesced recovery sync.
+
+## Monthly Realtime Publication Rule
+- Every active monthly table must be included in the Supabase Realtime publication.
+- Month creation automatically configures Realtime, RLS, indexes, and required columns.
+- Schema-management RPCs are never called repeatedly by ordinary page rendering or search.
+- Future month tables must not require manual publication repair.

@@ -768,12 +768,15 @@ export const AppProvider = ({ children }) => {
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
   const tableColumnCacheRef = useRef(new Map())
+  const realtimeChannelRef = useRef(null)
+  const realtimeScopeRef = useRef('')
   const devCountersRef = useRef({
     syncStarted: 0,
     syncCoalesced: 0,
     schemaFetchCount: 0,
     attendanceFetchCount: 0,
-    staleResultIgnored: 0
+    staleResultIgnored: 0,
+    realtimeSubscribedCount: 0
   })
   const membersCacheRef = useRef(new Map()) // tableName -> { data, ts }
   const memberPreviewSyncRef = useRef(new Map())
@@ -1900,17 +1903,7 @@ export const AppProvider = ({ children }) => {
     return undefined
   }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, members, membersLoadedAll, user?.id, workspaceMemberCodeAssignments])
 
-  useEffect(() => {
-    const ownerId = dataOwnerId || user?.id
-    if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) return undefined
-    const channel = supabase
-      .channel(`workspace-member-codes:${ownerId}`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'workspace_member_codes', filter: `workspace_owner_id=eq.${ownerId}`
-      }, () => { loadWorkspaceMemberCodes().catch(() => {}) })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, user?.id])
+  // Realtime member-code updates are managed by the unified workspace Realtime manager.
 
   const buildAdminTarget = useCallback((stickyMonth, stickySundays) => {
     let targetTable = null
@@ -2392,38 +2385,7 @@ export const AppProvider = ({ children }) => {
     fetchOwnerStickyDefaults(dataOwnerId)
   }, [isCollaborator, dataOwnerId, fetchOwnerStickyDefaults])
 
-  useEffect(() => {
-    if (!isSupabaseConfigured() || !isCollaborator || !dataOwnerId) return
-
-    const channel = supabase
-      .channel(`owner-preferences-${dataOwnerId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'user_preferences',
-          filter: `user_id=eq.${dataOwnerId}`
-        },
-        (payload) => {
-          const nextStickyMonth = payload?.new?.admin_sticky_month || null
-          const nextStickySundays = Array.isArray(payload?.new?.admin_sticky_sundays)
-            ? payload.new.admin_sticky_sundays
-            : []
-          const nextLockedDate = payload?.new?.locked_default_date || null
-          setOwnerStickyMonth(nextStickyMonth)
-          setOwnerStickySundays(nextStickySundays)
-          setLockedDefaultDate(nextLockedDate)
-          setOwnerMemberCodePreferences(pickWorkspaceMemberCodePreferences(payload?.new || {}))
-          updateAdminSyncNotice(nextStickyMonth, nextStickySundays)
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [isSupabaseConfigured, isCollaborator, dataOwnerId, updateAdminSyncNotice])
+  // Realtime preference updates are managed by the unified workspace Realtime manager.
 
   useEffect(() => {
     updateAdminSyncNotice(ownerStickyMonth, ownerStickySundays)
@@ -2614,25 +2576,13 @@ export const AppProvider = ({ children }) => {
   }, [workspaceCacheScope])
 
   const ensureMemberPreviewSyncColumns = useCallback(async (tableName) => {
-    if (!tableName || isDeveloperBypass || !isSupabaseConfigured()) return true
-    if (memberPreviewSchemaReadyRef.current.get(tableName)) return true
-    try {
-      const { error } = await supabase.rpc('ensure_month_member_sync_columns', {
-        target_table: tableName
-      })
-      if (error) throw error
+    // Normal client rendering, sync, and attendance operations only read/write data.
+    // Schema management is performed strictly during table creation or migrations.
+    if (tableName) {
       memberPreviewSchemaReadyRef.current.set(tableName, true)
-      return true
-    } catch (error) {
-      const missingRpc = String(error?.message || '').toLowerCase().includes('function ensure_month_member_sync_columns')
-      if (missingRpc) {
-        console.warn('ensure_month_member_sync_columns RPC is missing; preview sync columns were not auto-created.')
-      } else {
-        console.warn(`Could not ensure preview sync columns for ${tableName}:`, error)
-      }
-      return false
     }
-  }, [isDeveloperBypass, isSupabaseConfigured])
+    return true
+  }, [])
 
   const readMemberPreviewIndex = useCallback(async (tableName = currentTable) => {
     if (!tableName) return []
@@ -5992,10 +5942,10 @@ export const AppProvider = ({ children }) => {
       return
     }
 
-    // When all workspace members are loaded in memory, local search on activeMembers
-    // is 100% complete and authoritative. Clear serverSearchResults to prevent
-    // partial IndexedDB preview rows from overwriting complete member records.
-    if (membersLoadedAll) {
+    // When workspace members are available in memory (cached or synced),
+    // local search on activeMembers is 100% immediate and authoritative.
+    // Typing must perform zero network requests.
+    if (activeMembers.length > 0 || membersLoadedAll) {
       if (isCurrentRequest()) setServerSearchResults(null)
       return
     }
@@ -7985,22 +7935,57 @@ export const AppProvider = ({ children }) => {
   }, [currentTable, dataOwnerId, user?.id])
 
   useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-    if (!currentTable) return undefined
+    const ownerId = dataOwnerId || user?.id
+    if (!ownerId || !currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
+
+    const scopeKey = `${ownerId}:${currentTable}`
+    if (realtimeScopeRef.current === scopeKey && realtimeChannelRef.current) {
+      return undefined
+    }
+
+    if (realtimeChannelRef.current) {
+      supabase.removeChannel(realtimeChannelRef.current)
+      realtimeChannelRef.current = null
+    }
+
+    realtimeScopeRef.current = scopeKey
+    const channelName = `workspace:${ownerId}:${currentTable}`
+    let disposed = false
+
+    const scheduleAttendanceRefresh = (serviceDate, source = 'attendance-realtime') => {
+      const targetDateKey = serviceDate || (selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null)
+      if (!targetDateKey) return
+      if (realtimeAttendanceRefreshTimerRef.current) {
+        clearTimeout(realtimeAttendanceRefreshTimerRef.current)
+      }
+      realtimeAttendanceRefreshTimerRef.current = setTimeout(async () => {
+        if (disposed) return
+        const snapshotVersion = attendanceSnapshotVersionRef.current.startRead(currentTable, targetDateKey)
+        signalRealtimeSyncStatus(source)
+        const date = new Date(`${targetDateKey}T12:00:00`)
+        const remoteAttendance = await fetchAttendanceForDateInTable(date, currentTable)
+        if (disposed) return
+        if (!attendanceSnapshotVersionRef.current.canApplyRead(currentTable, targetDateKey, snapshotVersion)) return
+        const mergedAttendance = mergeAttendanceMapWithPending(
+          remoteAttendance,
+          offlinePendingChangesRef.current,
+          { tableName: currentTable, serviceDate: targetDateKey }
+        )
+        setAttendanceData((previous) => ({
+          ...previous,
+          [targetDateKey]: mergedAttendance
+        }))
+      }, 250)
+    }
 
     const channel = supabase
-      .channel(`public:members:${currentTable}`)
+      .channel(channelName)
+      // 1. Monthly member table (e.g. August_2026)
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: currentTable,
-        },
+        { event: '*', schema: 'public', table: currentTable },
         (payload) => {
-          console.log('Change received!', payload);
-          signalRealtimeSyncStatus(`members-${String(payload.eventType || 'change').toLowerCase()}`);
-
+          signalRealtimeSyncStatus(`members-${String(payload.eventType || 'change').toLowerCase()}`)
           if (payload.eventType === 'INSERT') {
             const prepared = prepareRealtimeMember(payload.new)
             const incoming = prepared.member
@@ -8041,7 +8026,7 @@ export const AppProvider = ({ children }) => {
                 lastSyncAt: incoming.updated_at || new Date().toISOString()
               })
               return nextMembers
-            });
+            })
           } else if (payload.eventType === 'UPDATE') {
             const prepared = prepareRealtimeMember(payload.new)
             const incoming = prepared.member
@@ -8085,7 +8070,7 @@ export const AppProvider = ({ children }) => {
                 lastSyncAt: incoming.updated_at || new Date().toISOString()
               })
               return nextMembers
-            });
+            })
           } else if (payload.eventType === 'DELETE') {
             const pendingDeleteMerge = prepareRealtimeMember(payload.old)
             if (pendingDeleteMerge.pendingCount > 0 && !pendingDeleteMerge.shouldRemove) {
@@ -8104,7 +8089,7 @@ export const AppProvider = ({ children }) => {
               const nextMembers = prevMembers.filter((member) => member.id !== payload.old.id)
               membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
               return nextMembers
-            });
+            })
             deleteMemberPreviewMember(workspaceCacheScope, currentTable, payload.old.id)
               .catch((error) => console.warn('Could not remove realtime member from index:', error))
             removeMemberFromAttendanceData(payload.old.id)
@@ -8117,101 +8102,60 @@ export const AppProvider = ({ children }) => {
           }
         }
       )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          signalRealtimeSyncStatus('realtime-connected')
-          return
-        }
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setMemberPreviewSyncStatus((prev) => ({
-            ...prev,
-            isSyncing: false,
-            source: 'realtime-fallback'
-          }))
-          refreshSyncedDataInBackground('realtime-fallback', { force: true })
-        }
-      });
-
-    return () => {
-      if (realtimeSyncStatusTimerRef.current) {
-        clearTimeout(realtimeSyncStatusTimerRef.current)
-        realtimeSyncStatusTimerRef.current = null
-      }
-      supabase.removeChannel(channel);
-    };
-  }, [applyAttendanceColumnsFromMemberRows, currentTable, membersTotalCount, persistMemberPreviewIndex, prepareRealtimeMember, refreshSyncedDataInBackground, removeMemberFromAttendanceData, signalRealtimeSyncStatus, workspaceCacheScope]);
-
-  useEffect(() => {
-    const ownerId = dataOwnerId || user?.id
-    if (!ownerId || !currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
-
-    let disposed = false
-    const scheduleAttendanceRefresh = (serviceDate, source = 'attendance-realtime') => {
-      const targetDateKey = serviceDate || (selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null)
-      if (!targetDateKey) return
-      if (realtimeAttendanceRefreshTimerRef.current) {
-        clearTimeout(realtimeAttendanceRefreshTimerRef.current)
-      }
-      realtimeAttendanceRefreshTimerRef.current = setTimeout(async () => {
-        if (disposed) return
-        const snapshotVersion = attendanceSnapshotVersionRef.current.startRead(currentTable, targetDateKey)
-        signalRealtimeSyncStatus(source)
-        const date = new Date(`${targetDateKey}T12:00:00`)
-        const remoteAttendance = await fetchAttendanceForDateInTable(date, currentTable)
-        if (disposed) return
-        // A local selection or rollback happened while this request was in flight.
-        // Keep that newer state; a later realtime event will schedule a fresh read.
-        if (!attendanceSnapshotVersionRef.current.canApplyRead(currentTable, targetDateKey, snapshotVersion)) return
-        const mergedAttendance = mergeAttendanceMapWithPending(
-          remoteAttendance,
-          offlinePendingChangesRef.current,
-          { tableName: currentTable, serviceDate: targetDateKey }
-        )
-        setAttendanceData((previous) => ({
-          ...previous,
-          [targetDateKey]: mergedAttendance
-        }))
-      }, 250)
-    }
-
-    const handleAttendanceRecordChange = async (payload) => {
-      const row = payload?.new || payload?.old
-      if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
-      let serviceDate = row?.service_date || null
-      if (!serviceDate && row?.session_id) {
-        const { data, error } = await supabase
-          .from('attendance_sessions')
-          .select('service_date')
-          .eq('id', row.session_id)
-          .eq('owner_id', ownerId)
-          .maybeSingle()
-        if (!error) serviceDate = data?.service_date || null
-      }
-      scheduleAttendanceRefresh(serviceDate, 'attendance-records-realtime')
-    }
-
-    const channel = supabase
-      .channel(`public:attendance-records:${ownerId}`)
+      // 2. Member codes (workspace_member_codes)
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'attendance_records'
-        },
+        { event: '*', schema: 'public', table: 'workspace_member_codes', filter: `workspace_owner_id=eq.${ownerId}` },
         (payload) => {
-          handleAttendanceRecordChange(payload).catch((error) => {
-            console.warn('Could not apply targeted attendance record refresh:', error)
+          const row = payload?.new
+          if (!row || !row.member_id) return
+          setWorkspaceMemberCodeAssignments((prev) => {
+            const updated = {
+              ...prev,
+              [row.member_id]: {
+                member_id: row.member_id,
+                current_code: row.current_code,
+                ordinal: row.ordinal,
+                legacy_code: row.legacy_code,
+                aliases: row.aliases || []
+              }
+            }
+            writeStoredWorkspaceMemberCodeAssignments(workspaceCacheScope, updated)
+            return updated
           })
+        }
+      )
+      // 3. User preferences (user_preferences)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_preferences', filter: `user_id=eq.${ownerId}` },
+        (payload) => {
+          const nextStickyMonth = payload?.new?.admin_sticky_month || null
+          const nextStickySundays = Array.isArray(payload?.new?.admin_sticky_sundays)
+            ? payload.new.admin_sticky_sundays
+            : []
+          const nextLockedDate = payload?.new?.locked_default_date || null
+          setOwnerStickyMonth(nextStickyMonth)
+          setOwnerStickySundays(nextStickySundays)
+          setLockedDefaultDate(nextLockedDate)
+          setOwnerMemberCodePreferences(pickWorkspaceMemberCodePreferences(payload?.new || {}))
+          updateAdminSyncNotice(nextStickyMonth, nextStickySundays)
+        }
+      )
+      // 4. Attendance records / sessions
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance_records' },
+        (payload) => {
+          const row = payload?.new || payload?.old
+          if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
+          let serviceDate = row?.service_date || null
+          scheduleAttendanceRefresh(serviceDate, 'attendance-records-realtime')
         }
       )
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'attendance_sessions'
-        },
+        { event: '*', schema: 'public', table: 'attendance_sessions' },
         (payload) => {
           const row = payload?.new || payload?.old
           if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
@@ -8220,11 +8164,14 @@ export const AppProvider = ({ children }) => {
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          signalRealtimeSyncStatus('attendance-realtime-connected')
+          devCountersRef.current.realtimeSubscribedCount = (devCountersRef.current.realtimeSubscribedCount || 0) + 1
+          signalRealtimeSyncStatus('realtime-connected')
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          refreshSyncedDataInBackground('attendance-realtime-fallback', { force: true })
+          console.warn(`[RealtimeManager] Channel ${channelName} status: ${status}`)
         }
       })
+
+    realtimeChannelRef.current = channel
 
     return () => {
       disposed = true
@@ -8232,9 +8179,13 @@ export const AppProvider = ({ children }) => {
         clearTimeout(realtimeAttendanceRefreshTimerRef.current)
         realtimeAttendanceRefreshTimerRef.current = null
       }
-      supabase.removeChannel(channel)
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current)
+        realtimeChannelRef.current = null
+        realtimeScopeRef.current = ''
+      }
     }
-  }, [currentTable, dataOwnerId, fetchAttendanceForDateInTable, isDeveloperBypass, isSupabaseConfigured, refreshSyncedDataInBackground, selectedAttendanceDate, shouldUseOfflineData, signalRealtimeSyncStatus, user?.id])
+  }, [applyAttendanceColumnsFromMemberRows, currentTable, dataOwnerId, fetchAttendanceForDateInTable, isDeveloperBypass, isSupabaseConfigured, membersTotalCount, persistMemberPreviewIndex, prepareRealtimeMember, removeMemberFromAttendanceData, selectedAttendanceDate, shouldUseOfflineData, signalRealtimeSyncStatus, updateAdminSyncNotice, user?.id, workspaceCacheScope])
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)
