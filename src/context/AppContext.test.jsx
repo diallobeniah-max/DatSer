@@ -49,6 +49,7 @@ vi.mock('../lib/supabase', () => {
       eq: () => base,
       in: () => base,
       limit: () => base,
+      order: () => base,
       range: () => Promise.resolve({ data: [], error: null }),
       single: () => {
         if (table === 'collaborators') {

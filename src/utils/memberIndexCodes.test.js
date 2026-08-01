@@ -49,7 +49,7 @@ describe('workspace member-code formats', () => {
   })
 
   it('uses a persisted workspace assignment over a client fallback and retains aliases', () => {
-    const members = [{ id: 'one', full_name: 'Esther M' }, { id: 'two', full_name: 'Beniah D' }]
+    const members = [{ id: 'preview-one', member_id: 'one', full_name: 'Esther M' }, { id: 'two', full_name: 'Beniah D' }]
     const map = buildMemberIndexCodeMap(members, {
       format: MEMBER_CODE_FORMATS.NUMBERS,
       codeLength: 3,

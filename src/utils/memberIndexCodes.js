@@ -1,3 +1,5 @@
+import { getMemberCanonicalId } from './memberIdentity'
+
 const getMemberName = (member = {}) => (
   member.full_name || member.fullName || member['full_name'] || member['Full Name'] || member.name || member.Name || ''
 )
@@ -90,13 +92,15 @@ const extractCurrentCode = (value) => {
 
 export const getMemberIndexCode = (member, indexMap) => {
   if (!member) return ''
-  const value = indexMap instanceof Map ? indexMap.get(member.id) : indexMap?.[member.id]
+  const memberId = getMemberCanonicalId(member)
+  const value = indexMap instanceof Map ? indexMap.get(memberId) : indexMap?.[memberId]
   return extractCurrentCode(value)
 }
 
 export const getMemberIndexCodeAliases = (member, indexMap) => {
   if (!member) return []
-  const value = indexMap instanceof Map ? indexMap.get(member.id) : indexMap?.[member.id]
+  const memberId = getMemberCanonicalId(member)
+  const value = indexMap instanceof Map ? indexMap.get(memberId) : indexMap?.[memberId]
   return Array.isArray(value?.aliases) ? value.aliases.filter(Boolean) : []
 }
 
@@ -127,15 +131,16 @@ export const buildMemberIndexCodeMap = (members = [], { format, codeLength = DEF
   const legacyCodes = buildLegacyAlphanumericCodes(members, length)
   const normalizedFormat = normalizeMemberCodeFormat(format)
   return members.reduce((map, member, index) => {
-    if (!member?.id) return map
-    const persisted = persistedCodes instanceof Map ? persistedCodes.get(member.id) : persistedCodes?.[member.id]
+    const memberId = getMemberCanonicalId(member)
+    if (!memberId) return map
+    const persisted = persistedCodes instanceof Map ? persistedCodes.get(memberId) : persistedCodes?.[memberId]
     if (persisted) {
-      map[member.id] = persisted
+      map[memberId] = persisted
       return map
     }
     if (!allowLegacyFallback) return map
     const ordinal = index + 1
-    map[member.id] = normalizedFormat === MEMBER_CODE_FORMATS.LETTERS
+    map[memberId] = normalizedFormat === MEMBER_CODE_FORMATS.LETTERS
       ? getLettersOnlyMemberCode(ordinal, length)
       : normalizedFormat === MEMBER_CODE_FORMATS.NUMBERS
         ? getNumbersOnlyMemberCode(ordinal, length)

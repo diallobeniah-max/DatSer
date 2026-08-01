@@ -18,6 +18,7 @@ import { consumeMemberCheckInUrl } from '../utils/qrCheckIn'
 import {
   attachMemberIdentity,
   buildMemberIdentityHint,
+  getMemberCanonicalId,
   getMemberOwnerId,
   getMemberSourceTable
 } from '../utils/memberIdentity'
@@ -837,6 +838,7 @@ export const AppProvider = ({ children }) => {
   const [workspaceMemberCodeAssignments, setWorkspaceMemberCodeAssignments] = useState({})
   const [workspaceMemberCodeStatus, setWorkspaceMemberCodeStatus] = useState('idle')
   const workspaceMemberCodeRequestRef = useRef({ ownerId: null, sequence: 0 })
+  const workspaceMemberCodeAssignmentsRef = useRef({})
   const workspaceMemberCodeOwnerId = dataOwnerId || user?.id
   const [cachedMemberCodeSettings, setCachedMemberCodeSettings] = useState(() => readMemberCodeSettingsCache(workspaceMemberCodeOwnerId))
   const hasConfirmedRemoteMemberCodeFormat = preferences?.member_code_format !== undefined && preferences?.member_code_format !== null
@@ -864,6 +866,10 @@ export const AppProvider = ({ children }) => {
     setWorkspaceMemberCodeAssignments(cached?.assignments || {})
     setWorkspaceMemberCodeStatus(cached?.assignments && Object.keys(cached.assignments).length > 0 ? 'loading' : 'idle')
   }, [isDeveloperBypass, workspaceMemberCodeOwnerId])
+
+  useEffect(() => {
+    workspaceMemberCodeAssignmentsRef.current = workspaceMemberCodeAssignments
+  }, [workspaceMemberCodeAssignments])
 
   useEffect(() => {
     if (!workspaceMemberCodeOwnerId || !hasConfirmedRemoteMemberCodeFormat || !hasConfirmedRemoteMemberCodeLength) return
@@ -1627,7 +1633,7 @@ export const AppProvider = ({ children }) => {
     }
   }, [])
 
-  const loadWorkspaceMemberCodes = useCallback(async ({ ensure = false } = {}) => {
+  const loadWorkspaceMemberCodes = useCallback(async ({ ensure = false, membersToEnsure = [] } = {}) => {
     const ownerId = dataOwnerId || user?.id
     if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) return []
     // Standard collaborators may read authoritative assignments, but only the
@@ -1635,10 +1641,15 @@ export const AppProvider = ({ children }) => {
     const canAllocate = !isCollaborator || isAdminCollaborator
     const shouldEnsure = ensure && canAllocate
 
-    const legacyCodeMap = buildMemberIndexCodeMap(members, { codeLength: memberCodeLength })
-    const memberPayload = members
-      .filter((member) => member?.id && !member?.deleted_at)
-      .map((member) => ({ id: member.id, legacy_code: getMemberIndexCode(member, legacyCodeMap) }))
+    const canonicalMembers = (membersToEnsure || [])
+      .filter((member) => getMemberCanonicalId(member) && !member?.deleted_at)
+    const legacyCodeMap = buildMemberIndexCodeMap(canonicalMembers, { codeLength: memberCodeLength })
+    const memberPayload = canonicalMembers
+      .filter((member) => !workspaceMemberCodeAssignmentsRef.current[String(getMemberCanonicalId(member))])
+      .map((member) => ({
+        id: getMemberCanonicalId(member),
+        legacy_code: getMemberIndexCode(member, legacyCodeMap)
+      }))
       // Allocation must not depend on whichever client happened to load rows first.
       .sort((left, right) => left.legacy_code.localeCompare(right.legacy_code) || left.id.localeCompare(right.id))
 
@@ -1653,7 +1664,7 @@ export const AppProvider = ({ children }) => {
 
     setWorkspaceMemberCodeStatus(shouldEnsure ? 'allocating' : 'loading')
     try {
-      if (shouldEnsure) {
+      if (shouldEnsure && memberPayload.length > 0) {
         const { error } = await supabase.rpc('ensure_workspace_member_codes', { p_owner_id: ownerId, p_members: memberPayload })
         if (error) throw error
       }
@@ -1671,7 +1682,7 @@ export const AppProvider = ({ children }) => {
       if (isCurrentRequest()) setWorkspaceMemberCodeStatus('unavailable')
       return []
     }
-  }, [dataOwnerId, isAdminCollaborator, isCollaborator, isDeveloperBypass, isSupabaseConfigured, memberCodeLength, members, readWorkspaceMemberCodeAssignments, user?.id])
+  }, [dataOwnerId, isAdminCollaborator, isCollaborator, isDeveloperBypass, isSupabaseConfigured, memberCodeLength, readWorkspaceMemberCodeAssignments, user?.id])
 
   const convertWorkspaceMemberCodeFormat = useCallback(async (nextFormat, nextCodeLength = memberCodeLength) => {
     const ownerId = dataOwnerId || user?.id
@@ -1715,11 +1726,27 @@ export const AppProvider = ({ children }) => {
     }
   }, [authContext, dataOwnerId, fetchOwnerStickyDefaults, isAdminCollaborator, isCollaborator, isDeveloperBypass, isOnline, isSupabaseConfigured, memberCodeLength, readWorkspaceMemberCodeAssignments, user?.id])
 
+  // Hydrate the authoritative workspace assignments as soon as the workspace
+  // identity is known. This must not wait for the first preview page, otherwise
+  // badges appear only after a later render or a second search.
   useEffect(() => {
-    if (!members.length || isDeveloperBypass || !isSupabaseConfigured() || !(dataOwnerId || user?.id)) return undefined
-    loadWorkspaceMemberCodes({ ensure: true }).catch(() => {})
+    if (isDeveloperBypass || !isSupabaseConfigured() || !(dataOwnerId || user?.id)) return undefined
+    loadWorkspaceMemberCodes().catch(() => {})
     return undefined
-  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, members.length, user?.id])
+  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, user?.id])
+
+  // Only allocate after the complete current member index has hydrated, and
+  // only for canonical identities the server has not assigned yet.
+  useEffect(() => {
+    if (!membersLoadedAll || !members.length || isDeveloperBypass || !isSupabaseConfigured() || !(dataOwnerId || user?.id)) return undefined
+    const missingMembers = members.filter((member) => {
+      const memberId = getMemberCanonicalId(member)
+      return memberId && !member.deleted_at && !workspaceMemberCodeAssignments[String(memberId)]
+    })
+    if (missingMembers.length === 0) return undefined
+    loadWorkspaceMemberCodes({ ensure: true, membersToEnsure: missingMembers }).catch(() => {})
+    return undefined
+  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, members, membersLoadedAll, user?.id, workspaceMemberCodeAssignments])
 
   useEffect(() => {
     const ownerId = dataOwnerId || user?.id
@@ -3113,6 +3140,10 @@ export const AppProvider = ({ children }) => {
       if (!createdMember) {
         throw new Error('Member was saved but no record was returned from Supabase')
       }
+
+      // A newly confirmed member must get an authoritative code immediately;
+      // do not wait for the next full preview hydration cycle.
+      loadWorkspaceMemberCodes({ ensure: true, membersToEnsure: [createdMember] }).catch(() => {})
 
       searchCacheRef.current.clear()
       setMembers(prev => {

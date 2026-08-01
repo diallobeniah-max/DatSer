@@ -254,3 +254,11 @@
 ## Member Codes Accent Rule
 - Member Codes uses the semantic deep-blue feature accent.
 - Member Codes components must consume the shared Member Codes tokens and must not hardcode local blue, orange, yellow, or amber values for feature icons, labels, or status states.
+
+## Complete Member Code Assignment Rule
+- Workspace member-code assignments hydrate from the authoritative workspace assignment store before member-card rendering depends on them.
+- Assignment lookups, badges, search, QR/passes, and realtime updates use one stable canonical member identity, not a row position or preview-only identifier.
+- Cache may show the last confirmed assignment snapshot immediately, but remote assignments reconcile in full pages and remain authoritative.
+- Automatic allocation runs only after the complete current member index is available and only for genuinely unassigned canonical members.
+- Adding a member requests a code assignment immediately after the member record is confirmed; editing a member never changes its code.
+- Loading, syncing, and assignment failures keep existing confirmed codes visible and never replace them with synthetic or partial assignments.

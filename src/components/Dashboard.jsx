@@ -18,6 +18,7 @@ import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyl
 import MissingDataModal from './MissingDataModal'
 import { resolveMemberAttendanceForDate } from '../utils/attendanceRecords'
 import { buildMemberIndexCodeMap, getMemberIndexCode, getMemberIndexCodeAliases, memberMatchesIndexCode, normalizeMemberCode } from '../utils/memberIndexCodes'
+import { getMemberCanonicalId } from '../utils/memberIdentity'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
 import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
@@ -2359,7 +2360,7 @@ const Dashboard = ({ isAdmin = false }) => {
               const targetDate = getDateString(selectedAttendanceDate)
               return (
                 <MemberCard
-                  key={member.id}
+                  key={getMemberCanonicalId(member) || member.id}
                   member={member}
                   memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
                   isMemberCodeLoading={isMemberCodeHydrating}
@@ -2849,7 +2850,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 const isSelected = longPressSelectedIds.has(member.id) || selectedMemberIds.has(member.id)
                 return (
                   <MemberCard
-                    key={member.id}
+                    key={getMemberCanonicalId(member) || member.id}
                     member={member}
                     memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
                     isMemberCodeLoading={isMemberCodeHydrating}

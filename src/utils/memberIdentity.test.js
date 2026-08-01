@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   attachMemberIdentity,
   buildMemberIdentityHint,
+  getMemberCanonicalId,
   getMemberSourceTable
 } from './memberIdentity'
 
@@ -25,5 +26,10 @@ describe('member identity helpers', () => {
       full_name: 'Test Member',
       phone_number: '0244000000'
     })
+  })
+
+  it('uses the canonical member identity across preview and monthly row shapes', () => {
+    expect(getMemberCanonicalId({ id: 'preview-row', member_id: 'member-1' })).toBe('member-1')
+    expect(attachMemberIdentity({ id: 'monthly-row', canonical_member_id: 'member-2' }).__canonical_member_id).toBe('member-2')
   })
 })
