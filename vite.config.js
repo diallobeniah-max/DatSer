@@ -1,13 +1,27 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createClient } from '@supabase/supabase-js'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
 const APP_UPDATES_BUCKET = 'app-updates'
 const APP_RELEASE_SELECT = 'id,version_name,version_code,title,description,apk_url,force_update,is_active,published_at,created_at,created_by'
 const APK_FILE_LIMIT_BYTES = 150 * 1024 * 1024
+
+const getBuildCommit = () => {
+  const configuredCommit = process.env.VITE_COMMIT_HASH?.trim()
+  if (configuredCommit) return configuredCommit
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
 
 const createDatserApkDevPlugin = () => {
   const jobs = new Map()
@@ -388,7 +402,7 @@ export default defineConfig({
   plugins: [react(), createDatserApkDevPlugin()],
   base: '/',
   define: {
-    __BUILD_COMMIT__: JSON.stringify(process.env.VITE_COMMIT_HASH || '884248df80016182ecf787efd17b3646a3c4cb06'),
+    __BUILD_COMMIT__: JSON.stringify(getBuildCommit()),
     __BUILD_TIMESTAMP__: JSON.stringify(new Date().toISOString())
   },
   server: {

@@ -430,7 +430,6 @@ const Dashboard = ({ isAdmin = false }) => {
     dashboardTab,
     setDashboardTab,
     setAndSaveAttendanceDate,
-    loadAllAttendanceData,
     uiAction,
     validateMemberData,
     getPastSundays,
@@ -584,9 +583,6 @@ const Dashboard = ({ isAdmin = false }) => {
 
   // Duplicates management state
   const [selectedDuplicateIds, setSelectedDuplicateIds] = useState(new Set())
-
-  // Ref to track the last fetched table to prevent re-fetching on every render
-  const lastFetchedTableRef = useRef(null)
 
   // Missing data validation state
   const [showMissingDataModal, setShowMissingDataModal] = useState(false)
@@ -1323,19 +1319,9 @@ const Dashboard = ({ isAdmin = false }) => {
     return acc
   }, [attendanceData, members, sundayDates])
 
-  // Fetch attendance for the selected date when table or date changes
-  useEffect(() => {
-    const targetDate = getDateString(selectedAttendanceDate)
-    if (targetDate && lastFetchedTableRef.current !== `${currentTable}_${targetDate}`) {
-      lastFetchedTableRef.current = `${currentTable}_${targetDate}`
-      fetchAndApplyAttendanceForDate(new Date(targetDate))
-    }
-  }, [currentTable, selectedAttendanceDate, fetchAndApplyAttendanceForDate])
-
   // Preload attendance maps when switching to Edited tab
   useEffect(() => {
     if (dashboardTab === 'edited') {
-      loadAllAttendanceData()
       if (!membersLoadedAll) {
         fetchMembers(currentTable, {
           background: true,
@@ -1345,13 +1331,6 @@ const Dashboard = ({ isAdmin = false }) => {
       }
     }
   }, [currentTable, dashboardTab, membersLoadedAll])
-
-  // Ensure attendance map loads when a Sunday is selected (local state)
-  useEffect(() => {
-    if (selectedSundayDate && !attendanceData[selectedSundayDate]) {
-      fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
-    }
-  }, [selectedSundayDate, currentTable, fetchAndApplyAttendanceForDate])
 
   // Reset selected Sunday when month changes
   useEffect(() => {
@@ -1366,20 +1345,6 @@ const Dashboard = ({ isAdmin = false }) => {
       } catch { }
     }
   }, [uiAction])
-
-  // Fetch attendance for all Sunday dates
-  useEffect(() => {
-    // Load Sunday attendance maps for all tabs to ensure highlights show in expanded cards
-    if (sundayDates.length === 0) return
-
-    let isCancelled = false
-    const load = async () => {
-      // Logic removed to prevent request flood
-    }
-    load()
-    return () => { isCancelled = true }
-  }, [currentTable, fetchAndApplyAttendanceForDate, sundayDates])
-
 
   useEffect(() => {
     if (selectedAttendanceDate) {

@@ -30,6 +30,8 @@ import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '.
 import { classifyMemberSearch, normalizeSearchText } from '../utils/memberSearch'
 import { createAttendanceSnapshotVersionRegistry } from '../utils/attendanceSnapshot'
 import { createResumeSyncCoordinator } from '../utils/appResumeSync'
+import { invalidateRequestScope, runScopedRequest } from '../utils/runtimeRequestRegistry'
+import { acquireRealtimeChannel } from '../utils/realtimeChannelRegistry'
 import {
   isAttendanceAlreadySynced,
   isOfflineAttendanceConflict,
@@ -486,6 +488,14 @@ const getSundaysForMonth = (monthIndex, yearNum) => {
   return sundays
 }
 
+const getAttendanceColumnsForMonthTable = (tableName) => {
+  const parsed = parseMonthTable(tableName)
+  if (!parsed) return []
+  return getSundaysForMonth(parsed.monthIndex, parsed.yearNum).map((date) => ({
+    column_name: getAttendanceColumnNameForDate(date)
+  }))
+}
+
 const getSundayDefaultForTable = (tableName, referenceDate = new Date()) => {
   const parsed = parseMonthTable(tableName)
   const referenceDay = toLocalStartOfDay(referenceDate)
@@ -767,11 +777,7 @@ export const AppProvider = ({ children }) => {
   const [deletedMemberSearchTombstones, setDeletedMemberSearchTombstones] = useState([])
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
-  const tableColumnCacheRef = useRef(new Map())
-  const inFlightTableColumnsPromisesRef = useRef(new Map())
   const inFlightAttendancePromisesRef = useRef(new Map())
-  const realtimeChannelRef = useRef(null)
-  const realtimeScopeRef = useRef('')
   const devCountersRef = useRef({
     syncStarted: 0,
     syncCoalesced: 0,
@@ -781,8 +787,6 @@ export const AppProvider = ({ children }) => {
     realtimeSubscribedCount: 0
   })
   const membersCacheRef = useRef(new Map()) // tableName -> { data, ts }
-  const memberPreviewSyncRef = useRef(new Map())
-  const memberPreviewSchemaReadyRef = useRef(new Map())
   const memberPreviewBackgroundSyncRunnerRef = useRef(null)
   const searchRequestRef = useRef(0)
   const attendanceSnapshotVersionRef = useRef(createAttendanceSnapshotVersionRegistry())
@@ -792,8 +796,34 @@ export const AppProvider = ({ children }) => {
     dataOwnerId,
     isCollaborator
   }), [dataOwnerId, isCollaborator, user?.id])
+  const runtimeRequestScopeRef = useRef(null)
   const [attendanceData, setAttendanceData] = useState({})
+  const attendanceDataRef = useRef({})
+  useEffect(() => {
+    attendanceDataRef.current = attendanceData
+  }, [attendanceData])
   const [currentTable, setCurrentTable] = useState(getLatestTable())
+
+  useEffect(() => {
+    const nextScope = {
+      workspace: workspaceCacheScope,
+      owner: dataOwnerId || user?.id || 'guest',
+      table: currentTable || 'none'
+    }
+    const previous = runtimeRequestScopeRef.current
+    if (previous && (
+      previous.workspace !== nextScope.workspace ||
+      previous.owner !== nextScope.owner ||
+      previous.table !== nextScope.table
+    )) {
+      invalidateRequestScope(`${previous.workspace}:${previous.table}`)
+      invalidateRequestScope(`${previous.owner}:${previous.table}`)
+      if (previous.owner !== nextScope.owner) {
+        invalidateRequestScope(`${previous.owner}:workspace`)
+      }
+    }
+    runtimeRequestScopeRef.current = nextScope
+  }, [currentTable, dataOwnerId, user?.id, workspaceCacheScope])
 
   useEffect(() => {
     setDeletedMemberSearchTombstones([])
@@ -854,7 +884,6 @@ export const AppProvider = ({ children }) => {
   const [workspaceMemberCodeStatus, setWorkspaceMemberCodeStatus] = useState('idle')
   const workspaceMemberCodeRequestRef = useRef({ ownerId: null, sequence: 0 })
   const workspaceMemberCodeAssignmentsRef = useRef({})
-  const workspaceMemberCodeReadRef = useRef({ ownerId: null, promise: null })
   const memberCodeRecoveryQueueRef = useRef(new Map())
   const memberCodeRecoveryTimerRef = useRef(null)
   const memberCodeRecoveryRunningRef = useRef(false)
@@ -1015,7 +1044,6 @@ export const AppProvider = ({ children }) => {
   const autoSnapshotTimerRef = useRef(null)
   const autoPrepareOfflineRef = useRef({ signature: '', running: false })
   const backgroundRefreshRef = useRef({ running: false, lastRun: 0 })
-  const realtimeAttendanceRefreshTimerRef = useRef(null)
   const realtimeSyncStatusTimerRef = useRef(null)
   const normalizedAttendanceBackendAvailableRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
@@ -1669,17 +1697,11 @@ export const AppProvider = ({ children }) => {
   }, [])
 
   const readConfirmedWorkspaceMemberCodeAssignments = useCallback(async (ownerId) => {
-    const activeRead = workspaceMemberCodeReadRef.current
-    if (activeRead.ownerId === ownerId && activeRead.promise) return activeRead.promise
-
-    const promise = readWorkspaceMemberCodeAssignments(ownerId)
-      .finally(() => {
-        if (workspaceMemberCodeReadRef.current.ownerId === ownerId) {
-          workspaceMemberCodeReadRef.current = { ownerId: null, promise: null }
-        }
-      })
-    workspaceMemberCodeReadRef.current = { ownerId, promise }
-    return promise
+    return runScopedRequest(
+      `${ownerId}:workspace`,
+      'member-code-assignments',
+      () => readWorkspaceMemberCodeAssignments(ownerId)
+    )
   }, [readWorkspaceMemberCodeAssignments])
 
   const enqueueMemberCodeRecovery = useCallback((member, error = null) => {
@@ -1740,6 +1762,7 @@ export const AppProvider = ({ children }) => {
       if (shouldEnsure && memberPayload.length > 0) {
         const { error } = await supabase.rpc('ensure_workspace_member_codes', { p_owner_id: ownerId, p_members: memberPayload })
         if (error) throw error
+        invalidateRequestScope(`${ownerId}:workspace`, 'member-code-assignments')
       }
       const data = await readConfirmedWorkspaceMemberCodeAssignments(ownerId)
       if (!isCurrentRequest()) return data
@@ -1870,6 +1893,7 @@ export const AppProvider = ({ children }) => {
         () => supabase.rpc('configure_workspace_member_codes', { p_owner_id: ownerId, p_format: format, p_code_length: codeLength }),
         { action: 'Change workspace member-code format', retries: 1 }
       )
+      invalidateRequestScope(`${ownerId}:workspace`, 'member-code-assignments')
       const assignments = await readConfirmedWorkspaceMemberCodeAssignments(ownerId)
       if (workspaceMemberCodeRequestRef.current.ownerId === ownerId && workspaceMemberCodeRequestRef.current.sequence === conversionRequestId) {
         mergeConfirmedWorkspaceMemberCodeAssignments(ownerId, assignments)
@@ -2584,9 +2608,7 @@ export const AppProvider = ({ children }) => {
   const ensureMemberPreviewSyncColumns = useCallback(async (tableName) => {
     // Normal client rendering, sync, and attendance operations only read/write data.
     // Schema management is performed strictly during table creation or migrations.
-    if (tableName) {
-      memberPreviewSchemaReadyRef.current.set(tableName, true)
-    }
+    void tableName
     return true
   }, [])
 
@@ -2635,9 +2657,7 @@ export const AppProvider = ({ children }) => {
       return
     }
 
-    const syncKey = `${workspaceCacheScope}::${tableName || 'default'}`
-    if (memberPreviewSyncRef.current.get(syncKey)) return
-    memberPreviewSyncRef.current.set(syncKey, true)
+    const syncKey = `${workspaceCacheScope}:${tableName || 'default'}`
 
     setMemberPreviewSyncStatus(prev => ({
       ...prev,
@@ -2645,7 +2665,7 @@ export const AppProvider = ({ children }) => {
       source: options.source || 'background'
     }))
 
-    ;(async () => {
+    void runScopedRequest(syncKey, 'member-reconciliation', async () => {
       await ensureMemberPreviewSyncColumns(tableName)
 
       let offset = 0
@@ -2748,15 +2768,13 @@ export const AppProvider = ({ children }) => {
         lastSyncAt: now,
         lastRemoteUpdatedAt: latestRemoteUpdatedAt || now
       })
-    })().catch((error) => {
+    }, { force: options.force, cacheResult: false }).catch((error) => {
       console.warn('Background member preview sync failed:', error)
       setMemberPreviewSyncStatus(prev => ({
         ...prev,
         isSyncing: false,
         source: 'error'
       }))
-    }).finally(() => {
-      memberPreviewSyncRef.current.delete(syncKey)
     })
   }
 
@@ -2962,7 +2980,12 @@ export const AppProvider = ({ children }) => {
       }
 
       appContextLog(`Querying first ${MEMBER_PREVIEW_PAGE_SIZE} members from ${tableName} with session user: ${session?.user?.id || user?.id || 'admin-code'}`)
-      const { data, error, count } = await fetchMemberPreviewPage(tableName, 0)
+      const { data, error, count } = await runScopedRequest(
+        `${workspaceCacheScope}:${tableName}`,
+        'member-first-page',
+        () => fetchMemberPreviewPage(tableName, 0),
+        { force: forceRefresh }
+      )
 
       appContextLog(`Query result: ${data?.length || 0} rows, error: ${error?.message || 'none'}`)
 
@@ -3345,93 +3368,18 @@ export const AppProvider = ({ children }) => {
     }
   }
 
-  // Get attendance column name for a given date
-  const getAttendanceColumn = (date) => {
-    const day = date.getDate()
-    let suffix = 'th'
-    if (day === 1 || day === 21 || day === 31) suffix = 'st'
-    else if (day === 2 || day === 22) suffix = 'nd'
-    else if (day === 3 || day === 23) suffix = 'rd'
-    return `Attendance ${day}${suffix}`
-  }
-
-  const getTableColumnsCached = useCallback(async (tableName, { force = false } = {}) => {
-    if (!tableName || isDeveloperBypass || !isSupabaseConfigured()) return []
-    if (!force && tableColumnCacheRef.current.has(tableName)) {
-      return tableColumnCacheRef.current.get(tableName)
-    }
-    if (inFlightTableColumnsPromisesRef.current.has(tableName)) {
-      devCountersRef.current.schemaFetchDeduplicated = (devCountersRef.current.schemaFetchDeduplicated || 0) + 1
-      return inFlightTableColumnsPromisesRef.current.get(tableName)
-    }
-
-    const promise = (async () => {
-      try {
-        const { data, error } = await supabase.rpc('get_table_columns', {
-          table_name: tableName
-        })
-        if (error) {
-          console.error('Error getting table columns:', error)
-          return tableColumnCacheRef.current.get(tableName) || []
-        }
-        const columns = Array.isArray(data) ? data : []
-        tableColumnCacheRef.current.set(tableName, columns)
-        devCountersRef.current.schemaFetchCount = (devCountersRef.current.schemaFetchCount || 0) + 1
-        return columns
-      } catch (error) {
-        console.error('Error getting table columns:', error)
-        return tableColumnCacheRef.current.get(tableName) || []
-      } finally {
-        inFlightTableColumnsPromisesRef.current.delete(tableName)
-      }
-    })()
-
-    inFlightTableColumnsPromisesRef.current.set(tableName, promise)
-    return promise
-  }, [isDeveloperBypass, isSupabaseConfigured])
-
-  // Get all attendance columns for the current table
+  // Attendance columns are deterministic. Runtime reads must never query schema
+  // metadata before loading normal member or attendance data.
   const getAttendanceColumns = useCallback(async () => {
-    if (!currentTable) return []
-    const data = await getTableColumnsCached(currentTable)
-    return data.filter(col => {
-      const name = col.column_name
-      const nameLower = name.toLowerCase()
-      const isOldFormat = name.startsWith('Attendance ')
-      const isNewFormat = /^attendance_\d{4}_\d{2}_\d{2}$/.test(nameLower)
-      return isOldFormat || isNewFormat
-    })
-  }, [currentTable, getTableColumnsCached])
+    return getAttendanceColumnsForMonthTable(currentTable)
+  }, [currentTable])
 
   // Get available attendance dates for the current table
   const getAvailableAttendanceDates = async () => {
     try {
-      const attendanceColumns = await getAttendanceColumns()
-
-      // Extract dates from column names and sort them
-      // Support both OLD format (Attendance 7th) and NEW format (attendance_2025_12_07)
-      const dates = attendanceColumns
-        .map(col => {
-          const colName = col.column_name.toLowerCase()
-
-          // NEW format: attendance_2025_12_07
-          const newMatch = colName.match(/attendance_(\d{4})_(\d{2})_(\d{2})/)
-          if (newMatch) {
-            return parseInt(newMatch[3]) // Return day of month
-          }
-
-          // OLD format: Attendance 7th, attendance_7th
-          const oldMatch = col.column_name.match(/[Aa]ttendance[_ ](\d+)(st|nd|rd|th)?/)
-          if (oldMatch) {
-            return parseInt(oldMatch[1])
-          }
-
-          return null
-        })
-        .filter(date => date !== null)
-        .sort((a, b) => a - b)
-
-      return dates
+      return (await getAttendanceColumns())
+        .map((column) => Number(column.column_name.slice(-2)))
+        .filter(Number.isFinite)
     } catch (error) {
       console.error('Error getting available attendance dates:', error)
       return []
@@ -3761,98 +3709,19 @@ export const AppProvider = ({ children }) => {
     }
   }
 
-  const findAttendanceColumnForDate = async (date) => {
-    try {
-      const attendanceColumns = await getAttendanceColumns()
-      const dayOfMonth = date.getDate()
-      const month = date.getMonth() + 1 // 0-indexed to 1-indexed
-      const year = date.getFullYear()
-
-      // Find the column that matches this date
-      const matchingColumn = attendanceColumns.find(col => {
-        const colName = col.column_name.toLowerCase()
-
-        // NEW format: attendance_2025_12_07 (year_month_day)
-        const newFormatMatch = colName.match(/attendance_(\d{4})_(\d{2})_(\d{2})/)
-        if (newFormatMatch) {
-          const [, colYear, colMonth, colDay] = newFormatMatch
-          return parseInt(colYear) === year &&
-            parseInt(colMonth) === month &&
-            parseInt(colDay) === dayOfMonth
-        }
-
-        // OLD format: Attendance 7th, attendance_7th
-        const oldFormatMatch = col.column_name.match(/[Aa]ttendance[_ ](\d+)(st|nd|rd|th)?/)
-        if (oldFormatMatch) {
-          return parseInt(oldFormatMatch[1]) === dayOfMonth
-        }
-
-        return false
-      })
-
-      return matchingColumn ? matchingColumn.column_name : null
-    } catch (error) {
-      console.error('Error finding attendance column for date:', error)
-      return null
-    }
-  }
+  const findAttendanceColumnForDate = async (date) => getAttendanceColumnNameForDate(date)
 
   const getAttendanceColumnsForTable = useCallback(async (tableName) => {
-    if (!tableName) return []
-    const data = await getTableColumnsCached(tableName)
-    return data.filter(col => {
-      const name = col.column_name
-      const nameLower = name.toLowerCase()
-      const isOldFormat = name.startsWith('Attendance ')
-      const isNewFormat = /^attendance_\d{4}_\d{2}_\d{2}$/.test(nameLower)
-      return isOldFormat || isNewFormat
-    })
-  }, [getTableColumnsCached])
+    return getAttendanceColumnsForMonthTable(tableName)
+  }, [])
 
-  const findAttendanceColumnForDateInTable = useCallback(async (date, tableName) => {
-    try {
-      const attendanceColumns = await getAttendanceColumnsForTable(tableName)
-      const dayOfMonth = date.getDate()
-      const month = date.getMonth() + 1
-      const year = date.getFullYear()
-
-      const matchingColumn = attendanceColumns.find(col => {
-        const colName = col.column_name.toLowerCase()
-        const newFormatMatch = colName.match(/attendance_(\d{4})_(\d{2})_(\d{2})/)
-        if (newFormatMatch) {
-          const [, colYear, colMonth, colDay] = newFormatMatch
-          return parseInt(colYear) === year &&
-            parseInt(colMonth) === month &&
-            parseInt(colDay) === dayOfMonth
-        }
-
-        const oldFormatMatch = col.column_name.match(/[Aa]ttendance[_ ](\d+)(st|nd|rd|th)?/)
-        if (oldFormatMatch) {
-          return parseInt(oldFormatMatch[1]) === dayOfMonth
-        }
-
-        return false
-      })
-
-      return matchingColumn ? matchingColumn.column_name : null
-    } catch (error) {
-      console.error('Error finding attendance column for date:', error)
-      return null
-    }
-  }, [getAttendanceColumnsForTable])
+  const findAttendanceColumnForDateInTable = useCallback(async (date) => (
+    getAttendanceColumnNameForDate(date)
+  ), [])
 
   // Check if attendance column exists in the current table
   const checkAttendanceColumnExists = async (attendanceColumn) => {
-    try {
-      if (!isSupabaseConfigured()) return true
-
-      // Get all attendance columns and check if the requested one exists
-      const attendanceColumns = await getAttendanceColumns()
-      return attendanceColumns.some(col => col.column_name === attendanceColumn)
-    } catch (error) {
-      console.error('Error checking attendance column:', error)
-      return false
-    }
+    return /^attendance_\d{4}_\d{2}_\d{2}$/.test(String(attendanceColumn || '').toLowerCase())
   }
 
   // Create attendance column for a specific date if it doesn't exist
@@ -3994,10 +3863,12 @@ export const AppProvider = ({ children }) => {
         }
       })
 
-      return {
+      const next = {
         ...prev,
         [dateKey]: dateAttendance
       }
+      attendanceDataRef.current = next
+      return next
     })
   }, [currentTable])
 
@@ -4684,10 +4555,14 @@ export const AppProvider = ({ children }) => {
       return null
     }
 
-    setAttendanceData((previous) => ({
-      ...previous,
-      [dateKey]: attendanceMap || {}
-    }))
+    setAttendanceData((previous) => {
+      const next = {
+        ...previous,
+        [dateKey]: attendanceMap || {}
+      }
+      attendanceDataRef.current = next
+      return next
+    })
     return attendanceMap || {}
   }, [currentTable, fetchAttendanceForDateInTable])
 
@@ -5967,14 +5842,6 @@ export const AppProvider = ({ children }) => {
       return
     }
 
-    // Quick attendance keywords
-    const kw = trimmed.toLowerCase()
-    if (kw === 'present' || kw === 'absent') {
-      await quickMarkAttendanceFromKeyword(kw)
-      if (isCurrentRequest()) setServerSearchResults(null)
-      return
-    }
-
     // When workspace members are available in memory (cached or synced),
     // local search on activeMembers is 100% immediate and authoritative.
     // Typing must perform zero network requests.
@@ -5983,106 +5850,16 @@ export const AppProvider = ({ children }) => {
       return
     }
 
-    const CACHE_DURATION = 10 * 60 * 1000
-    const cacheKey = `${currentTable}::${trimmed}`
-    const hit = searchCacheRef.current.get(cacheKey)
-    const now = Date.now()
-    // A cached partial result from the first preview page is useful for instant
-    // feedback, but it must not prevent the first full search hydration.
-    if (hit && now - hit.timestamp < CACHE_DURATION && membersLoadedAll) {
-      if (isCurrentRequest()) setServerSearchResults(hit.data || [])
-      return
-    }
-
+    // The IndexedDB preview index is part of the canonical local store. Search
+    // may read it, but typing must never start Supabase reconciliation or fetches.
     const localMatches = await searchMemberPreviewIndex(trimmed, currentTable)
     if (!isCurrentRequest()) return
-    if (localMatches.length > 0) {
-      searchCacheRef.current.set(cacheKey, { timestamp: now, data: localMatches })
-      setServerSearchResults(localMatches)
-      if (isSupabaseConfigured() && isOnline && !shouldUseOfflineData && !membersLoadedAll) {
-        startMemberPreviewBackgroundSync(currentTable, { source: 'search-refresh' })
-      }
-      // Once the local index is complete it is authoritative for search. Until
-      // then, keep the instant local result visible while a single full index
-      // read validates the result set without asking the user to type again.
-      if (membersLoadedAll) return
-      await sleep(140)
-      if (!isCurrentRequest()) return
-    }
-    if (!isSupabaseConfigured() || !isOnline || shouldUseOfflineData) {
-      if (isCurrentRequest()) setServerSearchResults([])
-      return
-    }
-
-    // A new device only has the first visible page in memory. Hydrate a narrow
-    // read-only search index before declaring a name or guardian phone missing.
-    // This keeps desktop, Android tablet, and compact keyboard results on the
-    // same matcher instead of relying on schema-specific ILIKE expressions.
-    let offset = 0
-    const candidates = []
-    while (true) {
-      const { data, error } = await fetchMemberPreviewPage(currentTable, offset)
-      if (!isCurrentRequest()) return
-      if (error) {
-        console.error('Server search index fetch failed', error)
-        setServerSearchResults(null)
-        return
-      }
-      const page = (data || []).map(normalizeMemberRecord)
-      candidates.push(...page)
-      if (page.length < MEMBER_PREVIEW_PAGE_SIZE) break
-      offset += MEMBER_PREVIEW_PAGE_SIZE
-    }
-    const candidateCodeMap = buildMemberIndexCodeMap(candidates, {
-      format: memberCodeFormat,
-      codeLength: memberCodeLength,
-      persistedCodes: workspaceMemberCodeAssignments,
-      allowLegacyFallback: false
-    })
-    const sorted = classifyMemberSearch({
-      members: candidates,
-      query: trimmed,
-      getCode: (member) => getMemberIndexCode(member, candidateCodeMap) || member?.member_code || '',
-      getCodeAliases: (member) => getMemberIndexCodeAliases(member, candidateCodeMap),
-      codeLength: memberCodeLength
-    }).visible.slice().sort((a, b) => {
-      const an = (getMemberDisplayNameForRecentEdit(a) || '').toString().toLowerCase()
-      const bn = (getMemberDisplayNameForRecentEdit(b) || '').toString().toLowerCase()
-      if (an < bn) return -1
-      if (an > bn) return 1
-      return 0
-    })
-    if (!isCurrentRequest()) return
-    searchCacheRef.current.set(cacheKey, { timestamp: now, data: sorted })
-    await persistMemberPreviewIndex(currentTable, candidates, {
-      cachedCount: candidates.length,
-      totalCount: candidates.length,
-      source: 'search-index'
-    })
-    if (isCurrentRequest()) {
-      setMembers((prev) => mergeMemberPreviewPages(prev, candidates))
-      setMembersTotalCount(candidates.length)
-      setMembersLoadedAll(true)
-    }
-    if (isCurrentRequest()) setServerSearchResults(sorted)
-  }, [currentTable, isOnline, memberCodeFormat, memberCodeLength, membersLoadedAll, membersTotalCount, persistMemberPreviewIndex, searchMemberPreviewIndex, shouldUseOfflineData, workspaceMemberCodeAssignments])
+    setServerSearchResults(localMatches)
+  }, [activeMembers.length, currentTable, membersLoadedAll, searchMemberPreviewIndex])
 
   useEffect(() => {
     performServerSearch(searchTerm)
   }, [searchTerm, currentTable, performServerSearch])
-
-  const quickMarkAttendanceFromKeyword = useCallback(async (kw) => {
-    const list = serverSearchResults && serverSearchResults.length > 0 ? serverSearchResults : filteredMembers
-    const first = list && list.length ? list[0] : null
-    if (!first) return
-      const statusBool = kw === 'present'
-    try {
-      const dateObj = selectedAttendanceDate ? new Date(selectedAttendanceDate) : new Date()
-      await markAttendance(first.id, dateObj, statusBool)
-    } catch (e) {
-      console.error('Quick mark attendance failed', e)
-    }
-  }, [serverSearchResults, filteredMembers, selectedAttendanceDate, markAttendance])
 
   // Function to refresh search results
   const refreshSearch = useCallback(() => {
@@ -6129,7 +5906,7 @@ export const AppProvider = ({ children }) => {
     const nowIso = options.updatedAt || new Date().toISOString()
     let remoteMember = null
 
-    if (!isDeveloperBypass && isSupabaseConfigured() && isBrowserOnline() && !shouldUseOfflineData) {
+    if (!options.skipRemote && !isDeveloperBypass && isSupabaseConfigured() && isBrowserOnline() && !shouldUseOfflineData) {
       try {
         await ensureMemberPreviewSyncColumns(tableName)
         let response = await applyDeletedAtFilter(
@@ -6281,94 +6058,37 @@ export const AppProvider = ({ children }) => {
     workspaceCacheScope
   ])
 
-  // Function to search for a member across all monthly tables
+  // Historical search uses the same canonical local store as the dashboard.
+  // It intentionally performs no REST/RPC work while the user is searching.
   const searchMemberAcrossAllTables = useCallback(async (searchName) => {
-    console.log('=== SEARCHING ACROSS ALL TABLES ===')
-    console.log('Looking for:', searchName)
+    const query = String(searchName || '').trim()
+    const localCodeMap = buildMemberIndexCodeMap(activeMembers, {
+      format: memberCodeFormat,
+      codeLength: memberCodeLength,
+      persistedCodes: workspaceMemberCodeAssignments,
+      allowLegacyFallback: false
+    })
+    const matches = query
+      ? classifyMemberSearch({
+          members: activeMembers,
+          query,
+          getCode: (member) => getMemberIndexCode(member, localCodeMap) || member?.member_code || '',
+          getCodeAliases: (member) => getMemberIndexCodeAliases(member, localCodeMap),
+          codeLength: memberCodeLength
+        }).visible
+      : []
+    const foundInTables = matches.length > 0
+      ? [{ table: currentTable, members: matches }]
+      : []
 
-    const searchTerm = searchName.toLowerCase().trim()
-    const foundInTables = []
-
-    for (const tableName of monthlyTables) {
-      try {
-        console.log(`Checking table: ${tableName}`)
-
-        if (isSupabaseConfigured()) {
-          const safe = searchTerm.replace(/%/g, '').replace(/_/g, '').trim()
-          await ensureMemberPreviewSyncColumns(tableName)
-          let { data, error } = await applyDeletedAtFilter(
-            supabase
-              .from(tableName)
-              .select(MEMBER_PREVIEW_SELECT)
-          )
-            .ilike('Full Name', `%${safe}%`)
-            .limit(20)
-
-          if (error) {
-            const message = error.message?.toLowerCase() || ''
-            const missingColumn =
-              error.code === 'PGRST100' ||
-              error.code === '42703' ||
-              message.includes('failed to parse') ||
-              message.includes('does not exist') ||
-              message.includes('column')
-
-            if (missingColumn) {
-              const nameCol = await resolveNameColumn(tableName)
-              const fallback = await applyDeletedAtFilter(
-                supabase
-                  .from(tableName)
-                  .select(MEMBER_PREVIEW_SELECT)
-              )
-                .ilike(nameCol, `%${safe}%`)
-                .limit(20)
-              data = fallback.data
-              error = fallback.error
-            }
-          }
-
-          if (error) {
-            console.log(`Error accessing ${tableName}:`, error.message)
-            continue
-          }
-
-          const foundMembers = data?.map(normalizeMemberRecord).filter(member => {
-            const fullName = (
-              (typeof member['full_name'] === 'string' ? member['full_name'] : '') ||
-              (typeof member['Full Name'] === 'string' ? member['Full Name'] : '') ||
-              ''
-            ).toLowerCase()
-
-            return fullName.includes(searchTerm)
-          }) || []
-
-          if (foundMembers.length > 0) {
-            console.log(`Found ${foundMembers.length} matches in ${tableName}:`)
-            foundMembers.forEach(member => {
-              console.log(`  - ${member['Full Name'] || member['full_name']}`)
-            })
-            foundInTables.push({ table: tableName, members: foundMembers })
-          }
-        }
-      } catch (error) {
-        console.log(`Error searching ${tableName}:`, error.message)
-      }
-    }
-
-    console.log('=== SEARCH RESULTS ===')
     if (foundInTables.length === 0) {
-      console.log('Member not found in any table')
       toast.error(`"${searchName}" not found in any monthly table`)
     } else {
-      console.log(`Found in ${foundInTables.length} table(s):`)
-      foundInTables.forEach(({ table, members }) => {
-        console.log(`  ${table}: ${members.length} match(es)`)
-      })
       toast.success(`Found "${searchName}" in ${foundInTables.length} table(s)`)
     }
 
     return foundInTables
-  }, [monthlyTables, isSupabaseConfigured, resolveNameColumn])
+  }, [activeMembers, currentTable, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments])
 
   // Validate member data for missing fields
   const validateMemberData = useCallback((member) => {
@@ -7066,56 +6786,52 @@ export const AppProvider = ({ children }) => {
   }
 
   // Load all attendance data for all Sunday dates in the current month
-  const loadAllAttendanceData = async (options = {}) => {
+  const loadAllAttendanceData = useCallback(async (options = {}) => {
+    const { forceOnline = false } = options
+    const ownerId = dataOwnerId || user?.id
+    const requestScope = `${ownerId || 'guest'}:${currentTable}`
     try {
-      const { forceOnline = false } = options
       if (shouldUseOfflineData && !forceOnline) {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
         const snapshot = snapshotRecord?.snapshot
-      if (snapshot?.attendanceData && applyOfflineSnapshot(snapshotRecord)) {
+        if (snapshot?.attendanceData && applyOfflineSnapshot(snapshotRecord)) {
           return snapshot.attendanceData
         }
       }
 
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         console.log('Demo mode - attendance data will be managed locally')
-        return attendanceData
+        return attendanceDataRef.current
       }
 
       devCountersRef.current.attendanceFetchCount = (devCountersRef.current.attendanceFetchCount || 0) + 1
 
-      // Get all attendance columns for the current table
-      const attendanceColumns = await getAttendanceColumns()
+      const allData = await runScopedRequest(
+        requestScope,
+        'attendance-reconciliation',
+        async () => {
+          const rows = []
+          let offset = 0
+          const PAGE_SIZE = 1000
+          while (true) {
+            // One paginated reconciliation reads the table rows once. Attendance
+            // keys are extracted locally, so no runtime schema RPC is required.
+            let query = supabase.from(currentTable).select('*')
+            if (ownerId) query = query.eq('user_id', ownerId)
+            query = query.is('deleted_at', null)
+            const { data: page, error: pageError } = await query.range(offset, offset + PAGE_SIZE - 1)
+            if (pageError) throw pageError
+            if (!page?.length) break
+            rows.push(...page)
+            if (page.length < PAGE_SIZE) break
+            offset += PAGE_SIZE
+          }
+          return rows
+        },
+        { force: forceOnline, cacheResult: true }
+      )
 
-      if (attendanceColumns.length === 0) {
-        appContextLog('No attendance columns found in current table')
-        setAttendanceData({})
-        return {}
-      }
-
-      // Build select query for all attendance columns
-      const selectColumns = ['id', ...attendanceColumns.map(col => `"${col.column_name}"`)]
-
-      // Fetch all rows - use high limit to avoid Supabase default 1000-row cap
-      let allData = []
-      let offset = 0
-      const PAGE_SIZE = 1000
-      while (true) {
-        let query = supabase
-          .from(currentTable)
-          .select(selectColumns.join(', '))
-        const ownerId = dataOwnerId || user?.id
-        if (ownerId) query = query.eq('user_id', ownerId)
-        query = query.is('deleted_at', null)
-        const { data: page, error: pageError } = await query
-          .range(offset, offset + PAGE_SIZE - 1)
-
-        if (pageError) throw pageError
-        if (!page || page.length === 0) break
-        allData = allData.concat(page)
-        if (page.length < PAGE_SIZE) break
-        offset += PAGE_SIZE
-      }
+      const attendanceColumns = getAttendanceColumnsForMonthTable(currentTable)
 
       // Transform data into the format expected by the UI
       const newAttendanceData = {}
@@ -7176,15 +6892,16 @@ export const AppProvider = ({ children }) => {
         : newAttendanceData
 
       // Update attendance data state
+      attendanceDataRef.current = reconciledAttendanceData
       setAttendanceData(reconciledAttendanceData)
       console.log('Loaded attendance data for all dates:', Object.keys(reconciledAttendanceData), 'from', allData.length, 'rows')
       return reconciledAttendanceData
 
     } catch (error) {
       console.error('Error loading attendance data:', error)
-      return attendanceData
+      return attendanceDataRef.current
     }
-  }
+  }, [applyOfflineSnapshot, currentTable, dataOwnerId, isDeveloperBypass, pendingSyncCount, shouldUseOfflineData, user?.id])
 
   // Load all badge data for the current table
   const loadAllBadgeData = async () => {
@@ -7755,10 +7472,6 @@ export const AppProvider = ({ children }) => {
           console.warn(`Background member refresh failed (${source}):`, error)
           return null
         }),
-        loadAllAttendanceData({ forceOnline: true }).catch((error) => {
-          console.warn(`Background attendance refresh failed (${source}):`, error)
-          return null
-        }),
         loadAllBadgeData().catch((error) => {
           console.warn(`Background badge refresh failed (${source}):`, error)
           return null
@@ -7845,13 +7558,14 @@ export const AppProvider = ({ children }) => {
     }
   }, [currentTable, dataOwnerId, fetchOwnerStickyDefaults, isCollaborator, isDeveloperBypass, isSupabaseConfigured, offlineMode, refreshSyncedDataInBackground, shouldUseOfflineData])
 
-  // Load attendance and badge data when table changes
+  // Reconcile attendance once for the active workspace/month. The shared
+  // registry coalesces StrictMode and provider re-entry into one request.
   useEffect(() => {
-    if (currentTable) {
-      loadAllAttendanceData()
-      loadAllBadgeData()
-    }
-  }, [currentTable])
+    const ownerId = dataOwnerId || user?.id
+    if (!currentTable || (!ownerId && !isDeveloperBypass && isSupabaseConfigured())) return
+    loadAllAttendanceData()
+    loadAllBadgeData()
+  }, [currentTable, dataOwnerId, isDeveloperBypass, user?.id])
 
   // QR-based member lookup. Passes are evergreen: the active table and Sunday
   // come from the scanner's current workspace, never from an old shared image.
@@ -7972,251 +7686,190 @@ export const AppProvider = ({ children }) => {
     if (!ownerId || !currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return undefined
 
     const scopeKey = `${ownerId}:${currentTable}`
-    if (realtimeScopeRef.current === scopeKey && realtimeChannelRef.current) {
-      return undefined
-    }
-
-    if (realtimeChannelRef.current) {
-      supabase.removeChannel(realtimeChannelRef.current)
-      realtimeChannelRef.current = null
-    }
-
-    realtimeScopeRef.current = scopeKey
     const channelName = `workspace:${ownerId}:${currentTable}`
-    let disposed = false
 
-    const scheduleAttendanceRefresh = (serviceDate, source = 'attendance-realtime') => {
-      const targetDateKey = serviceDate || (selectedAttendanceDateRef.current ? getLocalDateString(selectedAttendanceDateRef.current) : null)
-      if (!targetDateKey) return
-      if (realtimeAttendanceRefreshTimerRef.current) {
-        clearTimeout(realtimeAttendanceRefreshTimerRef.current)
+    const handleMemberPayload = (payload) => {
+      signalRealtimeSyncStatus(`members-${String(payload.eventType || 'change').toLowerCase()}`)
+      if (payload.eventType === 'INSERT') {
+        const prepared = prepareRealtimeMember(payload.new)
+        const incoming = prepared.member
+        if (prepared.shouldRemove || incoming?.deleted_at) {
+          setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(incoming.id)), incoming].slice(-100))
+          setMembers((prevMembers) => prevMembers.filter((member) => member.id !== incoming.id))
+          setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== incoming.id) : prev)
+          searchCacheRef.current.clear()
+          deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
+            .catch((error) => console.warn('Could not remove realtime deleted member from index:', error))
+          markMemberPreviewSyncComplete(currentTable, {
+            cachedCount: Math.max(0, membersTotalCount - 1),
+            totalCount: Math.max(0, membersTotalCount - 1),
+            source: 'realtime-delete',
+            lastSyncAt: incoming.updated_at || new Date().toISOString()
+          })
+          return
+        }
+        setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(incoming.id)))
+        setServerSearchResults((prev) => prev ? prev.map((member) => member.id === incoming.id ? incoming : member) : prev)
+        searchCacheRef.current.clear()
+        setMembers((prevMembers) => {
+          const exists = prevMembers.some(member => member.id === incoming.id)
+          const nextMembers = exists
+            ? prevMembers.map(member => member.id === incoming.id ? { ...member, ...incoming } : member)
+            : [...prevMembers, incoming]
+          membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+          persistMemberPreviewIndex(currentTable, [incoming], {
+            cachedCount: nextMembers.length,
+            totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
+            source: 'realtime-insert'
+          }).catch((error) => console.warn('Could not index realtime member insert:', error))
+          applyAttendanceColumnsFromMemberRows([incoming], currentTable)
+          markMemberPreviewSyncComplete(currentTable, {
+            cachedCount: nextMembers.length,
+            totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
+            source: 'realtime-insert',
+            lastSyncAt: incoming.updated_at || new Date().toISOString()
+          })
+          return nextMembers
+        })
+      } else if (payload.eventType === 'UPDATE') {
+        const prepared = prepareRealtimeMember(payload.new)
+        const incoming = prepared.member
+        if (prepared.shouldRemove || incoming?.deleted_at) {
+          setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(incoming.id)), incoming].slice(-100))
+          setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== incoming.id) : prev)
+          searchCacheRef.current.clear()
+          setMembers((prevMembers) => {
+            const nextMembers = prevMembers.filter((member) => member.id !== incoming.id)
+            membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+            return nextMembers
+          })
+          deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
+            .catch((error) => console.warn('Could not remove realtime soft-deleted member from index:', error))
+          markMemberPreviewSyncComplete(currentTable, {
+            cachedCount: Math.max(0, membersTotalCount - 1),
+            totalCount: Math.max(0, membersTotalCount - 1),
+            source: 'realtime-delete',
+            lastSyncAt: incoming.updated_at || new Date().toISOString()
+          })
+          return
+        }
+        setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(incoming.id)))
+        setServerSearchResults((prev) => prev ? prev.map((member) => member.id === incoming.id ? { ...member, ...incoming } : member) : prev)
+        searchCacheRef.current.clear()
+        setMembers((prevMembers) => {
+          const exists = prevMembers.some((member) => member.id === incoming.id)
+          const nextMembers = exists
+            ? prevMembers.map((member) => member.id === incoming.id ? { ...member, ...incoming } : member)
+            : [...prevMembers, incoming]
+          membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+          persistMemberPreviewIndex(currentTable, [incoming], {
+            cachedCount: nextMembers.length,
+            totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
+            source: 'realtime-update'
+          }).catch((error) => console.warn('Could not index realtime member update:', error))
+          applyAttendanceColumnsFromMemberRows([incoming], currentTable)
+          markMemberPreviewSyncComplete(currentTable, {
+            cachedCount: nextMembers.length,
+            totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
+            source: 'realtime-update',
+            lastSyncAt: incoming.updated_at || new Date().toISOString()
+          })
+          return nextMembers
+        })
+      } else if (payload.eventType === 'DELETE') {
+        const pendingDeleteMerge = prepareRealtimeMember(payload.old)
+        if (pendingDeleteMerge.pendingCount > 0 && !pendingDeleteMerge.shouldRemove) {
+          setMembers((prevMembers) => prevMembers.map((member) => (
+            member.id === payload.old.id
+              ? { ...member, __offline_status: 'conflict', __remote_deleted_at: new Date().toISOString() }
+              : member
+          )))
+          setOfflineStatusMessage('A remote delete conflicts with a saved offline change. Review and retry the pending change.')
+          return
+        }
+        setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(payload.old.id)), { ...payload.old, deleted_at: new Date().toISOString() }].slice(-100))
+        setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== payload.old.id) : prev)
+        searchCacheRef.current.clear()
+        setMembers((prevMembers) => {
+          const nextMembers = prevMembers.filter((member) => member.id !== payload.old.id)
+          membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
+          return nextMembers
+        })
+        deleteMemberPreviewMember(workspaceCacheScope, currentTable, payload.old.id)
+          .catch((error) => console.warn('Could not remove realtime member from index:', error))
+        removeMemberFromAttendanceData(payload.old.id)
+        markMemberPreviewSyncComplete(currentTable, {
+          cachedCount: Math.max(0, membersTotalCount - 1),
+          totalCount: Math.max(0, membersTotalCount - 1),
+          source: 'realtime-delete',
+          lastSyncAt: new Date().toISOString()
+        })
       }
-      realtimeAttendanceRefreshTimerRef.current = setTimeout(async () => {
-        if (disposed) return
-        const snapshotVersion = attendanceSnapshotVersionRef.current.startRead(currentTable, targetDateKey)
-        signalRealtimeSyncStatus(source)
-        const date = new Date(`${targetDateKey}T12:00:00`)
-        const remoteAttendance = await fetchAttendanceForDateInTable(date, currentTable)
-        if (disposed) return
-        if (!attendanceSnapshotVersionRef.current.canApplyRead(currentTable, targetDateKey, snapshotVersion)) return
-        const mergedAttendance = mergeAttendanceMapWithPending(
-          remoteAttendance,
-          offlinePendingChangesRef.current,
-          { tableName: currentTable, serviceDate: targetDateKey }
-        )
-        setAttendanceData((previous) => ({
-          ...previous,
-          [targetDateKey]: mergedAttendance
-        }))
-      }, 250)
     }
 
-    const channel = supabase
-      .channel(channelName)
-      // 1. Monthly member table (e.g. August_2026)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: currentTable },
-        (payload) => {
-          signalRealtimeSyncStatus(`members-${String(payload.eventType || 'change').toLowerCase()}`)
-          if (payload.eventType === 'INSERT') {
-            const prepared = prepareRealtimeMember(payload.new)
-            const incoming = prepared.member
-            if (prepared.shouldRemove || incoming?.deleted_at) {
-              setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(incoming.id)), incoming].slice(-100))
-              setMembers((prevMembers) => prevMembers.filter((member) => member.id !== incoming.id))
-              setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== incoming.id) : prev)
-              searchCacheRef.current.clear()
-              deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
-                .catch((error) => console.warn('Could not remove realtime deleted member from index:', error))
-              markMemberPreviewSyncComplete(currentTable, {
-                cachedCount: Math.max(0, membersTotalCount - 1),
-                totalCount: Math.max(0, membersTotalCount - 1),
-                source: 'realtime-delete',
-                lastSyncAt: incoming.updated_at || new Date().toISOString()
-              })
-              return
-            }
-            setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(incoming.id)))
-            setServerSearchResults((prev) => prev ? prev.map((member) => member.id === incoming.id ? incoming : member) : prev)
-            searchCacheRef.current.clear()
-            setMembers((prevMembers) => {
-              const exists = prevMembers.some(member => member.id === incoming.id)
-              const nextMembers = exists
-                ? prevMembers.map(member => member.id === incoming.id ? { ...member, ...incoming } : member)
-                : [...prevMembers, incoming]
-              membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
-              persistMemberPreviewIndex(currentTable, [incoming], {
-                cachedCount: nextMembers.length,
-                totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
-                source: 'realtime-insert'
-              }).catch((error) => console.warn('Could not index realtime member insert:', error))
-              applyAttendanceColumnsFromMemberRows([incoming], currentTable)
-              markMemberPreviewSyncComplete(currentTable, {
-                cachedCount: nextMembers.length,
-                totalCount: Math.max(membersTotalCount || prevMembers.length, nextMembers.length),
-                source: 'realtime-insert',
-                lastSyncAt: incoming.updated_at || new Date().toISOString()
-              })
-              return nextMembers
-            })
-          } else if (payload.eventType === 'UPDATE') {
-            const prepared = prepareRealtimeMember(payload.new)
-            const incoming = prepared.member
-            if (prepared.shouldRemove || incoming?.deleted_at) {
-              setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(incoming.id)), incoming].slice(-100))
-              setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== incoming.id) : prev)
-              searchCacheRef.current.clear()
-              setMembers((prevMembers) => {
-                const nextMembers = prevMembers.filter((member) => member.id !== incoming.id)
-                membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
-                return nextMembers
-              })
-              deleteMemberPreviewMember(workspaceCacheScope, currentTable, incoming.id)
-                .catch((error) => console.warn('Could not remove realtime soft-deleted member from index:', error))
-              markMemberPreviewSyncComplete(currentTable, {
-                cachedCount: Math.max(0, membersTotalCount - 1),
-                totalCount: Math.max(0, membersTotalCount - 1),
-                source: 'realtime-delete',
-                lastSyncAt: incoming.updated_at || new Date().toISOString()
-              })
-              return
-            }
-            setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(incoming.id)))
-            setServerSearchResults((prev) => prev ? prev.map((member) => member.id === incoming.id ? { ...member, ...incoming } : member) : prev)
-            searchCacheRef.current.clear()
-            setMembers((prevMembers) => {
-              const nextMembers = prevMembers.map((member) =>
-                member.id === incoming.id ? { ...member, ...incoming } : member
-              )
-              membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
-              persistMemberPreviewIndex(currentTable, [incoming], {
-                cachedCount: nextMembers.length,
-                totalCount: membersTotalCount || nextMembers.length,
-                source: 'realtime-update'
-              }).catch((error) => console.warn('Could not index realtime member update:', error))
-              applyAttendanceColumnsFromMemberRows([incoming], currentTable)
-              markMemberPreviewSyncComplete(currentTable, {
-                cachedCount: nextMembers.length,
-                totalCount: membersTotalCount || nextMembers.length,
-                source: 'realtime-update',
-                lastSyncAt: incoming.updated_at || new Date().toISOString()
-              })
-              return nextMembers
-            })
-          } else if (payload.eventType === 'DELETE') {
-            const pendingDeleteMerge = prepareRealtimeMember(payload.old)
-            if (pendingDeleteMerge.pendingCount > 0 && !pendingDeleteMerge.shouldRemove) {
-              setMembers((prevMembers) => prevMembers.map((member) => (
-                member.id === payload.old.id
-                  ? { ...member, __offline_status: 'conflict', __remote_deleted_at: new Date().toISOString() }
-                  : member
-              )))
-              setOfflineStatusMessage('A remote delete conflicts with a saved offline change. Review and retry the pending change.')
-              return
-            }
-            setDeletedMemberSearchTombstones((prev) => [...prev.filter((member) => String(member.id) !== String(payload.old.id)), { ...payload.old, deleted_at: new Date().toISOString() }].slice(-100))
-            setServerSearchResults((prev) => prev ? prev.filter((member) => member.id !== payload.old.id) : prev)
-            searchCacheRef.current.clear()
-            setMembers((prevMembers) => {
-              const nextMembers = prevMembers.filter((member) => member.id !== payload.old.id)
-              membersCacheRef.current.set(currentTable || 'default', { data: nextMembers, ts: Date.now() })
-              return nextMembers
-            })
-            deleteMemberPreviewMember(workspaceCacheScope, currentTable, payload.old.id)
-              .catch((error) => console.warn('Could not remove realtime member from index:', error))
-            removeMemberFromAttendanceData(payload.old.id)
-            markMemberPreviewSyncComplete(currentTable, {
-              cachedCount: Math.max(0, membersTotalCount - 1),
-              totalCount: Math.max(0, membersTotalCount - 1),
-              source: 'realtime-delete',
-              lastSyncAt: new Date().toISOString()
-            })
+    const handleMemberCodePayload = (payload) => {
+      const row = payload?.new || payload?.old
+      if (!row?.member_id) return
+      invalidateRequestScope(`${ownerId}:workspace`, 'member-code-assignments')
+      setWorkspaceMemberCodeAssignments((previous) => {
+        const updated = { ...previous }
+        if (payload.eventType === 'DELETE') {
+          delete updated[row.member_id]
+        } else {
+          updated[row.member_id] = {
+            member_id: row.member_id,
+            current_code: row.current_code,
+            ordinal: row.ordinal,
+            legacy_code: row.legacy_code,
+            aliases: row.aliases || [],
+            updated_at: row.updated_at || null
           }
         }
-      )
-      // 2. Member codes (workspace_member_codes)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'workspace_member_codes', filter: `workspace_owner_id=eq.${ownerId}` },
-        (payload) => {
-          const row = payload?.new
-          if (!row || !row.member_id) return
-          setWorkspaceMemberCodeAssignments((prev) => {
-            const updated = {
-              ...prev,
-              [row.member_id]: {
-                member_id: row.member_id,
-                current_code: row.current_code,
-                ordinal: row.ordinal,
-                legacy_code: row.legacy_code,
-                aliases: row.aliases || []
-              }
-            }
-            writeStoredWorkspaceMemberCodeAssignments(workspaceCacheScope, updated)
-            return updated
-          })
-        }
-      )
-      // 3. User preferences (user_preferences)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'user_preferences', filter: `user_id=eq.${ownerId}` },
-        (payload) => {
-          const nextStickyMonth = payload?.new?.admin_sticky_month || null
-          const nextStickySundays = Array.isArray(payload?.new?.admin_sticky_sundays)
-            ? payload.new.admin_sticky_sundays
-            : []
-          const nextLockedDate = payload?.new?.locked_default_date || null
-          setOwnerStickyMonth(nextStickyMonth)
-          setOwnerStickySundays(nextStickySundays)
-          setLockedDefaultDate(nextLockedDate)
-          setOwnerMemberCodePreferences(pickWorkspaceMemberCodePreferences(payload?.new || {}))
-          updateAdminSyncNotice(nextStickyMonth, nextStickySundays)
-        }
-      )
-      // 4. Attendance records / sessions
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'attendance_records' },
-        (payload) => {
-          const row = payload?.new || payload?.old
-          if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
-          let serviceDate = row?.service_date || null
-          scheduleAttendanceRefresh(serviceDate, 'attendance-records-realtime')
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'attendance_sessions' },
-        (payload) => {
-          const row = payload?.new || payload?.old
-          if (row?.owner_id && String(row.owner_id) !== String(ownerId)) return
-          scheduleAttendanceRefresh(row?.service_date, 'attendance-sessions-realtime')
-        }
-      )
-      .subscribe((status) => {
+        workspaceMemberCodeAssignmentsRef.current = updated
+        writeStoredWorkspaceMemberCodeAssignments(workspaceCacheScope, updated)
+        return updated
+      })
+    }
+
+    const handlePreferencePayload = (payload) => {
+      const nextStickyMonth = payload?.new?.admin_sticky_month || null
+      const nextStickySundays = Array.isArray(payload?.new?.admin_sticky_sundays)
+        ? payload.new.admin_sticky_sundays
+        : []
+      const nextLockedDate = payload?.new?.locked_default_date || null
+      setOwnerStickyMonth(nextStickyMonth)
+      setOwnerStickySundays(nextStickySundays)
+      setLockedDefaultDate(nextLockedDate)
+      setOwnerMemberCodePreferences(pickWorkspaceMemberCodePreferences(payload?.new || {}))
+      updateAdminSyncNotice(nextStickyMonth, nextStickySundays)
+    }
+
+    const releaseRealtime = acquireRealtimeChannel({
+      client: supabase,
+      scopeKey,
+      channelName,
+      bindings: [
+        { key: 'members', table: currentTable },
+        { key: 'member-codes', table: 'workspace_member_codes', filter: `workspace_owner_id=eq.${ownerId}` },
+        { key: 'preferences', table: 'user_preferences', filter: `user_id=eq.${ownerId}` }
+      ],
+      handlers: {
+        members: handleMemberPayload,
+        'member-codes': handleMemberCodePayload,
+        preferences: handlePreferencePayload
+      },
+      onStatus: (status) => {
         if (status === 'SUBSCRIBED') {
           devCountersRef.current.realtimeSubscribedCount = (devCountersRef.current.realtimeSubscribedCount || 0) + 1
           signalRealtimeSyncStatus('realtime-connected')
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn(`[RealtimeManager] Channel ${channelName} status: ${status}`)
         }
-      })
-
-    realtimeChannelRef.current = channel
+      }
+    })
 
     return () => {
-      disposed = true
-      if (realtimeAttendanceRefreshTimerRef.current) {
-        clearTimeout(realtimeAttendanceRefreshTimerRef.current)
-        realtimeAttendanceRefreshTimerRef.current = null
-      }
-      if (realtimeChannelRef.current) {
-        supabase.removeChannel(realtimeChannelRef.current)
-        realtimeChannelRef.current = null
-        realtimeScopeRef.current = ''
-      }
+      releaseRealtime()
     }
   }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, shouldUseOfflineData, user?.id])
 

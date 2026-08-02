@@ -19,7 +19,7 @@ import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
 
 const MemberModal = ({ isOpen, onClose }) => {
-  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, refreshSearch, loadAllAttendanceData, loadAllBadgeData, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment } = useApp()
+  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success } = useHapticFeedback()
@@ -407,10 +407,10 @@ const MemberModal = ({ isOpen, onClose }) => {
             },
             source: 'member-bundle-add',
             action: 'add',
-            summary: 'Added member'
+            summary: 'Added member',
+            skipRemote: true,
+            skipBackgroundSync: true
           })
-          await Promise.all([loadAllAttendanceData(), loadAllBadgeData()])
-          refreshSearch()
         } catch (refreshError) {
           console.warn('Member saved but refresh failed:', refreshError)
           toast.warning('Member was saved, but the local view could not refresh automatically.')

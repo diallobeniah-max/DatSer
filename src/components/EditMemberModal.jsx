@@ -20,7 +20,7 @@ import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
-  const { updateMember, markAttendance, refreshSearch, loadAllAttendanceData, loadAllBadgeData, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
+  const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
@@ -582,11 +582,10 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
             },
             source: 'member-bundle-update',
             action: 'update',
-            summary: 'Updated member details'
+            summary: 'Updated member details',
+            skipRemote: true,
+            skipBackgroundSync: true
           })
-          await Promise.all([loadAllAttendanceData(), loadAllBadgeData()])
-          // Only one refreshSearch is needed
-          refreshSearch()
         } catch (refreshError) {
           console.warn('Member updated but refresh failed:', refreshError)
           toast.warning('Member was saved, but the local view could not refresh automatically.')
@@ -603,8 +602,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       setSundayAttendance({})
       setClearedAttendanceDates(new Set())
       setSelectedTags([])
-
-      // Removed redundant setTimeout refreshSearch to prevent double-triggering
 
     } catch (error) {
       console.error('Error updating member:', error)

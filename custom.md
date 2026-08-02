@@ -341,3 +341,25 @@
 - The service worker must not leave users running obsolete application JavaScript indefinitely.
 - Updating static caches must preserve IndexedDB and offline member data.
 - Real-device testing must verify that the installed PWA is running the expected commit.
+
+## Runtime Schema Rule
+- Normal application rendering must not call runtime schema-introspection RPCs.
+- Attendance columns are derived deterministically from the active month and Sunday dates.
+- Schema discovery belongs to explicit developer, migration, or recovery tools only.
+
+## Shared Request Registry Rule
+- Members, attendance, member codes, and schema fallbacks use one module-level request registry keyed by workspace, table, and request type.
+- The registry reuses resolved data and in-flight promises across React mounts and StrictMode remounts.
+- Failed requests remain retryable and never erase the last confirmed result.
+- Scope changes invalidate only the previous workspace or table entries.
+
+## Immediate Add Member Rule
+- A confirmed Add Member response is merged directly into members, search, code assignments, and local caches.
+- Add Member must not trigger a full member, attendance, badge, or workspace reconciliation.
+- Realtime confirmation merges idempotently and does not duplicate the initiating member.
+
+## Realtime Singleton Rule
+- Exactly one physical Realtime subscription exists per active workspace and month.
+- React remounts reuse the shared channel instead of creating duplicate subscriptions.
+- Realtime events from the monthly member table patch only the affected member and attendance values; code and preference events patch only their matching state.
+- Workspace, month, logout, and genuine shutdown changes release the previous channel cleanly.
