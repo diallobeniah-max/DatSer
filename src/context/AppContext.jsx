@@ -4720,17 +4720,9 @@ export const AppProvider = ({ children }) => {
         delete normalized.current_level
       }
 
-      // Get existing columns from the table to filter out non-existent fields
+      // validColumns is always null here — schema introspection is not done at runtime
+      // per the Runtime Schema Rule. The fallback snake_case normalization below handles field mapping.
       let validColumns = null
-      try {
-        const columnRows = await getTableColumnsCached(targetTable)
-        if (Array.isArray(columnRows) && columnRows.length > 0) {
-          validColumns = new Set(columnRows.map((column) => column.column_name).filter(Boolean))
-          console.log('[updateMember] Valid columns in table:', Array.from(validColumns))
-        }
-      } catch (e) {
-        console.warn('Could not fetch table schema, proceeding with all fields:', e)
-      }
 
       // If validColumns not found (empty table or error), fallback to snake_case for standard fields
       if (!validColumns) {
@@ -7826,7 +7818,7 @@ export const AppProvider = ({ children }) => {
           }
         }
         workspaceMemberCodeAssignmentsRef.current = updated
-        writeStoredWorkspaceMemberCodeAssignments(workspaceCacheScope, updated)
+        writeWorkspaceMemberCodeAssignmentsCache(workspaceCacheScope, updated)
         return updated
       })
     }

@@ -528,47 +528,6 @@ const AccessibilitySettingsSection = ({
                         Current setting: about {(Number(notificationDurationMs || 4200) / 1000).toFixed(1).replace('.0', '')} seconds.
                     </p>
                 </div>
-
-                <div className="hidden">
-                    <div>
-                        {false ? (
-                            <>
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                    <div>
-                                        <p className="text-sm font-bold text-gray-900 dark:text-white">{latestApkRelease.title || 'DatSer Android update'}</p>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                                            Latest: {latestApkRelease.versionName} ({latestApkRelease.versionCode})
-                                            {installedAppInfo?.versionName ? ` · Current: ${installedAppInfo.versionName} (${installedAppInfo.versionCode || 'web'})` : ''}
-                                        </p>
-                                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                            Published: {latestApkRelease.publishedAt ? new Date(latestApkRelease.publishedAt).toLocaleString() : 'Recent update'}
-                                        </p>
-                                    </div>
-                                    <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-bold ${
-                                        installedAppInfo && isReleaseNewer(latestApkRelease, installedAppInfo)
-                                            ? 'bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-200'
-                                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200'
-                                    }`}>
-                                        {installedAppInfo && isReleaseNewer(latestApkRelease, installedAppInfo) ? 'Update ready' : 'Latest available'}
-                                    </span>
-                                </div>
-                                {latestApkRelease.description && (
-                                    <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-300">{latestApkRelease.description}</p>
-                                )}
-                                <button
-                                    type="button"
-                                    onClick={handleApkDownload}
-                                    className="mt-3 min-h-[42px] w-full rounded-xl bg-orange-600 px-4 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700"
-                                >
-                                    Download Android APK
-                                </button>
-                                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                                    Android keeps APK files in its normal downloads/install area. After installing, delete the APK from Downloads if you want to free storage.
-                                </p>
-                            </>
-                        ) : null}
-                    </div>
-                </div>
             </div>
 
             {/* Keyboard Shortcuts Notice */}

@@ -3140,8 +3140,8 @@ const Dashboard = ({ isAdmin = false }) => {
                       onClick={(e) => {
                         selection()
                         e.stopPropagation();
-                        // Assuming toggleLongPressSelection logic handles removal correctly
-                        toggleLongPressSelection(id);
+                        // Assuming toggleSelection logic handles removal correctly
+                        toggleSelection(id);
                         // If selection becomes empty after this, the modal works empty? 
                         // It will show title "Delete 0 Members". User can cancel.
                       }}
@@ -3712,129 +3712,6 @@ const Dashboard = ({ isAdmin = false }) => {
                   Send
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {false && (
-        <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md" onClick={() => { selection(); setProfileMember(null) }}>
-          <div
-            className="relative w-full max-w-md overflow-hidden rounded-[2rem] border border-white/10 bg-[#111313] p-5 text-white shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => { selection(); setProfileMember(null); setQuickPassMember(profileMember) }}
-                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                aria-label="Back to member pass"
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => { selection(); setProfileMember(null) }}
-                className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                aria-label="Close member profile"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-4">
-              {memberCodeShowPhoto && (
-                <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full border-2 border-orange-500 bg-gradient-to-br from-orange-500 to-purple-500 text-4xl font-black text-white shadow-xl">
-                  {getMemberSearchName(profileMember).charAt(0).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="truncate text-2xl font-black">{getMemberSearchName(profileMember)}</h3>
-                  <MemberCodeBadge
-                    code={getMemberIndexCode(profileMember, memberIndexCodeMap)}
-                    styleKey={memberCodeBadgeStyle === 'auto'
-                      ? getAutoBadgeStyleKey({
-                        member: profileMember,
-                        code: getMemberIndexCode(profileMember, memberIndexCodeMap),
-                        cycleSlot: memberCodeBadgeCycleSlot
-                      })
-                      : memberCodeBadgeStyle}
-                    className="h-7 min-w-[4rem] px-3 text-[10px]"
-                  />
-                </div>
-                {memberCodeShowEmail && (
-                  <p className="mt-1 flex items-center gap-2 text-sm text-white/60">
-                    <Mail className="h-4 w-4" />
-                    {getMemberEmail(profileMember) || 'No email'}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-3">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
-                <p className="mb-3 text-sm font-bold text-white/80">Contact</p>
-                <button
-                  type="button"
-                  onClick={() => contactMember(profileMember, 'whatsapp')}
-                  className="flex w-full items-center justify-between rounded-xl bg-black/20 px-3 py-3 text-left"
-                >
-                  <span className="flex items-center gap-3"><Phone className="h-5 w-5 text-green-400" />{getMemberPhone(profileMember) || 'No phone'}</span>
-                  <MessageSquare className="h-5 w-5 text-white/45" />
-                </button>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-white/45">Gender</p>
-                    <p className="mt-1 font-bold">{profileMember?.Gender || profileMember?.gender || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-white/45">Level</p>
-                    <p className="mt-1 font-bold">{getMemberLevel(profileMember)}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-white/45">Joined</p>
-                    <p className="mt-1 font-bold">{getMemberJoinLabel(profileMember).replace('Joined ', '')}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm font-bold text-white/80">Recent Attendance</p>
-                  <button type="button" className="text-xs font-bold text-orange-400">See All</button>
-                </div>
-                <div className="grid grid-cols-5 gap-2">
-                  {sundayDates.slice(-5).map((date) => {
-                    const status = attendanceData[date]?.[profileMember.id]
-                    const dateObj = new Date(date)
-                    return (
-                      <div key={date} className={`rounded-xl px-2 py-2 text-center text-xs ${status === false ? 'bg-red-500/20 text-red-100' : status === true ? 'bg-green-500/20 text-green-100' : 'bg-white/10 text-white/55'}`}>
-                        <p className="font-bold uppercase">{dateObj.toLocaleDateString('en-US', { weekday: 'short' })}</p>
-                        <p className="text-base font-black">{dateObj.getDate()}</p>
-                        <p>{status === false ? 'A' : status === true ? 'P' : '-'}</p>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  selection()
-                  setEditingMember(profileMember)
-                  setProfileMember(null)
-                  setQuickPassMember(null)
-                }}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-3 font-black text-white hover:bg-orange-700"
-              >
-                <Edit3 className="h-5 w-5" />
-                Edit Member
-              </button>
             </div>
           </div>
         </div>

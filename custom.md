@@ -363,3 +363,14 @@
 - React remounts reuse the shared channel instead of creating duplicate subscriptions.
 - Realtime events from the monthly member table patch only the affected member and attendance values; code and preference events patch only their matching state.
 - Workspace, month, logout, and genuine shutdown changes release the previous channel cleanly.
+
+## Runtime Symbol Safety Rule
+- `npm run lint` with `no-undef: error` must pass with zero errors before every production build.
+- Every function, variable, and import referenced in source must be defined or imported in its file scope.
+- Dead-code branches (`{false && ...}`, `{false ? ... : null}`) that reference undefined symbols must be removed, not left guarded.
+- Renaming or moving a utility function requires updating every call site and import in the same commit.
+
+## Production Crash Hotfix Rule
+- A production crash fix is not complete until `npm run lint` returns zero errors, `npm run build` succeeds, and the broken symbol is confirmed absent from `dist/`.
+- The fix must be committed to `main` and pushed to `origin/main` so Vercel deploys the corrected bundle.
+- The commit message must describe the specific crash (e.g., the undefined symbol name) not a generic "fix bug".

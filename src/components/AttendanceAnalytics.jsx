@@ -345,11 +345,6 @@ const AttendanceAnalytics = () => {
     }
   }
 
-  useEffect(() => {
-    if (members.length > 0) {
-      calculateAnalytics()
-    }
-  }, [members, filters])
 
   // Member Badges Tab
   const MemberBadgesTab = React.memo(({ membersByBadge, isDarkMode, onEditBadge, getLatestStatus }) => (
