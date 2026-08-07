@@ -54,6 +54,7 @@ import {
 import {
   clearAllOfflineData,
   deleteMemberPreviewMember,
+  filterPreviewMembersForWrite,
   getOfflineSnapshot,
   getMemberPreviewMembers,
   isOfflineStoreAvailable,
@@ -64,6 +65,13 @@ import {
   saveOfflineSnapshot,
   updateOfflineChangeStatus
 } from '../utils/offlineStore'
+import {
+  addMemberDeleteTombstone,
+  filterDeletedMembers,
+  getActiveSnapshotMembers,
+  isMemberStaleDeleted,
+  readMemberDeleteTombstones
+} from '../utils/memberDeleteTombstones'
 
 const AppContext = createContext()
 
@@ -1293,7 +1301,9 @@ export const AppProvider = ({ children }) => {
     }
 
     if (Array.isArray(snapshot.members)) {
-      setMembers(snapshot.members)
+      // A soft-deleted member must never be restored as active from a stale
+      // offline snapshot. Filter both deleted_at rows and id-scoped tombstones.
+      setMembers(getActiveSnapshotMembers(snapshot))
     }
     if (Array.isArray(snapshot.monthlyTables) && snapshot.monthlyTables.length > 0) {
       setMonthlyTables(snapshot.monthlyTables)
@@ -1542,7 +1552,7 @@ export const AppProvider = ({ children }) => {
 
     autoSnapshotTimerRef.current = setTimeout(() => {
       saveOfflineSnapshot({
-        members,
+        members: filterDeletedMembers(members),
         monthlyTables,
         currentTable,
         attendanceData,
@@ -2566,7 +2576,7 @@ export const AppProvider = ({ children }) => {
   }
 
   const applyMemberPreviewCache = (tableName, payload, { background = false } = {}) => {
-    const normalizedMembers = (payload?.data || []).filter((member) => !member?.deleted_at).map((member) => normalizeMemberRecord(member, {
+    const normalizedMembers = filterDeletedMembers(payload?.data || []).map((member) => normalizeMemberRecord(member, {
       tableName,
       ownerId: dataOwnerId || user?.id
     }))
@@ -2618,7 +2628,8 @@ export const AppProvider = ({ children }) => {
     if (!tableName || !Array.isArray(nextMembers) || nextMembers.length === 0) return 0
     if (!isOfflineStoreAvailable()) return 0
     try {
-      const normalizedMembers = nextMembers.map(normalizeMemberRecord)
+      // Never persist a deleted/tombstoned row into the active preview index.
+      const normalizedMembers = filterDeletedMembers(nextMembers).map(normalizeMemberRecord)
       const savedCount = await saveMemberPreviewMembers(workspaceCacheScope, tableName, normalizedMembers)
       setMemberPreviewSyncStatus(prev => ({
         ...prev,
@@ -2685,7 +2696,7 @@ export const AppProvider = ({ children }) => {
     if (!isOfflineStoreAvailable()) return []
     try {
       const cachedMembers = await getMemberPreviewMembers(workspaceCacheScope, tableName)
-      return (cachedMembers || []).filter((member) => !member?.deleted_at).map(normalizeMemberRecord)
+      return filterDeletedMembers(cachedMembers || []).map(normalizeMemberRecord)
     } catch (error) {
       console.warn('Could not read member preview index:', error)
       return []
@@ -2785,9 +2796,21 @@ export const AppProvider = ({ children }) => {
         await sleep(60)
       }
 
-      const deletedRows = remoteRows.filter((row) => row?.deleted_at)
+      // A row is treated as deleted when the server confirms deleted_at OR when a
+      // local tombstone says it was deleted more recently than the fetched row
+      // (stale in-flight pre-delete data must never resurrect a deleted member).
+      const tombstoneList = readMemberDeleteTombstones()
+      const deletedRows = remoteRows.filter((row) => row?.deleted_at || isMemberStaleDeleted(row, tombstoneList))
       const deletedIds = deletedRows.map((row) => String(row.id))
-      const activeRows = remoteRows.filter((row) => !row?.deleted_at)
+      const activeRows = remoteRows.filter((row) => !row?.deleted_at && !isMemberStaleDeleted(row, tombstoneList))
+
+      if (deletedRows.length > 0) {
+        // Persist a tombstone for every remotely-confirmed delete so a later
+        // stale cache/index write or reopen can never resurrect the row.
+        deletedRows.forEach((row) => {
+          addMemberDeleteTombstone(row.id, row.deleted_at || new Date().toISOString(), tableName)
+        })
+      }
 
       if (activeRows.length > 0) {
         await saveMemberPreviewMembers(workspaceCacheScope, tableName, activeRows)
@@ -2805,7 +2828,7 @@ export const AppProvider = ({ children }) => {
       }
 
       const indexedMembers = await readMemberPreviewIndex(tableName)
-      const filteredMembers = indexedMembers.filter((member) => !member?.deleted_at)
+      const filteredMembers = filterDeletedMembers(indexedMembers)
       const cachePayload = {
         data: filteredMembers,
         ts: Date.now(),
@@ -2878,7 +2901,7 @@ export const AppProvider = ({ children }) => {
             setLoading(false)
             setOfflineStatusMessage('Offline Mode - using saved local data.')
           }
-          return snapshotRecord?.snapshot?.members || []
+          return filterDeletedMembers(snapshotRecord?.snapshot?.members || [])
         }
         if (offlineMode === 'offline') {
           if (!background) {
@@ -3078,7 +3101,7 @@ export const AppProvider = ({ children }) => {
           const snapshotRecord = await getOfflineSnapshot().catch(() => null)
           if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
             setOfflineStatusMessage('Offline Mode - using saved local data.')
-            return snapshotRecord?.snapshot?.members || []
+            return filterDeletedMembers(snapshotRecord?.snapshot?.members || [])
           }
         }
 
@@ -3137,7 +3160,7 @@ export const AppProvider = ({ children }) => {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
         if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
           setOfflineStatusMessage('Offline Mode - using saved local data.')
-          return snapshotRecord?.snapshot?.members || []
+          return filterDeletedMembers(snapshotRecord?.snapshot?.members || [])
         }
       }
       appContextLog('Preserving current members after unexpected fetch error')
@@ -5127,6 +5150,22 @@ export const AppProvider = ({ children }) => {
     }
   }
 
+  // Remove a member from the persisted offline snapshot so a stale snapshot can
+  // never resurrect it after a confirmed delete.
+  const purgeMemberFromOfflineSnapshot = useCallback(async (memberId) => {
+    if (!memberId) return
+    try {
+      const record = await getOfflineSnapshot().catch(() => null)
+      const snapshot = record?.snapshot
+      if (!snapshot || !Array.isArray(snapshot.members)) return
+      const nextMembers = snapshot.members.filter((member) => String(member?.id) !== String(memberId))
+      if (nextMembers.length === snapshot.members.length) return
+      await saveOfflineSnapshot({ ...snapshot, members: nextMembers })
+    } catch (err) {
+      console.warn('Could not purge member from offline snapshot:', err)
+    }
+  }, [])
+
   // Delete member
   const deleteMember = async (memberId) => {
     console.log(`[DELETE] Starting deletion for member ID: ${memberId}`)
@@ -5164,6 +5203,8 @@ export const AppProvider = ({ children }) => {
       })
       refreshSearch()
       await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
+      addMemberDeleteTombstone(memberId, new Date().toISOString(), currentTable)
+      await purgeMemberFromOfflineSnapshot(memberId)
       toast.success('Member deleted (Demo Mode)')
       return { success: true }
     }
@@ -5189,6 +5230,8 @@ export const AppProvider = ({ children }) => {
       refreshSearch()
       invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
       await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
+      addMemberDeleteTombstone(memberId, createdAt, currentTable)
+      await purgeMemberFromOfflineSnapshot(memberId)
       await queueOfflineChange({
         local_change_id: `member_delete_${currentTable}_${memberId}`,
         action_type: 'member_delete',
@@ -5351,6 +5394,10 @@ export const AppProvider = ({ children }) => {
         summary: 'Deleted member',
         table: currentTable
       })
+      // Persist the delete tombstone and drop the member from every local source
+      // so a stale cache/offline snapshot cannot resurrect it after reopen.
+      addMemberDeleteTombstone(memberId, deletedAt, currentTable)
+      await purgeMemberFromOfflineSnapshot(memberId)
       console.log(`[DELETE] Member ${memberId} deleted successfully and UI updated`)
       toast.success('Member deleted')
       logActivity('DELETE_MEMBER', `Deleted member ID: ${memberId}`)

@@ -228,10 +228,16 @@ export const clearOfflinePreferences = async (userId = null, ownerId = null) => 
   return runStore(LOCAL_STATE_STORE, 'readwrite', (store) => store.delete(PREFERENCES_KEY))
 }
 
+// Deleted rows must never be persisted into the active member preview store.
+// This pure helper keeps the write path testable without IndexedDB.
+export const filterPreviewMembersForWrite = (members = []) =>
+  (Array.isArray(members) ? members : []).filter((member) => Boolean(member) && !member?.deleted_at)
+
 export const saveMemberPreviewMembers = async (scope, tableName, members = []) => {
-  if (!Array.isArray(members) || members.length === 0) return 0
+  const activeMembers = filterPreviewMembersForWrite(members)
+  if (activeMembers.length === 0) return 0
   const savedAt = new Date().toISOString()
-  const records = members
+  const records = activeMembers
     .map((member) => {
       const memberId = getMemberId(member)
       if (!memberId) return null

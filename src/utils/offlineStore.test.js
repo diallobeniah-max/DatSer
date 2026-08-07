@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coalesceOfflineChange } from './offlineStore'
+import { coalesceOfflineChange, filterPreviewMembersForWrite } from './offlineStore'
 
 describe('offline mutation coalescing', () => {
   it('keeps only the newest attendance intent for a member and Sunday', () => {
@@ -76,5 +76,15 @@ describe('offline mutation coalescing', () => {
       parent_name_1: 'Synthetic Guardian'
     })
     expect(second.client_revision).toBe(2)
+  })
+})
+
+describe('member preview persistence filtering', () => {
+  it('D: preview cache persistence excludes deleted rows', () => {
+    const active = { id: 'a', full_name: 'Active' }
+    const deleted = { id: 'd', full_name: 'Deleted', deleted_at: '2026-08-07T12:00:00.000Z' }
+    expect(filterPreviewMembersForWrite([active, deleted]).map((m) => m.id)).toEqual(['a'])
+    expect(filterPreviewMembersForWrite([deleted])).toEqual([])
+    expect(filterPreviewMembersForWrite([])).toEqual([])
   })
 })

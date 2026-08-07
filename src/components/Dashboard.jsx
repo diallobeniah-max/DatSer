@@ -17,6 +17,7 @@ import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
 import MissingDataModal from './MissingDataModal'
 import { resolveMemberAttendanceForDate, getCanonicalAttendanceStatus, isMemberMarkedForDate } from '../utils/attendanceRecords'
+import { getAutoHistoricalSearchKey, shouldAutoSearchHistorical } from '../utils/autoHistoricalSearch'
 import { buildMemberIndexCodeMap, getMemberIndexCode, getMemberIndexCodeAliases, memberMatchesIndexCode, normalizeMemberCode } from '../utils/memberIndexCodes'
 import { getMemberCanonicalId } from '../utils/memberIdentity'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
@@ -469,6 +470,10 @@ const Dashboard = ({ isAdmin = false }) => {
   const [historicalSearchResults, setHistoricalSearchResults] = useState([])
   const [isSearchingOtherMonths, setIsSearchingOtherMonths] = useState(false)
   const [searchOtherMonthsError, setSearchOtherMonthsError] = useState(null)
+  // Guards the automatic historical fallback so the same (table, term) only ever
+  // triggers one request per settled search state (no repeated/infinite RPC loop).
+  const autoHistoricalFiredRef = useRef(new Set())
+  const lastAutoSearchKeyRef = useRef(null)
   const [isScopeModalOpen, setIsScopeModalOpen] = useState(false)
   const [temporaryScopeSettings, setTemporaryScopeSettings] = useState(null)
   const [presentConfirmTarget, setPresentConfirmTarget] = useState(null)
@@ -2210,6 +2215,12 @@ const Dashboard = ({ isAdmin = false }) => {
     const query = String(searchTerm || pendingSearchTerm || '').trim()
     if (!query || query.length < 2) return
 
+    // Mark this (table, term) as handled so neither a manual tap nor the
+    // automatic fallback fires a duplicate/overlapping request.
+    const autoKey = `${currentTable}:${query}`
+    if (autoHistoricalFiredRef.current.size > 60) autoHistoricalFiredRef.current.clear()
+    autoHistoricalFiredRef.current.add(autoKey)
+
     const activeScope = temporaryScopeSettings || preferences?.historical_search_settings
     setIsSearchingOtherMonths(true)
     setSearchOtherMonthsError(null)
@@ -2248,6 +2259,47 @@ const Dashboard = ({ isAdmin = false }) => {
       setIsSearchingOtherMonths(false)
     }
   }
+
+  // Automatic historical fallback: once the current-month search settles with
+  // ZERO active matches, run the historical search once (no extra tap). Guarded
+  // so a current match, an in-flight search, or the same (table, term) never
+  // triggers a duplicate/looping request. Re-evaluates when the term, table, or
+  // the settled result set changes (e.g. after a mutation import/edit/delete).
+  useEffect(() => {
+    const query = String(searchTerm || '').trim()
+    const autoKey = getAutoHistoricalSearchKey(currentTable, query)
+
+    // A change in term/table resets the dedup set so a previously auto-searched
+    // term can be searched again later (e.g. after clearing and re-typing).
+    if (lastAutoSearchKeyRef.current !== autoKey) {
+      autoHistoricalFiredRef.current.clear()
+      lastAutoSearchKeyRef.current = autoKey
+    }
+
+    // Only act once typing has settled (the committed searchTerm matches the
+    // current input) and the term is non-empty.
+    if (!query || query.length < 2 || String(localSearchTerm || '').trim() !== query) {
+      autoHistoricalFiredRef.current.delete(autoKey)
+      return
+    }
+
+    if (shouldAutoSearchHistorical({
+      query,
+      loading,
+      isSearchingOtherMonths,
+      isShortSearchDisplayActive,
+      visibleCount: searchResultSections?.visibleCount || 0,
+      alreadyFired: autoHistoricalFiredRef.current.has(autoKey)
+    })) {
+      if (autoHistoricalFiredRef.current.size > 60) autoHistoricalFiredRef.current.clear()
+      autoHistoricalFiredRef.current.add(autoKey)
+      handleSearchOtherMonths()
+    } else if ((searchResultSections?.visibleCount || 0) > 0) {
+      // A current match exists (or appeared after a mutation): drop the guard so
+      // the term can re-evaluate later instead of being treated as searched.
+      autoHistoricalFiredRef.current.delete(autoKey)
+    }
+  }, [searchTerm, currentTable, localSearchTerm, searchResultSections?.visibleCount, searchResultSections?.status, loading, isSearchingOtherMonths, isShortSearchDisplayActive])
 
   const handleConfirmPresent = async (e) => {
     e?.stopPropagation?.()
