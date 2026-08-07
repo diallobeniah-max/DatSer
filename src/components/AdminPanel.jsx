@@ -35,7 +35,8 @@ import {
   Mail,
   Send,
   UserCheck,
-  UserX
+  UserX,
+  Database
 } from 'lucide-react'
 import TagManager from './TagManager'
 import AppUpdatesManager from './AppUpdatesManager'
@@ -1058,6 +1059,14 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
               >
                 <Printer className="w-4 h-4" />
                 <span className="hidden sm:inline">Overview</span>
+              </button>
+              <button
+                onClick={() => setCurrentView('data-review')}
+                className="flex items-center gap-2 px-3 py-2 sm:px-3 text-sm font-semibold text-orange-700 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/30 rounded-lg transition-colors"
+                title="Review member data across all months"
+              >
+                <Database className="w-4 h-4" />
+                <span className="hidden sm:inline">Member Data Review</span>
               </button>
             </div>
             {showOverview && (

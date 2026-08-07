@@ -20,6 +20,7 @@ const MemberModal = lazyWithRetry(() => import('./components/MemberModal'))
 const EditMemberModal = lazyWithRetry(() => import('./components/EditMemberModal'))
 const AttendanceAnalytics = lazyWithRetry(() => import('./components/AttendanceAnalytics'))
 const AdminPanel = lazyWithRetry(() => import('./components/AdminPanel'))
+const MemberDataReview = lazyWithRetry(() => import('./components/MemberDataReview'))
 const WorkspaceSettingsModal = lazyWithRetry(() => import('./components/WorkspaceSettingsModal'))
 const DeleteAccountModal = lazyWithRetry(() => import('./components/DeleteAccountModal'))
 const ExportDataModal = lazyWithRetry(() => import('./components/ExportDataModal'))
@@ -645,6 +646,12 @@ function AppContent({ isMobile }) {
                 setCurrentView('dashboard')
               }}
             />
+          </Suspense>
+        )}
+
+        {currentView === 'data-review' && (
+          <Suspense fallback={<LazyFallback />}>
+            <MemberDataReview onBack={() => setCurrentView('admin')} />
           </Suspense>
         )}
 
