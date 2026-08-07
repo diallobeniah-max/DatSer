@@ -174,7 +174,7 @@ const AdminControlsModal = ({ isOpen, onClose }) => {
                 }
                 
                 // Apply to admin immediately
-                setCurrentTable(monthIdentifier)
+                setCurrentTable(monthIdentifier, { persistPreference: true })
             } else {
                 toast.success(`Sticky month set to ${monthIdentifier} (Demo mode)`)
             }

@@ -16,6 +16,7 @@ import { GuidedField, useGuidedFormAssistant } from './GuidedFormAssistant'
 import CurrentLevelPicker from './CurrentLevelPicker'
 import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKeyboard, scrollControlIntoModalView } from '../hooks/useKeyboardSafeModal'
 import AttendanceChoice from './AttendanceChoice'
+import { getCanonicalAttendanceStatus } from '../utils/attendanceRecords'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
 
@@ -191,11 +192,14 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
     const initialAttendance = {}
     sundayDates.forEach(date => {
-      const dateKey = date
-      const memberAttendance = attendanceData[dateKey]?.[latestMember.id]
-      if (memberAttendance !== undefined) {
-        initialAttendance[date] = memberAttendance
-      }
+      const status = getCanonicalAttendanceStatus({
+        member: latestMember,
+        memberId: latestMember.id,
+        attendanceDate: date,
+        attendanceData
+      })
+      if (status === 'Present') initialAttendance[date] = true
+      else if (status === 'Absent') initialAttendance[date] = false
     })
     setSundayAttendance(initialAttendance)
     setClearedAttendanceDates(new Set())
@@ -206,11 +210,14 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     if (latestMember && sundayDates.length > 0) {
       const updatedAttendance = {}
       sundayDates.forEach(date => {
-        const dateKey = date
-        const memberAttendance = attendanceData[dateKey]?.[latestMember.id]
-        if (memberAttendance !== undefined) {
-          updatedAttendance[date] = memberAttendance
-        }
+        const status = getCanonicalAttendanceStatus({
+          member: latestMember,
+          memberId: latestMember.id,
+          attendanceDate: date,
+          attendanceData
+        })
+        if (status === 'Present') updatedAttendance[date] = true
+        else if (status === 'Absent') updatedAttendance[date] = false
       })
       setSundayAttendance(prev => ({ ...prev, ...updatedAttendance }))
     }
@@ -734,7 +741,14 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
             ? 'bg-orange-100/80 dark:bg-orange-800/80 border-orange-200 dark:border-orange-700'
             : 'border-gray-200 dark:border-gray-700'
             }`}>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white">Edit Member</h2>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white">Edit Member</h2>
+              {member?.source_month_label && !member?.already_in_current_table && (
+                <p className="text-xs text-orange-600 dark:text-orange-400 font-medium">
+                  Profile source: {member.source_month_label}
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -766,7 +780,14 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           ? 'bg-orange-100/80 dark:bg-orange-800/80 border-orange-200 dark:border-orange-700'
           : 'border-gray-200 dark:border-gray-700'
           }`}>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Edit Member</h2>
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Edit Member</h2>
+            {member?.source_month_label && !member?.already_in_current_table && (
+              <p className="text-xs text-orange-600 dark:text-orange-400 font-medium">
+                Profile source: {member.source_month_label}
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"

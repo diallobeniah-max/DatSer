@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_GUIDED_FORM_SETTINGS,
@@ -7,24 +8,22 @@ import {
 } from './guidedFormSettings'
 
 const createMemoryStorage = () => {
-  let store = {}
+  const store = new Map()
   return {
-    getItem: (key) => (key in store ? store[key] : null),
-    setItem: (key, value) => { store[key] = String(value) },
-    removeItem: (key) => { delete store[key] },
-    clear: () => { store = {} }
+    getItem: (key) => store.get(key) || null,
+    setItem: (key, value) => { store.set(key, String(value)) },
+    removeItem: (key) => { store.delete(key) },
+    clear: () => { store.clear() }
   }
 }
 
 describe('workspace guided form settings', () => {
   beforeEach(() => {
-    if (!globalThis.localStorage || typeof globalThis.localStorage.clear !== 'function') {
-      Object.defineProperty(globalThis, 'localStorage', {
-        value: createMemoryStorage(),
-        configurable: true
-      })
-    }
-    globalThis.localStorage.clear()
+    Object.defineProperty(window, 'localStorage', {
+      value: createMemoryStorage(),
+      writable: true,
+      configurable: true
+    })
   })
 
   it('defaults optional tags to off when no workspace preference exists', () => {
@@ -43,7 +42,7 @@ describe('workspace guided form settings', () => {
   })
 
   it('does not reuse the old device-global value for another workspace', () => {
-    globalThis.localStorage.setItem(GUIDED_FORM_SETTINGS_KEY, JSON.stringify({ showTagsField: true }))
+    window.localStorage.setItem(GUIDED_FORM_SETTINGS_KEY, JSON.stringify({ showTagsField: true }))
     expect(readGuidedFormSettings('workspace-new').showTagsField).toBe(false)
   })
 })

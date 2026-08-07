@@ -7,6 +7,11 @@ import {
   isTransientSupabaseError
 } from '../utils/supabaseWrite'
 import { useAuth } from './AuthContext'
+import {
+  isBackendHealthy,
+  isBackendDegradedError,
+  markBackendDegraded
+} from '../utils/backendHealthCoordinator'
 import { notify } from '../utils/notify'
 import { buildMemberIndexCodeMap, DEFAULT_MEMBER_CODE_LENGTH, getMemberIndexCode, getMemberIndexCodeAliases, normalizeMemberCodeFormat, normalizeMemberCodeLength } from '../utils/memberIndexCodes'
 import {
@@ -24,12 +29,21 @@ import {
   getMemberOwnerId,
   getMemberSourceTable
 } from '../utils/memberIdentity'
-import { normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
+import { DEFAULT_GUIDED_FORM_SETTINGS, normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
-import { classifyMemberSearch, normalizeSearchText } from '../utils/memberSearch'
+import { classifyMemberSearch, getSearchableMemberName, normalizeSearchText } from '../utils/memberSearch'
+import { normalizeHistoricalSearchSettings, resolveHistoricalSearchTables } from '../utils/historicalSearchSettings'
 import { createAttendanceSnapshotVersionRegistry } from '../utils/attendanceSnapshot'
 import { createResumeSyncCoordinator } from '../utils/appResumeSync'
+import {
+  buildAutoCalendarPreferences,
+  buildManualCalendarPreferences,
+  getPersonalManualDeadline,
+  getPersonalManualExpiryPhase,
+  PERSONAL_MANUAL_DURATION_MS,
+  PERSONAL_MANUAL_WARNING_MS
+} from '../utils/personalCalendarMode'
 import { invalidateRequestScope, runScopedRequest } from '../utils/runtimeRequestRegistry'
 import { acquireRealtimeChannel } from '../utils/realtimeChannelRegistry'
 import {
@@ -89,6 +103,16 @@ const FALLBACK_MONTHLY_TABLES = [DEFAULT_TABLE]
 const DEFAULT_COLLAB_TABLE = 'January_2026'
 const COLLAB_FALLBACK_TABLES = [DEFAULT_COLLAB_TABLE]
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+const isConfirmedMissingMonthTableError = (error) => {
+  if (!error || isBackendDegradedError(error)) return false
+  if (error.code === '42P01' || error.code === 'PGRST205') return true
+  const message = String(error.message || '').toLowerCase()
+  return (
+    message.includes('relation') && message.includes('does not exist')
+  ) || (
+    message.includes('table') && message.includes('does not exist')
+  )
+}
 const NOTIFICATION_DURATION_STORAGE_KEY = 'datser_notification_duration_ms'
 const NOTIFICATION_DURATION_MIGRATION_KEY = 'datser_notification_duration_readable_default_v2'
 const NOTIFICATION_DURATION_COMPACT_MIGRATION_KEY = 'datser_notification_duration_compact_default_v1'
@@ -522,7 +546,9 @@ const getSundayDefaultForTable = (tableName, referenceDate = new Date()) => {
   return sundaysUpToReference.length > 0 ? sundaysUpToReference[sundaysUpToReference.length - 1] : sundays[0]
 }
 
-const PERSONAL_MANUAL_OVERRIDE_HOURS = 12
+// Personal calendar selection is deliberately short-lived. The persisted expiry
+// protects a resumed session; activity refreshes the in-memory deadline without
+// creating background preference writes.
 
 const parseStoredCalendarDate = (value) => {
   if (!value) return null
@@ -746,8 +772,26 @@ export const AppProvider = ({ children }) => {
   // Get user from auth context - may be null during initial load
   const authContext = useAuth()
   const user = authContext?.user
-  const personalPreferences = authContext?.preferences || null
+  // `preferences` merges personal and workspace settings. Calendar mode is
+  // personal, and workspace defaults intentionally include calendar values,
+  // so use the unmerged personal record for calendar decisions.
+  const personalCalendarPreferences = authContext?.personalPreferences || authContext?.preferences || null
+  // A successful calendar RPC is authoritative, but AuthContext reaches this
+  // provider on the next render. Keep that confirmed result locally for the
+  // short hand-off so a background reconciliation cannot briefly put the user
+  // back on the Auto month between the save response and preference hydration.
+  const [confirmedCalendarPreferenceOverride, setConfirmedCalendarPreferenceOverride] = useState(null)
+  const effectivePersonalCalendarPreferences = confirmedCalendarPreferenceOverride
+    ? { ...(personalCalendarPreferences || {}), ...confirmedCalendarPreferenceOverride }
+    : personalCalendarPreferences
+  const personalPreferences = authContext?.personalPreferences || authContext?.preferences || null
   const authLoading = authContext?.loading
+  // Hydration readiness for the personal preference bundle. Calendar controls
+  // must stay disabled until this confirms, otherwise an explicit Manual save
+  // is rejected while the dashboard already looks fully usable.
+  const preferencesHydrated = authContext?.preferencesHydrated === true
+  const preferencesLoading = authContext?.preferencesLoading === true
+  const preferencesError = authContext?.preferencesError || null
   const isDeveloperBypass = authContext?.isDeveloperBypass === true
   const isDeveloperBypassActive = isDeveloperBypass || isDeveloperBypassStorageEnabled()
   const isAdminCodeLogin = authContext?.preferences?.admin_code_login === true || user?.app_metadata?.provider === 'admin-code'
@@ -934,7 +978,6 @@ export const AppProvider = ({ children }) => {
     writeMemberCodeSettingsCache(workspaceMemberCodeOwnerId, next)
   }, [hasConfirmedRemoteMemberCodeFormat, hasConfirmedRemoteMemberCodeLength, preferences?.member_code_format, preferences?.member_code_length, preferences?.updated_at, workspaceMemberCodeOwnerId])
   const [adminSyncNotice, setAdminSyncNotice] = useState(null)
-  const adminBroadcastRef = useRef({ month: null, date: null })
   const adminRealtimeChannelRef = useRef(null)
   const adminRealtimeStatusRef = useRef('CLOSED')
   const pendingAdminBroadcastRef = useRef(null)
@@ -949,15 +992,28 @@ export const AppProvider = ({ children }) => {
         const storageKey = isCollaborator && dataOwnerId ? `selectedMonthTable_${dataOwnerId}` : 'selectedMonthTable'
         const localSaved = localStorage.getItem(storageKey)
 
-        if (isCollaborator && ownerStickyMonth && !localSaved && !authContext?.preferences?.current_month_table) {
+        const storedManualTable = effectivePersonalCalendarPreferences?.calendar_mode === 'manual'
+          ? effectivePersonalCalendarPreferences?.manual_month_table
+          : null
+
+        // A confirmed, unexpired personal Manual selection always wins over
+        // the normal saved-month hydration. Reconciliation later validates the
+        // selected Sunday; it must not first bounce the view back to Auto.
+        if (storedManualTable) {
+          setCurrentTable(storedManualTable)
+          localStorage.setItem(storageKey, storedManualTable)
+          return
+        }
+
+        if (isCollaborator && ownerStickyMonth && !localSaved && !effectivePersonalCalendarPreferences?.current_month_table) {
           setCurrentTable(ownerStickyMonth)
           localStorage.setItem(storageKey, ownerStickyMonth)
           return
         }
 
         // Try to load from Supabase preferences first (persisted across devices)
-        if (authContext?.preferences?.current_month_table) {
-          const savedMonth = authContext.preferences.current_month_table
+        if (effectivePersonalCalendarPreferences?.current_month_table) {
+          const savedMonth = effectivePersonalCalendarPreferences.current_month_table
           appContextLog('[MONTH] Loaded saved month from Supabase preferences:', savedMonth)
           setCurrentTable(savedMonth)
           localStorage.setItem(storageKey, savedMonth)
@@ -985,7 +1041,16 @@ export const AppProvider = ({ children }) => {
     }
 
     loadSavedMonth()
-  }, [user, authLoading, authContext?.preferences?.current_month_table, isCollaborator, dataOwnerId, ownerStickyMonth])
+  }, [
+    user,
+    authLoading,
+    effectivePersonalCalendarPreferences?.calendar_mode,
+    effectivePersonalCalendarPreferences?.manual_month_table,
+    effectivePersonalCalendarPreferences?.current_month_table,
+    isCollaborator,
+    dataOwnerId,
+    ownerStickyMonth
+  ])
   const [monthlyTables, setMonthlyTables] = useState(FALLBACK_MONTHLY_TABLES)
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState(null)
   const selectedAttendanceDateRef = useRef(selectedAttendanceDate)
@@ -1365,11 +1430,28 @@ export const AppProvider = ({ children }) => {
   }, [])
   const missingInfoPromptEnabled = missingInfoPromptEnabledState
 
-  const [guidedFormSettingsState, setGuidedFormSettingsState] = useState(() => readGuidedFormSettings())
+  const [guidedFormSettingsState, setGuidedFormSettingsState] = useState(() => (
+    readGuidedFormSettings(dataOwnerId)
+  ))
 
   useEffect(() => {
-    setGuidedFormSettingsState(readGuidedFormSettings(workspaceCacheScope))
-  }, [workspaceCacheScope])
+    setGuidedFormSettingsState(readGuidedFormSettings(dataOwnerId))
+  }, [dataOwnerId])
+
+  useEffect(() => {
+    const remote = authContext?.workspacePreferences?.guided_form_settings
+    const isMatchingOwner = authContext?.workspacePreferencesOwnerId === dataOwnerId
+    if (remote && typeof remote === 'object' && isMatchingOwner) {
+      const base = readGuidedFormSettings(dataOwnerId)
+      setGuidedFormSettingsState({
+        ...DEFAULT_GUIDED_FORM_SETTINGS,
+        ...base,
+        ...remote,
+        guidedOrder: normalizeGuidedOrder(remote.guidedOrder || base?.guidedOrder)
+      })
+    }
+  }, [authContext?.workspacePreferences?.guided_form_settings, authContext?.workspacePreferencesOwnerId, dataOwnerId])
+
   const setGuidedFormSetting = useCallback(async (key, value) => {
     const resolvedValue = typeof value === 'function'
       ? value(guidedFormSettingsState[key])
@@ -1384,24 +1466,12 @@ export const AppProvider = ({ children }) => {
 
     try {
       if (user?.id) {
-        if (isCollaborator && dataOwnerId) {
-          if (!isAdminCollaborator) {
-            throw new Error('Only a workspace owner or admin collaborator can change shared form visibility')
-          }
-          const result = await executeSupabaseWrite(
-            () => supabase
-              .from('user_preferences')
-              .update({
-                guided_form_settings: nextSettings,
-                updated_at: new Date().toISOString()
-              })
-              .eq('user_id', dataOwnerId)
-              .select('user_id'),
-            { action: 'Save workspace form visibility settings' }
-          )
-          assertSupabaseMutationAffected(result, 'Form settings update')
-        } else {
-          await authContext?.updatePreference?.('guided_form_settings', nextSettings, { throwOnError: true })
+        if (isCollaborator && dataOwnerId && !isAdminCollaborator) {
+          throw new Error('Only a workspace owner or admin collaborator can change shared form visibility')
+        }
+        const ok = await authContext?.saveWorkspacePreferences?.(dataOwnerId, { guided_form_settings: nextSettings })
+        if (!ok) {
+          throw new Error('Workspace preferences save failed')
         }
       }
       return nextSettings
@@ -1521,15 +1591,33 @@ export const AppProvider = ({ children }) => {
   // Admin-locked default date forces collaborators to a specific date
   const [lockedDefaultDate, setLockedDefaultDate] = useState(null)
   const suppressDateBroadcastRef = useRef(false)
-  const personalCalendarMode = preferences?.calendar_mode === 'manual' ? 'manual' : 'auto'
-  const manualMonthTable = preferences?.manual_month_table || null
-  const manualSundayDateValue = preferences?.manual_sunday_date || null
-  const manualOverrideUntil = preferences?.manual_override_until || null
+  const personalCalendarMode = effectivePersonalCalendarPreferences?.calendar_mode === 'manual' ? 'manual' : 'auto'
+  const manualMonthTable = effectivePersonalCalendarPreferences?.manual_month_table || null
+  const manualSundayDateValue = effectivePersonalCalendarPreferences?.manual_sunday_date || null
+  const manualOverrideUntil = effectivePersonalCalendarPreferences?.manual_override_until || null
   const manualSundayDate = useMemo(() => parseStoredCalendarDate(manualSundayDateValue), [manualSundayDateValue])
   const manualOverrideUntilDate = useMemo(() => parseStoredCalendarDate(manualOverrideUntil), [manualOverrideUntil])
-  const isManualOverrideExpired = Boolean(manualOverrideUntilDate && manualOverrideUntilDate.getTime() <= Date.now())
+  const [personalManualDeadlineAt, setPersonalManualDeadlineAt] = useState(() => manualOverrideUntilDate?.getTime() ?? null)
+  const [personalManualExpiryWarning, setPersonalManualExpiryWarning] = useState(false)
+  const effectiveManualDeadlineAt = personalManualDeadlineAt ?? manualOverrideUntilDate?.getTime() ?? null
+  const isManualOverrideExpired = Boolean(effectiveManualDeadlineAt && effectiveManualDeadlineAt <= Date.now())
   const collaboratorLockedByOwner = Boolean(isCollaborator && lockedDefaultDate)
   const isPersonalManualMode = personalCalendarMode === 'manual' && !isManualOverrideExpired && !collaboratorLockedByOwner
+
+  useEffect(() => {
+    if (personalCalendarMode !== 'manual') {
+      setPersonalManualDeadlineAt(null)
+      setPersonalManualExpiryWarning(false)
+      return
+    }
+
+    const persistedDeadline = manualOverrideUntilDate?.getTime() ?? null
+    if (!persistedDeadline) return
+
+    // Never let an older server response shorten a more recent local activity
+    // deadline. Supabase remains authoritative when it sends a newer value.
+    setPersonalManualDeadlineAt((currentDeadline) => Math.max(currentDeadline ?? 0, persistedDeadline) || null)
+  }, [personalCalendarMode, manualOverrideUntilDate])
 
   // Fetch the owner's locked default date (for collaborators)
   const fetchLockedDefaultDate = useCallback(async (ownerId) => {
@@ -1572,26 +1660,32 @@ export const AppProvider = ({ children }) => {
     }
 
     try {
-      const { error } = await supabase
-        .from('user_preferences')
-        .update({ locked_default_date: dateStr || null })
-        .eq('user_id', user.id)
+      if (!user?.id || !isSupabaseConfigured()) {
+        return true
+      }
+      const [, yearStr] = (currentTable || '').split('_')
+      const targetOwnerId = dataOwnerId || user.id
+      const { error } = await supabase.rpc('update_owner_admin_override', {
+        p_owner_id: targetOwnerId,
+        p_month_table: currentTable || null,
+        p_year: parseInt(yearStr, 10) || new Date().getFullYear(),
+        p_sunday_dates: dateStr ? [dateStr] : null,
+        p_locked_date: dateStr || null
+      })
 
       if (!error) {
         return true
       }
 
-      // Revert on error
       console.error('Error saving locked default date:', error)
       setLockedDefaultDate(previousDateStr)
       return false
     } catch (err) {
-      // Revert on error
       console.error('Error saving locked default date:', err)
       setLockedDefaultDate(previousDateStr)
       return false
     }
-  }, [user?.id, isCollaborator, lockedDefaultDate, currentTable])
+  }, [user?.id, dataOwnerId, lockedDefaultDate, currentTable])
 
   const getMonthStorageKey = useCallback(() => {
     if (isCollaborator && dataOwnerId) {
@@ -1600,7 +1694,7 @@ export const AppProvider = ({ children }) => {
     return 'selectedMonthTable'
   }, [isCollaborator, dataOwnerId])
 
-  const changeCurrentTable = useCallback((tableName) => {
+  const changeCurrentTable = useCallback((tableName, { persistPreference = false } = {}) => {
     setCurrentTable(tableName)
     const storageKey = getMonthStorageKey()
     if (tableName) {
@@ -1608,11 +1702,13 @@ export const AppProvider = ({ children }) => {
     } else {
       localStorage.removeItem(storageKey)
     }
-    // Also persist to Supabase so the selection survives across devices/sessions
-    if (tableName && authContext?.updatePreference) {
-      authContext.updatePreference('current_month_table', tableName)
+    // Only a direct month-picker choice is allowed to write a preference. This
+    // callback is also used by hydration, collaborator broadcasts, fallbacks,
+    // and calendar reconciliation, which must stay local-only.
+    if (persistPreference && tableName && authContext?.savePersonalPreferences) {
+      void authContext.savePersonalPreferences({ current_month_table: tableName })
     }
-  }, [getMonthStorageKey, authContext?.updatePreference])
+  }, [getMonthStorageKey, authContext?.savePersonalPreferences])
 
   const pruneMissingTable = useCallback((tableName) => {
     if (!tableName) return
@@ -1636,6 +1732,10 @@ export const AppProvider = ({ children }) => {
 
   const fetchOwnerStickyDefaults = useCallback(async (ownerId) => {
     if (!isSupabaseConfigured() || !ownerId) return null
+    // Keep the last confirmed owner defaults visible while Supabase is
+    // degraded. A background refresh must never blank a collaborator's
+    // workspace context or create another request during a 503/schema outage.
+    if (!isBackendHealthy()) return null
     try {
       const query = supabase
         .from('user_preferences')
@@ -1656,17 +1756,11 @@ export const AppProvider = ({ children }) => {
         return data
       }
 
-      setOwnerStickyMonth(null)
-      setOwnerStickySundays([])
-      setLockedDefaultDate(null)
-      setOwnerMemberCodePreferences({})
+      if (error && isBackendDegradedError(error)) markBackendDegraded(error)
       return null
     } catch (err) {
+      if (isBackendDegradedError(err)) markBackendDegraded(err)
       console.error('Error fetching owner sticky defaults:', err)
-      setOwnerStickyMonth(null)
-      setOwnerStickySundays([])
-      setLockedDefaultDate(null)
-      setOwnerMemberCodePreferences({})
       return null
     }
   }, [isSupabaseConfigured])
@@ -1731,6 +1825,10 @@ export const AppProvider = ({ children }) => {
   const loadWorkspaceMemberCodes = useCallback(async ({ ensure = false, membersToEnsure = [] } = {}) => {
     const ownerId = dataOwnerId || user?.id
     if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) return []
+    if (!isBackendHealthy()) {
+      setWorkspaceMemberCodeStatus('paused-degraded')
+      return Object.values(workspaceMemberCodeAssignmentsRef.current)
+    }
     // Active workspace owners and collaborators with workspace access can allocate
     // and ensure member codes when adding members or hydrating workspace data.
     const canAllocate = Boolean(ownerId)
@@ -1777,6 +1875,28 @@ export const AppProvider = ({ children }) => {
       throw error
     }
   }, [dataOwnerId, isAdminCollaborator, isCollaborator, isDeveloperBypass, isSupabaseConfigured, memberCodeLength, mergeConfirmedWorkspaceMemberCodeAssignments, readConfirmedWorkspaceMemberCodeAssignments, user?.id])
+
+  // Hydrate the authoritative workspace assignments as soon as the workspace
+  // identity is known. This must not wait for the first preview page, otherwise
+  // badges appear only after a later render or a second search.
+  useEffect(() => {
+    if (isDeveloperBypass || !isSupabaseConfigured() || !(dataOwnerId || user?.id)) return undefined
+    loadWorkspaceMemberCodes().catch(() => {})
+    return undefined
+  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, user?.id])
+
+  // Only allocate after the complete current member index has hydrated, and
+  // only for canonical identities the server has not assigned yet.
+  useEffect(() => {
+    if (!membersLoadedAll || !members.length || isDeveloperBypass || !isSupabaseConfigured() || !(dataOwnerId || user?.id)) return undefined
+    const missingMembers = members.filter((member) => {
+      const memberId = getMemberCanonicalId(member)
+      return memberId && !member.deleted_at && !workspaceMemberCodeAssignments[String(memberId)]
+    })
+    if (missingMembers.length === 0) return undefined
+    loadWorkspaceMemberCodes({ ensure: true, membersToEnsure: missingMembers }).catch(() => {})
+    return undefined
+  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, members, membersLoadedAll, user?.id, workspaceMemberCodeAssignments])
 
   const ensureMemberCodeAssignment = useCallback(async (member, { queueOnFailure = true } = {}) => {
     const ownerId = dataOwnerId || user?.id
@@ -1911,29 +2031,329 @@ export const AppProvider = ({ children }) => {
     }
   }, [authContext, dataOwnerId, fetchOwnerStickyDefaults, isAdminCollaborator, isCollaborator, isDeveloperBypass, isOnline, isSupabaseConfigured, memberCodeLength, mergeConfirmedWorkspaceMemberCodeAssignments, readConfirmedWorkspaceMemberCodeAssignments, user?.id])
 
-  // Hydrate the authoritative workspace assignments as soon as the workspace
-  // identity is known. This must not wait for the first preview page, otherwise
-  // badges appear only after a later render or a second search.
-  useEffect(() => {
-    if (isDeveloperBypass || !isSupabaseConfigured() || !(dataOwnerId || user?.id)) return undefined
-    loadWorkspaceMemberCodes().catch(() => {})
-    return undefined
-  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, user?.id])
+  // Check if current user is a collaborator and get the owner's ID
+  const checkCollaboratorStatus = async () => {
+    appContextLog('=== checkCollaboratorStatus STARTED ===')
+    appContextLog('User email:', user?.email)
+    appContextLog('User ID:', user?.id)
+    appContextLog('Supabase configured?', isSupabaseConfigured())
 
-  // Only allocate after the complete current member index has hydrated, and
-  // only for canonical identities the server has not assigned yet.
-  useEffect(() => {
-    if (!membersLoadedAll || !members.length || isDeveloperBypass || !isSupabaseConfigured() || !(dataOwnerId || user?.id)) return undefined
-    const missingMembers = members.filter((member) => {
-      const memberId = getMemberCanonicalId(member)
-      return memberId && !member.deleted_at && !workspaceMemberCodeAssignments[String(memberId)]
-    })
-    if (missingMembers.length === 0) return undefined
-    loadWorkspaceMemberCodes({ ensure: true, membersToEnsure: missingMembers }).catch(() => {})
-    return undefined
-  }, [dataOwnerId, isDeveloperBypass, isSupabaseConfigured, loadWorkspaceMemberCodes, members, membersLoadedAll, user?.id, workspaceMemberCodeAssignments])
+    if (isDeveloperBypass && user?.id) {
+      setIsCollaborator(false)
+      setIsAdminCollaborator(false)
+      setDataOwnerId(user.id)
+      setOwnerEmail(null)
+      setHasAccess(true)
+      setOwnerStickyMonth(null)
+      setOwnerStickySundays([])
+      return user.id
+    }
 
-  // Realtime member-code updates are managed by the unified workspace Realtime manager.
+    if (isAdminCodeLogin && user?.id) {
+      appContextLog('Admin code owner session detected; allowing owner access without collaborator lookup.')
+      setIsCollaborator(false)
+      setIsAdminCollaborator(false)
+      setDataOwnerId(user.id)
+      setOwnerEmail(null)
+      setHasAccess(true)
+      setOwnerStickyMonth(null)
+      setOwnerStickySundays([])
+      fetchOwnerStickyDefaults(user.id)
+      return user.id
+    }
+
+    if (!user?.id || !isSupabaseConfigured()) {
+      appContextLog('Skipping collaborator check - no user ID or Supabase not configured')
+      setIsCollaborator(false)
+      setDataOwnerId(null)
+      setOwnerEmail(null)
+      return null
+    }
+
+    if (shouldUseOfflineData) {
+      const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+      const snapshot = snapshotRecord?.snapshot
+      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord)) {
+        setIsCollaborator(Boolean(snapshot.is_collaborator))
+        setIsAdminCollaborator(Boolean(snapshot.is_admin_collaborator))
+        // An incomplete collaborator snapshot must never silently become the
+        // collaborator's personal workspace while offline.
+        const snapshotOwnerId = snapshot.data_owner_id || dataOwnerId || (snapshot.is_collaborator ? null : user.id)
+        setDataOwnerId(snapshotOwnerId)
+        setOwnerEmail(snapshot.owner_email || null)
+        setHasAccess(true)
+        setOfflineStatusMessage('Offline Mode - using saved local data.')
+        return snapshotOwnerId
+      }
+    }
+
+    // Preserve the last confirmed owner context instead of probing access
+    // endpoints while the backend health coordinator is cooling down.
+    if (!isBackendHealthy()) {
+      const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+      const snapshot = snapshotRecord?.snapshot
+      const confirmedOwnerId = snapshot?.data_owner_id || dataOwnerId || null
+      if (confirmedOwnerId) {
+        setIsCollaborator(Boolean(snapshot?.is_collaborator ?? confirmedOwnerId !== user.id))
+        if (typeof snapshot?.is_admin_collaborator === 'boolean') {
+          setIsAdminCollaborator(snapshot.is_admin_collaborator)
+        }
+        setDataOwnerId(confirmedOwnerId)
+        setHasAccess(true)
+      }
+      return confirmedOwnerId
+    }
+
+    try {
+      const normalizedEmail = user.email?.trim().toLowerCase()
+      let data = null
+      let error = null
+
+      const { data: accessContext, error: accessContextError } = await supabase.rpc('get_current_user_access_context')
+      if (!accessContextError && accessContext) {
+        appContextLog('Access context RPC result:', accessContext)
+        if (!accessContext.has_access) {
+          appContextLog('Access denied: user is not an owner or collaborator')
+          if (dataOwnerId && dataOwnerId !== user.id && authContext?.clearRevokedWorkspaceCache) {
+            authContext.clearRevokedWorkspaceCache(dataOwnerId)
+          }
+          setIsCollaborator(false)
+          setIsAdminCollaborator(false)
+          setDataOwnerId(user.id)
+          setOwnerEmail(null)
+          setHasAccess(false)
+          return null
+        }
+
+        if (accessContext.is_collaborator) {
+          setIsCollaborator(true)
+          setIsAdminCollaborator(Boolean(accessContext.is_admin_collaborator))
+          setDataOwnerId(accessContext.owner_id)
+          setOwnerEmail(null)
+          setHasAccess(true)
+          fetchOwnerStickyDefaults(accessContext.owner_id)
+          return accessContext.owner_id
+        }
+
+        setIsCollaborator(false)
+        setIsAdminCollaborator(false)
+        setDataOwnerId(accessContext.owner_id || user.id)
+        setOwnerEmail(null)
+        setHasAccess(true)
+        setOwnerStickyMonth(null)
+        setOwnerStickySundays([])
+        fetchOwnerStickyDefaults(accessContext.owner_id || user.id)
+        return accessContext.owner_id || user.id
+      }
+
+      if (accessContextError) {
+        console.warn('Access context RPC unavailable; falling back to legacy access checks:', accessContextError.message)
+        if (isBackendDegradedError(accessContextError)) {
+          markBackendDegraded(accessContextError)
+          const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+          const snapshot = snapshotRecord?.snapshot
+          const confirmedOwnerId = snapshot?.data_owner_id || dataOwnerId || null
+          if (confirmedOwnerId) {
+            setIsCollaborator(Boolean(snapshot?.is_collaborator ?? confirmedOwnerId !== user.id))
+            setIsAdminCollaborator(Boolean(snapshot?.is_admin_collaborator))
+            setDataOwnerId(confirmedOwnerId)
+            setHasAccess(true)
+          }
+          // Never turn a collaborator into a workspace owner because the
+          // access RPC is temporarily unavailable.
+          return confirmedOwnerId
+        }
+      }
+
+      const collaboratorQuery = supabase
+        .from('collaborators')
+        .select('owner_id, status, email, is_admin')
+        .eq('collaborator_user_id', user.id)
+        .in('status', ['accepted', 'active'])
+      const userLookup = await (
+        typeof collaboratorQuery.maybeSingle === 'function'
+          ? collaboratorQuery.maybeSingle()
+          : collaboratorQuery.single()
+      )
+
+      data = userLookup.data
+      error = userLookup.error
+
+      if (!data && normalizedEmail) {
+        appContextLog('Collaborator lookup by user id returned no match. Falling back to email lookup:', normalizedEmail)
+        const emailQueryBase = supabase
+          .from('collaborators')
+          .select('owner_id, status, email, is_admin')
+        const emailQuery = typeof emailQueryBase.ilike === 'function'
+          ? emailQueryBase.ilike('email', normalizedEmail)
+          : emailQueryBase.eq('email', normalizedEmail)
+        const emailLookup = await (
+          typeof emailQuery.maybeSingle === 'function'
+            ? emailQuery
+              .in('status', ['accepted', 'active'])
+              .maybeSingle()
+            : emailQuery
+              .in('status', ['accepted', 'active'])
+              .single()
+        )
+        data = emailLookup.data
+        error = emailLookup.error
+      }
+
+      appContextLog('Collaborators query result:', { data, error })
+
+      if (error) {
+        console.warn('Collaborator status check failed with error. Retaining existing workspace owner ID:', dataOwnerId || user?.id)
+        if (isBackendDegradedError(error)) {
+          markBackendDegraded(error)
+        }
+        const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        const snapshot = snapshotRecord?.snapshot
+        const resolvedOwnerId = snapshot?.data_owner_id || dataOwnerId || null
+        setIsCollaborator(Boolean(snapshot?.is_collaborator ?? Boolean(resolvedOwnerId && resolvedOwnerId !== user?.id)))
+        if (typeof snapshot?.is_admin_collaborator === 'boolean') {
+          setIsAdminCollaborator(snapshot.is_admin_collaborator)
+        }
+        if (resolvedOwnerId) setDataOwnerId(resolvedOwnerId)
+        setHasAccess(true)
+        return resolvedOwnerId
+      }
+
+      if (!data) {
+        // Verified: query succeeded with 0 records. User is NOT a collaborator on another workspace.
+        appContextLog('User is NOT a collaborator. Checking if they are an owner...')
+
+        const { data: ownerTables, error: ownerError } = await supabase
+          .from('user_month_tables')
+          .select('id')
+          .eq('user_id', user.id)
+          .limit(1)
+
+        const { data: prefs, error: prefsError } = await supabase
+          .from('user_preferences')
+          .select('id')
+          .eq('user_id', user.id)
+          .limit(1)
+
+        if (ownerError || prefsError) {
+          console.warn('Owner access check failed; keeping access open until the next retry.', ownerError || prefsError)
+          const fallbackOwnerId = dataOwnerId || user.id
+          const retainCollaboratorScope = Boolean(dataOwnerId && dataOwnerId !== user.id)
+          setIsCollaborator(retainCollaboratorScope)
+          if (!retainCollaboratorScope) {
+            setIsAdminCollaborator(false)
+          }
+          setDataOwnerId(fallbackOwnerId)
+          setOwnerEmail(null)
+          setHasAccess(true)
+          return fallbackOwnerId
+        }
+
+        const isRealOwner = (ownerTables && ownerTables.length > 0) || (prefs && prefs.length > 0)
+
+        if (!isRealOwner) {
+          // Random user with no data and not a collaborator - DENY ACCESS
+          appContextLog('Access denied: user is not an owner or collaborator')
+        setIsCollaborator(false)
+        setIsAdminCollaborator(false)
+          setDataOwnerId(null)
+          setOwnerEmail(null)
+          setHasAccess(false)
+          return null
+        }
+
+        appContextLog('User is a verified owner')
+        setIsCollaborator(false)
+        setDataOwnerId(user.id)
+        setOwnerEmail(null)
+        setHasAccess(true)
+        setOwnerStickyMonth(null)
+        setOwnerStickySundays([])
+        fetchOwnerStickyDefaults(user.id)
+        return user.id
+      }
+
+      // User is a collaborator - they should see the owner's data
+      appContextLog('User is a collaborator')
+      appContextLog('Owner ID:', data.owner_id)
+      appContextLog('Status:', data.status)
+      setIsCollaborator(true)
+      setIsAdminCollaborator(Boolean(data?.is_admin))
+      setDataOwnerId(data.owner_id)
+      setHasAccess(true)
+      fetchOwnerStickyDefaults(data.owner_id)
+
+      // Fetch Workspace Name from Owner for collaborator display without writing to database
+      const { data: ownerWsName, error: wsError } = await supabase.rpc('get_owner_workspace_name', {
+        owner_uuid: data.owner_id
+      })
+
+      if (!wsError && ownerWsName) {
+        appContextLog('Loaded owner workspace name:', ownerWsName)
+      }
+
+      // Get owner's email for display
+      const { data: ownerData } = await supabase
+        .from('collaborators')
+        .select('owner_id')
+        .eq('owner_id', data.owner_id)
+        .limit(1)
+
+      // Get owner email from auth.users via a different method
+      setOwnerEmail(null) // We'll show owner_id for now
+
+      appContextLog('=== checkCollaboratorStatus COMPLETE - User is COLLABORATOR ===')
+      return data.owner_id
+    } catch (err) {
+      console.error('ERROR in checkCollaboratorStatus:', err)
+      const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+      const snapshot = snapshotRecord?.snapshot
+      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord)) {
+        setIsCollaborator(Boolean(snapshot.is_collaborator))
+        setIsAdminCollaborator(Boolean(snapshot.is_admin_collaborator))
+        // A collaborator snapshot without a confirmed owner must not be
+        // re-scoped to the collaborator's own UUID. That would make a
+        // temporary access failure look like an empty personal workspace.
+        const snapshotOwnerId = snapshot.data_owner_id || dataOwnerId || (snapshot.is_collaborator ? null : user.id)
+        setDataOwnerId(snapshotOwnerId)
+        setOwnerEmail(snapshot.owner_email || null)
+        setHasAccess(true)
+        setOfflineStatusMessage('Offline Mode - using saved local data.')
+        return snapshotOwnerId
+      }
+
+      // An exception means access was not confirmed, not that a collaborator
+      // became an owner. Preserve the last owner scope and wait for the shared
+      // health coordinator to allow a later retry instead of loading a second,
+      // incorrect workspace with the collaborator's UUID.
+      if (isBackendDegradedError(err)) markBackendDegraded(err)
+      const confirmedOwnerId = dataOwnerId || null
+      if (confirmedOwnerId) {
+        setIsCollaborator(confirmedOwnerId !== user?.id)
+        setDataOwnerId(confirmedOwnerId)
+      }
+      setOwnerEmail(null)
+      setHasAccess(true)
+      return confirmedOwnerId
+    }
+  }
+
+  // Determine collaborator status whenever auth state settles
+  useEffect(() => {
+    if (authLoading) return
+    checkCollaboratorStatus()
+  }, [authLoading, user?.email, user?.id])
+
+  useEffect(() => {
+    if (!isCollaborator || !dataOwnerId) {
+      setOwnerStickyMonth(null)
+      setOwnerStickySundays([])
+      setAdminSyncNotice(null)
+      setIsAdminCollaborator(false)
+      return
+    }
+    fetchOwnerStickyDefaults(dataOwnerId)
+  }, [isCollaborator, dataOwnerId, fetchOwnerStickyDefaults])
 
   const buildAdminTarget = useCallback((stickyMonth, stickySundays) => {
     let targetTable = null
@@ -1960,7 +2380,7 @@ export const AppProvider = ({ children }) => {
   }, [])
 
   const applyAdminTargetForCollaborator = useCallback((targetTable, targetDateKey) => {
-    if (!isCollaborator) return
+    if (!isCollaborator || isPersonalManualMode) return
 
     const effectiveTable = targetTable || currentTable
     if (targetTable && targetTable !== currentTable) {
@@ -1980,7 +2400,7 @@ export const AppProvider = ({ children }) => {
 
     setSelectedAttendanceDate(normalizedDate)
     localStorage.setItem(`selectedAttendanceDate_${effectiveTable}`, normalizedDate.toISOString())
-  }, [isCollaborator, currentTable, changeCurrentTable, selectedAttendanceDate])
+  }, [isCollaborator, isPersonalManualMode, currentTable, changeCurrentTable, selectedAttendanceDate])
 
   const updateAdminSyncNotice = useCallback((stickyMonth, stickySundays) => {
     if (!isCollaborator) return
@@ -2070,354 +2490,6 @@ export const AppProvider = ({ children }) => {
   }, [isSupabaseConfigured, isCollaborator, dataOwnerId, user?.id, applyAdminBroadcastNotice])
 
   useEffect(() => {
-    if (isCollaborator || !isSupabaseConfigured() || !user?.id || !currentTable) return
-    if (!lockedDefaultDate) return
-    if (adminBroadcastRef.current.month === currentTable) return
-
-    const [monthName, yearStr] = currentTable.split('_')
-    const yearNum = parseInt(yearStr, 10)
-    if (!monthName || Number.isNaN(yearNum)) return
-
-    adminBroadcastRef.current.month = currentTable
-    ;(async () => {
-      try {
-        await supabase
-          .from('user_preferences')
-          .upsert({
-            user_id: user.id,
-            admin_sticky_month: currentTable,
-            admin_sticky_year: yearNum,
-            updated_at: new Date().toISOString()
-          }, {
-            onConflict: 'user_id'
-          })
-        sendAdminPeriodBroadcast({
-          targetTable: currentTable,
-          targetDate: null
-        })
-      } catch (err) {
-        console.error('Error broadcasting admin month change:', err)
-      }
-    })()
-  }, [isCollaborator, isSupabaseConfigured, user?.id, currentTable, lockedDefaultDate, sendAdminPeriodBroadcast])
-
-  useEffect(() => {
-    if (isCollaborator || !isSupabaseConfigured() || !user?.id || !selectedAttendanceDate) return
-    if (!lockedDefaultDate) return
-    if (suppressDateBroadcastRef.current) return
-    if (selectedAttendanceDate.getDay() !== 0) return
-
-    const dateStr = getLocalDateString(selectedAttendanceDate)
-    if (!dateStr) return
-    if (lockedDefaultDate !== dateStr) {
-      setLockedDefaultDate(dateStr)
-    }
-    if (adminBroadcastRef.current.date === dateStr) return
-
-    adminBroadcastRef.current.date = dateStr
-    ;(async () => {
-      try {
-        const [monthName, yearStr] = currentTable.split('_')
-        const currentYear = parseInt(yearStr, 10)
-        const currentMonthIndex = MONTHS_IN_YEAR.indexOf(monthName) + 1
-        const nextStickySundays = [
-          dateStr,
-          ...ownerStickySundays.filter((savedDate) => {
-            const [y, m] = savedDate.split('-').map(Number)
-            return y !== currentYear || m !== currentMonthIndex
-          })
-        ].filter((savedDate) => {
-          const [y, m, d] = savedDate.split('-').map(Number)
-          const dateObj = new Date(y, m - 1, d)
-          return !Number.isNaN(dateObj.getTime()) && dateObj.getDay() === 0
-        })
-        await supabase
-          .from('user_preferences')
-          .upsert({
-            user_id: user.id,
-            admin_sticky_month: currentTable,
-            admin_sticky_year: currentYear,
-            admin_sticky_sundays: nextStickySundays,
-            locked_default_date: dateStr,
-            updated_at: new Date().toISOString()
-          }, {
-            onConflict: 'user_id'
-          })
-        sendAdminPeriodBroadcast({
-          targetTable: currentTable,
-          targetDate: dateStr
-        })
-      } catch (err) {
-        console.error('Error broadcasting admin date change:', err)
-      }
-    })()
-  }, [isCollaborator, isSupabaseConfigured, user?.id, selectedAttendanceDate, currentTable, ownerStickySundays, lockedDefaultDate, sendAdminPeriodBroadcast])
-
-  // Check if current user is a collaborator and get the owner's ID
-  const checkCollaboratorStatus = async () => {
-    appContextLog('=== checkCollaboratorStatus STARTED ===')
-    appContextLog('User email:', user?.email)
-    appContextLog('User ID:', user?.id)
-    appContextLog('Supabase configured?', isSupabaseConfigured())
-
-    if (isDeveloperBypass && user?.id) {
-      setIsCollaborator(false)
-      setIsAdminCollaborator(false)
-      setDataOwnerId(user.id)
-      setOwnerEmail(null)
-      setHasAccess(true)
-      setOwnerStickyMonth(null)
-      setOwnerStickySundays([])
-      return user.id
-    }
-
-    if (isAdminCodeLogin && user?.id) {
-      appContextLog('Admin code owner session detected; allowing owner access without collaborator lookup.')
-      setIsCollaborator(false)
-      setIsAdminCollaborator(false)
-      setDataOwnerId(user.id)
-      setOwnerEmail(null)
-      setHasAccess(true)
-      setOwnerStickyMonth(null)
-      setOwnerStickySundays([])
-      fetchOwnerStickyDefaults(user.id)
-      return user.id
-    }
-
-    if (!user?.id || !isSupabaseConfigured()) {
-      appContextLog('Skipping collaborator check - no user ID or Supabase not configured')
-      setIsCollaborator(false)
-      setDataOwnerId(null)
-      setOwnerEmail(null)
-      return null
-    }
-
-    if (shouldUseOfflineData) {
-      const snapshotRecord = await getOfflineSnapshot().catch(() => null)
-      const snapshot = snapshotRecord?.snapshot
-      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord)) {
-        setIsCollaborator(Boolean(snapshot.is_collaborator))
-        setIsAdminCollaborator(Boolean(snapshot.is_admin_collaborator))
-        setDataOwnerId(snapshot.data_owner_id || user.id)
-        setOwnerEmail(snapshot.owner_email || null)
-        setHasAccess(true)
-        setOfflineStatusMessage('Offline Mode - using saved local data.')
-        return snapshot.data_owner_id || user.id
-      }
-    }
-
-    try {
-      const normalizedEmail = user.email?.trim().toLowerCase()
-      let data = null
-      let error = null
-
-      const { data: accessContext, error: accessContextError } = await supabase.rpc('get_current_user_access_context')
-      if (!accessContextError && accessContext) {
-        appContextLog('Access context RPC result:', accessContext)
-        if (!accessContext.has_access) {
-          setIsCollaborator(false)
-          setIsAdminCollaborator(false)
-          setDataOwnerId(null)
-          setOwnerEmail(null)
-          setHasAccess(false)
-          return null
-        }
-
-        if (accessContext.is_collaborator) {
-          setIsCollaborator(true)
-          setIsAdminCollaborator(Boolean(accessContext.is_admin_collaborator))
-          setDataOwnerId(accessContext.owner_id)
-          setOwnerEmail(null)
-          setHasAccess(true)
-          fetchOwnerStickyDefaults(accessContext.owner_id)
-          return accessContext.owner_id
-        }
-
-        setIsCollaborator(false)
-        setIsAdminCollaborator(false)
-        setDataOwnerId(accessContext.owner_id || user.id)
-        setOwnerEmail(null)
-        setHasAccess(true)
-        setOwnerStickyMonth(null)
-        setOwnerStickySundays([])
-        fetchOwnerStickyDefaults(accessContext.owner_id || user.id)
-        return accessContext.owner_id || user.id
-      }
-
-      if (accessContextError) {
-        console.warn('Access context RPC unavailable; falling back to legacy access checks:', accessContextError.message)
-      }
-
-      const collaboratorQuery = supabase
-        .from('collaborators')
-        .select('owner_id, status, email, is_admin')
-        .eq('collaborator_user_id', user.id)
-        .in('status', ['accepted', 'active'])
-      const userLookup = await (
-        typeof collaboratorQuery.maybeSingle === 'function'
-          ? collaboratorQuery.maybeSingle()
-          : collaboratorQuery.single()
-      )
-
-      data = userLookup.data
-      error = userLookup.error
-
-      if (!data && normalizedEmail) {
-        appContextLog('Collaborator lookup by user id returned no match. Falling back to email lookup:', normalizedEmail)
-        const emailQueryBase = supabase
-          .from('collaborators')
-          .select('owner_id, status, email, is_admin')
-        const emailQuery = typeof emailQueryBase.ilike === 'function'
-          ? emailQueryBase.ilike('email', normalizedEmail)
-          : emailQueryBase.eq('email', normalizedEmail)
-        const emailLookup = await (
-          typeof emailQuery.maybeSingle === 'function'
-            ? emailQuery
-              .in('status', ['accepted', 'active'])
-              .maybeSingle()
-            : emailQuery
-              .in('status', ['accepted', 'active'])
-              .single()
-        )
-        data = emailLookup.data
-        error = emailLookup.error
-      }
-
-      appContextLog('Collaborators query result:', { data, error })
-
-      if (error || !data) {
-        // Not a collaborator - verify they are an actual owner with data
-        appContextLog('User is NOT a collaborator. Checking if they are an owner...')
-
-        // Check if this user has any month tables (i.e., they are a real owner)
-        const { data: ownerTables, error: ownerError } = await supabase
-          .from('user_month_tables')
-          .select('id')
-          .eq('user_id', user.id)
-          .limit(1)
-
-        // Also check if they have user_preferences (created during onboarding)
-        const { data: prefs, error: prefsError } = await supabase
-          .from('user_preferences')
-          .select('id')
-          .eq('user_id', user.id)
-          .limit(1)
-
-        if (ownerError || prefsError) {
-          console.warn('Owner access check failed; keeping access open until the next retry.', ownerError || prefsError)
-          setIsCollaborator(false)
-          setIsAdminCollaborator(false)
-          setDataOwnerId(user.id)
-          setOwnerEmail(null)
-          setHasAccess(true)
-          return user.id
-        }
-
-        const isRealOwner = (ownerTables && ownerTables.length > 0) || (prefs && prefs.length > 0)
-
-        if (!isRealOwner) {
-          // Random user with no data and not a collaborator - DENY ACCESS
-          appContextLog('Access denied: user is not an owner or collaborator')
-        setIsCollaborator(false)
-        setIsAdminCollaborator(false)
-          setDataOwnerId(null)
-          setOwnerEmail(null)
-          setHasAccess(false)
-          return null
-        }
-
-        appContextLog('User is a verified owner')
-        setIsCollaborator(false)
-        setDataOwnerId(user.id)
-        setOwnerEmail(null)
-        setHasAccess(true)
-        setOwnerStickyMonth(null)
-        setOwnerStickySundays([])
-        fetchOwnerStickyDefaults(user.id)
-        return user.id
-      }
-
-      // User is a collaborator - they should see the owner's data
-      appContextLog('User is a collaborator')
-      appContextLog('Owner ID:', data.owner_id)
-      appContextLog('Status:', data.status)
-      setIsCollaborator(true)
-      setIsAdminCollaborator(Boolean(data?.is_admin))
-      setDataOwnerId(data.owner_id)
-      setHasAccess(true)
-      fetchOwnerStickyDefaults(data.owner_id)
-
-      // Sync Workspace Name from Owner
-      if (authContext?.updatePreference) {
-        const { data: ownerWsName, error: wsError } = await supabase.rpc('get_owner_workspace_name', {
-          owner_uuid: data.owner_id
-        })
-
-        if (!wsError && ownerWsName) {
-          const currentWs = authContext.preferences?.workspace_name
-          if (currentWs !== ownerWsName) {
-            appContextLog('Syncing workspace name from owner:', ownerWsName)
-            authContext.updatePreference('workspace_name', ownerWsName)
-          }
-        }
-      }
-
-      // Get owner's email for display
-      const { data: ownerData } = await supabase
-        .from('collaborators')
-        .select('owner_id')
-        .eq('owner_id', data.owner_id)
-        .limit(1)
-
-      // Get owner email from auth.users via a different method
-      setOwnerEmail(null) // We'll show owner_id for now
-
-      appContextLog('=== checkCollaboratorStatus COMPLETE - User is COLLABORATOR ===')
-      return data.owner_id
-    } catch (err) {
-      console.error('ERROR in checkCollaboratorStatus:', err)
-      const snapshotRecord = await getOfflineSnapshot().catch(() => null)
-      const snapshot = snapshotRecord?.snapshot
-      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord)) {
-        setIsCollaborator(Boolean(snapshot.is_collaborator))
-        setIsAdminCollaborator(Boolean(snapshot.is_admin_collaborator))
-        setDataOwnerId(snapshot.data_owner_id || user.id)
-        setOwnerEmail(snapshot.owner_email || null)
-        setHasAccess(true)
-        setOfflineStatusMessage('Offline Mode - using saved local data.')
-        return snapshot.data_owner_id || user.id
-      }
-
-      // On transient access-check errors, avoid a false Access Denied state.
-      setIsCollaborator(false)
-      setIsAdminCollaborator(false)
-      setDataOwnerId(user?.id || null)
-      setOwnerEmail(null)
-      setHasAccess(true)
-      return user?.id || null
-    }
-  }
-
-  // Determine collaborator status whenever auth state settles
-  useEffect(() => {
-    if (authLoading) return
-    checkCollaboratorStatus()
-  }, [authLoading, user?.email, user?.id])
-
-  useEffect(() => {
-    if (!isCollaborator || !dataOwnerId) {
-      setOwnerStickyMonth(null)
-      setOwnerStickySundays([])
-      setAdminSyncNotice(null)
-      setIsAdminCollaborator(false)
-      return
-    }
-    fetchOwnerStickyDefaults(dataOwnerId)
-  }, [isCollaborator, dataOwnerId, fetchOwnerStickyDefaults])
-
-  // Realtime preference updates are managed by the unified workspace Realtime manager.
-
-  useEffect(() => {
     updateAdminSyncNotice(ownerStickyMonth, ownerStickySundays)
   }, [ownerStickyMonth, ownerStickySundays, updateAdminSyncNotice])
 
@@ -2426,11 +2498,7 @@ export const AppProvider = ({ children }) => {
     if (!isSupabaseConfigured() || !user) return
 
     try {
-      // Determine the owner of the workspace being affected
-      // If I am a collaborator, I am affecting the 'dataOwnerId' workspace
-      // If I am the owner, I am affecting my own workspace (user.id)
       const targetOwner = isCollaborator ? dataOwnerId : user.id
-
       if (!targetOwner) {
         console.warn('Cannot log activity: targetOwner is undefined')
         return
@@ -2445,7 +2513,6 @@ export const AppProvider = ({ children }) => {
       })
     } catch (error) {
       console.error('Failed to log activity:', error)
-      // Do not throw; logging failure should not break the app
     }
   }, [user, isCollaborator, dataOwnerId])
 
@@ -2461,6 +2528,7 @@ export const AppProvider = ({ children }) => {
     if (!query || !ownerId || typeof query.eq !== 'function') return query
     return query.eq('user_id', ownerId)
   }, [dataOwnerId, user?.id])
+
 
   const fetchMemberPreviewPage = async (tableName, offset = 0) => {
     const from = Math.max(0, offset)
@@ -2644,6 +2712,10 @@ export const AppProvider = ({ children }) => {
 
   function startMemberPreviewBackgroundSync(tableName = currentTable, options = {}) {
     if (!tableName || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
+    if (!isBackendHealthy()) {
+      setMemberPreviewSyncStatus(prev => ({ ...prev, isSyncing: false, source: 'paused-degraded' }))
+      return
+    }
     if (offlineMode === 'online' && !isOnline) return
     const syncSince = getMemberPreviewSyncSince(tableName)
     const needsInitialIndex = !syncSince
@@ -2785,10 +2857,13 @@ export const AppProvider = ({ children }) => {
     const { forceRefresh = false, background = false, forceOnline = false, fullSnapshot = false } = options
     if (!tableName) {
       console.warn('fetchMembers called with null/undefined tableName, skipping')
-      setMembers([])
-      setMembersTotalCount(0)
-      setMembersLoadedAll(true)
-      return
+      if (!background) setLoading(false)
+      return []
+    }
+    if (!isBackendHealthy()) {
+      const cached = membersCacheRef.current.get(tableName) || readMemberPreviewCache(workspaceCacheScope, tableName)
+      if (!background) setLoading(false)
+      return cached?.data || members || []
     }
     try {
       if (!background) {
@@ -2846,7 +2921,6 @@ export const AppProvider = ({ children }) => {
         }
         if (!user?.id) {
           appContextLog('No active session yet; waiting for login before loading members')
-          setMembers([])
           if (!background) {
             setLoading(false)
           }
@@ -2859,7 +2933,6 @@ export const AppProvider = ({ children }) => {
           if (!background) {
             toast.error('Session expired. Please refresh and log in again.')
           }
-          setMembers([])
           if (!background) {
             setLoading(false)
           }
@@ -2887,16 +2960,14 @@ export const AppProvider = ({ children }) => {
           if (error) {
             console.error('Error fetching full offline member snapshot:', error)
 
-            const missingTable =
-              error.code === 'PGRST205' ||
-              error.code === 'PGRST116' ||
-              error.message?.toLowerCase().includes('does not exist') ||
-              error.message?.toLowerCase().includes('schema cache')
-
-            if (missingTable) {
+            if (isConfirmedMissingMonthTableError(error)) {
               await handleMissingTable(tableName)
               setMembers([])
               return []
+            }
+
+            if (isBackendDegradedError(error)) {
+              markBackendDegraded(error)
             }
 
             throw error
@@ -2993,16 +3064,14 @@ export const AppProvider = ({ children }) => {
         console.error('Error fetching members:', error)
         appContextLog('Error details:', error.message, error.code)
 
-        const missingTable =
-          error.code === 'PGRST205' ||
-          error.code === 'PGRST116' ||
-          error.message?.toLowerCase().includes('does not exist') ||
-          error.message?.toLowerCase().includes('schema cache')
-
-        if (missingTable) {
+        if (isConfirmedMissingMonthTableError(error)) {
           await handleMissingTable(tableName)
           setMembers([])
           return
+        }
+
+        if (isBackendDegradedError(error)) {
+          markBackendDegraded(error)
         }
 
         if (isTransientSupabaseError(error) || !isBrowserOnline()) {
@@ -3027,7 +3096,7 @@ export const AppProvider = ({ children }) => {
         const totalCount = count ?? normalizedMembers.length
         const loadedAll = normalizedMembers.length >= totalCount || normalizedMembers.length < MEMBER_PREVIEW_PAGE_SIZE
         const cachePayload = { data: normalizedMembers, ts: now, totalCount, loadedAll }
-        setMembers(normalizedMembers)
+        setMembers(prev => mergeMemberPreviewPages(prev, normalizedMembers))
         setMembersTotalCount(totalCount)
         setMembersLoadedAll(loadedAll)
         membersCacheRef.current.set(cacheKey, cachePayload)
@@ -5353,6 +5422,13 @@ export const AppProvider = ({ children }) => {
         return
       }
 
+      // A 503/schema-cache outage is not evidence that a month disappeared.
+      // Preserve current/cached metadata and wait for the shared health probe.
+      if (!isBackendHealthy()) {
+        resolveFallbackTables()
+        return
+      }
+
       // 2. Identify whose data we are fetching
       const ownerId = dataOwnerId || user?.id
       if (!ownerId) {
@@ -5391,6 +5467,17 @@ export const AppProvider = ({ children }) => {
         // If RPC is missing (legacy), try fallback to direct select if we are the owner
         // For collaborators, direct select will fail RLS, so we rely on RPC.
         console.error('Error fetching monthly tables via RPC:', error)
+
+        // Temporary backend failures are never evidence that a workspace has no
+        // month tables. Preserve the last confirmed registry/cache and let the
+        // single backend-health probe decide when normal refreshes can resume.
+        // Falling through to direct selects here created a request fan-out and
+        // could clear month metadata during a 503 or schema-cache outage.
+        if (isBackendDegradedError(error)) {
+          markBackendDegraded(error)
+          resolveFallbackTables()
+          return
+        }
 
         if (!isCollaborator) {
           const { data: directData, error: directError } = await supabase
@@ -5528,14 +5615,7 @@ export const AppProvider = ({ children }) => {
       return { success: true }
     } catch (error) {
       console.error('Error deleting month table:', error)
-      const normalized = error?.message?.toLowerCase?.() || ''
-      const missingTable =
-        error?.code === 'PGRST205' ||
-        error?.code === 'PGRST116' ||
-        normalized.includes('does not exist') ||
-        normalized.includes('schema cache')
-
-      if (missingTable) {
+      if (isConfirmedMissingMonthTableError(error)) {
         await handleMissingTable(tableName)
         toast.info(`${tableName.replace('_', ' ')} already removed.`)
         return { success: true }
@@ -5550,22 +5630,10 @@ export const AppProvider = ({ children }) => {
     if (!tableName) return
     console.warn(`Table ${tableName} missing in Supabase - syncing local state`)
 
-    if (isSupabaseConfigured() && user?.id) {
-      try {
-        await supabase
-          .from('user_month_tables')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('table_name', tableName)
-      } catch (error) {
-        console.warn('Could not prune user_month_tables entry:', error)
-      }
-    }
-
     pruneMissingTable(tableName)
     toast.warn(`${tableName.replace('_', ' ')} no longer exists in Supabase. Please recreate it if needed.`)
     await fetchMonthlyTables()
-  }, [currentTable, changeCurrentTable, fetchMonthlyTables, isSupabaseConfigured, pruneMissingTable, supabase, user?.id])
+  }, [fetchMonthlyTables, pruneMissingTable])
 
   // Create new month by copying from the most recent month
   const createNewMonth = async ({
@@ -6051,36 +6119,319 @@ export const AppProvider = ({ children }) => {
   ])
 
   // Historical search uses the same canonical local store as the dashboard.
-  // It intentionally performs no REST/RPC work while the user is searching.
-  const searchMemberAcrossAllTables = useCallback(async (searchName) => {
-    const query = String(searchName || '').trim()
-    const localCodeMap = buildMemberIndexCodeMap(activeMembers, {
-      format: memberCodeFormat,
-      codeLength: memberCodeLength,
-      persistedCodes: workspaceMemberCodeAssignments,
-      allowLegacyFallback: false
-    })
-    const matches = query
-      ? classifyMemberSearch({
-          members: activeMembers,
-          query,
-          getCode: (member) => getMemberIndexCode(member, localCodeMap) || member?.member_code || '',
-          getCodeAliases: (member) => getMemberIndexCodeAliases(member, localCodeMap),
-          codeLength: memberCodeLength
-        }).visible
-      : []
-    const foundInTables = matches.length > 0
-      ? [{ table: currentTable, members: matches }]
-      : []
+  const historicalSearchSettings = useMemo(() => (
+    normalizeHistoricalSearchSettings(authContext?.preferences?.historical_search_settings)
+  ), [authContext?.preferences?.historical_search_settings])
 
-    if (foundInTables.length === 0) {
-      toast.error(`"${searchName}" not found in any monthly table`)
-    } else {
-      toast.success(`Found "${searchName}" in ${foundInTables.length} table(s)`)
+  const saveHistoricalSearchSettings = useCallback(async (newSettings) => {
+    const targetOwnerId = dataOwnerId || authContext?.user?.id
+    if (!targetOwnerId) return false
+    const cleaned = normalizeHistoricalSearchSettings(newSettings)
+
+    try {
+      if (isSupabaseConfigured()) {
+        const { data, error } = await supabase.rpc('update_historical_search_settings', {
+          p_owner_id: targetOwnerId,
+          p_settings: cleaned
+        })
+        if (!error && data) {
+          // The authoritative RPC already persisted this workspace setting.
+          // Do not immediately replay it through the generic preference RPC.
+          return true
+        }
+        if (isBackendDegradedError(error)) {
+          markBackendDegraded(error)
+          return false
+        }
+      }
+
+      if (authContext?.saveWorkspacePreferences) {
+        const ok = await authContext.saveWorkspacePreferences(targetOwnerId, {
+          historical_search_settings: cleaned
+        })
+        return ok
+      }
+
+      return false
+    } catch (err) {
+      console.error('saveHistoricalSearchSettings error:', err)
+      return false
+    }
+  }, [authContext, dataOwnerId])
+
+  // It intentionally performs no REST/RPC work while the user is searching.
+  // Cross-month search: runs ONLY when explicitly invoked by user action.
+  // Performs zero network requests while typing.
+  const searchMemberAcrossAllTables = useCallback(async (searchQuery, options = {}) => {
+    const query = String(searchQuery || '').trim()
+    if (!query || query.length < 2) return []
+
+    const targetOwnerId = dataOwnerId || authContext?.user?.id
+    if (!targetOwnerId || !currentTable) return []
+
+    const activeSettings = normalizeHistoricalSearchSettings(
+      options?.scopeSettings || authContext?.preferences?.historical_search_settings
+    )
+
+    const targetTables = resolveHistoricalSearchTables({
+      settings: activeSettings,
+      monthlyTables,
+      currentTable
+    })
+
+    if (activeSettings.mode === 'custom' && targetTables.length === 0) {
+      return []
     }
 
-    return foundInTables
-  }, [activeMembers, currentTable, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments])
+    return runScopedRequest(
+      workspaceCacheScope,
+      `search_other_months:${query}:${activeSettings.mode}:${targetTables.join(',')}:${activeSettings.include_deleted}`,
+      async () => {
+        try {
+          if (isSupabaseConfigured()) {
+            const { data, error } = await supabase.rpc('search_workspace_members_across_months_scoped', {
+              p_owner_id: targetOwnerId,
+              p_current_table: currentTable,
+              p_query: query,
+              p_limit: 30,
+              p_source_tables: targetTables,
+              p_include_deleted: activeSettings.include_deleted
+            })
+
+            if (!error && Array.isArray(data)) {
+              return data
+            }
+
+            // Fallback to legacy RPC if scoped RPC returns error
+            const { data: legacyData, error: legacyError } = await supabase.rpc('search_workspace_members_across_months', {
+              p_owner_id: targetOwnerId,
+              p_current_table: currentTable,
+              p_query: query,
+              p_limit: 30
+            })
+
+            if (!legacyError && Array.isArray(legacyData)) {
+              const targetSet = new Set(targetTables)
+              return legacyData.filter((row) => targetSet.has(row.source_table))
+            }
+          }
+
+          // Client-side fallback
+          if (targetTables.length === 0) return []
+          const resultsMap = new Map()
+          const currentMemberIds = new Set((activeMembers || []).map((m) => String(m.id)))
+
+          for (const table of targetTables) {
+            try {
+              const { data, error } = await supabase
+                .from(table)
+                .select('*')
+                .limit(100)
+
+              if (error || !Array.isArray(data)) continue
+
+              const localCodeMap = buildMemberIndexCodeMap(data, {
+                format: memberCodeFormat,
+                codeLength: memberCodeLength,
+                persistedCodes: workspaceMemberCodeAssignments,
+                allowLegacyFallback: false
+              })
+
+              const matches = classifyMemberSearch({
+                members: data,
+                query,
+                getCode: (m) => getMemberIndexCode(m, localCodeMap) || m?.member_code || '',
+                getCodeAliases: (m) => getMemberIndexCodeAliases(m, localCodeMap),
+                codeLength: memberCodeLength
+              }).visible
+
+              for (const member of matches) {
+                if (!activeSettings.include_deleted && member.deleted_at) continue
+                const idStr = String(member.id)
+                if (!resultsMap.has(idStr)) {
+                  resultsMap.set(idStr, {
+                    canonical_member_id: member.id,
+                    source_table: table,
+                    source_month_label: table.replace('_', ' '),
+                    full_name: getSearchableMemberName(member),
+                    gender: member.Gender || member.gender || '',
+                    phone_number: member['Phone Number'] || member.phone_number || member.phone || '',
+                    age: member.Age || member.age || '',
+                    current_level: member['Current Level'] || member.level || '',
+                    member_code: getMemberIndexCode(member, localCodeMap) || member.member_code || '',
+                    already_in_current_table: currentMemberIds.has(idStr),
+                    is_deleted_in_current_table: false,
+                    is_deleted_in_source: Boolean(member.deleted_at),
+                    source_updated_at: member.inserted_at || new Date().toISOString()
+                  })
+                }
+              }
+            } catch (tblErr) {
+              console.warn(`Failed searching candidate table ${table}:`, tblErr)
+            }
+          }
+
+          return [...resultsMap.values()]
+        } catch (err) {
+          console.error('searchMemberAcrossAllTables failed:', err)
+          return []
+        }
+      },
+      { force: true, cacheResult: false }
+    )
+  }, [activeMembers, authContext, currentTable, dataOwnerId, memberCodeFormat, memberCodeLength, monthlyTables, workspaceCacheScope, workspaceMemberCodeAssignments])
+
+  // Module-level single-flight registry for cross-month attendance requests
+  // Key format: workspaceOwnerId:targetTable:canonicalMemberId:attendanceDate:attendanceStatus
+
+  // Present/Import member from another month into current month:
+  // Transactional, idempotent, preserves canonical ID & member code.
+  // STRICTLY uses secure RPC set_member_attendance_from_other_month with ZERO client write fallback.
+  const setMemberAttendanceFromOtherMonth = useCallback(async ({
+    memberId,
+    sourceTable,
+    targetTable = currentTable,
+    attendanceDate = selectedAttendanceDate,
+    attendanceStatus = 'Present',
+    memberNameHint = 'Member'
+  }) => {
+    if (!memberId || !sourceTable || !targetTable) {
+      return { success: false, error_message: 'Missing required parameters' }
+    }
+
+    const targetOwnerId = dataOwnerId || user?.id
+    if (!targetOwnerId) {
+      return { success: false, error_message: 'Owner identification missing' }
+    }
+
+    const dateObj = attendanceDate ? new Date(attendanceDate) : (selectedAttendanceDate || new Date())
+    const dateStr = getLocalDateString(dateObj)
+    const normStatus = (attendanceStatus === true || String(attendanceStatus).toLowerCase() === 'present') ? 'Present' : 'Absent'
+    const requestId = `set_att_${memberId}_${targetTable}_${dateStr}_${normStatus}_${Date.now()}`
+
+    const singleFlightKey = `${targetOwnerId}:${targetTable}:${memberId}:${dateStr}:${normStatus}`
+    if (globalThis.__crossMonthInFlightRequests?.has(singleFlightKey)) {
+      console.warn('Cross-month attendance request already in-flight for key:', singleFlightKey)
+      return { success: false, error_message: 'Request already in progress' }
+    }
+
+    if (!globalThis.__crossMonthInFlightRequests) {
+      globalThis.__crossMonthInFlightRequests = new Set()
+    }
+    globalThis.__crossMonthInFlightRequests.add(singleFlightKey)
+
+    if (import.meta.env.DEV) {
+      console.assert(
+        memberId && sourceTable && targetTable && dateStr && normStatus,
+        'setMemberAttendanceFromOtherMonth parameter verification before RPC',
+        { memberId, sourceTable, targetTable, dateStr, normStatus }
+      )
+    }
+
+    try {
+      if (!isSupabaseConfigured()) {
+        const msg = `${memberNameHint} could not be added. No member data was changed.`
+        toast.error(msg)
+        return { success: false, error_message: msg }
+      }
+
+      const { data, error } = await supabase.rpc('set_member_attendance_from_other_month', {
+        p_owner_id: targetOwnerId,
+        p_source_table: sourceTable,
+        p_target_table: targetTable,
+        p_member_id: memberId,
+        p_attendance_date: dateStr,
+        p_attendance_status: normStatus,
+        p_request_id: requestId
+      })
+
+      const isTransportError = Boolean(error)
+      const isSuccessTrue = Boolean(data && data.success === true)
+      const hasMemberObj = Boolean(data && data.member && data.member.id)
+      const isMemberIdMatch = Boolean(hasMemberObj && String(data.member.id) === String(memberId) && String(data.member_id) === String(memberId))
+      const isTargetTableMatch = Boolean(data && String(data.target_table) === String(targetTable))
+      const isAttendanceDateMatch = Boolean(data && String(data.attendance_date) === String(dateStr))
+      const isAttendanceStatusMatch = Boolean(data && String(data.attendance_status) === String(normStatus))
+
+      const isValidResponse = !isTransportError && isSuccessTrue && hasMemberObj && isMemberIdMatch && isTargetTableMatch && isAttendanceDateMatch && isAttendanceStatusMatch
+
+      if (!isValidResponse) {
+        if (hasMemberObj && !isMemberIdMatch) {
+          console.error('HIGH-SEVERITY IDENTITY MISMATCH: RPC returned member ID', data.member?.id, 'expected', memberId)
+        }
+        console.error('set_member_attendance_from_other_month RPC error or invalid response:', error || data?.error_message || data)
+        const msg = `${memberNameHint} could not be added. No member data was changed.`
+        toast.error(msg)
+        return { success: false, error_message: msg, serverError: error?.message || data?.error_message }
+      }
+
+      // Local-first immediate merge from confirmed RPC response ONLY
+      const rawMember = data.member
+      const normalizedMember = normalizeMemberRecord(rawMember)
+      const codeAss = data.code_assignment
+      const isPresentBool = normStatus === 'Present'
+
+      // 1. Merge member into active members state (match strictly by canonical UUID)
+      setMembers((prev) => {
+        const exists = prev.some((m) => String(m.id) === String(memberId))
+        if (exists) {
+          return prev.map((m) => (String(m.id) === String(memberId) ? { ...m, ...normalizedMember } : m))
+        }
+        return [normalizedMember, ...prev]
+      })
+
+      // 2. Merge code assignment if available
+      if (codeAss && codeAss.current_code) {
+        writeWorkspaceMemberCodeAssignmentsCache(targetOwnerId, [codeAss])
+        setWorkspaceMemberCodeAssignments((prev) => ({
+          ...prev,
+          [codeAss.member_id]: codeAss
+        }))
+      }
+
+      // 3. Update local attendanceData (true if Present, false if Absent)
+      setAttendanceData((prev) => ({
+        ...prev,
+        [dateStr]: {
+          ...(prev[dateStr] || {}),
+          [normalizedMember.id]: isPresentBool
+        }
+      }))
+
+      // 4. Update local IndexedDB cache
+      persistMemberPreviewIndex(targetTable, [normalizedMember], {
+        workspaceScope: workspaceCacheScope
+      }).catch(() => {})
+
+      // 5. Toast message
+      const memberName = getSearchableMemberName(normalizedMember)
+      const monthLabel = targetTable.replace('_', ' ')
+      const actionText = isPresentBool ? 'present' : 'absent'
+      if (data.status === 'already_present_in_month') {
+        toast.success(`${memberName} was marked ${actionText}.`)
+      } else {
+        toast.success(`${memberName} was added to ${monthLabel} and marked ${actionText}.`)
+      }
+
+      return {
+        success: true,
+        status: data.status,
+        member: normalizedMember,
+        memberCode: data.member_code || codeAss?.current_code || ''
+      }
+    } catch (err) {
+      console.error('setMemberAttendanceFromOtherMonth error:', err)
+      const msg = 'The secure attendance update is not available yet. No member data was changed.'
+      toast.error(msg)
+      return { success: false, error_message: msg }
+    } finally {
+      globalThis.__crossMonthInFlightRequests?.delete(singleFlightKey)
+    }
+  }, [currentTable, dataOwnerId, selectedAttendanceDate, user?.id, workspaceCacheScope])
+
+  const presentMemberFromOtherMonth = setMemberAttendanceFromOtherMonth
+
+
 
   // Validate member data for missing fields
   const validateMemberData = useCallback((member) => {
@@ -6153,7 +6504,6 @@ export const AppProvider = ({ children }) => {
 
     return missingDates
   }, [attendanceData])
-
   // Wrapper function to set attendance date and save to localStorage
   const setAndSaveAttendanceDate = useCallback((date, tableName = currentTable) => {
     const effectiveTable = tableName || currentTable
@@ -6168,6 +6518,9 @@ export const AppProvider = ({ children }) => {
   const syncCalendarToToday = useCallback(async ({ forceAuto = false } = {}) => {
     if (import.meta.env.MODE === 'test') return
     if (!currentTable || authLoading) return
+    // This is a local reconciliation path. Explicit admin override actions own
+    // persistence; automatic calendar changes must not create background writes.
+    if (!isBackendHealthy()) return
 
     const now = new Date()
     const currentDateKey = selectedAttendanceDate ? getLocalDateString(selectedAttendanceDate) : null
@@ -6184,43 +6537,11 @@ export const AppProvider = ({ children }) => {
         setAndSaveAttendanceDate(activeLockedSunday, currentTable)
       }
 
-      if (user?.id && isSupabaseConfigured()) {
-        const shouldPersist =
-          liveCalendarBroadcastRef.current.table !== currentTable ||
-          liveCalendarBroadcastRef.current.date !== lockedDateKey
-
-        if (!shouldPersist) return
-
-        try {
-          const [, yearStr] = currentTable.split('_')
-          await supabase
-            .from('user_preferences')
-            .upsert({
-              user_id: user.id,
-              admin_sticky_month: currentTable,
-              admin_sticky_year: parseInt(yearStr, 10) || now.getFullYear(),
-              admin_sticky_sundays: [lockedDateKey],
-              locked_default_date: lockedDateKey,
-              updated_at: new Date().toISOString()
-            }, {
-              onConflict: 'user_id'
-            })
-
-          sendAdminPeriodBroadcast({
-            targetTable: currentTable,
-            targetDate: lockedDateKey
-          })
-        } catch (err) {
-          console.error('Error syncing override calendar defaults:', err)
-        }
-
-        liveCalendarBroadcastRef.current = { table: currentTable, date: lockedDateKey }
-      }
       return
     }
 
     if (!forceAuto && isPersonalManualMode) {
-      const targetTable = manualMonthTable && monthlyTables.includes(manualMonthTable)
+      const targetTable = manualMonthTable && (monthlyTables.length <= 1 || monthlyTables.includes(manualMonthTable))
         ? manualMonthTable
         : currentTable
       const fallbackDate = manualSundayDate || selectedAttendanceDate || getSundayDefaultForTable(targetTable, now)
@@ -6254,39 +6575,6 @@ export const AppProvider = ({ children }) => {
     if (currentDateKey !== activeSundayKey) {
       setAndSaveAttendanceDate(activeSunday, nextTable)
     }
-
-    // Owner updates shared "live" Sunday so collaborators stay in sync.
-    if (!isCollaborator && user?.id && isSupabaseConfigured()) {
-      const shouldPersist =
-        liveCalendarBroadcastRef.current.table !== nextTable ||
-        liveCalendarBroadcastRef.current.date !== activeSundayKey
-
-      if (!shouldPersist) return
-
-      try {
-        await supabase
-          .from('user_preferences')
-          .upsert({
-            user_id: user.id,
-            admin_sticky_month: nextTable,
-            admin_sticky_year: now.getFullYear(),
-            admin_sticky_sundays: [activeSundayKey],
-            locked_default_date: null,
-            updated_at: new Date().toISOString()
-          }, {
-            onConflict: 'user_id'
-          })
-
-        sendAdminPeriodBroadcast({
-          targetTable: nextTable,
-          targetDate: activeSundayKey
-        })
-      } catch (err) {
-        console.error('Error syncing live calendar defaults:', err)
-      }
-
-      liveCalendarBroadcastRef.current = { table: nextTable, date: activeSundayKey }
-    }
   }, [
     authLoading,
     currentTable,
@@ -6298,18 +6586,21 @@ export const AppProvider = ({ children }) => {
     isCollaborator,
     isPersonalManualMode,
     manualMonthTable,
-    manualSundayDate,
-    user?.id,
-    isSupabaseConfigured,
-    sendAdminPeriodBroadcast
+    manualSundayDate
   ])
+
+  // Coalesces concurrent/re-entrant calendar saves with the same intent so a
+  // duplicate invocation (double wrap, effect re-entry, repeated click) cannot
+  // issue a second save_personal_preferences for the same action.
+  const personalCalendarSavesRef = useRef(null)
 
   const setPersonalCalendarMode = useCallback(async ({
     mode = 'auto',
     tableName = currentTable,
-    date = selectedAttendanceDate,
-    durationHours = PERSONAL_MANUAL_OVERRIDE_HOURS,
-    silent = false
+    date,
+    durationMs = PERSONAL_MANUAL_DURATION_MS,
+    silent = false,
+    persistPreference = true
   } = {}) => {
     const nextMode = mode === 'manual' ? 'manual' : 'auto'
 
@@ -6320,6 +6611,40 @@ export const AppProvider = ({ children }) => {
       return false
     }
 
+    // Never attempt (or toast about) an explicit calendar save while the
+    // personal preference bundle is still hydrating. The UI disables the
+    // controls, but this guards any path that calls in before that resolves.
+    if (!preferencesHydrated) {
+      console.warn('[AppContext] setPersonalCalendarMode skipped until preference hydration completes.')
+      return false
+    }
+
+    // A Manual commit is only legitimate when the user explicitly chose a
+    // Sunday. A bare/stale call (no explicit date) must never fall back to the
+    // default month/date (January_2026 / its first Sunday) and persist stale
+    // values — i.e. clicking Manual alone must not produce a save.
+    if (nextMode === 'manual') {
+      const explicitDate = (date instanceof Date) && !Number.isNaN(date.getTime())
+      if (!explicitDate) {
+        if (!silent) console.warn('[AppContext] Manual calendar save requires an explicit Sunday date; skipped.')
+        return false
+      }
+    }
+
+    // A while-waiting duplicate of the same calendar intent must not issue a
+    // second RPC write. Reuse the in-flight save when the action matches.
+    const toDateKeyArg = (value) => value instanceof Date
+      ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+      : (value ? String(value) : '')
+    const saveKey = nextMode === 'manual'
+      ? `manual:${String(tableName || currentTable || '')}:${toDateKeyArg(date)}`
+      : 'auto'
+    const inflight = personalCalendarSavesRef.current
+    if (inflight && inflight.key === saveKey) {
+      return inflight.promise
+    }
+
+    const perform = (async () => {
     try {
       if (nextMode === 'manual') {
         const targetTable = tableName || currentTable || getCurrentMonthTable()
@@ -6332,35 +6657,57 @@ export const AppProvider = ({ children }) => {
           throw new Error('Could not find a Sunday for manual mode')
         }
 
-        const expiresAt = new Date(Date.now() + (durationHours * 60 * 60 * 1000))
-        const nextPreferences = {
-          calendar_mode: 'manual',
-          current_month_table: targetTable,
-          manual_month_table: targetTable,
-          manual_sunday_date: getLocalDateString(targetDate),
-          manual_override_until: expiresAt.toISOString()
+      const expiresAt = new Date(Date.now() + durationMs)
+        const nextPreferences = buildManualCalendarPreferences({
+          tableName: targetTable,
+          dateKey: getLocalDateString(targetDate),
+          expiresAt: expiresAt.toISOString()
+        })
+
+        // Preference writes return false for a refused, unhealthy, or
+        // unhydrated backend instead of always throwing.  Do not update the
+        // visible month until the authoritative personal preference confirms.
+        if (persistPreference) {
+          if (!authContext?.savePersonalPreferences) {
+            throw new Error('Calendar preferences are not ready to save yet')
+          }
+          const saved = await authContext.savePersonalPreferences(nextPreferences, {
+            requireServerConfirmation: true
+          })
+          if (!saved) {
+            if (!silent) toast.error('Manual month and Sunday were not saved. Please try again.')
+            return false
+          }
         }
 
-        changeCurrentTable(targetTable)
+        setConfirmedCalendarPreferenceOverride(nextPreferences)
+        changeCurrentTable(targetTable, { persistPreference: false })
         setAndSaveAttendanceDate(targetDate, targetTable)
-
-        if (authContext?.saveUserPreferences) {
-          await authContext.saveUserPreferences(nextPreferences)
-        }
+        setPersonalManualDeadlineAt(expiresAt.getTime())
+        setPersonalManualExpiryWarning(false)
 
         return true
       }
 
-      if (authContext?.saveUserPreferences) {
-        await authContext.saveUserPreferences({
-          calendar_mode: 'auto',
-          manual_month_table: null,
-          manual_sunday_date: null,
-          manual_override_until: null
+      if (persistPreference) {
+        if (!authContext?.savePersonalPreferences) {
+          throw new Error('Calendar preferences are not ready to save yet')
+        }
+        const saved = await authContext.savePersonalPreferences(buildAutoCalendarPreferences(), {
+          requireServerConfirmation: true
         })
+        if (!saved) {
+          if (!silent) toast.error('Auto mode was not saved. Please try again.')
+          return false
+        }
       }
 
+      setConfirmedCalendarPreferenceOverride(buildAutoCalendarPreferences())
       await syncCalendarToToday({ forceAuto: true })
+      setPersonalManualExpiryWarning(false)
+      // Returning to Auto cancels any still-armed manual expiry timer so the
+      // background expiry effect cannot later issue a redundant auto write.
+      setPersonalManualDeadlineAt(null)
       return true
     } catch (error) {
       console.error('Error updating personal calendar mode:', error)
@@ -6369,6 +6716,13 @@ export const AppProvider = ({ children }) => {
       }
       return false
     }
+    })()
+
+    personalCalendarSavesRef.current = { key: saveKey, promise: perform }
+    perform.finally(() => {
+      if (personalCalendarSavesRef.current?.key === saveKey) personalCalendarSavesRef.current = null
+    }).catch(() => {})
+    return perform
   }, [
     authContext,
     collaboratorLockedByOwner,
@@ -6376,24 +6730,81 @@ export const AppProvider = ({ children }) => {
     selectedAttendanceDate,
     changeCurrentTable,
     setAndSaveAttendanceDate,
-    syncCalendarToToday
+    syncCalendarToToday,
+    preferencesHydrated
   ])
 
-  useEffect(() => {
-    if (personalCalendarMode !== 'manual' || !manualOverrideUntilDate) return
+  const refreshPersonalManualInactivity = useCallback(() => {
+    if (personalCalendarMode !== 'manual' || collaboratorLockedByOwner) return
+    setPersonalManualDeadlineAt(getPersonalManualDeadline())
+    setPersonalManualExpiryWarning(false)
+  }, [personalCalendarMode, collaboratorLockedByOwner])
 
-    const remainingMs = manualOverrideUntilDate.getTime() - Date.now()
-    if (remainingMs <= 0) {
-      setPersonalCalendarMode({ mode: 'auto', silent: true })
-      return
+  const isPersonalManualExpiryBlocked = useCallback(() => {
+    if (typeof document === 'undefined') return false
+
+    // Open forms/modals, explicit in-flight actions, and marked unsaved form
+    // state are all safe reasons to postpone automatic local expiry.
+    return Boolean(document.querySelector(
+      '[role="dialog"], [aria-modal="true"], [data-unsaved="true"], [data-saving="true"], [data-pending="true"], [aria-busy="true"]'
+    ))
+  }, [])
+
+  useEffect(() => {
+    if (!isPersonalManualMode || !effectiveManualDeadlineAt) return
+
+    let timeoutId
+    const scheduleExpiry = () => {
+      const now = Date.now()
+      const remainingMs = effectiveManualDeadlineAt - now
+      const phase = getPersonalManualExpiryPhase({
+        isManualMode: isPersonalManualMode,
+        deadlineAt: effectiveManualDeadlineAt,
+        now,
+        isBlocked: isPersonalManualExpiryBlocked()
+      })
+      if (phase === 'active') {
+        timeoutId = window.setTimeout(scheduleExpiry, remainingMs - PERSONAL_MANUAL_WARNING_MS)
+        return
+      }
+
+      if (phase === 'warning') {
+        setPersonalManualExpiryWarning(true)
+        timeoutId = window.setTimeout(scheduleExpiry, remainingMs)
+        return
+      }
+
+      if (phase === 'deferred') {
+        setPersonalManualExpiryWarning(true)
+        timeoutId = window.setTimeout(scheduleExpiry, 5000)
+        return
+      }
+
+      setPersonalManualExpiryWarning(false)
+      // Expiring Manual is a LOCAL state transition and must NOT write
+      // preferences automatically. The reconciliation effect moves the visible
+      // month back to the live month; no timer/background effect may issue a
+      // save_personal_preferences write on its own.
+      setConfirmedCalendarPreferenceOverride(buildAutoCalendarPreferences())
+      setPersonalManualDeadlineAt(null)
     }
 
-    const timeoutId = window.setTimeout(() => {
-      setPersonalCalendarMode({ mode: 'auto', silent: true })
-    }, remainingMs)
-
+    scheduleExpiry()
     return () => window.clearTimeout(timeoutId)
-  }, [personalCalendarMode, manualOverrideUntilDate, setPersonalCalendarMode])
+  }, [effectiveManualDeadlineAt, isPersonalManualExpiryBlocked, isPersonalManualMode, setPersonalCalendarMode])
+
+  useEffect(() => {
+    if (!isPersonalManualMode || typeof document === 'undefined') return
+    const refresh = () => refreshPersonalManualInactivity()
+    document.addEventListener('pointerdown', refresh, { passive: true, capture: true })
+    document.addEventListener('keydown', refresh, true)
+    document.addEventListener('touchstart', refresh, { passive: true, capture: true })
+    return () => {
+      document.removeEventListener('pointerdown', refresh, true)
+      document.removeEventListener('keydown', refresh, true)
+      document.removeEventListener('touchstart', refresh, true)
+    }
+  }, [isPersonalManualMode, refreshPersonalManualInactivity])
 
   useEffect(() => {
     if (import.meta.env.MODE === 'test') return
@@ -6810,7 +7221,11 @@ export const AppProvider = ({ children }) => {
             // keys are extracted locally, so no runtime schema RPC is required.
             let query = supabase.from(currentTable).select('*')
             if (ownerId) query = query.eq('user_id', ownerId)
-            query = query.is('deleted_at', null)
+            if (typeof query.is === 'function') {
+              query = query.is('deleted_at', null)
+            } else if (typeof query.filter === 'function') {
+              query = query.filter('deleted_at', 'is', null)
+            }
             const { data: page, error: pageError } = await query.range(offset, offset + PAGE_SIZE - 1)
             if (pageError) throw pageError
             if (!page?.length) break
@@ -6883,9 +7298,15 @@ export const AppProvider = ({ children }) => {
         ? applyPendingAttendanceChanges(newAttendanceData, pendingChanges, currentTable)
         : newAttendanceData
 
-      // Update attendance data state
-      attendanceDataRef.current = reconciledAttendanceData
-      setAttendanceData(reconciledAttendanceData)
+      // Update attendance data state cleanly
+      setAttendanceData(prev => {
+        const next = { ...prev }
+        Object.keys(reconciledAttendanceData).forEach(dk => {
+          next[dk] = { ...(next[dk] || {}), ...reconciledAttendanceData[dk] }
+        })
+        attendanceDataRef.current = next
+        return next
+      })
       console.log('Loaded attendance data for all dates:', Object.keys(reconciledAttendanceData), 'from', allData.length, 'rows')
       return reconciledAttendanceData
 
@@ -6902,6 +7323,7 @@ export const AppProvider = ({ children }) => {
         console.log('Demo mode - badge data will be managed locally')
         return
       }
+      if (!isBackendHealthy()) return
 
       appContextLog('Loading badge data from Supabase...')
 
@@ -6929,6 +7351,7 @@ export const AppProvider = ({ children }) => {
       }
 
       if (error) {
+        if (isBackendDegradedError(error)) markBackendDegraded(error)
         console.error('Error loading badge data:', error)
 
         // Only treat as missing table if it's actually a missing TABLE error
@@ -7178,6 +7601,10 @@ export const AppProvider = ({ children }) => {
       toast.info('Switch to Auto or Online before syncing saved changes.')
       return { success: false, error: 'forced-offline' }
     }
+    if (!isBackendHealthy()) {
+      setOfflineStatusMessage('Service is temporarily unavailable. Saved offline changes will retry after recovery.')
+      return { success: false, error: 'service-unavailable', queued: true }
+    }
 
     offlineSyncInFlightRef.current = true
     setIsSyncingOffline(true)
@@ -7401,7 +7828,7 @@ export const AppProvider = ({ children }) => {
   syncOfflineChangesRef.current = syncOfflineChanges
 
   useEffect(() => {
-    if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline) return undefined
+    if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline || !isBackendHealthy()) return undefined
 
     const syncableChanges = offlinePendingChanges.filter((change) => (
       change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
@@ -7442,6 +7869,10 @@ export const AppProvider = ({ children }) => {
   const refreshSyncedDataInBackground = useCallback(async (source = 'background', options = {}) => {
     if (!currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
     if (offlineMode === 'online' && !isOnline) return
+    if (!isBackendHealthy()) {
+      setMemberPreviewSyncStatus(prev => ({ ...prev, isSyncing: false, source: 'paused-degraded' }))
+      return
+    }
 
     const now = Date.now()
     const minGapMs = options.force ? 0 : 3500
@@ -7488,6 +7919,7 @@ export const AppProvider = ({ children }) => {
 
     const runResumeSync = async (source = 'resume') => {
       if (document.visibilityState === 'hidden' || !isBrowserOnline()) return { skipped: 'offline-or-hidden' }
+      if (!isBackendHealthy()) return { skipped: 'backend-degraded' }
 
       // Session confirmation is silent and never replaces the visible app with a loader.
       if (!isDeveloperBypass && isSupabaseConfigured()) {
@@ -7901,6 +8333,19 @@ export const AppProvider = ({ children }) => {
     }
   }
 
+  // One explicit, bounded re-read of the preference bundle used by the calendar
+  // control's Retry. It never writes preferences.
+  const retryPreferenceHydration = useCallback(async () => {
+    const owner = dataOwnerId || user?.id
+    if (!owner || typeof authContext?.loadUserPreferences !== 'function') return false
+    try {
+      await authContext.loadUserPreferences(owner)
+      return true
+    } catch {
+      return false
+    }
+  }, [dataOwnerId, user?.id, authContext?.loadUserPreferences])
+
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value = useMemo(() => ({
     checkCollaboratorStatus,
@@ -7931,6 +8376,8 @@ export const AppProvider = ({ children }) => {
     forceRefreshMembersSilent,
     refreshMemberPreviewById,
     searchMemberAcrossAllTables,
+    setMemberAttendanceFromOtherMonth,
+    presentMemberFromOtherMonth,
     addMember,
     updateMember,
     deleteMember,
@@ -8016,7 +8463,9 @@ export const AppProvider = ({ children }) => {
     manualMonthTable,
     manualSundayDate,
     manualOverrideUntil,
+    personalManualExpiryWarning,
     setPersonalCalendarMode,
+    refreshPersonalManualInactivity,
     ownerStickyMonth,
     ownerStickySundays,
     adminSyncNotice,
@@ -8026,6 +8475,12 @@ export const AppProvider = ({ children }) => {
     setCollaboratorOverride,
     fetchLockedDefaultDate,
     sendAdminPeriodBroadcast,
+    historicalSearchSettings,
+    saveHistoricalSearchSettings,
+    preferencesHydrated,
+    preferencesLoading,
+    preferencesError,
+    retryPreferenceHydration,
     getDevCounters: () => devCountersRef.current
   }), [
     members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, preferences, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, ensureMemberCodeAssignment, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
@@ -8033,7 +8488,7 @@ export const AppProvider = ({ children }) => {
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,
     refreshSearch, forceRefreshMembers, forceRefreshMembersSilent, refreshMemberPreviewById,
-    searchMemberAcrossAllTables, addMember, updateMember, deleteMember,
+    searchMemberAcrossAllTables, setMemberAttendanceFromOtherMonth, presentMemberFromOtherMonth, addMember, updateMember, deleteMember,
     fetchMembers, fetchMoreMembers, markAttendance, bulkAttendance, fetchAttendanceForDate, fetchAttendanceForDateInTable, fetchAndApplyAttendanceForDate,
     loadAllAttendanceData, loadAllBadgeData, changeCurrentTable, createNewMonth,
     deleteMonthTable, fetchMonthlyTables, getAttendanceColumns, getAvailableAttendanceDates,
@@ -8048,7 +8503,8 @@ export const AppProvider = ({ children }) => {
     prepareOfflineData, clearOfflineCacheData, syncOfflineChanges, refreshOfflineStatus,
     hasAccess, isCollaborator, isAdminCollaborator, dataOwnerId, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil,
     setPersonalCalendarMode, ownerStickyMonth, ownerStickySundays, adminSyncNotice, acknowledgeAdminSync,
-    lockedDefaultDate, saveLockedDefaultDate, setCollaboratorOverride, fetchLockedDefaultDate, sendAdminPeriodBroadcast
+    lockedDefaultDate, saveLockedDefaultDate, setCollaboratorOverride, fetchLockedDefaultDate, sendAdminPeriodBroadcast,
+    historicalSearchSettings, saveHistoricalSearchSettings, preferencesHydrated, preferencesLoading, preferencesError, retryPreferenceHydration
   ])
 
   return (

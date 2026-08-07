@@ -13,16 +13,44 @@ const MonthPickerPopup = ({
     autoEnabled = null,
     onToggleAuto = null,
     toggleLabel = 'Auto',
+    calendarMode = null,
+    onCalendarModeChange = null,
+    calendarModeSaving = false,
     manualModeDisabled = false,
     disabledReason = '',
     manualStatus = ''
 }) => {
-    const { monthlyTables, currentTable, setCurrentTable, isCollaborator, selectedAttendanceDate, setAndSaveAttendanceDate, getSundaysInMonth, ownerStickySundays } = useApp()
+    const { monthlyTables, currentTable, setCurrentTable, isCollaborator, selectedAttendanceDate, setAndSaveAttendanceDate, getSundaysInMonth, ownerStickySundays, preferencesHydrated, preferencesLoading, preferencesError, retryPreferenceHydration } = useApp()
     const { selection } = useHapticFeedback()
     const popupRef = useRef(null)
     const [previewTable, setPreviewTable] = useState(currentTable)
     const showAutoToggle = typeof autoEnabled === 'boolean' && typeof onToggleAuto === 'function'
-    const selectionDisabled = showAutoToggle ? (autoEnabled || manualModeDisabled) : false
+    const showCalendarModeControl = (calendarMode === 'auto' || calendarMode === 'manual') && typeof onCalendarModeChange === 'function'
+    const [pendingCalendarMode, setPendingCalendarMode] = useState(calendarMode === 'manual' ? 'manual' : 'auto')
+    const [isSavingSelection, setIsSavingSelection] = useState(false)
+    // Synchronous ref guard: React state updates do not apply until the next
+    // render, so two rapid clicks in the same tick would both see the state
+    // as not-yet-saving. This ref flips instantly to prevent a duplicate save.
+    const selectionSaveInFlightRef = useRef(false)
+    const isCalendarSaving = calendarModeSaving || isSavingSelection
+
+    // Hydration readiness: calendar saves must wait for the personal
+    // preference bundle. While pending (or failed) the Manual/Auto controls
+    // and Sunday confirmation stay disabled and we show a status message
+    // instead of letting a save be rejected later with an error toast.
+    const calendarSettingsReady = preferencesHydrated === true
+    const calendarSettingsLoading = !preferencesHydrated && !preferencesError
+    const calendarSettingsError = !preferencesHydrated && !!preferencesError
+    const selectionDisabled = manualModeDisabled || isSavingSelection || (showCalendarModeControl
+        ? (pendingCalendarMode !== 'manual' || !calendarSettingsReady || calendarSettingsError)
+        : (showAutoToggle ? autoEnabled : false))
+
+    // Confirmed/current vs preview/manual table. Inside a Manual calendar the
+    // orange highlight and checkmark must track the temporarily previewed
+    // month (previewTable); the persisted/current month is only used for Auto
+    // and legacy flows so a preview never looks bound to the confirmed table.
+    const isManualPreview = showCalendarModeControl && pendingCalendarMode === 'manual'
+    const activeDisplayTable = isManualPreview ? (previewTable || currentTable) : currentTable
 
     const handleClose = useCallback(() => {
         selection()
@@ -32,8 +60,40 @@ const MonthPickerPopup = ({
     useEffect(() => {
         if (isOpen) {
             setPreviewTable(currentTable)
+            setPendingCalendarMode(calendarMode === 'manual' ? 'manual' : 'auto')
         }
-    }, [isOpen, currentTable])
+    }, [isOpen, currentTable, calendarMode])
+
+    const handleCalendarModeChange = async (nextMode) => {
+        if (manualModeDisabled || isCalendarSaving) return
+        selection()
+
+        // Choosing Manual only prepares the picker. It is persisted exactly
+        // once after the user chooses a Sunday.
+        if (nextMode === 'manual') {
+            setPendingCalendarMode('manual')
+            return
+        }
+
+        if (calendarMode !== 'manual') {
+            setPendingCalendarMode('auto')
+            return
+        }
+
+        if (selectionSaveInFlightRef.current) return
+        selectionSaveInFlightRef.current = true
+        setIsSavingSelection(true)
+        try {
+            const saved = await onCalendarModeChange('auto')
+            if (saved !== false) {
+                setPendingCalendarMode('auto')
+                onClose()
+            }
+        } finally {
+            selectionSaveInFlightRef.current = false
+            setIsSavingSelection(false)
+        }
+    }
 
     // Close on outside click
     useEffect(() => {
@@ -65,7 +125,7 @@ const MonthPickerPopup = ({
         selection()
         setPreviewTable(table)
         if (!onSelectSunday) {
-            setCurrentTable(table)
+            setCurrentTable(table, { persistPreference: true })
         }
     }
 
@@ -101,23 +161,31 @@ const MonthPickerPopup = ({
         ? `${selectedAttendanceDate.getFullYear()}-${String(selectedAttendanceDate.getMonth() + 1).padStart(2, '0')}-${String(selectedAttendanceDate.getDate()).padStart(2, '0')}`
         : null
 
-    const handleSelectSunday = (dateStr) => {
+    const handleSelectSunday = async (dateStr) => {
         if (selectionDisabled) return
         const [y, m, d] = dateStr.split('-').map(Number)
         if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return
         selection()
         const selectedDate = new Date(y, m - 1, d)
         if (onSelectSunday) {
-            onSelectSunday({
-                table: previewTable || currentTable,
-                date: selectedDate,
-                dateStr
-            })
-            onClose()
+            if (selectionSaveInFlightRef.current) return
+            selectionSaveInFlightRef.current = true
+            setIsSavingSelection(true)
+            try {
+                const saved = await onSelectSunday({
+                    table: previewTable || currentTable,
+                    date: selectedDate,
+                    dateStr
+                })
+                if (saved !== false) onClose()
+            } finally {
+                selectionSaveInFlightRef.current = false
+                setIsSavingSelection(false)
+            }
             return
         }
         if (previewTable && previewTable !== currentTable) {
-            setCurrentTable(previewTable)
+            setCurrentTable(previewTable, { persistPreference: true })
         }
         setAndSaveAttendanceDate(selectedDate)
         onClose()
@@ -167,7 +235,27 @@ const MonthPickerPopup = ({
                         </span>
                     </div>
                     <div className="flex items-center gap-2">
-                        {showAutoToggle && (
+                        {showCalendarModeControl ? (
+                            <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 text-xs font-semibold dark:border-gray-700 dark:bg-gray-900" role="group" aria-label="Calendar mode">
+                                {['auto', 'manual'].map((mode) => (
+                                    <button
+                                        key={mode}
+                                        type="button"
+                                        disabled={isCalendarSaving || !calendarSettingsReady || calendarSettingsError || (mode === 'manual' && manualModeDisabled)}
+                                        onClick={() => handleCalendarModeChange(mode)}
+                                        aria-pressed={pendingCalendarMode === mode}
+                                        className={`rounded-md px-2.5 py-1.5 capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${pendingCalendarMode === mode
+                                            ? mode === 'manual'
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'bg-orange-600 text-white'
+                                            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+                                            }`}
+                                    >
+                                        {mode}
+                                    </button>
+                                ))}
+                            </div>
+                        ) : showAutoToggle && (
                             <button
                                 type="button"
                                 onClick={onToggleAuto}
@@ -193,7 +281,38 @@ const MonthPickerPopup = ({
                     </div>
                 </div>
 
-                {showAutoToggle && (
+                {showCalendarModeControl ? (
+                    <div className={`px-4 py-3 border-b border-gray-200/60 dark:border-gray-700/60 ${pendingCalendarMode === 'manual'
+                        ? 'bg-indigo-50/80 dark:bg-indigo-900/20'
+                        : 'bg-emerald-50/80 dark:bg-emerald-900/20'
+                        }`}>
+                        <p className={`text-xs font-semibold ${pendingCalendarMode === 'manual' ? 'text-indigo-800 dark:text-indigo-200' : 'text-emerald-800 dark:text-emerald-200'}`}>
+                            {pendingCalendarMode === 'manual' ? 'Choose a month and Sunday' : 'Auto follows the live Sunday'}
+                        </p>
+                        <p className={`text-[11px] mt-1 ${pendingCalendarMode === 'manual' ? 'text-indigo-700/80 dark:text-indigo-300/80' : 'text-emerald-700/80 dark:text-emerald-300/80'}`}>
+                            {calendarSettingsLoading
+                                ? 'Loading calendar settings…'
+                                : calendarSettingsError
+                                    ? 'Calendar settings could not be loaded.'
+                                    : manualModeDisabled
+                                        ? disabledReason
+                                        : pendingCalendarMode === 'manual'
+                                            ? 'Selecting a month only previews it. The choice saves when you select a Sunday.'
+                                            : 'Choose Manual to select a historical month and Sunday.'}
+                        </p>
+                        {calendarSettingsError && (
+                            <button
+                                type="button"
+                                onClick={() => retryPreferenceHydration?.()}
+                                disabled={calendarSettingsLoading}
+                                className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                Retry
+                            </button>
+                        )}
+                    </div>
+                ) : showAutoToggle && (
                     <div className={`px-4 py-3 border-b border-gray-200/60 dark:border-gray-700/60 ${autoEnabled
                             ? 'bg-emerald-50/80 dark:bg-emerald-900/20'
                             : 'bg-red-50/80 dark:bg-red-900/20'
@@ -223,7 +342,7 @@ const MonthPickerPopup = ({
                             {/* Month buttons */}
                             <div className="p-2 grid grid-cols-3 gap-1.5">
                                 {tables.map((table) => {
-                                    const isSelected = table === currentTable
+                                    const isSelected = table === activeDisplayTable
                                     return (
                                         <button
                                             key={table}

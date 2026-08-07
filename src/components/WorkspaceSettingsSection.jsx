@@ -1,6 +1,5 @@
 import React from 'react'
-import { Building2, ChevronDown, CheckCircle, RefreshCw, Calendar, Sparkles } from 'lucide-react'
-import MonthPickerPopup from './MonthPickerPopup'
+import { Building2, ChevronDown, Calendar } from 'lucide-react'
 
 const WorkspaceSettingsSection = ({
     preferences,
@@ -13,21 +12,25 @@ const WorkspaceSettingsSection = ({
     isOverrideSaving,
     handleEnableOverride,
     handleDisableOverride,
-    handleOverrideSundaySelect,
+    isPersonalManualMode,
+    manualMonthTable,
+    manualSundayDate,
+    personalModeDisabled,
+    personalManualExpiryWarning,
+    onOpenPersonalManualPicker,
+    onReturnToAuto,
+    onStayInManual,
     toggleWorkspacePanel,
     workspacePanels,
     getSettingTargetClass,
-    showOverridePicker,
     setShowOverridePicker,
     overrideButtonRef,
     isLiveNow,
-    liveMonthExists,
-    liveSundayDateKey,
-    getMonthDisplayName,
-    handleQuickCreateMonth
+    getMonthDisplayName
 }) => {
     const hasAdminAccess = !isCollaborator || isAdminCollaborator
     const isOverrideActive = Boolean(lockedDefaultDate)
+    const manualModeIsLocked = Boolean(personalModeDisabled || (isCollaborator && lockedDefaultDate))
 
     const renderWorkspacePanel = (panelKey, title, description, iconClassName, icon, children) => {
         const Icon = icon
@@ -152,24 +155,12 @@ const WorkspaceSettingsSection = ({
                                         </div>
                                         <div className="relative" ref={overrideButtonRef}>
                                             <button
-                                                onClick={() => setShowOverridePicker(!showOverridePicker)}
+                                            onClick={() => setShowOverridePicker(true)}
                                                 className="px-2.5 py-1 rounded-md border border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-900 text-xs font-semibold text-orange-600 dark:text-orange-400 hover:bg-orange-50 transition-colors flex items-center gap-1.5"
                                             >
                                                 Change
                                                 <ChevronDown className="w-3 h-3" />
                                             </button>
-
-                                            {showOverridePicker && (
-                                                <div className="absolute top-full right-0 mt-2 z-[60]">
-                                                    <MonthPickerPopup
-                                                        onClose={() => setShowOverridePicker(false)}
-                                                        onSelect={handleOverrideSundaySelect}
-                                                        monthlyTables={monthlyTables}
-                                                        currentTable={currentTable}
-                                                        selectedDate={selectedAttendanceDate}
-                                                    />
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -178,26 +169,70 @@ const WorkspaceSettingsSection = ({
 
                         <div className="h-px bg-gray-100 dark:bg-gray-700" />
 
-                        {/* Status Check */}
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                                <p className="font-semibold text-gray-900 dark:text-white">Calendar Mode</p>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">
-                                    {isOverrideActive ? 'Locked to admin override' : isLiveNow ? 'Live: following real-time Sunday' : 'Custom: manual navigation active'}
-                                </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                {isLiveNow && !isOverrideActive ? (
+                        <div className="space-y-3" data-setting-id="personal_calendar_mode">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                    <p className="font-semibold text-gray-900 dark:text-white">Calendar Mode</p>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                                        {manualModeIsLocked
+                                            ? 'The workspace owner has locked the attendance date.'
+                                            : isPersonalManualMode
+                                                ? 'Choose a month and Sunday temporarily without changing the workspace schedule.'
+                                                : 'Following the current month and Sunday.'}
+                                    </p>
+                                </div>
+                                {isLiveNow && !isPersonalManualMode && !manualModeIsLocked && (
                                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 text-xs font-bold uppercase tracking-wider">
-                                        <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                         Live
-                                    </span>
-                                ) : (
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs font-bold uppercase tracking-wider">
-                                        {isOverrideActive ? 'Override' : 'Custom'}
                                     </span>
                                 )}
                             </div>
+
+                            <div className="grid grid-cols-2 gap-2" role="group" aria-label="Calendar mode">
+                                <button
+                                    type="button"
+                                    onClick={onReturnToAuto}
+                                    aria-pressed={!isPersonalManualMode}
+                                    className={`btn-press min-h-[44px] rounded-xl border px-3 text-sm font-semibold transition-colors ${!isPersonalManualMode
+                                        ? 'border-orange-500 bg-orange-50 text-orange-700 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200'
+                                        : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800'}`}
+                                >
+                                    Auto
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={onOpenPersonalManualPicker}
+                                    disabled={manualModeIsLocked}
+                                    aria-pressed={isPersonalManualMode}
+                                    className={`btn-press min-h-[44px] rounded-xl border px-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${isPersonalManualMode
+                                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-indigo-400 dark:bg-indigo-500/15 dark:text-indigo-200'
+                                        : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800'}`}
+                                >
+                                    Manual
+                                </button>
+                            </div>
+
+                            {isPersonalManualMode && (
+                                <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 text-sm dark:border-indigo-900/60 dark:bg-indigo-950/25">
+                                    <p className="font-semibold text-indigo-950 dark:text-indigo-100">
+                                        Manual mode: {getMonthDisplayName(manualMonthTable)}{manualSundayDate ? ` — ${manualSundayDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}
+                                    </p>
+                                    <button type="button" onClick={onReturnToAuto} className="mt-2 font-semibold text-indigo-700 underline underline-offset-2 hover:text-indigo-900 dark:text-indigo-300 dark:hover:text-indigo-100">
+                                        Return to Auto
+                                    </button>
+                                </div>
+                            )}
+
+                            {personalManualExpiryWarning && isPersonalManualMode && (
+                                <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900/60 dark:bg-amber-950/25">
+                                    <p className="font-medium text-amber-950 dark:text-amber-100">Manual mode has been inactive for 5 minutes. Returning to Auto in 60 seconds.</p>
+                                    <div className="mt-3 flex gap-2">
+                                        <button type="button" onClick={onStayInManual} className="btn-press rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700">Stay in Manual</button>
+                                        <button type="button" onClick={onReturnToAuto} className="btn-press rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-100 dark:hover:bg-amber-900/50">Return to Auto</button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

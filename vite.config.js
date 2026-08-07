@@ -413,6 +413,7 @@ export default defineConfig({
     }
   },
   test: {
+    setupFiles: ['./src/test/setup.js'],
     exclude: ['node_modules/**', 'tests/**', 'test-results/**']
   }
 })

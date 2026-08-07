@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspens
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
-import { Search, Users, UserX, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine } from 'lucide-react'
+import { Search, Users, UserX, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine, Loader2 } from 'lucide-react'
 import QRCode from 'qrcode'
 import DateSelector from './DateSelector'
 import ConfirmModal from './ConfirmModal'
@@ -16,14 +16,22 @@ import MemberCard from './MemberCard'
 import MemberCodeBadge, { getAutoBadgeStyleKey } from './MemberCodeBadge'
 import MemberCodePassCard, { getMemberCodeCardStyle, normalizeMemberCodeCardStyleKey } from './MemberCodePassCard'
 import MissingDataModal from './MissingDataModal'
-import { resolveMemberAttendanceForDate } from '../utils/attendanceRecords'
+import { resolveMemberAttendanceForDate, getCanonicalAttendanceStatus, isMemberMarkedForDate } from '../utils/attendanceRecords'
 import { buildMemberIndexCodeMap, getMemberIndexCode, getMemberIndexCodeAliases, memberMatchesIndexCode, normalizeMemberCode } from '../utils/memberIndexCodes'
 import { getMemberCanonicalId } from '../utils/memberIdentity'
 import { buildMemberCheckInUrl } from '../utils/qrCheckIn'
+import { formatMemberCodeShareMessage } from '../utils/memberCodeShareMessage'
 import { notify } from '../utils/notify'
 import lazyWithRetry from '../utils/lazyWithRetry'
 import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
+import SearchScopeModal from './SearchScopeModal'
+import { formatHistoricalScopeSummary } from '../utils/historicalSearchSettings'
+import {
+  resolveInlineAttendanceAction,
+  buildHistoricalTransferSnapshot,
+  INLINE_ATTENDANCE_ACTIONS
+} from '../utils/historicalInlineAttendance'
 
 
 // Lazy load heavy modals for better initial load performance
@@ -97,18 +105,12 @@ const MEMBER_PASS_SHARE_THEMES = {
 const DEFAULT_MEMBER_PASS_SHARE_MESSAGE_TEMPLATE = 'Hi. Thank you for being part of {workspace}. Your member pass code is {code}.'
 
 const formatMemberPassShareMessage = (template, { name, code, churchName }) => {
-  const fallback = DEFAULT_MEMBER_PASS_SHARE_MESSAGE_TEMPLATE
-  const resolvedTemplate = String(template || fallback)
-  const formatted = resolvedTemplate
-    .replace(/\{name\}/gi, name || 'member')
-    .replace(/\{code\}/gi, code || '')
-    .replace(/\{workspace\}/gi, churchName || 'DatSer Church')
-    .replace(/\{church\}/gi, churchName || 'DatSer Church')
-    .trim()
-
-  return formatted || fallback
-    .replace(/\{code\}/gi, code || '')
-    .replace(/\{workspace\}/gi, churchName || 'DatSer Church')
+  return formatMemberCodeShareMessage({
+    template,
+    member: { full_name: name },
+    memberCode: code,
+    churchName
+  })
 }
 
 const wrapCanvasText = (ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) => {
@@ -403,6 +405,8 @@ const Dashboard = ({ isAdmin = false }) => {
     forceRefreshMembers,
     forceRefreshMembersSilent,
     searchMemberAcrossAllTables,
+    setMemberAttendanceFromOtherMonth,
+    presentMemberFromOtherMonth,
     deleteMember,
     logActivity,
     markAttendance,
@@ -411,6 +415,7 @@ const Dashboard = ({ isAdmin = false }) => {
     attendanceData,
     setAttendanceData,
     currentTable,
+    monthlyTables,
     members,
     membersTotalCount,
     membersLoadedAll,
@@ -462,6 +467,11 @@ const Dashboard = ({ isAdmin = false }) => {
   const [isQuickPassQrExpanded, setIsQuickPassQrExpanded] = useState(false)
   const [isQuickPassQrAnimating, setIsQuickPassQrAnimating] = useState(false)
   const [historicalSearchResults, setHistoricalSearchResults] = useState([])
+  const [isSearchingOtherMonths, setIsSearchingOtherMonths] = useState(false)
+  const [searchOtherMonthsError, setSearchOtherMonthsError] = useState(null)
+  const [isScopeModalOpen, setIsScopeModalOpen] = useState(false)
+  const [temporaryScopeSettings, setTemporaryScopeSettings] = useState(null)
+  const [presentConfirmTarget, setPresentConfirmTarget] = useState(null)
   const [memberPassSharePreview, setMemberPassSharePreview] = useState(null)
   const turboCheckInRef = useRef({ key: '', running: false })
 
@@ -949,14 +959,16 @@ const Dashboard = ({ isAdmin = false }) => {
   const canonicalAttendanceByDate = useMemo(() => {
     const next = {}
     sundayDates.forEach((dateKey) => {
-      const map = attendanceData[dateKey] || {}
-      const authoritativeMap = Object.prototype.hasOwnProperty.call(attendanceData, dateKey)
       next[dateKey] = {}
       members.forEach((member) => {
-        const value = resolveMemberAttendanceForDate(member, dateKey, map, { authoritativeMap })
-        if (value === true || value === false) {
-          next[dateKey][member.id] = value
-        }
+        const status = getCanonicalAttendanceStatus({
+          member,
+          memberId: member.id,
+          attendanceDate: dateKey,
+          attendanceData
+        })
+        if (status === 'Present') next[dateKey][member.id] = true
+        else if (status === 'Absent') next[dateKey][member.id] = false
       })
     })
     return next
@@ -964,26 +976,30 @@ const Dashboard = ({ isAdmin = false }) => {
 
   const getCanonicalAttendanceValue = useCallback((member, dateKey) => {
     if (!member?.id || !dateKey) return undefined
-    return canonicalAttendanceByDate[dateKey]?.[member.id]
-  }, [canonicalAttendanceByDate])
+    const status = getCanonicalAttendanceStatus({
+      member,
+      memberId: member.id,
+      attendanceDate: dateKey,
+      attendanceData
+    })
+    if (status === 'Present') return true
+    if (status === 'Absent') return false
+    return undefined
+  }, [attendanceData])
 
   // Function to check if a member has been edited (has attendance marked for any date)
-  const isEditedMember = (member) => {
-    // First check: inspect member record columns from database. This works before
-    // attendanceData is loaded and supports both old and date-keyed column names.
-    const editedViaRecord = sundayDates.some((dateKey) => (
-      resolveMemberAttendanceForDate(member, dateKey) !== undefined
-    ))
-    if (editedViaRecord) return true
-
-    // Second check: attendanceData map (for real-time updates before DB sync)
-    const editedViaMaps = sundayDates.some((date) => {
-      const v = getCanonicalAttendanceValue(member, date)
-      return v === true || v === false
+  const isEditedMember = useCallback((member) => {
+    if (!member?.id) return false
+    return sundayDates.some((dateKey) => {
+      const status = getCanonicalAttendanceStatus({
+        member,
+        memberId: member.id,
+        attendanceDate: dateKey,
+        attendanceData
+      })
+      return status === 'Present' || status === 'Absent'
     })
-
-    return editedViaMaps
-  }
+  }, [attendanceData, sundayDates])
 
   const recentMemberEditById = useMemo(() => {
     const map = new Map()
@@ -1057,32 +1073,19 @@ const Dashboard = ({ isAdmin = false }) => {
 
     if (dashboardTab === 'edited') {
       const dateKey = selectedSundayDate || getDateString(selectedAttendanceDate)
-      if (!dateKey) {
-        const editedOnly = filteredMembers.filter(isEditedMember)
-        return editedOnly.sort((a, b) => {
-          const recentDiff = getRecentMemberEditTime(b) - getRecentMemberEditTime(a)
-          if (recentDiff !== 0) return recentDiff
-          // Sort by join date (respecting sortNewestFirst toggle)
-          const dateA = new Date(a.inserted_at || a.created_at || 0)
-          const dateB = new Date(b.inserted_at || b.created_at || 0)
-          const dateDiff = sortNewestFirst ? dateB - dateA : dateA - dateB
-          if (dateA !== dateB) return dateDiff
-          // Then by most recent action timestamp
-          const tsA = Math.max(...sundayDates.map(d => actionTimestampsRef.current[`${a.id}_${d}`] || 0))
-          const tsB = Math.max(...sundayDates.map(d => actionTimestampsRef.current[`${b.id}_${d}`] || 0))
-          if (tsA !== tsB) return tsB - tsA
-          // Finally by name
-          const an = (a['full_name'] || a['Full Name'] || '').toLowerCase()
-          const bn = (b['full_name'] || b['Full Name'] || '').toLowerCase()
-          return an.localeCompare(bn)
-        })
-      }
-      // Check both attendanceData map AND member record columns for the selected date
-      const getVal = (member) => getCanonicalAttendanceValue(member, dateKey)
 
       let filteredByDate = filteredMembers.filter(m => {
-        const val = getVal(m)
-        return val === true || val === false
+        if (m?.deleted_at) return false
+        if (dateKey) {
+          const status = getCanonicalAttendanceStatus({
+            member: m,
+            memberId: m.id,
+            attendanceDate: dateKey,
+            attendanceData
+          })
+          return status === 'Present' || status === 'Absent'
+        }
+        return isEditedMember(m)
       })
 
       return filteredByDate.sort((a, b) => {
@@ -1094,14 +1097,14 @@ const Dashboard = ({ isAdmin = false }) => {
         const dateDiff = sortNewestFirst ? joinDateB - joinDateA : joinDateA - joinDateB
         if (joinDateA !== joinDateB) return dateDiff
         // Then by most recent action timestamp (chronological, newest on top)
-        const tsA = actionTimestampsRef.current[`${a.id}_${dateKey}`] || 0
-        const tsB = actionTimestampsRef.current[`${b.id}_${dateKey}`] || 0
+        const tsA = dateKey ? (actionTimestampsRef.current[`${a.id}_${dateKey}`] || 0) : 0
+        const tsB = dateKey ? (actionTimestampsRef.current[`${b.id}_${dateKey}`] || 0) : 0
         if (tsA !== tsB) return tsB - tsA
         // Fallback: group Present before Absent, then alphabetical
-        const avResolved = getVal(a)
-        const bvResolved = getVal(b)
-        const rank = (v) => (v === true ? 0 : v === false ? 1 : 2)
-        const r = rank(avResolved) - rank(bvResolved)
+        const statusA = dateKey ? getCanonicalAttendanceStatus({ member: a, memberId: a.id, attendanceDate: dateKey, attendanceData }) : null
+        const statusB = dateKey ? getCanonicalAttendanceStatus({ member: b, memberId: b.id, attendanceDate: dateKey, attendanceData }) : null
+        const rank = (s) => (s === 'Present' ? 0 : s === 'Absent' ? 1 : 2)
+        const r = rank(statusA) - rank(statusB)
         if (r !== 0) return r
         const an = (a['full_name'] || a['Full Name'] || '').toLowerCase()
         const bn = (b['full_name'] || b['Full Name'] || '').toLowerCase()
@@ -1125,28 +1128,36 @@ const Dashboard = ({ isAdmin = false }) => {
   const { presentCount, absentCount } = useMemo(() => {
     let present = 0
     let absent = 0
-    if (dashboardTab === 'edited') {
-      // Edited tab: count only edited members
-      const membersBase = members.filter(isEditedMember)
-      selectedDatesForCounting.forEach((dateKey) => {
-        for (const m of membersBase) {
-          const val = getCanonicalAttendanceValue(m, dateKey)
-          if (val === true) present += 1
-          else if (val === false) absent += 1
-        }
-      })
+    const activeMembers = (members || []).filter(m => !m?.deleted_at)
+    const selectedDate = selectedSundayDate || getDateString(selectedAttendanceDate)
+
+    if (selectedDate) {
+      for (const member of activeMembers) {
+        const status = getCanonicalAttendanceStatus({
+          member,
+          memberId: member.id,
+          attendanceDate: selectedDate,
+          attendanceData
+        })
+        if (status === 'Present') present += 1
+        else if (status === 'Absent') absent += 1
+      }
     } else {
-      // All tab: count only current members so stale/deleted IDs do not inflate totals.
       selectedDatesForCounting.forEach((dateKey) => {
-        for (const member of members) {
-          const val = getCanonicalAttendanceValue(member, dateKey)
-          if (val === true) present += 1
-          else if (val === false) absent += 1
+        for (const member of activeMembers) {
+          const status = getCanonicalAttendanceStatus({
+            member,
+            memberId: member.id,
+            attendanceDate: dateKey,
+            attendanceData
+          })
+          if (status === 'Present') present += 1
+          else if (status === 'Absent') absent += 1
         }
       })
     }
     return { presentCount: present, absentCount: absent }
-  }, [dashboardTab, getCanonicalAttendanceValue, isEditedMember, members, selectedDatesForCounting])
+  }, [members, selectedSundayDate, selectedAttendanceDate, attendanceData, selectedDatesForCounting])
 
   // Helper function to normalize names for duplicate detection
   const normalizeName = (name) => {
@@ -2192,12 +2203,116 @@ const Dashboard = ({ isAdmin = false }) => {
 
   useEffect(() => {
     setHistoricalSearchResults([])
+    setSearchOtherMonthsError(null)
   }, [searchTerm, currentTable])
 
-  const handleSearchAllMonths = async () => {
-    if (!searchTerm.trim()) return
-    const results = await searchMemberAcrossAllTables(searchTerm)
-    setHistoricalSearchResults(results || [])
+  const handleSearchOtherMonths = async () => {
+    const query = String(searchTerm || pendingSearchTerm || '').trim()
+    if (!query || query.length < 2) return
+
+    const activeScope = temporaryScopeSettings || preferences?.historical_search_settings
+    setIsSearchingOtherMonths(true)
+    setSearchOtherMonthsError(null)
+
+    try {
+      const results = await searchMemberAcrossAllTables(query, { scopeSettings: activeScope })
+      // Deduplicate historical results strictly by canonical_member_id
+      const deduplicated = (() => {
+        if (!Array.isArray(results)) return []
+        const map = new Map()
+        for (const item of results) {
+          if (!item || !item.canonical_member_id) continue
+          const key = String(item.canonical_member_id)
+          if (!map.has(key)) {
+            map.set(key, item)
+          } else {
+            const existing = map.get(key)
+            const existingTime = new Date(existing.source_updated_at || existing.inserted_at || 0).getTime()
+            const newTime = new Date(item.source_updated_at || item.inserted_at || 0).getTime()
+            if (newTime > existingTime) {
+              map.set(key, item)
+            }
+          }
+        }
+        return Array.from(map.values())
+      })()
+
+      setHistoricalSearchResults(deduplicated)
+      if (!deduplicated || deduplicated.length === 0) {
+        setSearchOtherMonthsError('No matching active member was found in the selected months.')
+      }
+    } catch (err) {
+      console.error('Search other months failed:', err)
+      setSearchOtherMonthsError('Other months could not be searched. Your current month was not changed.')
+    } finally {
+      setIsSearchingOtherMonths(false)
+    }
+  }
+
+  const handleConfirmPresent = async (e) => {
+    e?.stopPropagation?.()
+    if (!presentConfirmTarget || presentConfirmTarget.loading) return
+
+    const snapshot = { ...presentConfirmTarget }
+    setPresentConfirmTarget({ ...snapshot, loading: true })
+
+    try {
+      const res = await setMemberAttendanceFromOtherMonth({
+        memberId: snapshot.canonicalMemberId,
+        sourceTable: snapshot.sourceTable,
+        targetTable: snapshot.targetTable || currentTable,
+        attendanceDate: snapshot.attendanceDate || selectedAttendanceDate,
+        attendanceStatus: snapshot.attendanceStatus,
+        memberNameHint: snapshot.memberName
+      })
+
+      if (res && res.success) {
+        setHistoricalSearchResults((prev) =>
+          prev.map((r) =>
+            String(r.canonical_member_id) === String(snapshot.canonicalMemberId)
+              ? { ...r, already_in_current_table: true }
+              : r
+          )
+        )
+      }
+    } catch (err) {
+      console.error('Confirm attendance error:', err)
+    } finally {
+      setPresentConfirmTarget(null)
+    }
+  }
+
+  const handleHistoricalAttendanceForDate = (memberId, nextValue, specificDate, resultItem) => {
+    if (!specificDate) return
+    const decision = resolveInlineAttendanceAction({
+      alreadyInCurrentTable: Boolean(resultItem?.already_in_current_table),
+      nextValue
+    })
+
+    if (decision.action === INLINE_ATTENDANCE_ACTIONS.NORMAL) {
+      // Member already exists in the current month: preserve the normal
+      // current-month inline P/A/C behavior.
+      handleAttendanceForDate(memberId, nextValue, specificDate)
+      return
+    }
+
+    if (decision.action === INLINE_ATTENDANCE_ACTIONS.SKIP) {
+      // Clear on a historical member not yet in the current month: do NOT
+      // import the member merely to clear attendance.
+      const memberName = resultItem?.full_name || resultItem?.['Full Name'] || 'Member'
+      toast.info(`${memberName} is not in ${getMonthDisplayName(currentTable)} yet. Use Present or Absent to add them first.`)
+      return
+    }
+
+    // TRANSFER: route through the same safe cross-month confirmation flow as
+    // the main historical-card Present/Absent buttons.
+    const snapshot = buildHistoricalTransferSnapshot({
+      resultItem,
+      currentTable,
+      specificDate,
+      status: decision.status
+    })
+    setPresentConfirmTarget(snapshot)
   }
 
   useEffect(() => {
@@ -2325,7 +2440,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onAttendanceForDate={handleAttendanceForDate}
                   onEdit={setEditingMember}
                   onDelete={openDeleteConfirm}
-                  attendanceStatus={targetDate ? attendanceData[targetDate]?.[member.id] : undefined}
+                  attendanceStatus={targetDate ? getCanonicalAttendanceValue(member, targetDate) : undefined}
                   attendanceLoading={attendanceLoading[member.id]}
                   monthSundays={sundayDates}
                   attendanceData={attendanceData}
@@ -2818,7 +2933,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     attendanceStatus={(() => {
                       const targetDate = getDateString(selectedAttendanceDate)
                       if (!targetDate) return undefined
-                      return attendanceData[targetDate]?.[member.id]
+                      return getCanonicalAttendanceValue(member, targetDate)
                     })()}
                     attendanceLoading={attendanceLoading[member.id]}
                     monthSundays={sundayDates}
@@ -2957,30 +3072,169 @@ const Dashboard = ({ isAdmin = false }) => {
           )}
 
           {searchTerm && (
-            <div className="flex flex-col justify-center gap-2 sm:flex-row">
-              <button
-                type="button"
-                onClick={() => { setSearchTerm(''); setLocalSearchTerm(''); setHistoricalSearchResults([]) }}
-                className="min-h-11 rounded-xl border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:border-orange-400 dark:border-gray-600 dark:text-gray-200"
-              >
-                Clear Search
-              </button>
-              {isSupabaseConfigured() && (
+            <div className="flex flex-col items-center justify-center gap-3">
+              <div className="flex flex-col sm:flex-row items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleSearchAllMonths}
-                  className="min-h-11 rounded-xl bg-orange-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-orange-700"
+                  onClick={() => { setSearchTerm(''); setLocalSearchTerm(''); setHistoricalSearchResults([]); setSearchOtherMonthsError(null) }}
+                  className="min-h-11 rounded-xl border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:border-orange-400 dark:border-gray-600 dark:text-gray-200"
                 >
-                  Search all months
+                  Clear Search
                 </button>
+                {isSupabaseConfigured() && (
+                  <button
+                    type="button"
+                    disabled={isSearchingOtherMonths}
+                    onClick={handleSearchOtherMonths}
+                    className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-orange-700 disabled:opacity-50 shadow-sm"
+                  >
+                    {isSearchingOtherMonths ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Searching selected months…</span>
+                      </>
+                    ) : (
+                      <span>Search Other Months</span>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {isSupabaseConfigured() && (
+                <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                  <span>
+                    {formatHistoricalScopeSummary({
+                      settings: temporaryScopeSettings || preferences?.historical_search_settings,
+                      monthlyTables,
+                      currentTable
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsScopeModalOpen(true)}
+                    className="text-orange-600 dark:text-orange-400 hover:underline font-bold"
+                  >
+                    Change
+                  </button>
+                </div>
               )}
             </div>
           )}
 
-          {historicalSearchResults.length > 0 && (
-            <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-left text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950/35 dark:text-blue-100">
-              <p className="font-bold">Available in another month</p>
-              <p className="mt-1">{historicalSearchResults.map((result) => getMonthDisplayName(result.table)).join(', ')}</p>
+          {/* Loading state indicator */}
+          {isSearchingOtherMonths && (
+            <div className="mt-5 flex items-center justify-center gap-2 text-sm font-semibold text-orange-600 dark:text-orange-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Searching your other months…</span>
+            </div>
+          )}
+
+          {/* Error message */}
+          {searchOtherMonthsError && !isSearchingOtherMonths && (
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-center text-xs font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+              {searchOtherMonthsError}
+            </div>
+          )}
+
+          {/* Cross-month member results rendered using standard MemberCard UI */}
+          {!isSearchingOtherMonths && historicalSearchResults.length > 0 && (
+            <div className="mt-6 text-left space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  Found in other months ({historicalSearchResults.length})
+                </h4>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                {historicalSearchResults.map((resultItem) => {
+                  const memberObj = {
+                    id: resultItem.canonical_member_id,
+                    canonical_member_id: resultItem.canonical_member_id,
+                    full_name: resultItem.full_name,
+                    'Full Name': resultItem.full_name,
+                    gender: resultItem.gender,
+                    'Gender': resultItem.gender,
+                    phone_number: resultItem.phone_number,
+                    'Phone Number': resultItem.phone_number,
+                    age: resultItem.age,
+                    'Age': resultItem.age,
+                    current_level: resultItem.current_level,
+                    'Current Level': resultItem.current_level,
+                    parent_name_1: resultItem.parent_name_1,
+                    parent_phone_1: resultItem.parent_phone_1,
+                    parent_name_2: resultItem.parent_name_2,
+                    parent_phone_2: resultItem.parent_phone_2,
+                    notes: resultItem.notes,
+                    ministry: resultItem.ministry,
+                    is_visitor: resultItem.is_visitor,
+                    date_of_birth: resultItem.date_of_birth,
+                    source_table: resultItem.source_table,
+                    table_name: resultItem.source_table,
+                    __source_table: resultItem.source_table,
+                    source_month_label: resultItem.source_month_label || (resultItem.source_table || '').replace('_', ' '),
+                    already_in_current_table: resultItem.already_in_current_table,
+                    inserted_at: resultItem.source_updated_at
+                  }
+                  const isExpanded = !!expandedMembers[resultItem.canonical_member_id]
+                  const isSelected = longPressSelectedIds.has(resultItem.canonical_member_id) || selectedMemberIds.has(resultItem.canonical_member_id)
+                  const targetDate = getDateString(selectedAttendanceDate)
+                  const currentAttStatus = targetDate ? getCanonicalAttendanceValue(memberObj, targetDate) : undefined
+                  const attendanceStatusValue = currentAttStatus
+
+                  return (
+                    <MemberCard
+                      key={`${resultItem.source_table}_${resultItem.canonical_member_id}`}
+                      member={memberObj}
+                      memberIndexCode={resultItem.member_code || (memberCodesEnabled ? getMemberIndexCode(memberObj, memberIndexCodeMap) : null)}
+                      isMemberCodeLoading={false}
+                      onIndexClick={openMemberPass}
+                      memberCodeBadgeStyle={memberCodeBadgeStyle}
+                      memberCodeBadgeCycleSlot={memberCodeBadgeCycleSlot}
+                      isExpanded={isExpanded}
+                      isSelected={isSelected}
+                      selectionMode={selectionMode}
+                      onToggleExpansion={toggleMemberExpansion}
+                      onToggleSelection={toggleSelection}
+                      onLongPressStart={handleLongPressStart}
+                      onLongPressMove={handleLongPressMove}
+                      onLongPressEnd={handleLongPressEnd}
+                      onMouseDown={handleMouseDown}
+                      onMouseUp={handleMouseUp}
+                      onAttendance={(mId, nextValue, e) => {
+                        e?.stopPropagation?.()
+                        if (!selectedAttendanceDate) {
+                          toast.error('Select an attendance date first.')
+                          return
+                        }
+                        const snapshot = {
+                          canonicalMemberId: resultItem.canonical_member_id,
+                          sourceTable: resultItem.source_table,
+                          sourceMonthLabel: resultItem.source_month_label || (resultItem.source_table || '').replace('_', ' '),
+                          targetTable: currentTable,
+                          attendanceDate: selectedAttendanceDate,
+                          attendanceStatus: nextValue === 'Absent' ? 'Absent' : 'Present',
+                          memberName: resultItem.full_name || resultItem['Full Name'] || 'Member',
+                          already_in_current_table: resultItem.already_in_current_table,
+                          item: { ...resultItem }
+                        }
+                        setPresentConfirmTarget(snapshot)
+                      }}
+                      onAttendanceForDate={(mId, nextValue, date) => handleHistoricalAttendanceForDate(mId, nextValue, date, resultItem)}
+                      onEdit={(m) => setEditingMember(m)}
+                      onDelete={openDeleteConfirm}
+                      attendanceStatus={attendanceStatusValue}
+                      attendanceLoading={attendanceLoading[resultItem.canonical_member_id]}
+                      monthSundays={sundayDates}
+                      attendanceData={attendanceData}
+                      memberTags={memberTags[resultItem.canonical_member_id] || []}
+                      showTags={showOptionalTags}
+                      currentTable={currentTable}
+                      getMonthDisplayName={getMonthDisplayName}
+                      showDeleteActions={showSearchTrayDelete}
+                    />
+                  )
+                })}
+              </div>
             </div>
           )}
 
@@ -3717,6 +3971,111 @@ const Dashboard = ({ isAdmin = false }) => {
         </div>
       )}
 
+      {/* Cross-Month Present Confirmation Modal */}
+      {presentConfirmTarget && (() => {
+        const target = presentConfirmTarget
+        const isAbsentAction = target.attendanceStatus === 'Absent'
+        const isAlreadyInMonth = target.already_in_current_table
+        const sourceMonthLabel = target.sourceMonthLabel || (target.sourceTable || '').replace('_', ' ')
+        const targetMonthLabel = getMonthDisplayName(target.targetTable || currentTable)
+        const memberName = target.memberName || 'Member'
+
+        const formattedDate = (() => {
+          if (!target.attendanceDate) return 'today'
+          const d = new Date(target.attendanceDate)
+          if (isNaN(d.getTime())) return 'today'
+          const dayName = d.toLocaleDateString('en-GB', { weekday: 'long' })
+          const dayNum = d.getDate()
+          const monthName = d.toLocaleDateString('en-GB', { month: 'long' })
+          const yearNum = d.getFullYear()
+          return `${dayName}, ${dayNum} ${monthName} ${yearNum}`
+        })()
+
+        let modalTitle = ''
+        if (!isAlreadyInMonth) {
+          modalTitle = isAbsentAction ? 'Add & Mark Absent' : 'Add & Mark Present'
+        } else {
+          modalTitle = isAbsentAction ? 'Confirm Absent' : 'Confirm Present'
+        }
+
+        let mainMessage = ''
+        if (!isAlreadyInMonth) {
+          const actionWord = isAbsentAction ? 'Absent' : 'Present'
+          mainMessage = `${memberName} will be added to ${targetMonthLabel} and marked ${actionWord} for ${formattedDate}.`
+        } else {
+          const actionWord = isAbsentAction ? 'Absent' : 'Present'
+          mainMessage = `Mark ${memberName} ${actionWord} for ${formattedDate}?`
+        }
+
+        let confirmBtnLabel = ''
+        if (!isAlreadyInMonth) {
+          confirmBtnLabel = isAbsentAction ? 'Add & Mark Absent' : 'Add & Present'
+        } else {
+          confirmBtnLabel = isAbsentAction ? 'Absent' : 'Present'
+        }
+
+        return (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-fade-in" onClick={() => !presentConfirmTarget.loading && setPresentConfirmTarget(null)}>
+            <div
+              className="relative w-full max-w-md overflow-hidden rounded-3xl border border-gray-200 bg-white p-6 shadow-2xl transition-all dark:border-gray-700 dark:bg-[#1C1D1D] dark:text-white"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-center gap-3">
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-orange-500/15 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400">
+                  <UserCheck className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">{modalTitle}</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Member Attendance & Import</p>
+                </div>
+              </div>
+
+              <p className="mb-2 text-sm leading-6 text-gray-700 dark:text-gray-200">
+                {mainMessage}
+              </p>
+
+              {!isAlreadyInMonth && (
+                <p className="mb-6 text-xs text-gray-400 dark:text-gray-500">
+                  Profile source: {sourceMonthLabel}
+                </p>
+              )}
+
+              {isAlreadyInMonth && <div className="mb-4" />}
+
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={presentConfirmTarget.loading}
+                  onClick={() => setPresentConfirmTarget(null)}
+                  className="min-h-[44px] rounded-xl border border-gray-300 px-5 text-sm font-bold text-gray-700 hover:border-gray-400 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={presentConfirmTarget.loading}
+                  onClick={handleConfirmPresent}
+                  className={`flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-6 text-sm font-bold text-white shadow-sm disabled:opacity-50 ${
+                    isAbsentAction
+                      ? 'bg-gray-700 hover:bg-gray-800 dark:bg-gray-600 dark:hover:bg-gray-500'
+                      : 'bg-orange-600 hover:bg-orange-700'
+                  }`}
+                >
+                  {presentConfirmTarget.loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Updating attendance…</span>
+                    </>
+                  ) : (
+                    <span>{confirmBtnLabel}</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Bottom Search Bar */}
       <div className={`app-bottom-dock bottom-search-bar bottom-control-safe fixed bottom-0 left-0 right-0 border-t z-30 safe-area-x ${isShortSearchActive ? 'bg-white/95 dark:bg-[#202121]/95 border-orange-500 shadow-2xl shadow-black/30' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
         <div className="mx-auto px-3 sm:px-4 py-2 sm:py-2.5">
@@ -3820,6 +4179,13 @@ const Dashboard = ({ isAdmin = false }) => {
       </div>
 
       {renderSearchSuggestionTray()}
+
+      <SearchScopeModal
+        isOpen={isScopeModalOpen}
+        onClose={() => setIsScopeModalOpen(false)}
+        activeScopeSettings={temporaryScopeSettings || preferences?.historical_search_settings}
+        onApplyTemporaryScope={(newScope) => setTemporaryScopeSettings(newScope)}
+      />
 
       {/* Add padding to prevent content from being hidden behind bottom search bar */}
       <div className="h-16 md:h-10" />

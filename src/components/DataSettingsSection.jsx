@@ -1,5 +1,6 @@
 import React from 'react'
 import { Download, Upload, RefreshCw, Trash2, Archive, ChevronLeft, Loader2 } from 'lucide-react'
+import SearchOtherMonthsSettingsSection from './SearchOtherMonthsSettingsSection'
 
 const DataSettingsSection = ({
     offlineModeStatus,
@@ -51,9 +52,11 @@ const DataSettingsSection = ({
     return (
         <div className="space-y-6">
             <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Data Management</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Export, import, and manage your data</p>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Search & Data Management</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Configure historical search scope, offline sync, exports, and databases</p>
             </div>
+
+            <SearchOtherMonthsSettingsSection getSettingTargetClass={getSettingTargetClass} />
 
             <div
                 data-setting-id="offline_mode"

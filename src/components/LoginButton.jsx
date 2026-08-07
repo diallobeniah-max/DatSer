@@ -22,6 +22,7 @@ import {
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { useApp } from '../context/AppContext'
+import { getCanonicalAttendanceStatus } from '../utils/attendanceRecords'
 import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 
@@ -56,24 +57,34 @@ const LoginButton = ({ onCreateMonth, onToggleAIChat, setCurrentView, setDashboa
   // Count edited members
   const editedCount = React.useMemo(() => {
     try {
-      if (!filteredMembers || filteredMembers.length === 0) return 0
+      const activeMembers = (members || []).filter(m => !m?.deleted_at)
       const dateKeys = Object.keys(attendanceData || {})
-      if (dateKeys.length === 0) return 0
-      let count = 0
-      for (const member of filteredMembers) {
-        let isEdited = false
-        for (const dk of dateKeys) {
-          const map = attendanceData[dk] || {}
-          const val = map[member.id]
-          if (val === true || val === false) { isEdited = true; break }
-        }
-        if (isEdited) count += 1
+      if (dateKeys.length === 0) {
+        return activeMembers.filter(member => {
+          for (const key in member) {
+            if (key.toLowerCase().startsWith('attendance_')) {
+              const val = member[key]
+              if (val === 'Present' || val === 'Absent' || val === true || val === false) return true
+            }
+          }
+          return false
+        }).length
       }
-      return count
+      return activeMembers.filter(member => {
+        return dateKeys.some(dk => {
+          const status = getCanonicalAttendanceStatus({
+            member,
+            memberId: member.id,
+            attendanceDate: dk,
+            attendanceData
+          })
+          return status === 'Present' || status === 'Absent'
+        })
+      }).length
     } catch {
       return 0
     }
-  }, [filteredMembers, attendanceData])
+  }, [members, attendanceData])
 
   // Close dropdown when clicking outside
   useEffect(() => {

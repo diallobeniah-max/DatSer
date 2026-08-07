@@ -59,6 +59,7 @@ import ConfirmModal from './ConfirmModal'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import lazyWithRetry from '../utils/lazyWithRetry'
 import LiveFeaturePreview from './LiveFeaturePreview'
+import { pickPersonalPreferencePatch, pickWorkspacePreferencePatch } from '../config/settingsRegistry'
 
 // Modals and heavy components are lazy-loaded for performance
 const ShareAccessModal = lazyWithRetry(() => import('./ShareAccessModal'))
@@ -306,9 +307,9 @@ const areMemberCodesVisible = (preferences = {}) => (
 )
 
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMember }) => {
-    const { user, signOut, preferences, resetPassword, saveUserPreferences, updatePreference, isDeveloperBypass } = useAuth()
+    const { user, signOut, preferences, resetPassword, savePersonalPreferences, saveWorkspacePreferences, saveUserPreferences, updatePreference, isDeveloperBypass } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
-    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil, setPersonalCalendarMode, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
+    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, isPersonalManualMode, manualMonthTable, manualSundayDate, personalManualExpiryWarning, setPersonalCalendarMode, refreshPersonalManualInactivity, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
     const { selection } = useHapticFeedback()
     const isAdminCodeLogin = preferences?.admin_code_login === true || user?.app_metadata?.provider === 'admin-code'
     const isDeveloperToolsEnabled = import.meta.env.DEV
@@ -895,6 +896,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         }
     }
     const [showOverridePicker, setShowOverridePicker] = useState(false)
+    const [pendingOverrideSelection, setPendingOverrideSelection] = useState(null)
     const overrideButtonRef = useRef(null)
     const [showPersonalMonthPicker, setShowPersonalMonthPicker] = useState(false)
     const personalMonthButtonRef = useRef(null)
@@ -923,36 +925,21 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             ...prev,
             ...nextPreferences
         }))
-        const workspacePatch = Object.fromEntries(
-            Object.entries(nextPreferences).filter(([key]) => WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS.has(key))
-        )
         try {
-            if (isCollaborator && isAdminCollaborator && dataOwnerId && Object.keys(workspacePatch).length > 0) {
-                // Collaborators are authorized to update an existing owner row,
-                // but RLS correctly prevents them from inserting a new one.
-                // Avoid upsert here so a valid shared toggle does not look like a
-                // failed insert on an established workspace.
-                const { data } = await executeSupabaseWrite(
-                    () => supabase
-                        .from('user_preferences')
-                        .update({
-                            ...workspacePatch,
-                            updated_at: new Date().toISOString()
-                        })
-                        .eq('user_id', dataOwnerId)
-                        .select()
-                        .single(),
-                    { action: 'Save workspace member-code preferences' }
-                )
-                if (isMemberCodeVisibilityChange) syncMemberCodeVisibility()
-                return data
+            const personalPatch = pickPersonalPreferencePatch(nextPreferences)
+            const workspacePatch = pickWorkspacePreferencePatch(nextPreferences)
+            let okPersonal = true
+            let okWorkspace = true
+
+            if (Object.keys(personalPatch).length > 0) {
+                okPersonal = await savePersonalPreferences?.(personalPatch)
             }
-            const entries = Object.entries(nextPreferences)
-            const result = entries.length === 1 && typeof updatePreference === 'function'
-                ? await updatePreference(entries[0][0], entries[0][1], { throwOnError: true })
-                : await saveUserPreferences?.(nextPreferences)
+            if (Object.keys(workspacePatch).length > 0) {
+                okWorkspace = await saveWorkspacePreferences?.(dataOwnerId, workspacePatch)
+            }
+
             if (isMemberCodeVisibilityChange) syncMemberCodeVisibility()
-            return result
+            return okPersonal && okWorkspace
         } catch (error) {
             setOptimisticPreferencePatch((prev) => {
                 const next = { ...prev }
@@ -1541,24 +1528,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
     }
 
     const isOverrideActive = Boolean(lockedDefaultDate)
-    const isAutoMode = !isOverrideActive
-    const isPersonalAutoMode = !isPersonalManualMode
     const personalModeDisabled = isCollaborator && isOverrideActive
-    const manualExpiryDate = useMemo(() => {
-        if (!manualOverrideUntil) return null
-        const parsed = new Date(manualOverrideUntil)
-        return Number.isNaN(parsed.getTime()) ? null : parsed
-    }, [manualOverrideUntil])
-    const manualModeCountdown = useMemo(() => {
-        if (!manualExpiryDate || isPersonalAutoMode) return null
-        const remainingMs = manualExpiryDate.getTime() - liveClock.getTime()
-        if (remainingMs <= 0) return 'Ending now'
-        const totalMinutes = Math.max(1, Math.ceil(remainingMs / 60000))
-        const hours = Math.floor(totalMinutes / 60)
-        const minutes = totalMinutes % 60
-        if (hours <= 0) return `${minutes}m left`
-        return `${hours}h ${minutes}m left`
-    }, [manualExpiryDate, isPersonalAutoMode, liveClock])
 
     const getFallbackOverrideDate = useCallback((tableName) => {
         if (!tableName) return null
@@ -1569,108 +1539,84 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         return sundays.length > 0 ? sundays[0] : null
     }, [getSundaysInMonth])
 
-    const handlePersonalModeToggle = useCallback(async () => {
+    const handleOpenPersonalManualPicker = useCallback(() => {
         if (personalModeDisabled) {
-            toast.info('The workspace owner override is active right now, so personal manual mode is temporarily locked.')
+            toast.info('The workspace owner has locked the attendance date.')
             return
         }
+        setShowPersonalMonthPicker(true)
+    }, [personalModeDisabled])
 
-        if (isPersonalAutoMode) {
-            const ok = await setPersonalCalendarMode({
-                mode: 'manual',
-                tableName: currentTable,
-                date: selectedAttendanceDate || manualSundayDate || new Date()
-            })
-            if (ok) {
-                toast.info('Manual mode is on for 12 hours. You can now choose a month and Sunday yourself.')
-            }
-            return
-        }
-
+    const handleReturnToAuto = useCallback(async () => {
         const ok = await setPersonalCalendarMode({ mode: 'auto' })
         if (ok) {
             toast.success('Auto mode is back on. Your month and Sunday will follow the live schedule again.')
         }
-    }, [
-        personalModeDisabled,
-        isPersonalAutoMode,
-        setPersonalCalendarMode,
-        currentTable,
-        selectedAttendanceDate,
-        manualSundayDate
-    ])
+    }, [setPersonalCalendarMode])
 
     const handlePersonalSundaySelection = useCallback(async ({ table, date }) => {
         if (personalModeDisabled) {
             toast.info('The workspace owner override is active right now, so personal manual mode is temporarily locked.')
-            return
+            return false
         }
 
-        if (isPersonalAutoMode) {
-            toast.info('Turn Auto off first before manually picking a month and Sunday.')
-            return
-        }
-
-        setShowPersonalMonthPicker(false)
         const ok = await setPersonalCalendarMode({
             mode: 'manual',
             tableName: table || currentTable,
-            date: date || selectedAttendanceDate || new Date(),
-            silent: true
+            date: date || selectedAttendanceDate || new Date()
         })
-        if (!ok) return
+        if (!ok) return false
 
+        setShowPersonalMonthPicker(false)
         toast.success('Manual month and Sunday updated.')
+        return true
     }, [
         personalModeDisabled,
-        isPersonalAutoMode,
         setPersonalCalendarMode,
         currentTable,
         selectedAttendanceDate
     ])
 
-    const handleEnableOverride = async (tableName = currentTable, sundayDate = selectedAttendanceDate, options = {}) => {
-        const { showToast = true } = options
+    const handleEnableOverride = useCallback(() => {
         if (!hasAdminAccess) {
-            console.log('[SETTINGS] handleEnableOverride: No admin access')
             return
         }
-        const targetTable = tableName || currentTable
-        const targetDate = sundayDate || selectedAttendanceDate || getFallbackOverrideDate(targetTable) || new Date()
-        console.log('[SETTINGS] handleEnableOverride called:', { targetTable, targetDate, hasAdminAccess })
+        // Opening a picker is intentionally side-effect free. The workspace
+        // override is saved only after a valid selection is confirmed.
+        setShowOverridePicker(true)
+    }, [hasAdminAccess])
+
+    const applyOverrideSelection = useCallback(async () => {
+        if (!pendingOverrideSelection || !hasAdminAccess) return
+        const { table, date } = pendingOverrideSelection
         setIsOverrideSaving(true)
         try {
             const ok = await setCollaboratorOverride({
                 enabled: true,
-                tableName: targetTable,
-                date: targetDate
+                tableName: table,
+                date
             })
-            console.log('[SETTINGS] setCollaboratorOverride returned:', ok)
             if (ok) {
-                if (showToast) {
-                    toast.success('Override enabled for all collaborators')
-                }
-            } else {
-                if (showToast) {
-                    toast.error('Failed to enable override')
-                }
+                toast.success('Override enabled for all collaborators')
+                setPendingOverrideSelection(null)
+                return true
             }
-            return ok
+            toast.error('Failed to enable override')
+            return false
         } catch (err) {
-            console.error('[SETTINGS] Error in handleEnableOverride:', err)
-            if (showToast) {
-                toast.error('Error: ' + (err?.message || 'Failed to enable override'))
-            }
+            console.error('[SETTINGS] Error applying owner override:', err)
+            toast.error('Error: ' + (err?.message || 'Failed to enable override'))
+            return false
         } finally {
             setIsOverrideSaving(false)
         }
-    }
+    }, [hasAdminAccess, pendingOverrideSelection, setCollaboratorOverride])
 
-    const handleOverrideSundaySelect = useCallback(async ({ table, date }) => {
+    const handleOverrideSundaySelect = useCallback(({ table, date }) => {
         if (!table || !date) return
         setShowOverridePicker(false)
-        await handleEnableOverride(table, date)
-    }, [handleEnableOverride])
+        setPendingOverrideSelection({ table, date })
+    }, [])
 
     const handleDisableOverride = async () => {
         if (!hasAdminAccess) return
@@ -1685,22 +1631,6 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         } finally {
             setIsOverrideSaving(false)
         }
-    }
-
-    const handleAdminSundaySelection = async (sunday, table) => {
-        if (!hasAdminAccess || !table) return
-        if (!isOverrideActive) {
-            toast.info('Enable Override All to change Sundays for everyone')
-            return
-        }
-        if (table !== currentTable) {
-            setCurrentTable(table)
-        }
-        if (isOverrideActive) {
-            await handleEnableOverride(table, sunday, { showToast: false })
-            return
-        }
-        setAndSaveAttendanceDate(sunday, table)
     }
 
     const renderContent = (sectionId = activeSection) => {
@@ -1736,11 +1666,17 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             isOverrideSaving={isOverrideSaving}
                             handleEnableOverride={handleEnableOverride}
                             handleDisableOverride={handleDisableOverride}
-                            handleOverrideSundaySelect={handleOverrideSundaySelect}
+                            isPersonalManualMode={isPersonalManualMode}
+                            manualMonthTable={manualMonthTable}
+                            manualSundayDate={manualSundayDate}
+                            personalModeDisabled={personalModeDisabled}
+                            personalManualExpiryWarning={personalManualExpiryWarning}
+                            onOpenPersonalManualPicker={handleOpenPersonalManualPicker}
+                            onReturnToAuto={handleReturnToAuto}
+                            onStayInManual={refreshPersonalManualInactivity}
                             toggleWorkspacePanel={toggleWorkspacePanel}
                             workspacePanels={workspacePanels}
                             getSettingTargetClass={getSettingTargetClass}
-                            showOverridePicker={showOverridePicker}
                             setShowOverridePicker={setShowOverridePicker}
                             overrideButtonRef={overrideButtonRef}
                             isLiveNow={isLiveNow}
@@ -2225,6 +2161,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             case 'invite_team':
                 navigateToSetting('team', item.id)
                 setIsShareModalOpen(true)
+                return
+            case 'search_other_months':
+                navigateToSetting('data', item.id)
                 return
             case 'export_data':
                 navigateToSetting('data', item.id)
@@ -3508,14 +3447,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                         anchorRef={personalMonthButtonRef}
                         onCreateMonth={onCreateMonth}
                         onSelectSunday={handlePersonalSundaySelection}
-                        autoEnabled={isPersonalAutoMode}
-                        onToggleAuto={handlePersonalModeToggle}
-                        toggleLabel="Personal Auto"
                         manualModeDisabled={personalModeDisabled}
                         disabledReason="The workspace owner override is active right now, so your personal manual mode is temporarily locked."
-                        manualStatus={isPersonalAutoMode
-                            ? 'Auto is on. The app follows the live month and Sunday for you.'
-                            : `Manual mode is active${manualModeCountdown ? ` - ${manualModeCountdown}` : ''}. Pick the exact month and Sunday you want to use.`}
+                        manualStatus="Select the exact month and Sunday to use in Manual mode. Nothing changes until you select a Sunday."
                     />
                 </React.Suspense>
             )}
@@ -3531,6 +3465,17 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     />
                 </React.Suspense>
             )}
+
+            <ConfirmModal
+                isOpen={Boolean(pendingOverrideSelection)}
+                onClose={() => setPendingOverrideSelection(null)}
+                onConfirm={applyOverrideSelection}
+                title="Apply workspace override"
+                message={`Apply ${pendingOverrideSelection ? `${getMonthDisplayName(pendingOverrideSelection.table)} — ${new Date(pendingOverrideSelection.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''} to all collaborators?`}
+                confirmText={isOverrideSaving ? 'Applying...' : 'Apply to all collaborators'}
+                confirmButtonClass="bg-orange-600 hover:bg-orange-700 text-white"
+                cancelText="Cancel"
+            />
         </div>
     )
 }

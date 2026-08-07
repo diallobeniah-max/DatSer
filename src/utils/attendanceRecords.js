@@ -67,36 +67,78 @@ export const getLegacyAttendanceColumnName = (dateKey) => {
   return `Attendance ${day}${getOrdinalSuffix(day)}`
 }
 
+export const getCanonicalAttendanceStatus = ({
+  member,
+  memberId,
+  attendanceDate,
+  attendanceData = {}
+}) => {
+  const mId = String(memberId || member?.id || '')
+  if (!mId || !attendanceDate) return null
+
+  let dateStr = ''
+  if (typeof attendanceDate === 'string') {
+    dateStr = attendanceDate.split('T')[0]
+  } else if (attendanceDate instanceof Date && !isNaN(attendanceDate.getTime())) {
+    const y = attendanceDate.getFullYear()
+    const m = String(attendanceDate.getMonth() + 1).padStart(2, '0')
+    const d = String(attendanceDate.getDate()).padStart(2, '0')
+    dateStr = `${y}-${m}-${d}`
+  }
+
+  if (!dateStr) return null
+
+  // 1. Check attendanceData map for dateStr and mId
+  const dateMap = attendanceData[dateStr]
+  if (dateMap && Object.prototype.hasOwnProperty.call(dateMap, mId)) {
+    const mapVal = dateMap[mId]
+    if (mapVal === 'Present' || mapVal === true) return 'Present'
+    if (mapVal === 'Absent' || mapVal === false) return 'Absent'
+  }
+
+  // 2. Check member record columns (e.g. attendance_2026_08_02, Attendance 2nd)
+  if (member && typeof member === 'object') {
+    const normalizedDateKey = dateStr.replace(/-/g, '_')
+    const newCol = `attendance_${normalizedDateKey}`
+    const legacyCol = getLegacyAttendanceColumnName(dateStr)
+
+    for (const key in member) {
+      const keyLower = key.toLowerCase()
+      if (keyLower === newCol || (legacyCol && key === legacyCol)) {
+        const val = member[key]
+        if (val === 'Present' || val === true) return 'Present'
+        if (val === 'Absent' || val === false) return 'Absent'
+      }
+    }
+  }
+
+  return null
+}
+
+export const isMemberMarkedForDate = (member, attendanceDate, attendanceData) => {
+  const status = getCanonicalAttendanceStatus({
+    member,
+    memberId: member?.id,
+    attendanceDate,
+    attendanceData
+  })
+  return status === 'Present' || status === 'Absent'
+}
+
 export const resolveMemberAttendanceForDate = (
   member,
   dateKey,
   attendanceMap = {},
   options = {}
 ) => {
-  if (!member || !dateKey) return undefined
-
-  if (Object.prototype.hasOwnProperty.call(attendanceMap, member.id)) {
-    const mapValue = normalizeAttendanceValue(attendanceMap[member.id])
-    if (mapValue !== undefined) return mapValue
-    return undefined
-  }
-
-  // Once a date map has been loaded from Supabase it is authoritative. A
-  // missing member id means "not marked" and must not resurrect an older
-  // attendance value copied onto a cached member row.
-  if (options.authoritativeMap === true) return undefined
-
-  const normalizedDateKey = String(dateKey).replace(/-/g, '_')
-  const newColumnName = `attendance_${normalizedDateKey}`
-  const legacyColumnName = getLegacyAttendanceColumnName(dateKey)
-
-  for (const key in member) {
-    const keyLower = key.toLowerCase()
-    if (keyLower === newColumnName || key === legacyColumnName) {
-      const memberValue = normalizeAttendanceValue(member[key])
-      if (memberValue !== undefined) return memberValue
-    }
-  }
-
+  void options
+  const status = getCanonicalAttendanceStatus({
+    member,
+    memberId: member?.id,
+    attendanceDate: dateKey,
+    attendanceData: { [dateKey]: attendanceMap }
+  })
+  if (status === 'Present') return true
+  if (status === 'Absent') return false
   return undefined
 }

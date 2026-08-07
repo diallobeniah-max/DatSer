@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'datser-offline-v2'
+const CACHE_VERSION = 'datser-offline-v3'
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`
 
@@ -15,6 +15,7 @@ const APP_SHELL_URLS = [
 ]
 
 const isSameOrigin = (requestUrl) => requestUrl.origin === self.location.origin
+const isSupabaseRequest = (requestUrl) => requestUrl.hostname.endsWith('.supabase.co')
 
 const fetchAndCache = async (request, cacheName) => {
   const response = await fetch(request)
@@ -90,6 +91,14 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return
 
   const requestUrl = new URL(request.url)
+
+  // Preference and API reads must always go to the network. They are never
+  // cached or replayed by the service worker; the app's scoped data store owns
+  // offline snapshots and explicit sync queues.
+  if (isSupabaseRequest(requestUrl)) {
+    event.respondWith(fetch(request))
+    return
+  }
 
   // Keep protected Supabase/API responses out of Cache Storage. User data is
   // stored in the app's user-bound IndexedDB snapshot instead.

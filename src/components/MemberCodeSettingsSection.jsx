@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
 import { buildMemberIndexCodeMap, getMemberCodeCapacity, getMemberIndexCode, getMemberIndexCodeAliases, getToggledMemberCodeFormat, MEMBER_CODE_LENGTHS, normalizeMemberCode, normalizeMemberCodeFormat, normalizeMemberCodeLength } from '../utils/memberIndexCodes'
 import MemberCodeBadge, { normalizeBadgeStyleKey } from './MemberCodeBadge'
+import { DEFAULT_SHARE_MESSAGE_TEMPLATE, SHARE_MESSAGE_TOKENS, formatMemberCodeShareMessage } from '../utils/memberCodeShareMessage'
 import MemberCodePassCard, {
     MEMBER_CODE_CARD_STYLE_OPTIONS,
     getMemberCodeCardStyle,
@@ -16,8 +17,6 @@ const AUTO_CYCLE_INTERVALS = [
     { value: 30, label: '30 min' },
     { value: 60, label: '1 hour' }
 ]
-
-const DEFAULT_SHARE_MESSAGE_TEMPLATE = 'Hi. Thank you for being part of {workspace}. Your member pass code is {code}.'
 
 const normalizeAutoCycleMinutes = (value) => {
     const numericValue = Number(value)
@@ -80,6 +79,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const quickPassEnabled = preferences?.member_code_quick_pass_enabled !== false
     const showLogo = preferences?.member_code_show_logo !== false
     const showPhoto = preferences?.member_code_show_photo !== false
+
     const showEmail = preferences?.member_code_show_email !== false
     const autoOpenProfile = preferences?.member_code_auto_profile_enabled === true
     const badgeStyle = preferences?.member_code_badge_style || 'soft'
@@ -104,6 +104,81 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
     const [saveStatus, setSaveStatus] = useState(null)
     const [pendingConfiguration, setPendingConfiguration] = useState(null)
     const logoInputRef = useRef(null)
+    const shareMessageTextareaRef = useRef(null)
+
+    useEffect(() => {
+        setDraftShareMessage(shareMessageTemplate)
+    }, [shareMessageTemplate])
+
+    const hasUnsavedShareMessage = draftShareMessage !== shareMessageTemplate
+
+    const insertTokenAtCaret = (tokenStr) => {
+        const textarea = shareMessageTextareaRef.current
+        const currentText = draftShareMessage ?? ''
+        if (!textarea) {
+            setDraftShareMessage(currentText + tokenStr)
+            return
+        }
+
+        const start = textarea.selectionStart ?? currentText.length
+        const end = textarea.selectionEnd ?? currentText.length
+
+        const before = currentText.substring(0, start)
+        const after = currentText.substring(end)
+
+        const nextText = before + tokenStr + after
+        setDraftShareMessage(nextText)
+
+        requestAnimationFrame(() => {
+            textarea.focus()
+            const newCursor = start + tokenStr.length
+            textarea.setSelectionRange(newCursor, newCursor)
+        })
+    }
+
+    const handleShareMessageDragOver = (e) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+    }
+
+    const handleShareMessageDrop = (e) => {
+        e.preventDefault()
+        const tokenStr = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('token')
+        if (!tokenStr) return
+
+        const textarea = shareMessageTextareaRef.current
+        const currentText = draftShareMessage ?? ''
+
+        if (textarea && typeof document.caretPositionFromPoint === 'function') {
+            const range = document.caretPositionFromPoint(e.clientX, e.clientY)
+            if (range) {
+                const offset = range.offset
+                const before = currentText.substring(0, offset)
+                const after = currentText.substring(offset)
+                setDraftShareMessage(before + tokenStr + after)
+                requestAnimationFrame(() => {
+                    textarea.focus()
+                    textarea.setSelectionRange(offset + tokenStr.length, offset + tokenStr.length)
+                })
+                return
+            }
+        } else if (textarea && typeof document.caretRangeFromPoint === 'function') {
+            const range = document.caretRangeFromPoint(e.clientX, e.clientY)
+            if (range) {
+                const offset = range.startOffset
+                const before = currentText.substring(0, offset)
+                const after = currentText.substring(offset)
+                setDraftShareMessage(before + tokenStr + after)
+                requestAnimationFrame(() => {
+                    textarea.focus()
+                    textarea.setSelectionRange(offset + tokenStr.length, offset + tokenStr.length)
+                })
+                return
+            }
+        }
+
+        insertTokenAtCaret(tokenStr)
+    }
 
     const memberIndexCodeMap = useMemo(() => buildMemberIndexCodeMap(members, {
         format: memberCodeFormat,
@@ -209,6 +284,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
             setSavingKey('')
         }
     }
+
     const setMemberCodesEnabled = async (value) => {
         if (!updatePreferences) return null
         setSavingKey('member_codes_enabled')
@@ -227,6 +303,7 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
             setSavingKey('')
         }
     }
+
     const setWorkspaceMemberCodesEnabled = async (value) => {
         if (!updatePreferences) return null
         setSavingKey('workspace_member_codes_enabled')
@@ -245,14 +322,53 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
             setSavingKey('')
         }
     }
+
     const saveChurchName = () => {
         const cleanName = draftChurchName.trim() || 'DatSer Church'
         setPreference('member_code_church_name', cleanName, 'Pass organization name')
         setEditingChurchName(false)
     }
-    const saveShareMessageTemplate = () => {
-        setPreference('member_code_share_message_template', draftShareMessage.trim() || DEFAULT_SHARE_MESSAGE_TEMPLATE, 'Share message')
+
+    const saveShareMessageTemplate = async () => {
+        if (!updatePreferences) return null
+        setSavingKey('member_code_share_message_template')
+        setSaveStatus(null)
+        try {
+            const cleanDraft = draftShareMessage.trim() || DEFAULT_SHARE_MESSAGE_TEMPLATE
+            const result = await updatePreferences({ member_code_share_message_template: cleanDraft })
+            if (result !== null) {
+                setSaveStatus({ type: 'success', message: 'Share message saved.' })
+                toast.success('Share message saved.')
+            } else {
+                setSaveStatus({ type: 'error', message: 'The share message could not be saved. Your previous message is still active.' })
+                toast.error('The share message could not be saved. Your previous message is still active.')
+            }
+            return result
+        } catch (error) {
+            console.error('Share message save failed:', error)
+            setSaveStatus({ type: 'error', message: 'The share message could not be saved. Your previous message is still active.' })
+            toast.error('The share message could not be saved. Your previous message is still active.')
+            return null
+        } finally {
+            setSavingKey('')
+        }
     }
+
+    const resetShareMessageToDefault = () => {
+        setDraftShareMessage(DEFAULT_SHARE_MESSAGE_TEMPLATE)
+        toast.info('Template reset to default. Tap Save Message to persist changes.')
+    }
+
+    const samplePreviewText = useMemo(() => {
+        return formatMemberCodeShareMessage({
+            template: draftShareMessage,
+            member: { full_name: 'Ama Mensah' },
+            memberCode: '062',
+            churchName: churchName || 'The Maker’s House',
+            lookupLink: 'https://example.com/member/062'
+        })
+    }, [draftShareMessage, churchName])
+
     const uploadChurchLogo = async (event) => {
         const file = event.target.files?.[0]
         event.target.value = ''
@@ -508,6 +624,46 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             disabled={savingKey === 'member_code_lookup_enabled'}
                             onChange={() => setPreference('member_code_lookup_enabled', !codeLookupEnabled, 'Code Number Lookup')}
                         />
+                        <ToggleRow
+                            icon={UserRound}
+                            title="Show Member Photo"
+                            description="Show the member photo or initials on the pass."
+                            checked={showPhoto}
+                            settingId="member_code_photo"
+                            getSettingTargetClass={getSettingTargetClass}
+                            disabled={savingKey === 'member_code_photo'}
+                            onChange={() => setPreference('member_code_photo', !showPhoto, 'Member photo visibility')}
+                        />
+                        <ToggleRow
+                            icon={Mail}
+                            title="Show Email"
+                            description="Display email on the profile preview when available."
+                            checked={showEmail}
+                            settingId="member_code_email"
+                            getSettingTargetClass={getSettingTargetClass}
+                            disabled={savingKey === 'member_code_email'}
+                            onChange={() => setPreference('member_code_email', !showEmail, 'Email visibility')}
+                        />
+                        <ToggleRow
+                            icon={Sparkles}
+                            title="Auto-Open Exact Match"
+                            description="Open the pass automatically when a typed code matches one member."
+                            checked={autoOpenProfile}
+                            settingId="member_code_auto_open"
+                            getSettingTargetClass={getSettingTargetClass}
+                            disabled={savingKey === 'member_code_auto_profile_enabled'}
+                            onChange={() => setPreference('member_code_auto_profile_enabled', !autoOpenProfile, 'Auto-open exact match')}
+                        />
+                        <ToggleRow
+                            icon={Search}
+                            title="Code Number Lookup"
+                            description="Show the matching member name while typing a code number."
+                            checked={codeLookupEnabled}
+                            settingId="member_code_lookup"
+                            getSettingTargetClass={getSettingTargetClass}
+                            disabled={savingKey === 'member_code_lookup_enabled'}
+                            onChange={() => setPreference('member_code_lookup_enabled', !codeLookupEnabled, 'Code Number Lookup')}
+                        />
                         {isAdminAccess && (
                             <>
                                 <ToggleRow
@@ -575,116 +731,6 @@ const MemberCodeSettingsSection = ({ preferences, updatePreferences, getSettingT
                             </div>
                         </div>
                     </div>
-
-                    <div data-setting-id="member_code_badge_style" tabIndex={-1} className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_badge_style') || ''}`}>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                                <h4 className="font-semibold text-gray-900 dark:text-white">Badge Style</h4>
-                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Choose the shape and automatic mix for member code badges.</p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setPreference('member_code_badge_style', 'auto')}
-                                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition ${
-                                    badgeStyle === 'auto'
-                                        ? 'border-orange-500 bg-orange-600 text-white'
-                                        : 'border-orange-200 bg-orange-50 text-orange-700 hover:border-orange-400 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200'
-                                }`}
-                            >
-                                <Shuffle className="h-4 w-4" />
-                                Auto Mix
-                            </button>
-                        </div>
-                        {badgeStyle === 'auto' && (
-                            <div className="mt-4 rounded-xl border border-orange-500/30 bg-orange-500/10 p-3">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <div>
-                                        <p className="text-sm font-bold text-orange-900 dark:text-orange-100">Rotate member colors</p>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400">Auto Mix changes each member badge on your chosen schedule.</p>
-                                    </div>
-                                    <div className="flex rounded-xl border border-orange-500/30 bg-black/5 p-1 dark:bg-black/20">
-                                        {AUTO_CYCLE_INTERVALS.map((option) => (
-                                            <button
-                                                key={option.value}
-                                                type="button"
-                                                onClick={() => setPreference('member_code_auto_cycle_minutes', option.value)}
-                                                className={`rounded-lg px-3 py-1.5 text-xs font-black transition ${
-                                                    autoCycleMinutes === option.value
-                                                        ? 'bg-orange-600 text-white shadow-sm'
-                                                        : 'text-orange-800 hover:bg-orange-500/10 dark:text-orange-100'
-                                                }`}
-                                            >
-                                                {option.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                        <div className="mt-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,9.25rem),1fr))]">
-                            {badgeStyles.map((option) => (
-                                <button key={option.id} type="button" onClick={() => setPreference('member_code_badge_style', option.id)} className={optionClass(normalizedBadgeStyle === option.id)}>
-                                    <MemberCodeBadge code="E79" styleKey={option.id} className="h-8 w-full max-w-[8.25rem] min-w-0 px-3 text-xs" />
-                                    <span className="mt-2 block break-words text-sm font-semibold leading-tight">{option.label}</span>
-                                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{option.description}</span>
-                                    {normalizedBadgeStyle === option.id && <CheckCircle className="absolute right-2 top-2 h-4 w-4 text-orange-500" />}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div data-setting-id="member_code_card_style" tabIndex={-1} className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_card_style') || ''}`}>
-                        <h4 className="font-semibold text-gray-900 dark:text-white">Card Style</h4>
-                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Choose one premium member pass effect. Each option shows its motion live.</p>
-                        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            {cardStyles.map((option) => (
-                                <button key={option.id} type="button" onClick={() => setPreference('member_code_card_style', option.id)} className={optionClass(cardStyle === option.id)}>
-                                    <MemberCodePassCard styleKey={option.id} compact className="member-code-pass-card-preview h-20 rounded-xl border border-white/10 transition duration-200 group-hover:scale-[1.02]">
-                                        <div className="flex h-full items-center justify-center">
-                                            <MemberCodeBadge code="E79" styleKey={option.badgeStyleKey} className="h-8 min-w-[4.75rem] px-4 text-xs" />
-                                        </div>
-                                    </MemberCodePassCard>
-                                    <span className="mt-2 block text-sm font-semibold leading-tight">{option.label}</span>
-                                    <span className="mt-0.5 block text-xs font-semibold text-orange-700 dark:text-orange-200">{option.colorName}</span>
-                                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{option.description}</span>
-                                    {cardStyle === option.id && <CheckCircle className="absolute right-2 top-2 h-4 w-4 text-orange-500" />}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div
-                        data-setting-id="member_code_share_message"
-                        tabIndex={-1}
-                        className={`rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800 ${getSettingTargetClass?.('member_code_share_message') || ''}`}
-                    >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                                <h4 className="font-semibold text-gray-900 dark:text-white">Share Message</h4>
-                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                                    Customize the text used for WhatsApp, SMS, and shared member pass previews.
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={saveShareMessageTemplate}
-                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-orange-700"
-                            >
-                                Save
-                            </button>
-                        </div>
-                        <textarea
-                            value={draftShareMessage}
-                            onChange={(event) => setDraftShareMessage(event.target.value)}
-                            onBlur={saveShareMessageTemplate}
-                            rows={4}
-                            className="mt-3 w-full resize-y rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold leading-6 text-gray-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-500/20 dark:border-white/10 dark:bg-black/25 dark:text-white"
-                        />
-                        <p className="mt-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                            Tokens: {'{name}'}, {'{code}'}, {'{workspace}'}.
-                        </p>
-                    </div>
-
                 </div>
 
                 <div className={`member-code-live-preview-panel rounded-3xl border p-4 shadow-xl ${selectedCardStyle.accentClass}`}>

@@ -26,10 +26,7 @@ const WorkspaceSettingsModal = ({ isOpen, onClose }) => {
 
         setIsLoading(true)
         try {
-            // Update auth preference (local state)
-            await updatePreference('workspace_name', workspaceName.trim())
-
-            // Trigger batch update for all table records via RPC
+            // Trigger batch update for all table records via specialized RPC
             await updateWorkspaceForAllTables(workspaceName.trim())
 
             onClose()

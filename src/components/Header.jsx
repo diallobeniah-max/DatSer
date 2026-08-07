@@ -19,8 +19,10 @@ import {
 import MonthPickerPopup from './MonthPickerPopup'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
+import { toast } from 'react-toastify'
 import LoginButton from './LoginButton'
 import useHapticFeedback from '../hooks/useHapticFeedback'
+import { getCanonicalAttendanceStatus } from '../utils/attendanceRecords'
 
 const getMemberDisplayName = (member) => (
   member?.full_name || member?.['Full Name'] || member?.name || 'Unknown member'
@@ -148,6 +150,10 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     selectedAttendanceDate,
     setAndSaveAttendanceDate,
     focusDateSelector,
+    isPersonalManualMode,
+    manualMonthTable,
+    setPersonalCalendarMode,
+    lockedDefaultDate,
     isCollaborator,
     isAdminCollaborator,
     isOnline,
@@ -321,6 +327,37 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     return acc
   }, [filteredMembers, attendanceData, sundayDates, dashboardTab])
 
+  // Count of edited members (has attendance marked Present or Absent for selected/any date)
+  const editedCount = useMemo(() => {
+    try {
+      const activeMembers = (members || []).filter(m => !m?.deleted_at)
+      if (visibleSelectedDateKey) {
+        return activeMembers.filter(member => {
+          const status = getCanonicalAttendanceStatus({
+            member,
+            memberId: member.id,
+            attendanceDate: visibleSelectedDateKey,
+            attendanceData
+          })
+          return status === 'Present' || status === 'Absent'
+        }).length
+      }
+      return activeMembers.filter(member => {
+        return sundayDates.some(d => {
+          const status = getCanonicalAttendanceStatus({
+            member,
+            memberId: member.id,
+            attendanceDate: d,
+            attendanceData
+          })
+          return status === 'Present' || status === 'Absent'
+        })
+      }).length
+    } catch {
+      return 0
+    }
+  }, [members, visibleSelectedDateKey, attendanceData, sundayDates])
+
   // Compute compact summary count: respects search and dashboard tab (All/Edited)
   const compactFoundCount = useMemo(() => {
     try {
@@ -331,38 +368,13 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
         return filteredMembers.length
       }
       if (dashboardTab === 'all') return Math.max(membersTotalCount || 0, filteredMembers.length)
+      if (dashboardTab === 'edited') return editedCount
 
-      if (dashboardTab === 'edited' && visibleSelectedDateKey) {
-        const map = attendanceData[visibleSelectedDateKey] || {}
-        return filteredMembers.filter(member => {
-          const value = resolveHeaderMemberAttendanceForDate(member, visibleSelectedDateKey, map)
-          return value === true || value === false
-        }).length
-      }
-
-      // Edited tab: member has any attendance entry (present/absent)
-      return filteredMembers.filter(isEditedMember).length
+      return filteredMembers.length
     } catch {
       return filteredMembers?.length ?? 0
     }
-  }, [filteredMembers, dashboardTab, attendanceData, searchTerm, sundayDates, visibleSelectedDateKey, membersTotalCount])
-
-  // Count of edited members (has attendance marked true/false for any date)
-  const editedCount = useMemo(() => {
-    try {
-      if (!filteredMembers || filteredMembers.length === 0) return 0
-      if (visibleSelectedDateKey) {
-        const map = attendanceData[visibleSelectedDateKey] || {}
-        return filteredMembers.filter(member => {
-          const value = resolveHeaderMemberAttendanceForDate(member, visibleSelectedDateKey, map)
-          return value === true || value === false
-        }).length
-      }
-      return filteredMembers.filter(isEditedMember).length
-    } catch {
-      return 0
-    }
-  }, [filteredMembers, attendanceData, sundayDates, visibleSelectedDateKey])
+  }, [filteredMembers, dashboardTab, searchTerm, membersTotalCount, editedCount])
 
   const recentEditedMembers = useMemo(() => {
     const source = Array.isArray(members) && members.length ? members : filteredMembers || []
@@ -489,7 +501,37 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   const visibleDateLabel = visibleSelectedDate
     ? visibleSelectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null
-  const monthLabel = currentTable ? currentTable.replace('_', ' ') : 'Select Month'
+  const activeCalendarTable = isPersonalManualMode && manualMonthTable ? manualMonthTable : currentTable
+  const monthLabel = activeCalendarTable
+    ? `${isPersonalManualMode ? 'Manual · ' : ''}${activeCalendarTable.replace('_', ' ')}`
+    : 'Select Month'
+  const personalModeDisabled = Boolean(isCollaborator && lockedDefaultDate)
+
+  const handleHeaderCalendarModeChange = useCallback(async (mode) => {
+    if (mode !== 'auto') return true
+    const saved = await setPersonalCalendarMode({ mode: 'auto' })
+    if (saved) {
+      toast.success('Auto mode is back on. Your month and Sunday follow the live schedule again.')
+    }
+    return saved
+  }, [setPersonalCalendarMode])
+
+  const handleHeaderSundaySelection = useCallback(async ({ table, date }) => {
+    if (personalModeDisabled) {
+      toast.info('The workspace owner has locked the attendance date.')
+      return false
+    }
+
+    const saved = await setPersonalCalendarMode({
+      mode: 'manual',
+      tableName: table || currentTable,
+      date: date || selectedAttendanceDate || new Date()
+    })
+    if (saved) {
+      toast.success('Manual month and Sunday updated.')
+    }
+    return saved
+  }, [currentTable, personalModeDisabled, selectedAttendanceDate, setPersonalCalendarMode])
 
   const recentButton = (extraClass = '', compact = false) => (
     <div ref={recentMenuRef} className={`relative ${extraClass}`}>
@@ -997,6 +1039,11 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
         onClose={() => setShowMonthPicker(false)}
         anchorRef={monthButtonRef}
         onCreateMonth={onCreateMonth}
+        onSelectSunday={handleHeaderSundaySelection}
+        calendarMode={isPersonalManualMode ? 'manual' : 'auto'}
+        onCalendarModeChange={handleHeaderCalendarModeChange}
+        manualModeDisabled={personalModeDisabled}
+        disabledReason="The workspace owner override is active right now, so your personal manual mode is temporarily locked."
       />
       {/* Badge filter popup removed; badge chips now render on the Edited page */}
     </header>

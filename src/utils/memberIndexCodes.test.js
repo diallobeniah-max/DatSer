@@ -59,4 +59,58 @@ describe('workspace member-code formats', () => {
     expect(getMemberIndexCode(members[1], map)).toBe('002')
     expect(getMemberIndexCodeAliases(members[0], map)).toEqual(['E01'])
   })
+
+  it('assigns each confirmed member its own canonical code across the map', () => {
+    const members = [
+      { id: 'm-1', full_name: 'Ama K' },
+      { id: 'm-2', full_name: 'Ben L' },
+      { id: 'm-3', full_name: 'Cora M' }
+    ]
+    const map = buildMemberIndexCodeMap(members, {
+      format: MEMBER_CODE_FORMATS.NUMBERS,
+      codeLength: 3,
+      persistedCodes: {
+        'm-1': { current_code: '101', aliases: [] },
+        'm-2': { current_code: '202', aliases: [] },
+        'm-3': { current_code: '303', aliases: [] }
+      },
+      allowLegacyFallback: false
+    })
+    expect(getMemberIndexCode(members[0], map)).toBe('101')
+    expect(getMemberIndexCode(members[1], map)).toBe('202')
+    expect(getMemberIndexCode(members[2], map)).toBe('303')
+  })
+
+  it('keeps every confirmed code even when one member has no assignment', () => {
+    const members = [
+      { id: 'matched-a', full_name: 'Ama K' },
+      { id: 'unmatched', full_name: 'Zoe N' },
+      { id: 'matched-b', full_name: 'Ben L' }
+    ]
+    const map = buildMemberIndexCodeMap(members, {
+      format: MEMBER_CODE_FORMATS.ALPHANUMERIC,
+      codeLength: 3,
+      persistedCodes: {
+        'matched-a': { current_code: 'A01', aliases: [] },
+        'matched-b': { current_code: 'A02', aliases: [] }
+      },
+      allowLegacyFallback: false
+    })
+    expect(getMemberIndexCode(members[0], map)).toBe('A01')
+    expect(getMemberIndexCode(members[2], map)).toBe('A02')
+  })
+
+  it('never lets partial legacy badge data replace a canonical code when fallback is off', () => {
+    const members = [
+      { id: 'm-1', full_name: 'Ama K' },
+      { id: 'm-2', full_name: 'Ben L' }
+    ]
+    const withPersisted = buildMemberIndexCodeMap(members, {
+      format: MEMBER_CODE_FORMATS.NUMBERS,
+      codeLength: 3,
+      persistedCodes: { 'm-1': { current_code: '111', aliases: [] } },
+      allowLegacyFallback: false
+    })
+    expect(getMemberIndexCode(members[0], withPersisted)).toBe('111')
+  })
 })

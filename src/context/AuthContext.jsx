@@ -5,6 +5,7 @@ import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabas
 import {
   clearAllOfflineData,
   clearOfflineAuthProfile,
+  clearOfflinePreferences,
   getOfflineAuthProfile,
   getOfflinePreferences,
   queueOfflineChange,
@@ -18,6 +19,21 @@ import {
   isLocalWebDeveloperModeAllowed,
   isNativeRuntime
 } from '../utils/developerMode'
+import {
+  clearPreferenceCache,
+  loadPreferenceBundle,
+  savePersonalPreferencePatch,
+  saveWorkspacePreferencePatch
+} from '../services/preferenceService'
+import { isBackendHealthy } from '../utils/backendHealthCoordinator'
+import {
+  getPersonalSettingsDefaults,
+  getWorkspaceSettingsDefaults,
+  getSettingConfig,
+  pickPersonalPreferencePatch,
+  pickWorkspacePreferencePatch,
+  SETTINGS_SCOPES
+} from '../config/settingsRegistry'
 
 const AuthContext = createContext(null)
 const LOCAL_PREFERENCE_OVERRIDES_PREFIX = 'datser_preference_overrides'
@@ -193,8 +209,19 @@ export const AuthProvider = ({ children }) => {
   // Fast initial state: if we have a stored session, assume logged in (optimistic)
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [preferences, setPreferences] = useState(null)
-  const preferencesRef = useRef(null)
+  const [personalPreferences, setPersonalPreferences] = useState(getPersonalSettingsDefaults())
+  const [workspacePreferences, setWorkspacePreferences] = useState(getWorkspaceSettingsDefaults())
+  const [workspacePreferencesOwnerId, setWorkspacePreferencesOwnerId] = useState(null)
+  const [personalRevision, setPersonalRevision] = useState(0n)
+  const [workspaceRevision, setWorkspaceRevision] = useState(0n)
+  const [preferencesHydrated, setPreferencesHydrated] = useState(false)
+  const [preferencesError, setPreferencesError] = useState(null)
+  const [preferencesLoading, setPreferencesLoading] = useState(false)
+  const preferences = useMemo(() => ({
+    ...personalPreferences,
+    ...workspacePreferences
+  }), [personalPreferences, workspacePreferences])
+  const preferencesRef = useRef(preferences)
   const welcomeToastShownRef = useRef(false) // Prevent duplicate welcome toasts
   // Durable guard so the welcome toast never repeats within a single browser
   // session. React refs reset on remount (StrictMode double-mount, route
@@ -222,8 +249,13 @@ export const AuthProvider = ({ children }) => {
 
       const cachedPreferences = await getOfflinePreferences(cachedAuth.user.id).catch(() => null)
       setUser(cachedAuth.user)
-      if (cachedPreferences?.preferences) {
-        setPreferences(cachedPreferences.preferences)
+      if (cachedPreferences) {
+        if (cachedPreferences.personal) setPersonalPreferences(cachedPreferences.personal)
+        if (cachedPreferences.workspace) setWorkspacePreferences(cachedPreferences.workspace)
+        if (cachedPreferences.preferences && !cachedPreferences.personal) {
+          setPersonalPreferences(cachedPreferences.preferences)
+        }
+        setPreferencesHydrated(true)
       }
       setLoading(false)
       welcomeToastShownRef.current = true
@@ -267,11 +299,15 @@ export const AuthProvider = ({ children }) => {
     }
   }, [])
 
-  // Load preferences in background (non-blocking)
+  // Load preferences in background. The FIRST authenticated hydration is
+  // required application state: Calendar Mode depends on preferencesHydrated,
+  // so it must start immediately and must NOT be deferred behind
+  // requestIdleCallback/setTimeout, which can be starved (idle starvation) and
+  // leave the UI stuck on "Loading calendar settings…". Idle scheduling is only
+  // acceptable for later refreshes.
   const loadUserPreferencesBackground = useCallback((userId) => {
-    // Use requestIdleCallback for old devices, fallback to setTimeout
-    const scheduleLoad = window.requestIdleCallback || ((cb) => setTimeout(cb, 50))
-    scheduleLoad(() => loadUserPreferences(userId))
+    const load = loadUserPreferencesRef.current
+    if (load) void load(userId)
   }, [])
 
   // Auto-accept collaborator invite when user signs in
@@ -302,7 +338,9 @@ export const AuthProvider = ({ children }) => {
       getDeveloperBypassPreferences()
         .then((devPreferences) => {
           if (!mounted) return
-          setPreferences(devPreferences)
+          setPersonalPreferences(devPreferences)
+          setWorkspacePreferences(devPreferences)
+          setPreferencesHydrated(true)
         })
         .finally(() => {
           if (mounted) setLoading(false)
@@ -459,8 +497,13 @@ export const AuthProvider = ({ children }) => {
             }
           }
         } else if (event === 'SIGNED_OUT') {
-          setPreferences(null)
-          welcomeToastShownRef.current = false // Reset for next login
+          clearPreferenceCache()
+          setPersonalPreferences(getPersonalSettingsDefaults())
+          setWorkspacePreferences(getWorkspaceSettingsDefaults())
+          setPersonalRevision(0n)
+          setWorkspaceRevision(0n)
+          setPreferencesHydrated(false)
+          welcomeToastShownRef.current = false
           try { window.sessionStorage?.removeItem(WELCOME_TOAST_SESSION_KEY) } catch { /* ignore */ }
           toast.info('Signed out successfully')
         }
@@ -476,216 +519,262 @@ export const AuthProvider = ({ children }) => {
     }
   }, [isDeveloperBypassEnabled, loadUserPreferencesBackground])
 
-  // Load user preferences from database
-  const loadUserPreferences = async (userId) => {
-    if (isDeveloperBypassEnabled) {
-      const devPreferences = await getDeveloperBypassPreferences()
-      setPreferences(devPreferences)
-      return devPreferences
+  const hydrationIdentityRef = useRef({ generation: 0, actorId: null, ownerId: null })
+  // Tracks the single in-flight bundle load per (actor, owner) so same-user
+  // repeated SIGNED_IN events share one request instead of restarting it.
+  const hydrationInFlightRef = useRef(null)
+  // Stable handle to the bundle loader; the background helper reads this ref so
+  // it never needs to be hoisted above its declaration.
+  const loadUserPreferencesRef = useRef(null)
+
+  const resolveCanonicalOwnerId = useCallback((explicitOwnerId) => (
+    explicitOwnerId || user?.user_metadata?.invited_by || user?.id
+  ), [user?.id, user?.user_metadata?.invited_by])
+
+  // Load preferences bundle using preferenceService
+  const loadUserPreferencesBundle = useCallback(async (ownerId, userId) => {
+    const targetOwnerId = resolveCanonicalOwnerId(ownerId)
+    const targetActorId = userId || user?.id
+    if (!targetOwnerId || !targetActorId) return null
+
+    // Same-user repeated SIGNED_IN events share the active in-flight load.
+    // Do not restart it, bump the generation, or leave loading stuck.
+    const inflight = hydrationInFlightRef.current
+    if (inflight && inflight.ownerId === targetOwnerId && inflight.actorId === targetActorId) {
+      return inflight.promise
     }
 
-    try {
-      if (isBrowserOffline()) {
-        const cached = await getOfflinePreferences(userId).catch(() => null)
-        if (cached?.preferences) {
-          setPreferences(cached.preferences)
-          return cached.preferences
+    const previousOwnerId = hydrationIdentityRef.current.ownerId
+    const currentGeneration = (hydrationIdentityRef.current.generation || 0) + 1
+    hydrationIdentityRef.current = {
+      generation: currentGeneration,
+      actorId: targetActorId,
+      ownerId: targetOwnerId
+    }
+
+    if (previousOwnerId && previousOwnerId !== targetOwnerId) {
+      setWorkspacePreferences(getWorkspaceSettingsDefaults())
+      setWorkspacePreferencesOwnerId(null)
+      setWorkspaceRevision(0n)
+      setPreferencesHydrated(false)
+    }
+
+    const isCurrentRequest = () => {
+      const active = hydrationIdentityRef.current
+      return Boolean(
+        active &&
+        active.generation === currentGeneration &&
+        active.actorId === targetActorId &&
+        active.ownerId === targetOwnerId
+      )
+    }
+
+    const loadPromise = (async () => {
+      setPreferencesLoading(true)
+      setPreferencesError(null)
+      try {
+        const bundle = await loadPreferenceBundle(targetOwnerId)
+
+        if (!isCurrentRequest()) {
+          return null
+        }
+
+        if (bundle && bundle.personalPreferences && bundle.workspacePreferences) {
+          setPersonalPreferences(bundle.personalPreferences)
+          setWorkspacePreferences(bundle.workspacePreferences)
+          setWorkspacePreferencesOwnerId(targetOwnerId)
+          setPersonalRevision(bundle.personalRevision || 0n)
+          setWorkspaceRevision(bundle.workspaceRevision || 0n)
+          setPreferencesHydrated(true)
+
+          saveOfflinePreferences(targetActorId, {
+            actorId: targetActorId,
+            ownerId: targetOwnerId,
+            personal: bundle.personalPreferences,
+            workspace: bundle.workspacePreferences,
+            personalRevision: bundle.personalRevision,
+            workspaceRevision: bundle.workspaceRevision
+          }).catch(() => {})
+
+          return bundle
+        }
+
+        throw new Error('Invalid preference bundle returned from server')
+      } catch (err) {
+        if (!isCurrentRequest()) {
+          return null
+        }
+
+        console.warn('[AuthContext] loadUserPreferencesBundle error:', err)
+        const cached = await getOfflinePreferences(targetActorId, targetOwnerId).catch(() => null)
+        if (cached && (cached.personal || cached.workspace)) {
+          if (cached.personal) setPersonalPreferences(cached.personal)
+          if (cached.workspace) setWorkspacePreferences(cached.workspace)
+          setPreferencesHydrated(true)
+          return null
+        }
+
+        setPreferencesError(err?.message || 'Failed to load preferences')
+        return null
+      } finally {
+        // Only the latest request for this identity may clear the loading flag,
+        // otherwise a stale/aborted request would hide a newer one's progress.
+        if (isCurrentRequest()) {
+          setPreferencesLoading(false)
+        }
+        if (hydrationInFlightRef.current && hydrationInFlightRef.current.promise === loadPromise) {
+          hydrationInFlightRef.current = null
         }
       }
+    })()
 
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('user_preferences')
-          .select('*')
-          .eq('user_id', userId)
-          .single()
+    const entry = { ownerId: targetOwnerId, actorId: targetActorId, promise: loadPromise }
+    hydrationInFlightRef.current = entry
+    return loadPromise
+  }, [resolveCanonicalOwnerId, user?.id])
 
-        if (error && error.code !== 'PGRST116') {
-          // PGRST116 = no rows returned (new user)
-          console.warn('Using local preferences because remote load failed:', error)
-          return
-        }
+  const loadUserPreferences = loadUserPreferencesBundle
+  loadUserPreferencesRef.current = loadUserPreferences
 
-        if (data) {
-          const cached = await getOfflinePreferences(userId).catch(() => null)
-          const localOverride = readLocalPreferenceOverride(userId)
-          const cachedSavedAt = cached?.saved_at ? new Date(cached.saved_at).getTime() : 0
-          const localOverrideSavedAt = localOverride?.saved_at ? new Date(localOverride.saved_at).getTime() : 0
-          const remoteUpdatedAt = data.updated_at ? new Date(data.updated_at).getTime() : 0
-          const localCacheIsNewer = cachedSavedAt > 0 && cachedSavedAt >= remoteUpdatedAt
-          const mergedBasePreferences = localCacheIsNewer
-            ? {
-              ...data,
-              ...(cached?.preferences || {}),
-              user_id: data.user_id || userId
-            }
-            : {
-              ...(cached?.preferences || {}),
-              ...data,
-              user_id: data.user_id || userId
-            }
-          const mergedPreferences = localOverrideSavedAt >= remoteUpdatedAt
-            ? {
-              ...mergedBasePreferences,
-              ...(localOverride?.preferences || {}),
-              user_id: data.user_id || userId
-            }
-            : mergedBasePreferences
-          // The server is authoritative for the workspace-wide code settings.
-          // A stale personal cache must not change every collaborator back to
-          // the default format while the app is starting.
-          const confirmedPreferences = preserveRemoteWorkspaceMemberCodeConfiguration(mergedPreferences, data)
-          setPreferences(confirmedPreferences)
-          saveOfflinePreferences(userId, confirmedPreferences).catch((error) => {
-            console.warn('Could not cache preferences for offline use:', error)
-          })
-          // Only apply database preferences if localStorage doesn't have values
-          // This preserves user's most recent selections even after logout
-          if (data.selected_month_table && !localStorage.getItem('selectedMonthTable')) {
-            localStorage.setItem('selectedMonthTable', data.selected_month_table)
-          }
-          if (data.badge_filter && !localStorage.getItem('badgeFilter')) {
-            localStorage.setItem('badgeFilter', JSON.stringify(data.badge_filter))
-          }
-          return confirmedPreferences
-        }
-      }
-    } catch (error) {
-      console.warn('Using cached preferences after load failed:', error)
-      const cached = await getOfflinePreferences(userId).catch(() => null)
-      if (cached?.preferences) {
-        setPreferences(cached.preferences)
-        return cached.preferences
-      }
-    }
-  }
-
-  // Save user preferences to database
-  const saveUserPreferences = async (newPreferences) => {
-    if (!user) return
-
-    const cached = await getOfflinePreferences(user.id).catch(() => null)
-    const freshestPreferences = {
-      ...(cached?.preferences || {}),
-      ...(preferencesRef.current || {})
-    }
-    const nextPreferences = {
-      ...freshestPreferences,
-      ...normalizePreferencePayload(newPreferences, user.id),
-      user_id: user.id
+  // Save personal preferences using save_personal_preferences RPC
+  const savePersonalPreferences = useCallback(async (patch = {}, options = {}) => {
+    if (!preferencesHydrated && !options?.forceHydrated) {
+      console.warn('[AuthContext] savePersonalPreferences ignored before hydration completed.')
+      return false
     }
 
-    try {
-      if (isDeveloperBypassEnabled) {
-        const devPreferences = {
-          ...(preferences || DEV_BYPASS_PREFERENCES),
-          ...normalizePreferencePayload(newPreferences, user.id),
-          user_id: user.id
-        }
-        setPreferences(devPreferences)
-        preferencesRef.current = devPreferences
-        writeDeveloperBypassPreferenceCache(devPreferences)
-        await saveOfflinePreferences(user.id, devPreferences).catch(() => {})
-        return devPreferences
-      }
-
-      setPreferences(nextPreferences)
-      preferencesRef.current = nextPreferences
-      writeLocalPreferenceOverride(user.id, nextPreferences)
-      await saveOfflinePreferences(user.id, nextPreferences).catch((error) => {
-        console.warn('Could not cache preferences for offline use:', error)
-      })
-
-      if (!isSupabaseConfigured() || !supabase || isBrowserOffline()) {
-        await queuePreferenceSync(user.id, nextPreferences)
-        return nextPreferences
-      }
-
-      if (supabase) {
-        const { data } = await executeSupabaseWrite(
-          () => supabase
-            .from('user_preferences')
-            .upsert({
-              user_id: user.id,
-              ...omitWorkspaceMemberCodeConfiguration(nextPreferences, user.id),
-              updated_at: new Date().toISOString()
-            }, {
-              onConflict: 'user_id'
-            })
-            .select()
-            .single(),
-          { action: 'Save user preferences' }
-        )
-
-        const savedPreferences = preserveRemoteWorkspaceMemberCodeConfiguration(data || nextPreferences, data)
-        setPreferences(savedPreferences)
-        preferencesRef.current = savedPreferences
-        await saveOfflinePreferences(user.id, savedPreferences).catch(() => {})
-        return savedPreferences
-      }
-    } catch (error) {
-      // Network / fetch errors are expected when Supabase is unreachable.
-      // Keep the UI responsive and avoid throwing (which can cascade into repeated calls).
-      const retryable = isTransientSupabaseError(error) || isPreferenceSchemaError(error) || isBrowserOffline()
-      if (retryable) {
-        console.warn('Preference save queued for later sync:', error)
-      } else {
-        console.error('Error saving preferences:', error)
-      }
-      if (retryable) {
-        setPreferences(nextPreferences)
-        preferencesRef.current = nextPreferences
-        await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
-        await queuePreferenceSync(user.id, nextPreferences)
-        return nextPreferences
-      }
-
-      // Permission/validation failures will not heal through retries. Restore
-      // the last confirmed state and make the failure visible.
-      setPreferences(freshestPreferences)
-      preferencesRef.current = freshestPreferences
-      writeLocalPreferenceOverride(user.id, freshestPreferences)
-      await saveOfflinePreferences(user.id, freshestPreferences).catch(() => {})
-      toast.error(error?.message || 'Setting could not be saved. Please retry.')
-      throw error
-    }
-  }
-
-  // Update a single preference
-  const updatePreference = async (key, value, options = {}) => {
-    if (!user) {
-      // If not logged in, just save to localStorage
-      return
+    if (!isBackendHealthy()) {
+      if (!options?.silent) toast.error('Database connection unavailable. Using cached local settings.')
+      return false
     }
 
-    try {
-      const nextPreferences = {
-        ...(preferencesRef.current || preferences || {}),
-        user_id: preferencesRef.current?.user_id || preferences?.user_id || user.id,
-        [key]: value
-      }
-
-      // Always update local state immediately so UI reflects change.
-      setPreferences(nextPreferences)
-      preferencesRef.current = nextPreferences
-      writeLocalPreferenceOverride(user.id, nextPreferences)
-      if (isDeveloperBypassEnabled) {
-        writeDeveloperBypassPreferenceCache(nextPreferences)
-      }
-      await saveOfflinePreferences(user.id, nextPreferences).catch(() => {})
-
-      // If Supabase isn't ready/online, skip remote write.
-      if (!isSupabaseConfigured() || !supabase || isBrowserOffline()) {
-        await queuePreferenceSync(user.id, nextPreferences)
-        return
-      }
-
-      return await saveUserPreferences(nextPreferences)
-    } catch (error) {
-      console.error('Error updating preference:', error)
-      if (options?.throwOnError) throw error
+    // Value diff check: ignore patch if values are unchanged unless the caller
+    // explicitly needs a server confirmation. Calendar mode uses this when a
+    // user chooses Auto/Manual so UI success always means the RPC confirmed it.
+    const hasChange = Object.keys(patch).some((k) => personalPreferences[k] !== patch[k])
+    if (!hasChange && !options?.requireServerConfirmation) {
+      return true
     }
-  }
+
+    const res = await savePersonalPreferencePatch(patch, {
+      expectedRevision: personalRevision,
+      requestId: options?.requestId
+    })
+
+    if (res.success && res.data) {
+      setPersonalPreferences(res.data)
+      if (res.revision !== undefined) setPersonalRevision(BigInt(res.revision))
+      const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
+      saveOfflinePreferences(user?.id, {
+        actorId: user?.id,
+        ownerId: targetOwnerId,
+        personal: res.data,
+        workspace: workspacePreferences,
+        personalRevision: res.revision,
+        workspaceRevision
+      }).catch(() => {})
+      return true
+    } else if (res.code === 'REVISION_CONFLICT') {
+      if (res.data) setPersonalPreferences(res.data)
+      if (res.revision !== undefined) setPersonalRevision(BigInt(res.revision))
+      toast.error(res.message)
+      return false
+    } else {
+      if (!options?.silent && res.code !== 'SERVICE_UNAVAILABLE') {
+        toast.error(res.message || 'This setting could not be saved.')
+      }
+      return false
+    }
+  }, [loadUserPreferencesBundle, personalPreferences, personalRevision, preferencesHydrated, resolveCanonicalOwnerId, user?.id, workspacePreferences, workspaceRevision])
+
+  // Save workspace preferences using save_workspace_preferences RPC
+  const saveWorkspacePreferences = useCallback(async (ownerId, patch = {}, options = {}) => {
+    if (!preferencesHydrated && !options?.forceHydrated) {
+      console.warn('[AuthContext] saveWorkspacePreferences ignored before hydration completed.')
+      return false
+    }
+
+    if (!isBackendHealthy()) {
+      if (!options?.silent) toast.error('Database connection unavailable. Using cached local settings.')
+      return false
+    }
+
+    const targetOwnerId = resolveCanonicalOwnerId(ownerId)
+    if (!targetOwnerId) return false
+
+    // Value diff check
+    const hasChange = Object.keys(patch).some((k) => workspacePreferences[k] !== patch[k])
+    if (!hasChange) {
+      return true
+    }
+
+    const res = await saveWorkspacePreferencePatch(targetOwnerId, patch, {
+      expectedRevision: workspaceRevision,
+      requestId: options?.requestId
+    })
+
+    if (res.success && res.data) {
+      setWorkspacePreferences(res.data)
+      if (res.revision !== undefined) setWorkspaceRevision(BigInt(res.revision))
+      saveOfflinePreferences(user?.id, {
+        actorId: user?.id,
+        ownerId: targetOwnerId,
+        personal: personalPreferences,
+        workspace: res.data,
+        personalRevision,
+        workspaceRevision: res.revision
+      }).catch(() => {})
+      return true
+    } else if (res.code === 'REVISION_CONFLICT') {
+      if (res.data) setWorkspacePreferences(res.data)
+      if (res.revision !== undefined) setWorkspaceRevision(BigInt(res.revision))
+      toast.error(res.message)
+      return false
+    } else {
+      if (!options?.silent && res.code !== 'SERVICE_UNAVAILABLE') {
+        toast.error(res.message || 'This setting could not be saved.')
+      }
+      return false
+    }
+  }, [loadUserPreferencesBundle, personalPreferences, personalRevision, preferencesHydrated, resolveCanonicalOwnerId, user?.id, workspacePreferences, workspaceRevision])
+
+  // Backward compatible saveUserPreferences & updatePreference
+  const saveUserPreferences = useCallback(async (newPreferences, explicitOwnerId) => {
+    if (!newPreferences || typeof newPreferences !== 'object') return false
+    const personalPatch = pickPersonalPreferencePatch(newPreferences)
+    const workspacePatch = pickWorkspacePreferencePatch(newPreferences)
+    const targetOwnerId = resolveCanonicalOwnerId(explicitOwnerId)
+
+    let okPersonal = true
+    let okWorkspace = true
+
+    if (Object.keys(personalPatch).length > 0) {
+      okPersonal = await savePersonalPreferences(personalPatch)
+    }
+    if (Object.keys(workspacePatch).length > 0) {
+      okWorkspace = await saveWorkspacePreferences(targetOwnerId, workspacePatch)
+    }
+
+    return okPersonal && okWorkspace
+  }, [resolveCanonicalOwnerId, savePersonalPreferences, saveWorkspacePreferences])
+
+  const updatePreference = useCallback(async (key, value, options = {}) => {
+    const settingConfig = getSettingConfig(key)
+    if (!settingConfig) {
+      console.warn(`[updatePreference] Unregistered key "${key}" ignored.`)
+      return false
+    }
+
+    if (settingConfig.scope === SETTINGS_SCOPES.PERSONAL) {
+      return await savePersonalPreferences({ [key]: value }, options)
+    } else if (settingConfig.scope === SETTINGS_SCOPES.WORKSPACE) {
+      const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
+      return await saveWorkspacePreferences(targetOwnerId, { [key]: value }, options)
+    } else {
+      console.warn(`[updatePreference] Key "${key}" with scope "${settingConfig.scope}" should use specialized save handler.`)
+      return false
+    }
+  }, [resolveCanonicalOwnerId, savePersonalPreferences, saveWorkspacePreferences])
 
   const getRedirectUrl = useCallback(() => {
     const normalizeRedirectUrl = (value) => {
@@ -945,14 +1034,47 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
+  const clearRevokedWorkspaceCache = useCallback(async (revokedOwnerId) => {
+    const actorId = user?.id
+    if (actorId && revokedOwnerId) {
+      hydrationIdentityRef.current = {
+        generation: (hydrationIdentityRef.current?.generation || 0) + 1,
+        actorId,
+        ownerId: actorId
+      }
+      clearPreferenceCache()
+      await clearOfflinePreferences(actorId, revokedOwnerId).catch(() => {})
+      setWorkspacePreferences(getWorkspaceSettingsDefaults())
+      setWorkspacePreferencesOwnerId(null)
+      setWorkspaceRevision(0n)
+      setPreferencesHydrated(false)
+      await loadUserPreferencesBundle(actorId, actorId)
+    }
+  }, [loadUserPreferencesBundle, user?.id])
+
   // Sign out - memoized to prevent stale references
   const signOut = useCallback(async () => {
     // Supabase can throw AuthSessionMissingError if the session is already gone.
     // We still want the UI to reliably log out in that case.
     try {
+      const currentActorId = user?.id
+      const currentOwnerId = user?.user_metadata?.invited_by || user?.id
+
       // Always clear local UI state FIRST to ensure immediate logout
       setUser(null)
-      setPreferences(null)
+      clearPreferenceCache()
+      if (currentActorId) {
+        clearOfflinePreferences(currentActorId, currentOwnerId).catch(() => {})
+      }
+      hydrationIdentityRef.current = { generation: (hydrationIdentityRef.current?.generation || 0) + 1, actorId: null, ownerId: null }
+      setPersonalPreferences(getPersonalSettingsDefaults())
+      setWorkspacePreferences(getWorkspaceSettingsDefaults())
+      setWorkspacePreferencesOwnerId(null)
+      setPersonalRevision(0n)
+      setWorkspaceRevision(0n)
+      setPreferencesHydrated(false)
+      setPreferencesLoading(false)
+      setPreferencesError(null)
       welcomeToastShownRef.current = false
       try { window.sessionStorage?.removeItem(WELCOME_TOAST_SESSION_KEY) } catch { /* ignore */ }
       try { window.sessionStorage?.removeItem(ADMIN_CODE_VERIFIED_SESSION_KEY) } catch { /* ignore */ }
@@ -982,7 +1104,7 @@ export const AuthProvider = ({ children }) => {
       console.error('Error signing out:', error)
       // Don't throw - we already cleared local state so user is logged out
     }
-  }, [])
+  }, [user?.id, user?.user_metadata?.invited_by])
 
   // Memoize bypassAuth to prevent recreation on every render
   const bypassAuth = useCallback(async () => {
@@ -991,7 +1113,10 @@ export const AuthProvider = ({ children }) => {
       const devUser = getDeveloperBypassUser()
       const devPreferences = await getDeveloperBypassPreferences()
       setUser(devUser)
-      setPreferences(devPreferences)
+      setPersonalPreferences(devPreferences)
+      setWorkspacePreferences(devPreferences)
+      setWorkspacePreferencesOwnerId(devUser.id)
+      setPreferencesHydrated(true)
       setLoading(false)
       toast.success('Entered Developer Mode')
       return devUser
@@ -1005,6 +1130,14 @@ export const AuthProvider = ({ children }) => {
   const value = useMemo(() => ({
     user,
     loading,
+    personalPreferences,
+    workspacePreferences,
+    workspacePreferencesOwnerId,
+    personalRevision,
+    workspaceRevision,
+    preferencesHydrated,
+    preferencesLoading,
+    preferencesError,
     preferences,
     signInWithGoogle,
     signUpWithEmail,
@@ -1013,13 +1146,17 @@ export const AuthProvider = ({ children }) => {
     resetPassword,
     signInWithAdminCode,
     signOut,
+    clearRevokedWorkspaceCache,
+    savePersonalPreferences,
+    saveWorkspacePreferences,
     saveUserPreferences,
     updatePreference,
     loadUserPreferences,
+    loadUserPreferencesBundle,
     bypassAuth,
     isDeveloperBypass: isDeveloperBypassEnabled,
     isAuthenticated: !!user
-  }), [user, loading, preferences, signInWithGoogle, signUpWithEmail, signInWithEmail, signInWithMagicLink, resetPassword, signInWithAdminCode, signOut, saveUserPreferences, updatePreference, loadUserPreferences, bypassAuth, isDeveloperBypassEnabled])
+  }), [user, loading, personalPreferences, workspacePreferences, workspacePreferencesOwnerId, personalRevision, workspaceRevision, preferencesHydrated, preferencesLoading, preferencesError, preferences, signInWithGoogle, signUpWithEmail, signInWithEmail, signInWithMagicLink, resetPassword, signInWithAdminCode, signOut, clearRevokedWorkspaceCache, savePersonalPreferences, saveWorkspacePreferences, saveUserPreferences, updatePreference, loadUserPreferences, loadUserPreferencesBundle, bypassAuth, isDeveloperBypassEnabled])
 
   return (
     <AuthContext.Provider value={value}>

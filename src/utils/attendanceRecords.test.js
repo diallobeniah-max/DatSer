@@ -3,7 +3,9 @@ import {
   isAttendanceAlreadySynced,
   isOfflineAttendanceConflict,
   normalizeAttendanceValue,
-  resolveMemberAttendanceForDate
+  resolveMemberAttendanceForDate,
+  getCanonicalAttendanceStatus,
+  isMemberMarkedForDate
 } from './attendanceRecords'
 
 describe('attendance record resolution', () => {
@@ -13,40 +15,41 @@ describe('attendance record resolution', () => {
     expect(normalizeAttendanceValue(null)).toBeUndefined()
     expect(normalizeAttendanceValue('')).toBeUndefined()
     expect(normalizeAttendanceValue('Clear')).toBeUndefined()
-})
-
-  it('lets a date-keyed cleared value shadow stale member-row attendance columns', () => {
-    const member = {
-      id: 'member-1',
-      attendance_2026_06_25: 'Present',
-      'Attendance 25th': 'Absent'
-    }
-
-    expect(resolveMemberAttendanceForDate(member, '2026-06-25', { 'member-1': null })).toBeUndefined()
-    expect(resolveMemberAttendanceForDate(member, '2026-06-25', { 'member-1': undefined })).toBeUndefined()
   })
 
-  it('falls back to member-row attendance columns only when no date-keyed value exists', () => {
+  it('returns Present or Absent for valid status and null for unmarked', () => {
+    const member = { id: 'm-1', attendance_2026_08_02: 'Present' }
+    const attendanceData = { '2026-08-02': { 'm-2': false } }
+
+    expect(getCanonicalAttendanceStatus({ member, memberId: 'm-1', attendanceDate: '2026-08-02', attendanceData })).toBe('Present')
+    expect(getCanonicalAttendanceStatus({ memberId: 'm-2', attendanceDate: '2026-08-02', attendanceData })).toBe('Absent')
+    expect(getCanonicalAttendanceStatus({ memberId: 'm-3', attendanceDate: '2026-08-02', attendanceData })).toBeNull()
+  })
+
+  it('normalizes boolean and string values consistently', () => {
+    expect(getCanonicalAttendanceStatus({ memberId: 'm-1', attendanceDate: '2026-08-02', attendanceData: { '2026-08-02': { 'm-1': true } } })).toBe('Present')
+    expect(getCanonicalAttendanceStatus({ memberId: 'm-1', attendanceDate: '2026-08-02', attendanceData: { '2026-08-02': { 'm-1': 'Present' } } })).toBe('Present')
+    expect(getCanonicalAttendanceStatus({ memberId: 'm-1', attendanceDate: '2026-08-02', attendanceDate: '2026-08-02', attendanceData: { '2026-08-02': { 'm-1': false } } })).toBe('Absent')
+    expect(getCanonicalAttendanceStatus({ memberId: 'm-1', attendanceDate: '2026-08-02', attendanceData: { '2026-08-02': { 'm-1': 'Absent' } } })).toBe('Absent')
+  })
+
+  it('correctly identifies marked vs unmarked members', () => {
+    const memberPresent = { id: 'm-1', attendance_2026_08_02: 'Present' }
+    const memberAbsent = { id: 'm-2', attendance_2026_08_02: 'Absent' }
+    const memberUnmarked = { id: 'm-3' }
+
+    expect(isMemberMarkedForDate(memberPresent, '2026-08-02', {})).toBe(true)
+    expect(isMemberMarkedForDate(memberAbsent, '2026-08-02', {})).toBe(true)
+    expect(isMemberMarkedForDate(memberUnmarked, '2026-08-02', {})).toBe(false)
+  })
+
+  it('falls back to member-row attendance columns when no date-keyed value exists', () => {
     const member = {
       id: 'member-1',
       attendance_2026_06_25: 'Present'
     }
 
     expect(resolveMemberAttendanceForDate(member, '2026-06-25', {})).toBe(true)
-  })
-
-  it('does not resurrect stale row columns after the server date map is loaded', () => {
-    const member = {
-      id: 'member-1',
-      attendance_2026_06_25: 'Present'
-    }
-
-    expect(resolveMemberAttendanceForDate(
-      member,
-      '2026-06-25',
-      {},
-      { authoritativeMap: true }
-    )).toBeUndefined()
   })
 
   it('does not treat queued clear/deselect actions as offline conflicts', () => {

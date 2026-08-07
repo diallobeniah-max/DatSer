@@ -120,7 +120,11 @@ const MemberCard = memo(({
                                 <h3 className="member-card-name min-w-0 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
                                     {name}
                                 </h3>
-                                {regDateRaw && (
+                                {member.source_month_label ? (
+                                    <p className="member-card-meta text-[10px] font-bold text-orange-600 dark:text-orange-400 mt-0.5">
+                                        {member.already_in_current_table ? `Already in ${getMonthDisplayName ? getMonthDisplayName(currentTable) : 'current month'}` : `Last found in ${member.source_month_label}`}
+                                    </p>
+                                ) : regDateRaw && (
                                     <p className="member-card-meta text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
                                         Joined {getRelativeRegTime()}
                                     </p>

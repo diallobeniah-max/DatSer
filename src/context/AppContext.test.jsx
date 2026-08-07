@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import React, { useEffect } from 'react'
 import { render, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -5,6 +6,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 let preferenceListeners = []
 let emitPreferencesChange = () => {}
 let preferencesRow = null
+let authState = null
+let savePersonalPreferencesMock = null
 
 const createMemoryStorage = () => {
   let store = {}
@@ -116,12 +119,7 @@ vi.mock('../lib/supabase', () => {
 })
 
 vi.mock('./AuthContext', () => ({
-  useAuth: () => ({
-    user: { id: 'collab-1', email: 'collab@example.com' },
-    loading: false,
-    preferences: {},
-    updatePreference: vi.fn()
-  })
+  useAuth: () => authState
 }))
 
 describe('AppContext collaborator sync', () => {
@@ -137,6 +135,24 @@ describe('AppContext collaborator sync', () => {
     }
 
     localStorage.clear()
+
+    savePersonalPreferencesMock = vi.fn(async (patch) => {
+      Object.assign(authState.personalPreferences, patch)
+      return true
+    })
+    authState = {
+      user: { id: 'collab-1', email: 'collab@example.com' },
+      loading: false,
+      personalPreferences: {},
+      preferencesHydrated: true,
+      preferencesLoading: false,
+      preferencesError: null,
+      get preferences() {
+        return { ...this.personalPreferences }
+      },
+      savePersonalPreferences: savePersonalPreferencesMock,
+      updatePreference: vi.fn()
+    }
   })
 
   it('auto-applies sticky month and sunday across month boundaries', async () => {
@@ -266,6 +282,77 @@ describe('AppContext collaborator sync', () => {
     })
 
     await waitFor(() => expect(latest.guidedFormSettings.showTagsField).toBe(true))
+    unmount()
+  })
+
+  it('confirms a Manual calendar selection before changing the active month', async () => {
+    const { AppProvider, useApp } = await import('./AppContext.jsx')
+    const StateProbe = ({ onState }) => {
+      const { currentTable, setPersonalCalendarMode } = useApp()
+      useEffect(() => {
+        onState({ currentTable, setPersonalCalendarMode })
+      }, [currentTable, setPersonalCalendarMode, onState])
+      return null
+    }
+
+    let latest = null
+    const { unmount } = render(
+      <AppProvider>
+        <StateProbe onState={(state) => { latest = state }} />
+      </AppProvider>
+    )
+
+    await waitFor(() => expect(latest?.currentTable).toBe('January_2026'))
+
+    const saved = await latest.setPersonalCalendarMode({
+      mode: 'manual',
+      tableName: 'February_2026',
+      date: new Date(2026, 1, 8)
+    })
+
+    expect(saved).toBe(true)
+    expect(savePersonalPreferencesMock).toHaveBeenCalledTimes(1)
+    expect(savePersonalPreferencesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar_mode: 'manual',
+        manual_month_table: 'February_2026',
+        manual_sunday_date: '2026-02-08',
+        manual_override_until: expect.any(String)
+      }),
+      { requireServerConfirmation: true }
+    )
+    await waitFor(() => expect(latest.currentTable).toBe('February_2026'))
+    unmount()
+  })
+
+  it('keeps the active month unchanged when a Manual calendar save is rejected', async () => {
+    savePersonalPreferencesMock.mockResolvedValue(false)
+    const { AppProvider, useApp } = await import('./AppContext.jsx')
+    const StateProbe = ({ onState }) => {
+      const { currentTable, setPersonalCalendarMode } = useApp()
+      useEffect(() => {
+        onState({ currentTable, setPersonalCalendarMode })
+      }, [currentTable, setPersonalCalendarMode, onState])
+      return null
+    }
+
+    let latest = null
+    const { unmount } = render(
+      <AppProvider>
+        <StateProbe onState={(state) => { latest = state }} />
+      </AppProvider>
+    )
+
+    await waitFor(() => expect(latest?.currentTable).toBe('January_2026'))
+    const saved = await latest.setPersonalCalendarMode({
+      mode: 'manual',
+      tableName: 'February_2026',
+      date: new Date(2026, 1, 8)
+    })
+
+    expect(saved).toBe(false)
+    expect(savePersonalPreferencesMock).toHaveBeenCalledTimes(1)
+    expect(latest.currentTable).toBe('January_2026')
     unmount()
   })
 })

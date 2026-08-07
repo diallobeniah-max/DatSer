@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mergeWorkspaceMemberCodeAssignments, readAllWorkspaceMemberCodeAssignmentPages, toWorkspaceMemberCodeMap } from './workspaceMemberCodeAssignments'
+import {
+  mergeWorkspaceMemberCodeAssignments,
+  readAllWorkspaceMemberCodeAssignmentPages,
+  toWorkspaceMemberCodeMap
+} from './workspaceMemberCodeAssignments'
 
 describe('workspace member-code assignments', () => {
   it('creates a new immutable map and ignores older assignment responses', () => {
@@ -63,5 +67,45 @@ describe('workspace member-code assignments', () => {
     expect(assignments[500].member_id).toBe('member-501')
     expect(assignments[999].member_id).toBe('member-1000')
     expect(assignments[1000].member_id).toBe('member-1001')
+  })
+
+  it('keeps UUID keys stable through map build and merge', () => {
+    const memberIds = [
+      '3f2c9d1a-0000-4000-8000-000000000001',
+      '3f2c9d1a-0000-4000-8000-000000000002'
+    ]
+    const rows = memberIds.map((id, index) => ({
+      member_id: id,
+      current_code: String(index + 1).padStart(3, '0'),
+      ordinal: index + 1,
+      aliases: [],
+      updated_at: '2026-08-01T10:00:00Z'
+    }))
+
+    const map = toWorkspaceMemberCodeMap(rows)
+    expect(Object.keys(map)).toEqual(memberIds)
+    expect(map[memberIds[0]].current_code).toBe('001')
+    expect(map[memberIds[1]].current_code).toBe('002')
+
+    const refreshed = toWorkspaceMemberCodeMap([
+      { member_id: memberIds[0], current_code: '01A', updated_at: '2026-08-01T10:01:00Z' }
+    ])
+    const merged = mergeWorkspaceMemberCodeAssignments(map, refreshed)
+    expect(Object.keys(merged)).toEqual(memberIds)
+    expect(merged[memberIds[0]].current_code).toBe('01A')
+    expect(merged[memberIds[1]].current_code).toBe('002')
+  })
+
+  it('does not let a matched member hide another member that shares no UUID', () => {
+    const map = toWorkspaceMemberCodeMap([
+      { member_id: 'uuid-a', current_code: 'A01', updated_at: '2026-08-01T10:00:00Z' }
+    ])
+    const incoming = toWorkspaceMemberCodeMap([
+      { member_id: 'uuid-a', current_code: 'A02', updated_at: '2026-08-01T10:01:00Z' },
+      { member_id: 'uuid-b', current_code: 'B01', updated_at: '2026-08-01T10:01:00Z' }
+    ])
+    const merged = mergeWorkspaceMemberCodeAssignments(map, incoming)
+    expect(merged['uuid-a'].current_code).toBe('A02')
+    expect(merged['uuid-b'].current_code).toBe('B01')
   })
 })

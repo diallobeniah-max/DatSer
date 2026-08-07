@@ -27,7 +27,7 @@ export const ThemeProvider = ({ children }) => {
   }, [updatePreference])
 
   // 1. Theme Mode
-  const [themeMode, setThemeMode] = useState(() => {
+  const [themeMode, setThemeModeState] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('themeMode')
       if (saved) return saved
@@ -53,35 +53,34 @@ export const ThemeProvider = ({ children }) => {
   })
 
   // 4. Font Size
-  const [fontSize, setFontSize] = useState(() => {
+  const [fontSize, setFontSizeState] = useState(() => {
     return preferences?.font_size || (typeof window !== 'undefined' ? localStorage.getItem('fontSize') : null) || '16'
   })
 
   // 5. Font Family - Default to system font
-  const [fontFamily, setFontFamily] = useState(() => {
+  const [fontFamily, setFontFamilyState] = useState(() => {
     return preferences?.font_family || (typeof window !== 'undefined' ? localStorage.getItem('fontFamily') : null) || 'system'
   })
 
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
-  const isFirstRender = useRef(true)
-
-  // Track first render
+  // Hydration is local-only. The explicit setters below are the only path that
+  // persists a theme choice, so copied server values can never trigger a save.
   useEffect(() => {
-    isFirstRender.current = false
-  }, [])
-
-  // Sync from Backend
-  useEffect(() => {
-    if (preferences && !preferencesLoaded && user) {
-      if (preferences.theme_mode) setThemeMode(preferences.theme_mode)
-      if (preferences.font_size) setFontSize(preferences.font_size)
-      if (preferences.font_family) setFontFamily(preferences.font_family)
+    if (preferences && user) {
+      if (preferences.theme_mode && preferences.theme_mode !== themeMode && !preferencesLoaded) {
+        setThemeModeState(preferences.theme_mode)
+      }
+      if (preferences.font_size && preferences.font_size !== fontSize && !preferencesLoaded) {
+        setFontSizeState(preferences.font_size)
+      }
+      if (preferences.font_family && preferences.font_family !== fontFamily && !preferencesLoaded) {
+        setFontFamilyState(preferences.font_family)
+      }
       setPreferencesLoaded(true)
     }
-  }, [preferences, preferencesLoaded, user])
+  }, [preferences, user, preferencesLoaded])
 
-  // Keep the last resolved device theme through session refresh/resume. A
-  // temporary null auth session must never flash the UI back to system theme.
+  // Keep the last resolved device theme through session refresh/resume.
   useEffect(() => {
     if (!loading && !user) {
       setPreferencesLoaded(false)
@@ -126,29 +125,34 @@ export const ThemeProvider = ({ children }) => {
     localStorage.setItem('datser_command_k', String(commandKEnabled))
   }, [commandKEnabled])
 
-  // Backend Saves
-  useEffect(() => {
-    if (isFirstRender.current || !updatePreferenceRef.current || !user || !preferencesLoaded) return
-    updatePreferenceRef.current('theme_mode', themeMode)
-  }, [themeMode, user, preferencesLoaded])
+  const persistExplicitPreference = useCallback((key, value) => {
+    if (!user || !preferencesLoaded || !updatePreferenceRef.current) return
+    void updatePreferenceRef.current(key, value)
+  }, [preferencesLoaded, user])
 
-  useEffect(() => {
-    if (isFirstRender.current || !updatePreferenceRef.current || !user || !preferencesLoaded) return
-    const timer = setTimeout(() => updatePreferenceRef.current?.('font_size', fontSize), 800)
-    return () => clearTimeout(timer)
-  }, [fontSize, user, preferencesLoaded])
+  const setThemeMode = useCallback((nextThemeMode) => {
+    const value = typeof nextThemeMode === 'function' ? nextThemeMode(themeMode) : nextThemeMode
+    if (value === themeMode) return
+    setThemeModeState(value)
+    persistExplicitPreference('theme_mode', value)
+  }, [persistExplicitPreference, themeMode])
 
-  useEffect(() => {
-    if (isFirstRender.current || !updatePreferenceRef.current || !user || !preferencesLoaded) return
-    updatePreferenceRef.current('font_family', fontFamily)
-  }, [fontFamily, user, preferencesLoaded])
+  const setFontSize = useCallback((nextFontSize) => {
+    const value = typeof nextFontSize === 'function' ? nextFontSize(fontSize) : nextFontSize
+    if (value === fontSize) return
+    setFontSizeState(value)
+    persistExplicitPreference('font_size', value)
+  }, [fontSize, persistExplicitPreference])
+
+  const setFontFamily = useCallback((nextFontFamily) => {
+    const value = typeof nextFontFamily === 'function' ? nextFontFamily(fontFamily) : nextFontFamily
+    if (value === fontFamily) return
+    setFontFamilyState(value)
+    persistExplicitPreference('font_family', value)
+  }, [fontFamily, persistExplicitPreference])
 
   const toggleTheme = useCallback(() => {
-    setThemeMode((prev) => {
-      // Toggle logic relative to current resolved state
-      // If we are currently visually dark (system or manual), go light. Otherwise dark.
-      return isDarkMode ? 'light' : 'dark'
-    })
+    setThemeMode(() => (isDarkMode ? 'light' : 'dark'))
   }, [isDarkMode])
 
   // Memoize context value to prevent unnecessary re-renders of consumers

@@ -18,7 +18,7 @@ import {
 
 const OnboardingWizard = ({ isOpen, onClose, onNavigate }) => {
   const { user, preferences, updatePreference } = useAuth()
-  const { members, currentTable, addMember } = useApp()
+  const { members, currentTable, addMember, updateWorkspaceForAllTables } = useApp()
   const [currentStep, setCurrentStep] = useState(0)
   const [workspaceName, setWorkspaceName] = useState(preferences?.workspace_name || '')
   const [isUpdating, setIsUpdating] = useState(false)
@@ -116,7 +116,7 @@ const OnboardingWizard = ({ isOpen, onClose, onNavigate }) => {
         // Save workspace name
         setIsUpdating(true)
         try {
-          await updatePreference('workspace_name', workspaceName.trim())
+          await updateWorkspaceForAllTables(workspaceName.trim())
         } catch (error) {
           console.error('Failed to save workspace name:', error)
           return // Don't proceed if save failed

@@ -374,3 +374,26 @@
 - A production crash fix is not complete until `npm run lint` returns zero errors, `npm run build` succeeds, and the broken symbol is confirmed absent from `dist/`.
 - The fix must be committed to `main` and pushed to `origin/main` so Vercel deploys the corrected bundle.
 - The commit message must describe the specific crash (e.g., the undefined symbol name) not a generic "fix bug".
+
+## Search Other Months Rule
+- Normal search remains local and network-free.
+- Cross-month search runs only after the user explicitly taps Search Other Months.
+- Results are limited to the active workspace’s authorized monthly tables.
+- Historical copies are deduplicated only by canonical member ID.
+- Same-name members with different IDs remain separate.
+- Historical search does not create Realtime subscriptions to old months.
+
+## Historical Member Present Rule
+- Presenting a member from another month preserves the canonical member ID and workspace code.
+- The operation copies safe profile fields only.
+- Historical attendance is never copied.
+- Only the selected current-month attendance date is marked Present.
+- Existing current-month members are never duplicated.
+- Soft-deleted canonical members are restored rather than duplicated.
+- The operation is transactional and idempotent.
+- The initiating device merges the returned member, code, and attendance immediately.
+
+## Dangerous Bulk Copy Rule
+- `insert_selected_members` must never be used for incremental member recovery or attendance.
+- Any function that deletes all target rows is forbidden in normal member import flows.
+- Incremental recovery must never delete, truncate, or reset the current month.

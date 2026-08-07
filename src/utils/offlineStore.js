@@ -168,15 +168,34 @@ export const clearOfflineAuthProfile = async () => (
   runStore(AUTH_STORE, 'readwrite', (store) => store.delete(AUTH_PROFILE_KEY))
 )
 
-export const saveOfflinePreferences = async (userId, preferences = {}) => {
-  if (!userId) return null
+const scopedPreferencesKey = (actorId, ownerId) => (
+  actorId && ownerId ? `preferences:${actorId}:${ownerId}` : PREFERENCES_KEY
+)
+
+export const saveOfflinePreferences = async (userId, payload = {}) => {
+  const actorId = payload?.actorId || userId
+  const ownerId = payload?.ownerId || userId
+  if (!actorId) return null
+
+  const isPartitioned = payload && (payload.personal || payload.workspace)
+  const personal = isPartitioned ? (payload.personal || {}) : payload
+  const workspace = isPartitioned ? (payload.workspace || {}) : {}
+
+  const key = scopedPreferencesKey(actorId, ownerId)
 
   const record = {
-    key: PREFERENCES_KEY,
-    user_id: userId,
+    key,
+    user_id: actorId,
+    actor_id: actorId,
+    owner_id: ownerId,
+    personal,
+    workspace,
+    personal_revision: payload?.personalRevision ? String(payload.personalRevision) : '0',
+    workspace_revision: payload?.workspaceRevision ? String(payload.workspaceRevision) : '0',
     preferences: {
-      ...(preferences || {}),
-      user_id: preferences?.user_id || userId
+      ...personal,
+      ...workspace,
+      user_id: actorId
     },
     saved_at: new Date().toISOString()
   }
@@ -185,16 +204,29 @@ export const saveOfflinePreferences = async (userId, preferences = {}) => {
   return record
 }
 
-export const getOfflinePreferences = async (userId = null) => {
+export const getOfflinePreferences = async (userId = null, ownerId = null) => {
+  if (userId && ownerId) {
+    const key = scopedPreferencesKey(userId, ownerId)
+    const record = await runStore(LOCAL_STATE_STORE, 'readonly', (store) => store.get(key))
+    if (record && record.actor_id === userId && record.owner_id === ownerId) {
+      return record
+    }
+  }
+
   const record = await runStore(LOCAL_STATE_STORE, 'readonly', (store) => store.get(PREFERENCES_KEY))
   if (!record) return null
-  if (userId && record.user_id && record.user_id !== userId) return null
+  if (userId && record.actor_id && record.actor_id !== userId && record.user_id !== userId) return null
+  if (ownerId && record.owner_id && record.owner_id !== ownerId) return null
   return record
 }
 
-export const clearOfflinePreferences = async () => (
-  runStore(LOCAL_STATE_STORE, 'readwrite', (store) => store.delete(PREFERENCES_KEY))
-)
+export const clearOfflinePreferences = async (userId = null, ownerId = null) => {
+  if (userId && ownerId) {
+    const key = scopedPreferencesKey(userId, ownerId)
+    await runStore(LOCAL_STATE_STORE, 'readwrite', (store) => store.delete(key))
+  }
+  return runStore(LOCAL_STATE_STORE, 'readwrite', (store) => store.delete(PREFERENCES_KEY))
+}
 
 export const saveMemberPreviewMembers = async (scope, tableName, members = []) => {
   if (!Array.isArray(members) || members.length === 0) return 0

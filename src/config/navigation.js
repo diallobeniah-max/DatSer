@@ -65,11 +65,11 @@ export const SETTINGS_SECTIONS = [
     },
     {
         id: 'data',
-        label: 'Data Management',
+        label: 'Search & Data',
         icon: Database,
         color: 'orange',
-        content: 'Export member data, import CSV files, backup your information, prepare offline mode, sync pending changes, and manage member databases.',
-        keywords: 'export import backup members data storage csv download upload database offline sync cache'
+        content: 'Configure historical search scope, export member data, import CSV files, backup your information, prepare offline mode, sync pending changes, and manage member databases.',
+        keywords: 'search other months historical search scope export import backup members data storage csv download upload database offline sync cache'
     },
     {
         id: 'storage',
@@ -451,6 +451,14 @@ export const SETTINGS_SEARCH_INDEX = [
         description: 'Review recent member edits by date and month',
         keywords: 'recent edits changes history activity edited updated date tabs month june sunday',
         icon: ClipboardList
+    },
+    {
+        id: 'search_other_months',
+        section: 'data',
+        label: 'Search Other Months',
+        description: 'Choose which previous months DatSer should check when a member is not found in the current month.',
+        keywords: 'search other months historical search scope months year custom recent',
+        icon: Search
     },
     {
         id: 'offline_mode',
