@@ -293,7 +293,7 @@ const MemberDataReview = ({ onBack }) => {
   const [selectedId, setSelectedId] = useState(null)
 
   const filteredPersons = useMemo(
-    () => sortReviewPersons(filterReviewPersons(persons, { filter, query }), { sortBy, sortDir }),
+    () => sortReviewPersons(filterReviewPersons(persons, { filter, query }), { sortBy, direction: sortDir }),
     [persons, filter, query, sortBy, sortDir]
   )
 

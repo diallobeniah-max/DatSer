@@ -29,6 +29,10 @@ const useMemberDataReview = () => {
   const [status, setStatus] = useState('idle') // idle | loading | ready | error
   const [error, setError] = useState(null)
   const reloadCounterRef = useRef(0)
+  // Monotonic request generation. Only the newest load (matching the current
+  // owner/table signature) may commit data, loading, or error state; a stale
+  // request that resolves after a workspace switch is ignored.
+  const requestGenRef = useRef(0)
 
   const fetchTableRows = useCallback((table) => (
     createReviewTableFetcher({
@@ -39,29 +43,41 @@ const useMemberDataReview = () => {
   ), [ownerId, isSupabaseConfigured])
 
   const load = useCallback(async (force = false) => {
-    if (!ownerId || tables.length === 0) {
-      setRowsByTable(null)
-      setStatus('idle')
+    const gen = ++requestGenRef.current
+    const currentOwnerId = ownerId
+    const currentTables = tables
+    const currentCacheKey = cacheKey
+
+    if (!currentOwnerId || currentTables.length === 0) {
+      if (gen === requestGenRef.current) {
+        setRowsByTable(null)
+        setStatus('idle')
+        setError(null)
+      }
       return
     }
 
     const now = Date.now()
-    const cached = reviewLoadCache.get(cacheKey)
+    const cached = reviewLoadCache.get(currentCacheKey)
     if (!force && cached && now - cached.ts < REVIEW_CACHE_TTL_MS) {
-      setRowsByTable(cached.rowsByTable)
-      setStatus('ready')
-      setError(null)
+      if (gen === requestGenRef.current) {
+        setRowsByTable(cached.rowsByTable)
+        setStatus('ready')
+        setError(null)
+      }
       return
     }
 
-    setStatus('loading')
+    if (gen === requestGenRef.current) setStatus('loading')
     try {
-      const loaded = await loadAllMonthReviewRows({ tables, ownerId, fetchTableRows })
-      reviewLoadCache.set(cacheKey, { ts: now, rowsByTable: loaded })
+      const loaded = await loadAllMonthReviewRows({ tables: currentTables, ownerId: currentOwnerId, fetchTableRows })
+      if (gen !== requestGenRef.current) return
+      reviewLoadCache.set(currentCacheKey, { ts: now, rowsByTable: loaded })
       setRowsByTable(loaded)
       setStatus('ready')
       setError(null)
     } catch (err) {
+      if (gen !== requestGenRef.current) return
       console.error('Member data review load failed:', err)
       setStatus('error')
       setError(err)

@@ -99,39 +99,24 @@ describe('createReviewTableFetcher', () => {
     expect(rows[0].id).toBe('a')
   })
 
-  it('falls back to an unfiltered safe read when the schema lacks user_id/deleted_at/member_code', async () => {
-    let first = true
-    let fallbackSelectCols = ''
+  it('owner-filtered query error fails closed and performs zero unscoped fallback reads', async () => {
+    let fromCalls = 0
     const supabase = {
       from: () => {
+        fromCalls += 1
         const chain = {
-          select: (cols) => {
-            chain.selectCols = cols
-            fallbackSelectCols = cols
-            return chain
-          },
+          select: () => chain,
           eq: () => chain,
           is: () => chain,
-          then: (resolve) => {
-            if (first) {
-              first = false
-              return resolve({ data: null, error: { message: 'column user_id does not exist' } })
-            }
-            return resolve({ data: [
-              { id: 'a', deleted_at: null },
-              { id: 'b', deleted_at: '2026-08-01T00:00:00Z' }
-            ], error: null })
-          }
+          then: (resolve) => resolve({ data: null, error: { message: 'column user_id does not exist' } })
         }
         return chain
       }
     }
     const fetcher = createReviewTableFetcher({ supabase, ownerId: '11111111-1111-1111-1111-111111111111', isConfigured: true })
-    const rows = await fetcher('January_2026')
-    expect(rows).toHaveLength(1)
-    expect(rows[0].id).toBe('a')
-    // The fallback must not select member_code, which older tables lack.
-    expect(fallbackSelectCols).not.toContain('member_code')
+    await expect(fetcher('January_2026')).rejects.toMatchObject({ reviewFailClosed: true })
+    // The owner-scoped query ran once; no unscoped fallback read was attempted.
+    expect(fromCalls).toBe(1)
   })
 
   it('returns empty when not configured', async () => {
@@ -139,18 +124,14 @@ describe('createReviewTableFetcher', () => {
     expect(await fetcher('January_2026')).toEqual([])
   })
 
-  it('skips the uuid-filtered query for a non-uuid owner and uses the safe fallback', async () => {
-    let eqCalled = false
-    let fallbackCols = ''
+  it('non-UUID owner fails closed and performs zero unscoped table reads', async () => {
+    let fromCalls = 0
     const supabase = {
       from: () => {
+        fromCalls += 1
         const chain = {
-          select: (cols) => {
-            chain.cols = cols
-            fallbackCols = cols
-            return chain
-          },
-          eq: () => { eqCalled = true; return chain },
+          select: () => chain,
+          eq: () => chain,
           is: () => chain,
           then: (resolve) => resolve({ data: [{ id: 'a', deleted_at: null }], error: null })
         }
@@ -158,9 +139,17 @@ describe('createReviewTableFetcher', () => {
       }
     }
     const fetcher = createReviewTableFetcher({ supabase, ownerId: 'dev-bypass-user', isConfigured: true })
-    const rows = await fetcher('January_2026')
-    expect(rows).toHaveLength(1)
-    expect(eqCalled).toBe(false)
-    expect(fallbackCols).not.toContain('member_code')
+    await expect(fetcher('January_2026')).rejects.toMatchObject({ reviewFailClosed: true })
+    // A non-UUID owner must never trigger a table read (owned or unscoped).
+    expect(fromCalls).toBe(0)
+  })
+
+  it('propagates fail-closed fetcher errors instead of degrading to empty rows', async () => {
+    const fetchTableRows = vi.fn(async () => {
+      const error = new Error('invalid owner')
+      error.reviewFailClosed = true
+      throw error
+    })
+    await expect(loadAllMonthReviewRows({ tables: ['January_2026'], fetchTableRows })).rejects.toThrow('invalid owner')
   })
 })

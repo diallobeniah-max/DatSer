@@ -198,36 +198,54 @@ const hasSupportingEvidence = (a, b) => {
   return false
 }
 
-// Two records may be unioned by a non-UUID signal only when they do not carry
-// conflicting confirmed canonical ids. Different canonical ids = separate people.
-const canUnion = (a, b) => !(a.canonicalId && b.canonicalId && String(a.canonicalId) !== String(b.canonicalId))
-
-const unionFind = (size) => {
-  const parent = Array.from({ length: size }, (_, i) => i)
+// Union-find that enforces identity safety at the COMPONENT level. Each
+// component tracks the set of non-empty canonical UUID identities it contains.
+// A union is REFUSED whenever combining two components would produce more than
+// one distinct canonical UUID — regardless of the transitive bridge order (code,
+// phone, or name+supporting). Legitimate rows sharing the same UUID still merge.
+const unionFind = (records) => {
+  const parent = Array.from({ length: records.length }, (_, i) => i)
+  const uuids = records.map((record) => (
+    record?.canonicalId ? new Set([String(record.canonicalId)]) : new Set()
+  ))
   const find = (x) => {
-    while (parent[x] !== x) {
-      parent[x] = parent[parent[x]]
-      x = parent[x]
+    let root = x
+    while (parent[root] !== root) root = parent[root]
+    while (parent[x] !== root) {
+      const next = parent[x]
+      parent[x] = root
+      x = next
     }
-    return x
+    return root
   }
-  const union = (a, b) => {
+  // Attempt to merge two components. Refused when the merged component would
+  // hold more than one distinct canonical UUID. Returns true when merged.
+  const tryUnion = (a, b) => {
     const ra = find(a)
     const rb = find(b)
-    if (ra !== rb) parent[Math.max(ra, rb)] = Math.min(ra, rb)
+    if (ra === rb) return true
+    const merged = new Set(uuids[ra])
+    uuids[rb].forEach((id) => merged.add(id))
+    if (merged.size > 1) return false
+    const newRoot = Math.min(ra, rb)
+    const oldRoot = Math.max(ra, rb)
+    parent[oldRoot] = newRoot
+    uuids[newRoot] = merged
+    return true
   }
-  return { find, union }
+  return { find, tryUnion }
 }
 
 // Group records by strong canonical identity. Priority: canonical UUID >
 // canonical code > normalized phone > exact name + supporting info. Names are
-// never the sole basis for merging, and different canonical ids stay separate.
+// never the sole basis for merging, and a component can never span more than
+// one distinct canonical UUID.
 export const groupRecordsByIdentity = (records = []) => {
   const safe = (Array.isArray(records) ? records : []).filter(Boolean)
   const n = safe.length
-  const { find, union } = unionFind(n)
+  const { find, tryUnion } = unionFind(safe)
 
-  const bucketBy = (keyOf, bucketKey = (value) => value) => {
+  const bucketBy = (keyOf) => {
     const map = new Map()
     safe.forEach((record, index) => {
       const key = keyOf(record)
@@ -238,7 +256,7 @@ export const groupRecordsByIdentity = (records = []) => {
     })
     for (const indices of map.values()) {
       for (let k = 1; k < indices.length; k += 1) {
-        if (canUnion(safe[indices[0]], safe[indices[k]])) union(indices[0], indices[k])
+        tryUnion(indices[0], indices[k])
       }
     }
   }
@@ -272,7 +290,7 @@ export const groupRecordsByIdentity = (records = []) => {
       for (let b = a + 1; b < indices.length; b += 1) {
         const ra = safe[indices[a]]
         const rb = safe[indices[b]]
-        if (canUnion(ra, rb) && hasSupportingEvidence(ra, rb)) union(indices[a], indices[b])
+        if (hasSupportingEvidence(ra, rb)) tryUnion(indices[a], indices[b])
       }
     }
   }

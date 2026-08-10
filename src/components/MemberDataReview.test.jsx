@@ -44,6 +44,8 @@ vi.mock('../lib/supabase', () => ({
   }
 }))
 
+const OWNER_UUID = '11111111-1111-1111-1111-111111111111'
+
 const row = (overrides = {}) => ({
   id: 'uuid-101',
   'Full Name': 'Beniah Opong',
@@ -63,14 +65,14 @@ const row = (overrides = {}) => ({
   inserted_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   deleted_at: null,
-  user_id: 'owner-1',
+  user_id: OWNER_UUID,
   ...overrides
 })
 
 const buildAppState = (overrides = {}) => ({
   monthlyTables: ['January_2026', 'May_2026'],
-  dataOwnerId: 'owner-1',
-  user: { id: 'owner-1' },
+  dataOwnerId: OWNER_UUID,
+  user: { id: OWNER_UUID },
   isSupabaseConfigured: () => true,
   workspaceMemberCodeAssignments: {
     'uuid-101': { current_code: 'B01', legacy_code: 'B01', aliases: [] }
@@ -125,5 +127,36 @@ describe('MemberDataReview page', () => {
     expect(supabaseCalls.insert).toBe(0)
     expect(supabaseCalls.update).toBe(0)
     expect(supabaseCalls.delete).toBe(0)
+  })
+
+  it('descending sort toggle actually reverses the result order', async () => {
+    // A fresh owner avoids the module-level review cache populated by earlier tests.
+    const sortOwner = '99999999-9999-9999-9999-999999999999'
+    appState.dataOwnerId = sortOwner
+    appState.user = { id: sortOwner }
+    appState.rowsFor = {
+      January_2026: [
+        row({ id: 'uuid-a', 'Full Name': 'Aba Tetteh', member_code: 'A01' }),
+        row({ id: 'uuid-b', 'Full Name': 'Zara Smith', member_code: 'Z01' })
+      ]
+    }
+    render(<MemberDataReview onBack={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Aba Tetteh')).toBeTruthy()
+      expect(screen.getByText('Zara Smith')).toBeTruthy()
+    })
+
+    const namesInOrder = () => screen.getAllByText(/Aba Tetteh|Zara Smith/).map((node) => node.textContent)
+
+    // Name ascending is the default: Aba Tetteh before Zara Smith.
+    expect(namesInOrder()).toEqual(['Aba Tetteh', 'Zara Smith'])
+
+    // Toggle the sort direction to descending.
+    fireEvent.click(screen.getByRole('button', { name: '↑' }))
+    await waitFor(() => {
+      expect(namesInOrder()).toEqual(['Zara Smith', 'Aba Tetteh'])
+    })
+    expect(screen.getByRole('button', { name: '↓' })).toBeTruthy()
   })
 })

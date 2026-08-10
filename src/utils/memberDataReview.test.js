@@ -145,6 +145,54 @@ describe('groupRecordsByIdentity', () => {
     expect(groups).toHaveLength(2)
     expect(groups.every((group) => group.uncertain)).toBe(true)
   })
+
+  describe('component-level canonical UUID safety (transitive bridge)', () => {
+    const uuidA = { canonicalId: 'uuid-A', member_code: 'C1', phone_number: '', full_name: '', parent_phone_1: '', parent_phone_2: '', gender: '', age: '' }
+    const bridge = { canonicalId: null, member_code: 'C1', phone_number: '0241111111', full_name: '', parent_phone_1: '', parent_phone_2: '', gender: '', age: '' }
+    const uuidB = { canonicalId: 'uuid-B', member_code: '', phone_number: '0241111111', full_name: '', parent_phone_1: '', parent_phone_2: '', gender: '', age: '' }
+
+    it('refuses to bridge UUID A and UUID B through a shared-code then shared-phone unidentified row', () => {
+      const groups = groupRecordsByIdentity([
+        rec({ id: 'A', ...uuidA }),
+        rec({ id: 'bridge', ...bridge }),
+        rec({ id: 'B', ...uuidB })
+      ])
+      expect(groups).toHaveLength(2)
+      const ids = groups.map((g) => g.records.map((r) => r.id).sort()).sort()
+      expect(ids).toEqual([['A', 'bridge'], ['B']])
+    })
+
+    it('produces the same result regardless of input order (reversed)', () => {
+      const groups = groupRecordsByIdentity([
+        rec({ id: 'B', ...uuidB }),
+        rec({ id: 'bridge', ...bridge }),
+        rec({ id: 'A', ...uuidA })
+      ])
+      expect(groups).toHaveLength(2)
+      const ids = groups.map((g) => g.records.map((r) => r.id).sort()).sort()
+      expect(ids).toEqual([['A', 'bridge'], ['B']])
+    })
+
+    it('keeps two unidentified rows bridged through A and B attached correctly, not merged', () => {
+      const groups = groupRecordsByIdentity([
+        rec({ id: 'bridge2', canonicalId: null, member_code: '', phone_number: '0241111111', full_name: '', parent_phone_1: '', parent_phone_2: '', gender: '', age: '' }),
+        rec({ id: 'A', ...uuidA }),
+        rec({ id: 'bridge', ...bridge }),
+        rec({ id: 'B', ...uuidB })
+      ])
+      expect(groups).toHaveLength(2)
+      expect(groups.reduce((sum, g) => sum + g.recordCount, 0)).toBe(4)
+    })
+
+    it('still merges legitimate rows that share the same canonical UUID', () => {
+      const groups = groupRecordsByIdentity([
+        rec({ id: 'x', canonicalId: 'uuid-X', member_code: 'C9', phone_number: '0249999999', sourceTable: 'January_2026' }),
+        rec({ id: 'y', canonicalId: 'uuid-X', member_code: 'C9', phone_number: '0248888888', sourceTable: 'May_2026' })
+      ])
+      expect(groups).toHaveLength(1)
+      expect(groups[0].recordCount).toBe(2)
+    })
+  })
 })
 
 describe('recommendCombinedProfile', () => {
@@ -295,5 +343,32 @@ describe('filterReviewPersons and sortReviewPersons', () => {
 
     const byName = sortReviewPersons(persons, { sortBy: REVIEW_SORTS.NAME, direction: 'asc' })
     expect(byName.map((p) => p.name)).toEqual(['Alice', 'Bob', 'Uncertain Name'])
+  })
+})
+
+describe('large synthetic review dataset (correctness smoke, no timing)', () => {
+  it('groups and recommends a ~2000-record dataset deterministically', () => {
+    const rows = []
+    for (let i = 0; i < 400; i += 1) {
+      const uuid = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+      const months = ['January_2026', 'February_2026', 'March_2026', 'April_2026', 'May_2026']
+      months.forEach((table, monthIdx) => {
+        if (monthIdx > (i % 5)) return
+        rows.push(rec({
+          id: `${uuid}-${monthIdx}`,
+          canonicalId: uuid,
+          full_name: `Person Number ${i}`,
+          member_code: String(1000 + i),
+          phone_number: `024${String(i).padStart(7, '0')}`,
+          sourceTable: table,
+          updated_at: `2026-0${(monthIdx % 9) + 1}-01T00:00:00Z`
+        }))
+      })
+    }
+    const groups = groupRecordsByIdentity(rows)
+    expect(groups.length).toBe(400)
+    expect(groups.every((g) => g.recordCount >= 1)).toBe(true)
+    expect(groups[0].recommended.combined.full_name).toBe('Person Number 0')
+    expect(groups.some((g) => g.recordCount > 1)).toBe(true)
   })
 })

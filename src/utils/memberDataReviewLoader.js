@@ -24,7 +24,10 @@ export const REVIEW_TABLE_SELECT = [
 ].join(',')
 
 // Load every month table's rows once. fetchTableRows(tableName) must be
-// read-only. Returns a Map<tableName, rows[]>; per-table failures degrade to [].
+// read-only. Returns a Map<tableName, rows[]>; per-table transient failures
+// degrade to []. Fail-closed conditions (invalid owner, owner-filtered query
+// failure) propagate so the caller surfaces the error instead of silently
+// reading a wider scope.
 export const loadAllMonthReviewRows = async ({
   tables = [],
   fetchTableRows,
@@ -46,6 +49,7 @@ export const loadAllMonthReviewRows = async ({
         const rows = await fetchTableRows(table)
         results.set(table, Array.isArray(rows) ? rows : [])
       } catch (err) {
+        if (err?.reviewFailClosed) throw err
         results.set(table, [])
       }
     }
@@ -55,35 +59,36 @@ export const loadAllMonthReviewRows = async ({
   return results
 }
 
+const isValidOwnerUuid = (ownerId) => (
+  typeof ownerId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId)
+)
+
 // Build the read-only per-table fetch used by the review pipeline.
-// Only `.from(table).select(...)` is ever called — no insert/update/delete/rpc.
+// Only `.from(table).select(...).eq('user_id', ownerId).is('deleted_at', null)`
+// is ever called — never an unscoped read. Fail-closed: a non-UUID owner or a
+// failing owner-filtered query throws (marked reviewFailClosed) instead of
+// silently widening the read scope. Canonical codes are derived from
+// workspace_member_codes / codeAssignments during normalization.
 export const createReviewTableFetcher = ({ supabase, ownerId, isConfigured }) => async (table) => {
   if (!isConfigured || !table) return []
 
-  // PostgREST requires a real uuid for the user_id filter. A non-uuid owner
-  // (e.g. the developer bypass user) skips the filtered query to avoid a
-  // guaranteed 400 and uses the safe fallback read instead.
-  const isUuidOwner = typeof ownerId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId)
-
-  if (isUuidOwner) {
-    const response = await supabase
-      .from(table)
-      .select(REVIEW_TABLE_SELECT)
-      .eq('user_id', ownerId)
-      .is('deleted_at', null)
-
-    if (!response?.error) {
-      return (response.data || []).filter((row) => !row.deleted_at)
-    }
+  if (!isValidOwnerUuid(ownerId)) {
+    const error = new Error('Member data review requires a valid workspace owner UUID')
+    error.reviewFailClosed = true
+    throw error
   }
 
-  // Fallback for schema variance (missing user_id/deleted_at) or a non-uuid
-  // owner: read the same safe column set and filter soft-deleted rows
-  // client-side. `member_code` is intentionally excluded from the select —
-  // live month tables do not have that column, and the canonical member code
-  // is derived from workspace_member_codes / codeAssignments during
-  // normalization.
-  const fallback = await supabase.from(table).select(REVIEW_TABLE_SELECT)
-  if (fallback?.error) return []
-  return (fallback.data || []).filter((row) => !row.deleted_at)
+  const response = await supabase
+    .from(table)
+    .select(REVIEW_TABLE_SELECT)
+    .eq('user_id', ownerId)
+    .is('deleted_at', null)
+
+  if (response?.error) {
+    const error = new Error(`Month table read failed: ${response.error.message || 'unknown error'}`)
+    error.reviewFailClosed = true
+    throw error
+  }
+
+  return (response.data || []).filter((row) => !row.deleted_at)
 }
