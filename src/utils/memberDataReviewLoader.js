@@ -17,31 +17,6 @@ export const REVIEW_TABLE_SELECT = [
   'notes',
   'ministry',
   'date_of_birth',
-  'member_code',
-  'inserted_at',
-  'updated_at',
-  'deleted_at',
-  'user_id'
-].join(',')
-
-// Schema-variance fallback. The canonical member code lives in
-// workspace_member_codes (applied during normalization), so `member_code` is
-// dropped here because some month tables do not have that column.
-export const REVIEW_TABLE_SELECT_SAFE = [
-  'id',
-  '"Full Name"',
-  '"Phone Number"',
-  '"Gender"',
-  '"Age"',
-  '"Current Level"',
-  'is_visitor',
-  'parent_name_1',
-  'parent_phone_1',
-  'parent_name_2',
-  'parent_phone_2',
-  'notes',
-  'ministry',
-  'date_of_birth',
   'inserted_at',
   'updated_at',
   'deleted_at',
@@ -102,9 +77,13 @@ export const createReviewTableFetcher = ({ supabase, ownerId, isConfigured }) =>
     }
   }
 
-  // Fallback for schema variance (missing user_id/deleted_at/member_code) or a
-  // non-uuid owner: read a safe column set and filter soft-deleted rows client-side.
-  const fallback = await supabase.from(table).select(REVIEW_TABLE_SELECT_SAFE)
+  // Fallback for schema variance (missing user_id/deleted_at) or a non-uuid
+  // owner: read the same safe column set and filter soft-deleted rows
+  // client-side. `member_code` is intentionally excluded from the select —
+  // live month tables do not have that column, and the canonical member code
+  // is derived from workspace_member_codes / codeAssignments during
+  // normalization.
+  const fallback = await supabase.from(table).select(REVIEW_TABLE_SELECT)
   if (fallback?.error) return []
   return (fallback.data || []).filter((row) => !row.deleted_at)
 }

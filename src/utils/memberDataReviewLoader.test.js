@@ -5,6 +5,12 @@ import {
   loadAllMonthReviewRows
 } from './memberDataReviewLoader'
 
+describe('REVIEW_TABLE_SELECT', () => {
+  it('does not request the member_code column, which live month tables lack', () => {
+    expect(REVIEW_TABLE_SELECT).not.toContain('member_code')
+  })
+})
+
 const makeSupabaseMock = ({ data = [], error = null }) => {
   const calls = { from: 0, rpc: 0, insert: 0, update: 0, delete: 0, table: null }
   const chain = {
