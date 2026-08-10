@@ -10,7 +10,8 @@ import { useAuth } from './AuthContext'
 import {
   isBackendHealthy,
   isBackendDegradedError,
-  markBackendDegraded
+  markBackendDegraded,
+  subscribeBackendHealth
 } from '../utils/backendHealthCoordinator'
 import { notify } from '../utils/notify'
 import { buildMemberIndexCodeMap, DEFAULT_MEMBER_CODE_LENGTH, getMemberIndexCode, getMemberIndexCodeAliases, normalizeMemberCodeFormat, normalizeMemberCodeLength } from '../utils/memberIndexCodes'
@@ -1126,14 +1127,30 @@ export const AppProvider = ({ children }) => {
   const realtimeSyncStatusTimerRef = useRef(null)
   const normalizedAttendanceBackendAvailableRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
+  const [backendHealthy, setBackendHealthy] = useState(() => isBackendHealthy())
   const syncFlushSchedulerRef = useRef(null)
-  if (!syncFlushSchedulerRef.current) {
-    syncFlushSchedulerRef.current = createSyncFlushScheduler({
-      run: () => syncOfflineChangesRef.current?.().catch((error) => {
-        console.warn('Automatic offline sync failed:', error)
-      }),
-      minDelayMs: AUTO_SYNC_DEBOUNCE_MS
-    })
+  const createActiveSyncFlushScheduler = useCallback(() => createSyncFlushScheduler({
+    run: () => syncOfflineChangesRef.current?.().catch((error) => {
+      console.warn('Automatic offline sync failed:', error)
+    }),
+    minDelayMs: AUTO_SYNC_DEBOUNCE_MS
+  }), [])
+  // A disposed scheduler must never remain the active scheduler. React
+  // StrictMode simulates an unmount/remount in development, which runs the
+  // unmount cleanup and disposes the scheduler while the ref still points at
+  // it. Every read goes through this helper so callers always get a live
+  // scheduler: a disposed one is replaced, never reused. Only one scheduler is
+  // ever active because the ref atomically swaps to the fresh instance and the
+  // old one is disposed (its timer is cleared and schedule() is inert).
+  const getActiveSyncFlushScheduler = useCallback(() => {
+    const current = syncFlushSchedulerRef.current
+    if (current && !current.isDisposed()) return current
+    const next = createActiveSyncFlushScheduler()
+    syncFlushSchedulerRef.current = next
+    return next
+  }, [createActiveSyncFlushScheduler])
+  if (!syncFlushSchedulerRef.current || syncFlushSchedulerRef.current.isDisposed()) {
+    syncFlushSchedulerRef.current = getActiveSyncFlushScheduler()
   }
   const offlineSyncInFlightRef = useRef(false)
   const applyOfflineSnapshotRef = useRef(null)
@@ -1141,6 +1158,11 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => () => {
     syncFlushSchedulerRef.current?.dispose?.()
+  }, [])
+
+  useEffect(() => {
+    setBackendHealthy(isBackendHealthy())
+    return subscribeBackendHealth((healthy) => setBackendHealthy(healthy))
   }, [])
 
   useEffect(() => {
@@ -4699,6 +4721,7 @@ export const AppProvider = ({ children }) => {
       silent = false,
       allowLocalFallback = false,
       skipRefresh = false,
+      flushMode = false,
       targetTable: requestedTargetTable = null,
       ownerId: requestedOwnerId = null,
       identity: requestedIdentity = null
@@ -4739,6 +4762,14 @@ export const AppProvider = ({ children }) => {
       }
 
       if (shouldUseOfflineData || !isBrowserOnline()) {
+        if (flushMode) {
+          // During an offline flush this branch means the update never reached
+          // the server. The change is already queued; keep it and let the
+          // flush loop mark the attempt instead of treating it as synced.
+          const flushError = new Error('Member update could not reach the server and stays queued for retry.')
+          flushError.code = '503'
+          throw flushError
+        }
         const createdAt = editTimestamp
         const existingMember = members.find(m => m.id === id) || {}
         const optimisticMember = normalizeMemberRecord({
@@ -4845,43 +4876,66 @@ export const AppProvider = ({ children }) => {
       }
 
       // validColumns is always null here — schema introspection is not done at runtime
-      // per the Runtime Schema Rule. The fallback snake_case normalization below handles field mapping.
+      // per the Runtime Schema Rule. Month tables store the display fields under
+      // quoted PascalCase columns ("Full Name", "Phone Number", "Gender", "Age",
+      // "Current Level", "Member", ...). The fallback below maps snake_case inputs
+      // to those canonical column names and leaves already-canonical keys untouched,
+      // so the resilient RPC payload (and queued offline replay) always uses valid
+      // month-table column names. Internal/control fields are excluded by the
+      // queue/insert sanitizers, not by this rename step.
       let validColumns = null
 
-      // If validColumns not found (empty table or error), fallback to snake_case for standard fields
+      // If validColumns not found (empty table or error), fallback to the canonical
+      // month-table column names for standard fields.
       if (!validColumns) {
-        if (normalized['Phone Number'] !== undefined) {
-          normalized['phone_number'] = normalized['Phone Number']
-          delete normalized['Phone Number']
+        if (normalized['phone_number'] !== undefined) {
+          if (normalized['Phone Number'] === undefined) {
+            normalized['Phone Number'] = normalized['phone_number']
+          }
+          delete normalized['phone_number']
         }
-        if (normalized['Age'] !== undefined) {
-          normalized['age'] = normalized['Age']
-          delete normalized['Age']
+        if (normalized['age'] !== undefined) {
+          if (normalized['Age'] === undefined) {
+            normalized['Age'] = normalized['age']
+          }
+          delete normalized['age']
         }
-        if (normalized['Gender'] !== undefined) {
-          normalized['gender'] = normalized['Gender']
-          delete normalized['Gender']
+        if (normalized['gender'] !== undefined) {
+          if (normalized['Gender'] === undefined) {
+            normalized['Gender'] = normalized['gender']
+          }
+          delete normalized['gender']
         }
-        if (normalized['Current Level'] !== undefined) {
-          normalized['current_level'] = normalized['Current Level']
-          delete normalized['Current Level']
+        if (normalized['current_level'] !== undefined) {
+          if (normalized['Current Level'] === undefined) {
+            normalized['Current Level'] = normalized['current_level']
+          }
+          delete normalized['current_level']
         }
-        if (normalized['Full Name'] !== undefined) {
-          // Only rename if 'Full Name' is present (fallback from resolveNameColumn)
-          normalized['full_name'] = normalized['Full Name']
-          delete normalized['Full Name']
+        if (normalized['full_name'] !== undefined) {
+          // Only rename if 'full_name' is present (fallback from resolveNameColumn)
+          if (normalized['Full Name'] === undefined) {
+            normalized['Full Name'] = normalized['full_name']
+          }
+          delete normalized['full_name']
         }
-        if (normalized['Member'] !== undefined) {
-          normalized['member'] = normalized['Member']
-          delete normalized['Member']
+        if (normalized['member'] !== undefined) {
+          if (normalized['Member'] === undefined) {
+            normalized['Member'] = normalized['member']
+          }
+          delete normalized['member']
         }
-        if (normalized['Regular'] !== undefined) {
-          normalized['regular'] = normalized['Regular']
-          delete normalized['Regular']
+        if (normalized['regular'] !== undefined) {
+          if (normalized['Regular'] === undefined) {
+            normalized['Regular'] = normalized['regular']
+          }
+          delete normalized['regular']
         }
-        if (normalized['Newcomer'] !== undefined) {
-          normalized['newcomer'] = normalized['Newcomer']
-          delete normalized['Newcomer']
+        if (normalized['newcomer'] !== undefined) {
+          if (normalized['Newcomer'] === undefined) {
+            normalized['Newcomer'] = normalized['newcomer']
+          }
+          delete normalized['newcomer']
         }
       }
 
@@ -5138,6 +5192,17 @@ export const AppProvider = ({ children }) => {
         }))
         recordRecentMemberEdit(fallbackEditedMember || { ...(members.find(m => m.id === id) || {}), ...updates, updated_at: editTimestamp }, editTimestamp)
         if (shouldQueueForRetry) {
+          if (flushMode) {
+            // The offline flush loop must know this attempt failed so it does
+            // not remove the still-queued change. The change is already in
+            // pendingChanges (the flush loop reads it), so do not re-queue it:
+            // re-queueing would reset retry_count before the flush loop can
+            // advance it. Throw instead and let the flush loop mark the
+            // attempt (status pending, retry_count/last_attempt_at advance).
+            const flushError = new Error('Member update was not confirmed by the server and stays queued for retry.')
+            flushError.code = '503'
+            throw flushError
+          }
           const existingMember = members.find(m => m.id === id) || {}
           await queueOfflineChange({
             local_change_id: `member_update_${targetTable}_${id}`,
@@ -7782,6 +7847,7 @@ export const AppProvider = ({ children }) => {
             } else if (change.action_type === 'member_update') {
               await updateMember(change.member_id, change.updates || {}, {
                 silent: true,
+                flushMode: true,
                 skipRefresh: changeTable !== currentTable,
                 targetTable: changeTable,
                 ownerId: change.owner_id,
@@ -8010,7 +8076,7 @@ export const AppProvider = ({ children }) => {
   syncOfflineChangesRef.current = syncOfflineChanges
 
   useEffect(() => {
-    if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline || !isBackendHealthy()) return undefined
+    if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline || !backendHealthy) return undefined
 
     const syncableChanges = offlinePendingChanges.filter(isChangeSyncable)
     if (syncableChanges.length === 0) return undefined
@@ -8021,18 +8087,18 @@ export const AppProvider = ({ children }) => {
       // Every change is backing off or has spent its retry budget. Wait for
       // the earliest next allowed attempt instead of hammering.
       const delay = getSyncableChangesNextAttemptDelayMs(syncableChanges, now)
-      if (delay !== null && !syncFlushSchedulerRef.current.isPending()) {
-        syncFlushSchedulerRef.current.schedule(delay)
+      if (delay !== null && !getActiveSyncFlushScheduler().isPending()) {
+        getActiveSyncFlushScheduler().schedule(delay)
       }
       return undefined
     }
 
-    if (syncFlushSchedulerRef.current.isPending()) {
+    if (getActiveSyncFlushScheduler().isPending()) {
       return undefined
     }
-    syncFlushSchedulerRef.current.schedule(AUTO_SYNC_DEBOUNCE_MS)
+    getActiveSyncFlushScheduler().schedule(AUTO_SYNC_DEBOUNCE_MS)
     return undefined
-  }, [isOnline, offlineMode, pendingSyncCount, offlinePendingChanges, isSyncingOffline])
+  }, [isOnline, offlineMode, pendingSyncCount, offlinePendingChanges, isSyncingOffline, backendHealthy])
 
   const refreshSyncedDataInBackground = useCallback(async (source = 'background', options = {}) => {
     if (!currentTable || isDeveloperBypass || !isSupabaseConfigured() || shouldUseOfflineData) return
@@ -8106,8 +8172,8 @@ export const AppProvider = ({ children }) => {
         const pendingChanges = await getPendingOfflineChanges().catch(() => [])
         const now = Date.now()
         const hasEligibleChanges = pendingChanges.some((change) => isChangeRetryEligible(change, now))
-        if (hasEligibleChanges && !syncFlushSchedulerRef.current.isPending()) {
-          syncFlushSchedulerRef.current.schedule(AUTO_SYNC_DEBOUNCE_MS)
+        if (hasEligibleChanges && !getActiveSyncFlushScheduler().isPending()) {
+          getActiveSyncFlushScheduler().schedule(AUTO_SYNC_DEBOUNCE_MS)
         }
       }
 

@@ -6,7 +6,7 @@ import { X, User, Phone, ChevronDown, ChevronUp, Users, StickyNote } from 'lucid
 import { toast } from 'react-toastify'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { supabase } from '../lib/supabase'
-import { executeSupabaseWrite } from '../utils/supabaseWrite'
+import { executeSupabaseWrite, isTransientSupabaseError } from '../utils/supabaseWrite'
 import { buildMemberIdentityHint, getMemberSourceTable } from '../utils/memberIdentity'
 import DatePicker from './DatePicker'
 import CombinedDatePicker from './CombinedDatePicker'
@@ -375,6 +375,8 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     submitInFlightRef.current = true
     setLoading(true)
 
+    let bundleContext = null
+
     try {
       // Clean up form data before saving
       const currentSnapshot = members.find(m => m.id === latestMember.id) || latestMember || member
@@ -540,6 +542,13 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           requestId: submitRequestIdRef.current
         })
 
+        bundleContext = {
+          backendUpdates,
+          targetTable,
+          ownerId,
+          identity: buildMemberIdentityHint(latestMember)
+        }
+
         const { data: bundleResult } = await executeSupabaseWrite(
           () => supabase.rpc('update_member_bundle_resilient', {
             p_table_name: targetTable,
@@ -612,7 +621,26 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
     } catch (error) {
       console.error('Error updating member:', error)
-      toast.error(error.message || 'Failed to update member')
+      const isOfflineNow = typeof navigator !== 'undefined' && navigator.onLine === false
+      if (bundleContext && (isTransientSupabaseError(error) || isOfflineNow)) {
+        // Offline or degraded backend: keep the edit by routing it through the
+        // canonical AppContext member-update path, which queues it for retry
+        // instead of letting it silently disappear.
+        try {
+          await updateMember(latestMember.id, bundleContext.backendUpdates, {
+            targetTable: bundleContext.targetTable,
+            ownerId: bundleContext.ownerId,
+            identity: bundleContext.identity
+          })
+          success()
+          onClose()
+        } catch (queueError) {
+          console.error('Could not queue offline member update:', queueError)
+          toast.error(queueError.message || 'Failed to update member')
+        }
+      } else {
+        toast.error(error.message || 'Failed to update member')
+      }
     } finally {
       setLoading(false)
       submitInFlightRef.current = false

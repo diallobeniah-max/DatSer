@@ -82,4 +82,52 @@ describe('sync flush scheduler', () => {
     await vi.advanceTimersByTimeAsync(1200)
     expect(run).not.toHaveBeenCalled()
   })
+
+  it('reports disposed state and rejects further scheduling once disposed', async () => {
+    const run = vi.fn()
+    const scheduler = createSyncFlushScheduler({ run, minDelayMs: 1200 })
+    expect(scheduler.isDisposed()).toBe(false)
+    scheduler.dispose()
+    expect(scheduler.isDisposed()).toBe(true)
+    const result = scheduler.schedule()
+    expect(result).toEqual({ scheduled: false, reason: 'disposed' })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('dispose clears a pending timer so the old scheduler never executes', async () => {
+    const run = vi.fn()
+    const scheduler = createSyncFlushScheduler({ run, minDelayMs: 1200 })
+    scheduler.schedule()
+    scheduler.dispose()
+    expect(scheduler.isPending()).toBe(false)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('a fresh scheduler created after dispose can schedule and run (recreate path)', async () => {
+    const run = vi.fn().mockResolvedValue('ok')
+    const first = createSyncFlushScheduler({ run, minDelayMs: 1200 })
+    first.dispose()
+    expect(first.schedule().reason).toBe('disposed')
+
+    // Simulates the AppContext recreation after a StrictMode dispose cycle.
+    const second = createSyncFlushScheduler({ run, minDelayMs: 1200 })
+    expect(second.schedule().scheduled).toBe(true)
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('only the active scheduler flushes after a dispose/recreate cycle (no duplicate flush)', async () => {
+    const run = vi.fn().mockResolvedValue('ok')
+    let active = createSyncFlushScheduler({ run, minDelayMs: 1200 })
+    active.schedule()
+    // Dispose the old scheduler mid-flight of its timer and swap in a new one.
+    active.dispose()
+    active = createSyncFlushScheduler({ run, minDelayMs: 1200 })
+    expect(active.schedule().scheduled).toBe(true)
+    await vi.advanceTimersByTimeAsync(1200)
+    // Exactly one flush: the old disposed scheduler never fires its timer.
+    expect(run).toHaveBeenCalledTimes(1)
+  })
 })

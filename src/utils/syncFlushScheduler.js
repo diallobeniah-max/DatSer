@@ -41,6 +41,10 @@ export const createSyncFlushScheduler = ({
       }
     },
     isPending: () => Boolean(timer || inFlight),
+    // A disposed scheduler is permanently inert: it can never schedule a flush
+    // again. Callers use this to detect that the ref is stale (e.g. after a
+    // React StrictMode simulated unmount) and recreate a fresh scheduler.
+    isDisposed: () => disposed,
     dispose: () => {
       disposed = true
       if (timer) {
