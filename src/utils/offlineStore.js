@@ -345,6 +345,7 @@ export const coalesceOfflineChange = (existingChanges = [], change = {}, now = n
         updated_at: now,
         sync_status: 'pending',
         retry_count: 0,
+        last_attempt_at: null,
         client_revision: Number(existingAdd.client_revision || 1) + 1
       },
       removeIds: relatedUpdates.map(item => item.local_change_id).filter(Boolean),
@@ -368,6 +369,7 @@ export const coalesceOfflineChange = (existingChanges = [], change = {}, now = n
       updated_at: now,
       sync_status: 'pending',
       retry_count: 0,
+      last_attempt_at: null,
       client_revision: Number(sameId?.client_revision || 0) + 1,
       idempotency_key: change.idempotency_key || change.local_change_id
     },
@@ -416,6 +418,89 @@ export const updateOfflineChangeStatus = async (localChangeId, updates = {}) => 
   }
   await runStore(PENDING_STORE, 'readwrite', (store) => store.put(next))
   return next
+}
+
+// Bounded retry policy for the automatic offline flush. A change gets a fixed
+// number of automatic attempts, spaced by an increasing backoff. When the
+// budget is spent the change is moved to a recoverable `failed` state instead
+// of being retried forever (or silently discarded).
+export const SYNC_RETRY_LIMIT = 5
+
+const SYNC_BACKOFF_STEPS_MS = [30_000, 60_000, 120_000, 300_000, 900_000]
+
+export const getSyncBackoffDelayMs = (retryCount) => {
+  const count = Math.max(0, Number(retryCount) || 0)
+  return SYNC_BACKOFF_STEPS_MS[Math.min(count, SYNC_BACKOFF_STEPS_MS.length - 1)]
+}
+
+// Earliest allowed attempt timestamp for a change. Returns null when the
+// change was never attempted yet (first attempt may run immediately).
+export const getChangeNextAttemptAt = (change, now = Date.now()) => {
+  if (!change) return null
+  const lastAttemptAt = Date.parse(change.last_attempt_at || '')
+  if (!Number.isFinite(lastAttemptAt) || lastAttemptAt <= 0) return null
+  return lastAttemptAt + getSyncBackoffDelayMs(change.retry_count)
+}
+
+export const isChangeSyncable = (change) => (
+  change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
+)
+
+// Automatic attempts are only allowed while the retry budget remains and the
+// backoff window has elapsed. Manual syncs intentionally bypass this gate.
+export const isChangeRetryEligible = (change, now = Date.now()) => {
+  if (!isChangeSyncable(change)) return false
+  if (Number(change.retry_count || 0) >= SYNC_RETRY_LIMIT) return false
+  const nextAttemptAt = getChangeNextAttemptAt(change, now)
+  return nextAttemptAt === null || now >= nextAttemptAt
+}
+
+// Delay until the earliest next allowed automatic attempt across all syncable
+// changes that still have retry budget left (0 when at least one is eligible
+// right now, null when none can ever be attempted automatically).
+export const getSyncableChangesNextAttemptDelayMs = (changes, now = Date.now(), { limit = SYNC_RETRY_LIMIT } = {}) => {
+  const delays = (Array.isArray(changes) ? changes : [])
+    .filter((change) => isChangeSyncable(change) && Number(change?.retry_count || 0) < limit)
+    .map((change) => {
+      const nextAttemptAt = getChangeNextAttemptAt(change, now)
+      return nextAttemptAt === null ? 0 : Math.max(0, nextAttemptAt - now)
+    })
+  return delays.length > 0 ? Math.min(...delays) : null
+}
+
+// Failure bookkeeping for one flush attempt. Transient failures stay `pending`
+// until the retry budget is spent; non-transient failures become `failed`
+// immediately. `failed` changes are never auto-retried but are preserved and
+// recoverable through a manual sync. The returned `error` is only set when the
+// retry budget was exhausted by repeated transient failures, so the caller can
+// surface an explicit recovery message instead of a raw network error.
+export const getNextFailureSyncStatus = (change, { transient = false, limit = SYNC_RETRY_LIMIT } = {}) => {
+  const nextRetryCount = Number(change?.retry_count || 0) + 1
+  const budgetExhausted = !transient || nextRetryCount >= limit
+  return {
+    sync_status: budgetExhausted ? 'failed' : 'pending',
+    retry_count: nextRetryCount,
+    error: transient && budgetExhausted
+      ? 'Sync kept failing after several attempts. Your change is still saved locally - retry from Settings.'
+      : null
+  }
+}
+
+// Decides how a pending member operation should be handled against the row
+// currently on the server:
+// - 'remove'   member_delete on an already-deleted/missing row is idempotent
+//              success: retire the queued delete (never resurrect, never loop).
+// - 'fail'     update/add/attendance against a deleted row cannot apply and
+//              must not resurrect the member; keep the change, stop auto-retry.
+// - 'proceed'  no deletion on the server, safe to run the operation.
+export const resolveServerDeletedMemberChange = (change, serverRow) => {
+  const isDeleted = !serverRow || Boolean(serverRow.deleted_at)
+  if (!isDeleted) return { action: 'proceed' }
+  if (change?.action_type === 'member_delete') return { action: 'remove' }
+  return {
+    action: 'fail',
+    error: 'Member was deleted on the server. This change is kept locally and will not auto-retry.'
+  }
 }
 
 export const removeOfflineChange = async (localChangeId) => (

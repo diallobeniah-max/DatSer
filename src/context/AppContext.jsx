@@ -36,6 +36,7 @@ import { classifyMemberSearch, getSearchableMemberName, normalizeSearchText } fr
 import { normalizeHistoricalSearchSettings, resolveHistoricalSearchTables } from '../utils/historicalSearchSettings'
 import { createAttendanceSnapshotVersionRegistry } from '../utils/attendanceSnapshot'
 import { createResumeSyncCoordinator } from '../utils/appResumeSync'
+import { createSyncFlushScheduler } from '../utils/syncFlushScheduler'
 import {
   buildAutoCalendarPreferences,
   buildManualCalendarPreferences,
@@ -55,14 +56,20 @@ import {
   clearAllOfflineData,
   deleteMemberPreviewMember,
   filterPreviewMembersForWrite,
+  getNextFailureSyncStatus,
   getOfflineSnapshot,
   getMemberPreviewMembers,
+  getSyncableChangesNextAttemptDelayMs,
+  isChangeRetryEligible,
+  isChangeSyncable,
   isOfflineStoreAvailable,
   getPendingOfflineChanges,
   queueOfflineChange,
   removeOfflineChange,
+  resolveServerDeletedMemberChange,
   saveMemberPreviewMembers,
   saveOfflineSnapshot,
+  SYNC_RETRY_LIMIT,
   updateOfflineChangeStatus
 } from '../utils/offlineStore'
 import {
@@ -136,6 +143,7 @@ const MEMBER_PREVIEW_PAGE_SIZE = 20
 const MEMBER_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000
 const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 90 * 1000
 const MEMBER_PREVIEW_SYNC_OVERLAP_MS = 5000
+const AUTO_SYNC_DEBOUNCE_MS = 1200
 const MEMBER_PREVIEW_CACHE_PREFIX = 'datser_member_preview_cache_v1'
 const MEMBER_PREVIEW_SYNC_META_PREFIX = 'datser_member_preview_sync_meta_v1'
 const MEMBER_CODE_SETTINGS_CACHE_PREFIX = 'datser_member_code_settings'
@@ -1112,17 +1120,28 @@ export const AppProvider = ({ children }) => {
     }
     return SEARCH_SUGGESTION_VIEW_MODES.includes(stored) ? stored : DEFAULT_SEARCH_SUGGESTION_VIEW
   })
-  const autoSyncTimerRef = useRef(null)
-  const autoSyncSignatureRef = useRef({ signature: '', at: 0 })
   const autoSnapshotTimerRef = useRef(null)
   const autoPrepareOfflineRef = useRef({ signature: '', running: false })
   const backgroundRefreshRef = useRef({ running: false, lastRun: 0 })
   const realtimeSyncStatusTimerRef = useRef(null)
   const normalizedAttendanceBackendAvailableRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
+  const syncFlushSchedulerRef = useRef(null)
+  if (!syncFlushSchedulerRef.current) {
+    syncFlushSchedulerRef.current = createSyncFlushScheduler({
+      run: () => syncOfflineChangesRef.current?.().catch((error) => {
+        console.warn('Automatic offline sync failed:', error)
+      }),
+      minDelayMs: AUTO_SYNC_DEBOUNCE_MS
+    })
+  }
   const offlineSyncInFlightRef = useRef(false)
   const applyOfflineSnapshotRef = useRef(null)
   const searchDisplayPromptQueuedRef = useRef(false)
+
+  useEffect(() => () => {
+    syncFlushSchedulerRef.current?.dispose?.()
+  }, [])
 
   useEffect(() => {
     offlinePendingChangesRef.current = offlinePendingChanges
@@ -1270,6 +1289,19 @@ export const AppProvider = ({ children }) => {
 
   const refreshOfflineStatus = useCallback(async () => {
     try {
+      // A pending change that has already spent its automatic retry budget can
+      // never be auto-flushed again; surface it as an explicit recoverable
+      // failure instead of leaving it "waiting to sync" forever.
+      const currentPending = await getPendingOfflineChanges().catch(() => [])
+      for (const change of currentPending) {
+        if (isChangeSyncable(change) && Number(change.retry_count || 0) >= SYNC_RETRY_LIMIT) {
+          await updateOfflineChangeStatus(change.local_change_id, {
+            sync_status: 'failed',
+            error: 'Sync kept failing after several attempts. Your change is still saved locally - retry from Settings.'
+          })
+        }
+      }
+
       const [snapshotRecord, pendingChanges] = await Promise.all([
         getOfflineSnapshot().catch(() => null),
         getPendingOfflineChanges().catch(() => [])
@@ -7636,7 +7668,8 @@ export const AppProvider = ({ children }) => {
     }
   }
 
-  const syncOfflineChanges = async () => {
+  const syncOfflineChanges = async (options = {}) => {
+    const { manual = false } = options
     if (offlineSyncInFlightRef.current) {
       return { success: false, syncing: true }
     }
@@ -7667,6 +7700,15 @@ export const AppProvider = ({ children }) => {
           conflicts += 1
           continue
         }
+        if (['unsupported', 'superseded'].includes(change.sync_status)) {
+          continue
+        }
+        // Automatic flushes only attempt changes within the retry budget and
+        // after the backoff window has elapsed. Manual syncs bypass the gate so
+        // the user can always recover budget-exhausted work explicitly.
+        if (!manual && !isChangeRetryEligible(change, Date.now())) {
+          continue
+        }
 
         if (change.action_type === 'preferences_update') {
           try {
@@ -7691,9 +7733,11 @@ export const AppProvider = ({ children }) => {
             await removeOfflineChange(change.local_change_id)
             synced += 1
           } catch (error) {
+            const failureState = getNextFailureSyncStatus(change, { transient: isTransientSupabaseError(error) })
             await updateOfflineChangeStatus(change.local_change_id, {
-              sync_status: isTransientSupabaseError(error) ? 'pending' : 'failed',
-              error: error?.message || 'Preference sync failed.'
+              sync_status: failureState.sync_status,
+              retry_count: failureState.retry_count,
+              error: failureState.error || error?.message || 'Preference sync failed.'
             })
             failed += 1
           }
@@ -7705,6 +7749,24 @@ export const AppProvider = ({ children }) => {
             const changeTable = change.table_name || currentTable
             if (!changeTable) throw new Error('Missing monthly table for member sync.')
             if (change.action_type === 'member_add') {
+              // A queued add must never resurrect a row that was deleted on the
+              // server (same id, deleted_at set). Reconcile instead of upserting.
+              const { data: addExistingRows, error: addCheckError } = await supabase
+                .from(changeTable)
+                .select('id, deleted_at')
+                .eq('id', change.member_id)
+                .limit(1)
+              if (addCheckError) throw addCheckError
+              const addResolution = resolveServerDeletedMemberChange(change, addExistingRows?.[0])
+              if (addResolution.action === 'fail') {
+                addMemberDeleteTombstone(change.member_id, addExistingRows?.[0]?.deleted_at || null, changeTable)
+                await updateOfflineChangeStatus(change.local_change_id, {
+                  sync_status: 'failed',
+                  error: addResolution.error
+                })
+                failed += 1
+                continue
+              }
               const queuedMember = sanitizeQueuedMemberInsert(change.member_data || {})
               await executeSupabaseWrite(
                 () => supabase
@@ -7726,6 +7788,22 @@ export const AppProvider = ({ children }) => {
                 identity: change.identity
               })
             } else if (change.action_type === 'member_delete') {
+              // A delete of a row that is already gone (missing or deleted_at)
+              // is idempotent success: retire the queued delete instead of
+              // failing forever. The tombstone keeps local caches in sync.
+              const { data: deleteExistingRows, error: deleteCheckError } = await supabase
+                .from(changeTable)
+                .select('id, deleted_at')
+                .eq('id', change.member_id)
+                .limit(1)
+              if (deleteCheckError) throw deleteCheckError
+              const deleteResolution = resolveServerDeletedMemberChange(change, deleteExistingRows?.[0])
+              if (deleteResolution.action === 'remove') {
+                addMemberDeleteTombstone(change.member_id, deleteExistingRows?.[0]?.deleted_at || new Date().toISOString(), changeTable)
+                await removeOfflineChange(change.local_change_id)
+                synced += 1
+                continue
+              }
               const deletedAt = new Date().toISOString()
               const deleteResult = await executeSupabaseWrite(
                 () => supabase
@@ -7741,9 +7819,39 @@ export const AppProvider = ({ children }) => {
             await removeOfflineChange(change.local_change_id)
             synced += 1
           } catch (error) {
+            // The row vanished between our pre-check and the write; a delete
+            // that affects no rows is already achieved server-side.
+            if (change.action_type === 'member_delete' && error?.code === 'DATSER_NO_ROWS') {
+              addMemberDeleteTombstone(change.member_id, new Date().toISOString(), changeTable)
+              await removeOfflineChange(change.local_change_id)
+              synced += 1
+              continue
+            }
+            // Update/add/attendance against a member proven deleted on the
+            // server cannot apply and must not resurrect it. Reconcile to a
+            // terminal, recoverable state (tombstone + failed, no auto-retry).
+            if (error?.code === 'DATSER_NO_ROWS' && ['member_update', 'member_add'].includes(change.action_type)) {
+              const { data: verifyRows } = await supabase
+                .from(changeTable)
+                .select('id, deleted_at')
+                .eq('id', change.member_id)
+                .limit(1)
+                .catch(() => ({ data: null }))
+              if (!verifyRows?.[0] || verifyRows[0].deleted_at) {
+                addMemberDeleteTombstone(change.member_id, verifyRows?.[0]?.deleted_at || null, changeTable)
+                await updateOfflineChangeStatus(change.local_change_id, {
+                  sync_status: 'failed',
+                  error: 'Member was deleted on the server. This change is kept locally and will not auto-retry.'
+                })
+                failed += 1
+                continue
+              }
+            }
+            const failureState = getNextFailureSyncStatus(change, { transient: isTransientSupabaseError(error) })
             await updateOfflineChangeStatus(change.local_change_id, {
-              sync_status: isTransientSupabaseError(error) ? 'pending' : 'failed',
-              error: error?.message || 'Member sync failed.'
+              sync_status: failureState.sync_status,
+              retry_count: failureState.retry_count,
+              error: failureState.error || error?.message || 'Member sync failed.'
             })
             failed += 1
           }
@@ -7783,10 +7891,25 @@ export const AppProvider = ({ children }) => {
 
           const { data: serverRows, error: serverError } = await supabase
             .from(changeTable)
-            .select(`id,${attendanceColumn}`)
+            .select(`id,${attendanceColumn},deleted_at`)
             .eq('id', change.member_id)
             .limit(1)
           if (serverError) throw serverError
+
+          // Attendance against a member deleted on the server can never apply
+          // and must not resurrect it: reconcile to a terminal recoverable
+          // state (tombstone + failed, no auto-retry).
+          const attendanceResolution = resolveServerDeletedMemberChange(change, serverRows?.[0])
+          if (attendanceResolution.action === 'fail') {
+            addMemberDeleteTombstone(change.member_id, serverRows?.[0]?.deleted_at || null, changeTable)
+            await updateOfflineChangeStatus(change.local_change_id, {
+              sync_status: 'failed',
+              error: attendanceResolution.error
+            })
+            failed += 1
+            continue
+          }
+
           const rawServerValue = serverRows?.[0]?.[attendanceColumn]
           const serverValue = rawServerValue === 'Present' ? true : rawServerValue === 'Absent' ? false : undefined
           const queuedPresent = normalizeQueuedAttendanceValue(change.present)
@@ -7831,9 +7954,21 @@ export const AppProvider = ({ children }) => {
           await removeOfflineChange(change.local_change_id)
           synced += 1
         } catch (error) {
+          // The member disappeared between the pre-check and the write.
+          if (error?.code === 'DATSER_NO_ROWS') {
+            addMemberDeleteTombstone(change.member_id, new Date().toISOString(), changeTable)
+            await updateOfflineChangeStatus(change.local_change_id, {
+              sync_status: 'failed',
+              error: 'Member was deleted on the server. This change is kept locally and will not auto-retry.'
+            })
+            failed += 1
+            continue
+          }
+          const failureState = getNextFailureSyncStatus(change, { transient: isTransientSupabaseError(error) })
           await updateOfflineChangeStatus(change.local_change_id, {
-            sync_status: 'failed',
-            error: error?.message || 'Sync failed.'
+            sync_status: failureState.sync_status,
+            retry_count: failureState.retry_count,
+            error: failureState.error || error?.message || 'Sync failed.'
           })
           failed += 1
         }
@@ -7877,40 +8012,26 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     if (!isOnline || offlineMode === 'offline' || pendingSyncCount <= 0 || isSyncingOffline || !isBackendHealthy()) return undefined
 
-    const syncableChanges = offlinePendingChanges.filter((change) => (
-      change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
-    ))
+    const syncableChanges = offlinePendingChanges.filter(isChangeSyncable)
     if (syncableChanges.length === 0) return undefined
 
-    const signature = syncableChanges
-      // Retry bookkeeping updates `updated_at`; including it here made every
-      // failed attempt look like a new change and bypassed the cooldown.
-      .map((change) => `${change.local_change_id}:${change.sync_status}`)
-      .sort()
-      .join('|')
     const now = Date.now()
-    const lastAttempt = autoSyncSignatureRef.current
-    if (lastAttempt.signature === signature && now - lastAttempt.at < 60000) {
+    const eligibleNow = syncableChanges.some((change) => isChangeRetryEligible(change, now))
+    if (!eligibleNow) {
+      // Every change is backing off or has spent its retry budget. Wait for
+      // the earliest next allowed attempt instead of hammering.
+      const delay = getSyncableChangesNextAttemptDelayMs(syncableChanges, now)
+      if (delay !== null && !syncFlushSchedulerRef.current.isPending()) {
+        syncFlushSchedulerRef.current.schedule(delay)
+      }
       return undefined
     }
 
-    if (autoSyncTimerRef.current) {
-      clearTimeout(autoSyncTimerRef.current)
+    if (syncFlushSchedulerRef.current.isPending()) {
+      return undefined
     }
-
-    autoSyncTimerRef.current = setTimeout(() => {
-      autoSyncSignatureRef.current = { signature, at: Date.now() }
-      syncOfflineChangesRef.current?.().catch((error) => {
-        console.warn('Automatic offline sync failed:', error)
-      })
-    }, 1200)
-
-    return () => {
-      if (autoSyncTimerRef.current) {
-        clearTimeout(autoSyncTimerRef.current)
-        autoSyncTimerRef.current = null
-      }
-    }
+    syncFlushSchedulerRef.current.schedule(AUTO_SYNC_DEBOUNCE_MS)
+    return undefined
   }, [isOnline, offlineMode, pendingSyncCount, offlinePendingChanges, isSyncingOffline])
 
   const refreshSyncedDataInBackground = useCallback(async (source = 'background', options = {}) => {
@@ -7983,13 +8104,10 @@ export const AppProvider = ({ children }) => {
 
       if (offlineMode !== 'offline' && !offlineSyncInFlightRef.current) {
         const pendingChanges = await getPendingOfflineChanges().catch(() => [])
-        const hasSyncableChanges = pendingChanges.some((change) => (
-          change?.sync_status === 'pending' || change?.sync_status === 'waiting_for_month'
-        ))
-        if (hasSyncableChanges) {
-          await syncOfflineChangesRef.current?.().catch((error) => {
-            console.warn(`Could not flush pending changes (${source}):`, error)
-          })
+        const now = Date.now()
+        const hasEligibleChanges = pendingChanges.some((change) => isChangeRetryEligible(change, now))
+        if (hasEligibleChanges && !syncFlushSchedulerRef.current.isPending()) {
+          syncFlushSchedulerRef.current.schedule(AUTO_SYNC_DEBOUNCE_MS)
         }
       }
 

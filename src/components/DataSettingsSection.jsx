@@ -149,7 +149,7 @@ const DataSettingsSection = ({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={syncOfflineChanges}
+                                    onClick={() => syncOfflineChanges({ manual: true })}
                                     disabled={isSyncingOffline || !isOnline || offlineMode === 'offline' || pendingSyncCount === 0}
                                     className="min-h-[44px] px-3 py-2 rounded-xl border border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-300 bg-white dark:bg-gray-900 hover:bg-orange-50 dark:hover:bg-orange-900/30 disabled:bg-gray-100 disabled:text-gray-400 dark:disabled:bg-gray-800 dark:disabled:text-gray-500 disabled:border-gray-200 dark:disabled:border-gray-700 disabled:cursor-not-allowed text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                                 >

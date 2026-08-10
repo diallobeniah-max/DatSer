@@ -169,7 +169,7 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
           {showSync && (
             <button
               type="button"
-              onClick={syncOfflineChanges}
+              onClick={() => syncOfflineChanges({ manual: true })}
               disabled={isSyncingOffline}
               className="datser-offline-card-pill"
             >
