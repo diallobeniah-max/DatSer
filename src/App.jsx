@@ -32,6 +32,7 @@ const ExecAttendancePage = lazyWithRetry(() => import('./components/ExecAttendan
 const SetPasswordModal = lazyWithRetry(() => import('./components/SetPasswordModal'))
 const ResetPasswordModal = lazyWithRetry(() => import('./components/ResetPasswordModal'))
 const MonthModal = lazyWithRetry(() => import('./components/MonthModal'))
+const PaperScanReview = lazyWithRetry(() => import('./components/PaperScanReview'))
 
 // Minimal loading fallback for lazy components
 const LazyFallback = memo(() => (
@@ -652,6 +653,12 @@ function AppContent({ isMobile }) {
         {currentView === 'data-review' && (
           <Suspense fallback={<LazyFallback />}>
             <MemberDataReview onBack={() => setCurrentView('admin')} />
+          </Suspense>
+        )}
+
+        {currentView === 'paper-scan-review' && (
+          <Suspense fallback={<LazyFallback />}>
+            <PaperScanReview onBack={() => setCurrentView('admin')} />
           </Suspense>
         )}
 
