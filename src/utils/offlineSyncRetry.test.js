@@ -164,10 +164,16 @@ describe('reload safety', () => {
 })
 
 describe('server-deleted member reconciliation', () => {
-  it('never resurrects a member deleted on the server (member_add)', () => {
+  it('does not resurrect a member explicitly deleted on the server (member_add)', () => {
     const add = { action_type: 'member_add', member_id: 'member-1' }
     expect(resolveServerDeletedMemberChange(add, { id: 'member-1', deleted_at: iso(T0) }).action).toBe('fail')
-    expect(resolveServerDeletedMemberChange(add, null).action).toBe('fail')
+  })
+
+  it('proceeds with a member_add when the server row is absent (new offline member)', () => {
+    const add = { action_type: 'member_add', member_id: 'member-1' }
+    expect(resolveServerDeletedMemberChange(add, null).action).toBe('proceed')
+    expect(resolveServerDeletedMemberChange(add, undefined).action).toBe('proceed')
+    expect(resolveServerDeletedMemberChange(add, { id: 'member-1', deleted_at: null }).action).toBe('proceed')
   })
 
   it('stops repeat retries for updates/attendance against a deleted member', () => {

@@ -494,6 +494,20 @@ export const getNextFailureSyncStatus = (change, { transient = false, limit = SY
 //              must not resurrect the member; keep the change, stop auto-retry.
 // - 'proceed'  no deletion on the server, safe to run the operation.
 export const resolveServerDeletedMemberChange = (change, serverRow) => {
+  // A queued member_add normally has no server row yet (a brand-new offline
+  // member), so an absent row is the expected state and must proceed to the
+  // idempotent upsert instead of being misread as a deletion. Only an explicit
+  // soft-deleted server row (deleted_at set) blocks the add and prevents
+  // resurrection of an already-deleted member identity.
+  if (change?.action_type === 'member_add') {
+    if (serverRow && serverRow.deleted_at) {
+      return {
+        action: 'fail',
+        error: 'Member was deleted on the server. This change is kept locally and will not auto-retry.'
+      }
+    }
+    return { action: 'proceed' }
+  }
   const isDeleted = !serverRow || Boolean(serverRow.deleted_at)
   if (!isDeleted) return { action: 'proceed' }
   if (change?.action_type === 'member_delete') return { action: 'remove' }
