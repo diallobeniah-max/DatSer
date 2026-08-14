@@ -1,6 +1,6 @@
 # DatSer
 
-**Open-source-ready attendance and member management for churches, youth ministries, nonprofits, and community teams.**
+**Open-source attendance and member management for churches, youth ministries, nonprofits, and community teams.**
 
 DatSer is a fast, offline-resilient attendance tracking and member-management dashboard built with React, Vite, and Supabase. Born out of real-world church and youth ministry workflows in Ghana, DatSer replaces fragile spreadsheets and complex enterprise software with a streamlined, secure system designed for fast Sunday check-ins, durable member registries, and multi-team collaboration.
 
@@ -45,11 +45,6 @@ Many local churches, youth fellowships, community organizations, and small nonpr
 - **Monotonic Alphanumeric Codes**: Deterministic member code generation (e.g., `A01`, `001`, `AAA`) unique per workspace.
 - **Printable Badges & QR Passes**: Generate badges and evergreen QR codes for fast scanner check-in.
 
-### 📄 Paper Scan Attendance Digitization
-- **Roster Scanning**: Digitize handwritten paper attendance sheets using device camera or image upload.
-- **Compare & Correct Review**: Visual side-by-side verification interface to confirm OCR/AI extraction before saving.
-- **Durable Batch Saves**: Server-authoritative step execution with idempotent retry protection.
-
 ### 📊 Analytics & Export
 - **Attendance Insights**: Review attendance trends, gender breakdowns, and regular vs. newcomer ratios.
 - **CSV Data Export**: Export filtered member rosters and monthly attendance logs to standard CSV files.
@@ -69,9 +64,9 @@ Many local churches, youth fellowships, community organizations, and small nonpr
 DatSer handles real-world community and member data. The platform is engineered with a security-first architecture:
 
 - **Row Level Security (RLS) as Primary Boundary**: Database queries and mutations strictly enforce PostgreSQL RLS policies tied to authenticated user IDs and verified workspace collaborator roles.
-- **Deterministic Transactional Advisory Locking**: Critical operations (e.g., member code allocations, paper scan batch commits) use `pg_advisory_xact_lock` to eliminate concurrency races and dual-ownership collisions.
+- **Deterministic Transactional Advisory Locking**: Critical operations (e.g., member code allocations) use `pg_advisory_xact_lock` to eliminate concurrency races and dual-ownership collisions.
 - **Provenance Verification**: Strict database constraints and migration-level integrity guards prevent orphaned or cross-workspace member adoption.
-- **Automated Quality Verification**: Comprehensive automated test coverage spanning frontend components, state management, offline sync coordinators, and PostgreSQL migration security invariants.
+- **Automated Quality Verification**: Automated test coverage spanning frontend components, state management, offline sync coordinators, and PostgreSQL migration security invariants.
 
 ---
 
@@ -132,10 +127,10 @@ DatSer handles real-world community and member data. The platform is engineered 
 
 ## Quality Assurance & Testing
 
-DatSer maintains an extensive automated test suite covering unit logic, state synchronization, UI interactions, and database migration safety.
+DatSer includes automated unit, integration, migration, and smoke-test coverage.
 
 ```bash
-# Run complete test suite (75+ test files, 780+ automated tests)
+# Run automated Vitest test suite
 npm test
 
 # Run code style & static analysis check
@@ -165,13 +160,13 @@ Detailed guides and architecture specifications are available in the repository:
 
 ## Project Status & Roadmap
 
-DatSer is actively developed and maintained for local ministry operations. Ongoing areas of development include:
+DatSer is actively developed and maintained for local ministry operations. Ongoing areas of active development include:
 
 - [x] Fast Sunday attendance tracking & real-time search
 - [x] Multi-month workspace isolation with PostgreSQL RLS
 - [x] Offline-first IndexedDB sync coordinator
-- [x] Paper Scan OCR extraction & compare-and-correct workflow
 - [x] Deterministic member-code allocation & advisory locking
+- [ ] Paper Scan OCR sheet extraction & Compare-and-Correct workflow (in active development)
 - [ ] Automated multi-service attendance reporting (Morning / Evening sessions)
 - [ ] Enhanced SMS and parent notification integrations
 

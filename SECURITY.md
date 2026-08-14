@@ -45,5 +45,5 @@ DatSer manages member registries, contact information, attendance records, and t
 
 | Version / Branch | Supported |
 | --- | --- |
-| `main` / `feature/ui-v2` | :white_check_mark: Active security fixes |
-| Older releases | :x: Please update to the latest branch |
+| `main` | :white_check_mark: Active security fixes |
+| Older releases | :x: Please update to the latest release |
