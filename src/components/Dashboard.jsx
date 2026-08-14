@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspens
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
-import { Search, Users, UserX, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine, Loader2 } from 'lucide-react'
+import { Search, Users, UserX, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine, Loader2, LayoutDashboard, CheckCircle2 } from 'lucide-react'
 import QRCode from 'qrcode'
 import DateSelector from './DateSelector'
 import ConfirmModal from './ConfirmModal'
@@ -1037,6 +1037,46 @@ const Dashboard = ({ isAdmin = false }) => {
     const parsed = Date.parse(editedAt || '')
     return Number.isFinite(parsed) ? parsed : 0
   }
+
+  const activeSundayDate = useMemo(() => {
+    if (selectedSundayDate) return selectedSundayDate
+    const targetDate = getDateString(selectedAttendanceDate)
+    if (targetDate && sundayDates.includes(targetDate)) return targetDate
+    return sundayDates[sundayDates.length - 1] || null
+  }, [selectedSundayDate, selectedAttendanceDate, sundayDates])
+
+  const activeSundayStats = useMemo(() => {
+    if (!activeSundayDate) return { present: 0, absent: 0, rate: 0, total: members?.length || 0 }
+    let present = 0
+    let absent = 0
+    ;(members || []).forEach(m => {
+      const val = getCanonicalAttendanceValue(m, activeSundayDate)
+      if (val === true) present++
+      else if (val === false) absent++
+    })
+    const marked = present + absent
+    const rate = marked > 0 ? Math.round((present / marked) * 100) : 0
+    return { present, absent, rate, total: members?.length || 0 }
+  }, [activeSundayDate, members, getCanonicalAttendanceValue])
+
+  const recentActivityList = useMemo(() => {
+    const list = []
+    const edits = recentMemberEdits || []
+    for (const edit of edits.slice(0, 5)) {
+      const member = (members || []).find(m => String(m.id) === String(edit.member_id || edit.id))
+      const name = edit.full_name || edit.name || (member ? (member.full_name || member['Full Name']) : 'Unknown')
+      const code = member ? getMemberIndexCode(member, memberIndexCodeMap) : null
+      list.push({
+        id: edit.id || Math.random(),
+        name,
+        code,
+        action: edit.action || 'Updated',
+        dateKey: edit.date_key,
+        time: edit.edited_at ? new Date(edit.edited_at) : new Date()
+      })
+    }
+    return list
+  }, [recentMemberEdits, members, memberIndexCodeMap])
 
   // Get filtered members based on active tab
   const getTabFilteredMembers = () => {
@@ -2543,9 +2583,380 @@ const Dashboard = ({ isAdmin = false }) => {
 
   return (
     <div className={`space-y-2 pb-0 md:pb-14 ${isSearchFocused ? 'keyboard-search-active' : ''} ${dashboardShellClass} mx-auto`}>
-      {/* Header removed; summary now shown in sticky Header */}
+      {/* 1. DASHBOARD / SUMMARY VIEW */}
+      {dashboardTab === 'summary' && (
+        <div className="w-[96%] sm:w-full mx-auto space-y-4 pt-2">
+          {/* Top Bar: Month Title & Direct Actions */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-4 shadow-xs">
+            <div>
+              <div className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
+                  {getMonthDisplayName(currentTable)}
+                </h2>
+              </div>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                Overview & attendance summary
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { selection(); setDashboardTab('attendance') }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs sm:text-sm font-semibold shadow-xs transition-colors"
+              >
+                <CheckSquare className="w-4 h-4" />
+                <span>Take Attendance</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { selection(); setDashboardTab('all') }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs sm:text-sm font-medium transition-colors"
+              >
+                <Users className="w-4 h-4" />
+                <span>View Directory</span>
+              </button>
+            </div>
+          </div>
 
-      {/* Desktop tab navigation removed; use mobile segmented control in Header */}
+          {/* 4 Compact Stat Tiles */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-4 shadow-xs">
+              <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 mb-1">
+                <span className="text-xs font-medium uppercase tracking-wider">Members</span>
+                <Users className="w-4 h-4 text-gray-400" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight">
+                {membersTotalCount || (members ? members.length : 0)}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Total active directory</p>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-4 shadow-xs">
+              <div className="flex items-center justify-between text-green-600 dark:text-green-400 mb-1">
+                <span className="text-xs font-medium uppercase tracking-wider">Present</span>
+                <UserCheck className="w-4 h-4" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-bold text-green-700 dark:text-green-300 tracking-tight">
+                {activeSundayStats.present}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Marked on active Sunday</p>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-4 shadow-xs">
+              <div className="flex items-center justify-between text-red-600 dark:text-red-400 mb-1">
+                <span className="text-xs font-medium uppercase tracking-wider">Absent</span>
+                <UserX className="w-4 h-4" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-bold text-red-700 dark:text-red-300 tracking-tight">
+                {activeSundayStats.absent}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Marked on active Sunday</p>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-4 shadow-xs">
+              <div className="flex items-center justify-between text-orange-600 dark:text-orange-400 mb-1">
+                <span className="text-xs font-medium uppercase tracking-wider">Rate</span>
+                <Award className="w-4 h-4" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-bold text-orange-700 dark:text-orange-300 tracking-tight">
+                {activeSundayStats.rate}%
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Attendance percentage</p>
+            </div>
+          </div>
+
+          {/* Side-by-Side: Active Sunday Glance + Recent Activity */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Active Sunday Glance */}
+            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-5 shadow-xs flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                    Active Sunday
+                  </h3>
+                  {activeSundayDate && (
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 font-semibold border border-orange-200/60 dark:border-orange-800/40">
+                      {new Date(activeSundayDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600 dark:text-gray-300">Marked Status</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">
+                      {activeSundayStats.present + activeSundayStats.absent} / {members?.length || 0} members
+                    </span>
+                  </div>
+
+                  {/* Clean progress bar */}
+                  <div className="w-full h-3 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden flex">
+                    <div
+                      style={{ width: `${(members?.length || 0) > 0 ? (activeSundayStats.present / (members?.length || 1)) * 100 : 0}%` }}
+                      className="bg-green-500 transition-all duration-300"
+                      title="Present"
+                    />
+                    <div
+                      style={{ width: `${(members?.length || 0) > 0 ? (activeSundayStats.absent / (members?.length || 1)) * 100 : 0}%` }}
+                      className="bg-red-500 transition-all duration-300"
+                      title="Absent"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 pt-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-green-500" />
+                      {activeSundayStats.present} Present
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-red-500" />
+                      {activeSundayStats.absent} Absent
+                    </span>
+                    <span>
+                      {Math.max((members?.length || 0) - activeSundayStats.present - activeSundayStats.absent, 0)} Unmarked
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700/60 flex items-center justify-between">
+                <span className="text-xs text-gray-500 dark:text-gray-400">Record Sunday attendance</span>
+                <button
+                  type="button"
+                  onClick={() => { selection(); setDashboardTab('attendance') }}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 transition-colors"
+                >
+                  <span>Open Attendance Sheet</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Recent Activity Glance */}
+            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-5 shadow-xs flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                    Recent Activity
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => { selection(); setDashboardTab('edited') }}
+                    className="text-xs text-orange-600 dark:text-orange-400 hover:underline font-semibold"
+                  >
+                    View All
+                  </button>
+                </div>
+
+                <div className="divide-y divide-gray-100 dark:divide-gray-700/60">
+                  {recentActivityList.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-gray-400">
+                      No recent updates recorded yet
+                    </div>
+                  ) : (
+                    recentActivityList.map((item, idx) => (
+                      <div key={idx} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {item.code && (
+                            <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-[10px] font-mono font-bold text-gray-600 dark:text-gray-300">
+                              {item.code}
+                            </span>
+                          )}
+                          <span className="font-semibold text-gray-900 dark:text-white truncate">
+                            {item.name}
+                          </span>
+                        </div>
+                        <span className="text-gray-400 text-[11px] flex-shrink-0">
+                          {item.time ? formatRecentEditLabel(item.time) : 'recently'}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700/60 text-right">
+                <button
+                  type="button"
+                  onClick={() => { selection(); setDashboardTab('edited') }}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                >
+                  <span>Full History & Transfer Log</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. FAST ATTENDANCE MARKING VIEW */}
+      {dashboardTab === 'attendance' && (
+        <div className="w-[96%] sm:w-full mx-auto space-y-3 pt-2">
+          {/* Header Bar: Title, Month & Sunday Selector */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <CheckSquare className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+                  <span>Sunday Attendance</span>
+                </h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Select Sunday and toggle [P] Present, [A] Absent, or [C] Clear
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2.5 py-1 rounded-full bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-300 font-semibold">
+                  {activeSundayStats.present} Present
+                </span>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 font-semibold">
+                  {activeSundayStats.absent} Absent
+                </span>
+              </div>
+            </div>
+
+            {/* Sunday Date Chips */}
+            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+              {sundayDates.map(dateStr => {
+                const isSelected = (selectedSundayDate || activeSundayDate) === dateStr
+                const dateObj = new Date(dateStr)
+                const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                const canonicalValues = Object.values(canonicalAttendanceByDate[dateStr] || {})
+                const presentCount = canonicalValues.filter(value => value === true).length
+                const absentCount = canonicalValues.filter(value => value === false).length
+                return (
+                  <button
+                    key={dateStr}
+                    type="button"
+                    onClick={async () => {
+                      selection()
+                      setSelectedSundayDate(dateStr)
+                      if (!attendanceData[dateStr]) {
+                        await fetchAndApplyAttendanceForDate(new Date(dateStr))
+                      }
+                    }}
+                    className={`flex-shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all border ${isSelected
+                      ? 'bg-orange-50 dark:bg-orange-950/50 text-orange-900 dark:text-orange-200 border-orange-300 dark:border-orange-700 ring-2 ring-orange-500/20'
+                      : 'bg-gray-50 dark:bg-gray-700/60 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
+                  >
+                    <span>{label}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/80 dark:bg-black/30 font-bold">
+                      {presentCount}P / {absentCount}A
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Quick Filter Input */}
+          <div className="relative">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Quick filter members by name or code..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500/30 transition-colors"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Fast-Marking Member Rows */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 overflow-hidden shadow-xs divide-y divide-gray-100 dark:divide-gray-700/60">
+            {getTabFilteredMembers().map((member) => {
+              const currentStatus = getCanonicalAttendanceValue(member, selectedSundayDate || activeSundayDate)
+              const memberCode = memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null
+              const name = member.full_name || member['Full Name'] || 'Unknown'
+              const level = member.current_level || member['Current Level'] || ''
+
+              return (
+                <div
+                  key={member.id}
+                  className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/80 dark:hover:bg-gray-700/30 transition-colors"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    {memberCode && (
+                      <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 shrink-0">
+                        {memberCode}
+                      </span>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                        {name}
+                      </p>
+                      {level && (
+                        <p className="text-xs text-gray-400 truncate">
+                          {level}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Fast 3-Button Toggle [P] [A] [C] */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        selection()
+                        await handleAttendanceForDate(member.id, selectedSundayDate || activeSundayDate, true)
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                        currentStatus === true
+                          ? 'bg-green-600 text-white shadow-xs'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-green-100 hover:text-green-700 dark:hover:bg-green-950/40 dark:hover:text-green-300'
+                      }`}
+                      title="Mark Present"
+                    >
+                      P
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        selection()
+                        await handleAttendanceForDate(member.id, selectedSundayDate || activeSundayDate, false)
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                        currentStatus === false
+                          ? 'bg-red-600 text-white shadow-xs'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-100 hover:text-red-700 dark:hover:bg-red-950/40 dark:hover:text-red-300'
+                      }`}
+                      title="Mark Absent"
+                    >
+                      A
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        selection()
+                        await handleAttendanceForDate(member.id, selectedSundayDate || activeSundayDate, null)
+                      }}
+                      className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        currentStatus === undefined
+                          ? 'bg-gray-200 dark:bg-gray-600 text-gray-400'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      }`}
+                      title="Clear mark"
+                    >
+                      C
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Edited Members: Sundays Quick View */}
       {dashboardTab === 'edited' && (
@@ -2940,110 +3351,146 @@ const Dashboard = ({ isAdmin = false }) => {
         </div>
       )}
 
-      {/* Members List */}
-      {!isShortSearchDisplayActive && (
-      <div className={`${longPressSelectedIds.size > 0 ? '' : 'mt-3 sm:mt-4'} grid ${dashboardMemberGridClass} ${dashboardMemberColumns === 4 ? 'gap-3 xl:gap-4' : 'gap-3'} ${searchTerm ? '' : 'transition-colors duration-200'} grid-animate`}>
-        {(() => {
-          const tabFilteredMembers = getTabFilteredMembers()
-          const membersToShow = searchTerm ? tabFilteredMembers : tabFilteredMembers.slice(0, displayLimit)
-          const serverTotalMembers = !searchTerm && dashboardTab === 'all'
-            ? Math.max(membersTotalCount || 0, tabFilteredMembers.length)
-            : tabFilteredMembers.length
-          const hasMoreMembers = !searchTerm && (
-            tabFilteredMembers.length > displayLimit ||
-            (dashboardTab === 'all' && !membersLoadedAll && tabFilteredMembers.length >= displayLimit)
-          )
+      {/* Members Directory View */}
+      {dashboardTab === 'all' && !isShortSearchDisplayActive && (
+        <div className="w-[96%] sm:w-full mx-auto space-y-3 pt-2">
+          {/* Top Bar: Title, Search, and Add Member Button */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 p-4 shadow-xs">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
+                Members Directory
+              </h2>
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 font-semibold">
+                {membersTotalCount || (members ? members.length : 0)}
+              </span>
+            </div>
 
-          return (
-            <>
-              {membersToShow.map((member, index) => {
-                const isExpanded = !!expandedMembers[member.id]
-                const isSelected = longPressSelectedIds.has(member.id) || selectedMemberIds.has(member.id)
-                return (
-                  <MemberCard
-                    key={getMemberCanonicalId(member) || member.id}
-                    member={member}
-                    memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
-                    isMemberCodeLoading={isMemberCodeHydrating}
-                    onIndexClick={openMemberPass}
-                    memberCodeBadgeStyle={memberCodeBadgeStyle}
-                    memberCodeBadgeCycleSlot={memberCodeBadgeCycleSlot}
-                    isExpanded={isExpanded}
-                    isSelected={isSelected}
-                    selectionMode={selectionMode}
-                    onToggleExpansion={toggleMemberExpansion}
-                    onToggleSelection={toggleSelection}
-                    onLongPressStart={handleLongPressStart}
-                    onLongPressMove={handleLongPressMove}
-                    onLongPressEnd={handleLongPressEnd}
-                    onMouseDown={handleMouseDown}
-                    onMouseUp={handleMouseUp}
-                    onAttendance={handleAttendance}
-                    onAttendanceForDate={handleAttendanceForDate}
-                    onEdit={setEditingMember}
-                    onDelete={openDeleteConfirm}
-                    attendanceStatus={(() => {
-                      const targetDate = getDateString(selectedAttendanceDate)
-                      if (!targetDate) return undefined
-                      return getCanonicalAttendanceValue(member, targetDate)
-                    })()}
-                    attendanceLoading={attendanceLoading[member.id]}
-                    monthSundays={sundayDates}
-                    attendanceData={attendanceData}
-                    memberTags={memberTags[member.id]}
-                    showTags={showOptionalTags}
-                    currentTable={currentTable}
-                    getMonthDisplayName={getMonthDisplayName}
-                  />
-                )
-              })}
+            <div className="flex items-center gap-2 flex-1 sm:justify-end max-w-md">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by name, code, phone..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500/30 transition-colors"
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
-              {(hasMoreMembers || (!searchTerm && tabFilteredMembers.length > 0)) && (
-                <div className="mt-4 mb-4 flex flex-col items-center justify-center space-y-2" style={{ gridColumn: '1 / -1' }}>
-                  {/* Load More Button */}
-                  {hasMoreMembers && (
-                    <button
-                      onClick={async () => {
-                        selection()
-                        setIsLoadingMore(true)
-                        try {
-                          if (dashboardTab === 'all' && tabFilteredMembers.length <= displayLimit && !membersLoadedAll) {
-                            await fetchMoreMembers?.()
-                          }
-                          setDisplayLimit(prev => prev + 20)
-                        } finally {
-                          setIsLoadingMore(false)
-                        }
-                      }}
-                      disabled={isLoadingMore}
-                      className="px-6 py-3 bg-primary-600 hover:bg-primary-700 disabled:bg-primary-400 text-white rounded-lg font-medium transition-colors flex items-center space-x-2"
-                    >
-                      {isLoadingMore ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>Loading...</span>
-                        </>
-                      ) : (
-                        <>
-                          <UserPlus className="w-4 h-4" />
-                          <span>Load More ({Math.max(serverTotalMembers - Math.min(displayLimit, tabFilteredMembers.length), 0)} remaining)</span>
-                        </>
-                      )}
-                    </button>
-                  )}
+              <button
+                type="button"
+                onClick={() => { selection(); setShowMemberModal(true) }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs sm:text-sm font-semibold shadow-xs transition-colors shrink-0"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>Add Member</span>
+              </button>
+            </div>
+          </div>
 
-                  {/* Members count info */}
-                  {!searchTerm && tabFilteredMembers.length > 0 && (
-                    <div className="text-sm md:text-base text-gray-600 dark:text-gray-400 text-center">
-                      Showing {Math.min(displayLimit, tabFilteredMembers.length)} of {serverTotalMembers} members
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )
-        })()}
-      </div>
+          {/* Clean Lightweight Table */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-gray-50 dark:bg-gray-750 text-gray-500 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                  <tr>
+                    <th className="px-4 py-3 w-20">Code</th>
+                    <th className="px-4 py-3">Full Name</th>
+                    <th className="px-4 py-3 hidden sm:table-cell">Phone</th>
+                    <th className="px-4 py-3 hidden md:table-cell">Gender</th>
+                    <th className="px-4 py-3 hidden md:table-cell">Educational Level</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700/60">
+                  {(() => {
+                    const tabFilteredMembers = getTabFilteredMembers()
+                    const membersToShow = searchTerm ? tabFilteredMembers : tabFilteredMembers.slice(0, displayLimit)
+
+                    if (membersToShow.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                            No members found
+                          </td>
+                        </tr>
+                      )
+                    }
+
+                    return membersToShow.map((member) => {
+                      const memberCode = memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null
+                      const name = member.full_name || member['Full Name'] || 'Unknown'
+                      const phone = member.phone_number || member['Phone Number'] || ''
+                      const gender = member.gender || member['Gender'] || ''
+                      const level = member.current_level || member['Current Level'] || ''
+
+                      return (
+                        <tr
+                          key={member.id}
+                          onClick={() => setEditingMember(member)}
+                          className="hover:bg-orange-50/30 dark:hover:bg-gray-700/40 cursor-pointer transition-colors"
+                        >
+                          <td className="px-4 py-3">
+                            {memberCode ? (
+                              <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300">
+                                {memberCode}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-xs">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 font-semibold text-gray-900 dark:text-white">
+                            {name}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600 dark:text-gray-300 hidden sm:table-cell">
+                            {phone || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600 dark:text-gray-300 hidden md:table-cell">
+                            {gender || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600 dark:text-gray-300 hidden md:table-cell">
+                            {level || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => setEditingMember(member)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 transition-colors"
+                            >
+                              Edit
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  })()}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Load More Button */}
+            {!searchTerm && getTabFilteredMembers().length > displayLimit && (
+              <div className="p-4 border-t border-gray-100 dark:border-gray-700 text-center">
+                <button
+                  type="button"
+                  onClick={() => setDisplayLimit(prev => prev + 30)}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  Load More ({getTabFilteredMembers().length - displayLimit} remaining)
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {isShortSearchDisplayActive && (

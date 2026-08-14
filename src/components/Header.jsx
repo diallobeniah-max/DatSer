@@ -14,7 +14,9 @@ import {
   CheckCircle2,
   X,
   Database,
-  LayoutGrid
+  LayoutGrid,
+  LayoutDashboard,
+  ScanLine
 } from 'lucide-react'
 import MonthPickerPopup from './MonthPickerPopup'
 import { useApp } from '../context/AppContext'
@@ -592,11 +594,23 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
           <div className="hidden md:flex items-center flex-1 justify-between mx-2 lg:mx-4">
             {/* Left: Main Navigation Links */}
             <nav className="flex items-center gap-1">
-              {/* Home/Dashboard */}
+              {/* 1. Dashboard */}
+              <button
+                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('summary') }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'summary'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 shadow-xs'
+                  : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span>Dashboard</span>
+              </button>
+
+              {/* 2. Members */}
               <button
                 onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('all') }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'all'
-                  ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 shadow-xs'
                   : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
                   }`}
               >
@@ -604,40 +618,50 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 <span>Members</span>
               </button>
 
-              {/* Marked - Quick access */}
+              {/* 3. Attendance */}
               <button
-                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('edited') }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'edited'
-                  ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
+                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('attendance') }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'attendance'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 shadow-xs'
                   : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
                   }`}
               >
                 <CheckSquare className="w-4 h-4" />
-                <span>Marked</span>
-                {editedCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 rounded-full">
-                    {editedCount}
-                  </span>
-                )}
+                <span>Attendance</span>
               </button>
 
-              {/* Admin Panel */}
+              {/* 4. Paper Scan */}
               <button
-                onClick={() => { selection(); setCurrentView('admin') }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'admin'
-                  ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
+                onClick={() => { selection(); setCurrentView('paper-scan-review') }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'paper-scan-review'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 shadow-xs'
                   : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
                   }`}
               >
-                <TrendingUp className="w-4 h-4" />
-                <span>Admin</span>
+                <ScanLine className="w-4 h-4" />
+                <span>Paper Scan</span>
+              </button>
+
+              {/* 5. History */}
+              <button
+                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('edited') }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'edited'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 shadow-xs'
+                  : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+              >
+                <History className="w-4 h-4" />
+                <span>History</span>
+                {editedCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-orange-100 dark:bg-orange-900/60 text-orange-700 dark:text-orange-300 rounded-full font-medium">
+                    {editedCount}
+                  </span>
+                )}
               </button>
             </nav>
 
             {/* Right: Help + Profile + Menu */}
             <div className="flex items-center gap-2">
-              {/* Quick Attendance Access Button removed */}
-
               {/* Help/Settings Button */}
               <button
                 onClick={() => { selection(); setCurrentView('settings') }}
@@ -652,7 +676,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
                 )}
               </button>
 
-              {/* Profile/Login Button - now contains all menu options */}
+              {/* Profile/Login Button */}
               <LoginButton
                 onCreateMonth={onCreateMonth}
                 onToggleAIChat={onToggleAIChat}
@@ -667,38 +691,84 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
 
         {/* Mobile Navigation */}
         <div className="md:hidden pb-2 pt-1">
-          <div className="flex items-center justify-between">
-            {/* Left: Quick nav */}
-            <div className="flex items-center gap-1">
+          <div className="flex items-center justify-between gap-1">
+            {/* Left: Quick nav horizontal list */}
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+              <button
+                onClick={() => {
+                  selection()
+                  setCurrentView('dashboard');
+                  setDashboardTab('summary');
+                }}
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${currentView === 'dashboard' && dashboardTab === 'summary'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300'
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+                title="Dashboard"
+              >
+                <LayoutDashboard className="h-3.5 w-3.5" />
+                <span>Dashboard</span>
+              </button>
+
               <button
                 onClick={() => {
                   selection()
                   setCurrentView('dashboard');
                   setDashboardTab('all');
                 }}
-                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'all'
-                  ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${currentView === 'dashboard' && dashboardTab === 'all'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300'
                   : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
                   }`}
                 title="Members"
               >
-                <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md ${currentView === 'dashboard' && dashboardTab === 'all' ? 'bg-orange-600 text-white' : 'bg-orange-500/12 text-orange-500'}`}>
-                  <Database className="h-3.5 w-3.5" strokeWidth={2.5} />
-                </span>
+                <Users className="h-3.5 w-3.5" />
                 <span>Members</span>
               </button>
+
               <button
-                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('edited') }}
-                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentView === 'dashboard' && dashboardTab === 'edited'
-                  ? 'bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300'
+                onClick={() => {
+                  selection()
+                  setCurrentView('dashboard');
+                  setDashboardTab('attendance');
+                }}
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${currentView === 'dashboard' && dashboardTab === 'attendance'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300'
                   : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
                   }`}
-                title="Marked"
+                title="Attendance"
               >
-                <CheckSquare className="w-4 h-4" />
-                <span>Marked</span>
+                <CheckSquare className="h-3.5 w-3.5" />
+                <span>Attendance</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  selection()
+                  setCurrentView('paper-scan-review');
+                }}
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${currentView === 'paper-scan-review'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300'
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+                title="Paper Scan"
+              >
+                <ScanLine className="h-3.5 w-3.5" />
+                <span>Paper Scan</span>
+              </button>
+
+              <button
+                onClick={() => { selection(); setCurrentView('dashboard'); setDashboardTab('edited') }}
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${currentView === 'dashboard' && dashboardTab === 'edited'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300'
+                  : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                  }`}
+                title="History"
+              >
+                <History className="h-3.5 w-3.5" />
+                <span>History</span>
                 {editedCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 rounded-full">
+                  <span className="ml-0.5 px-1 py-0.2 text-[9px] bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 rounded-full font-bold">
                     {editedCount}
                   </span>
                 )}
@@ -706,7 +776,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
             </div>
 
             {/* Right: Profile (contains all menu options) */}
-            <div className="flex items-center">
+            <div className="flex items-center flex-shrink-0">
               <LoginButton
                 onCreateMonth={onCreateMonth}
                 onToggleAIChat={onToggleAIChat}
