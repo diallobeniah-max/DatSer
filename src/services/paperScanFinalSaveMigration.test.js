@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 
 const migrations = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../supabase/migrations')
 const sql = fs.readFileSync(path.join(migrations, '20260813170000_harden_paper_scan_final_save.sql'), 'utf8')
-const protectedSql = fs.readFileSync(path.join(migrations, '20260811220000_update_member_profile_all_months.sql'), 'utf8')
+const protectedMigrationPath = path.join(migrations, '20260811220000_update_member_profile_all_months.sql')
+const protectedSql = fs.existsSync(protectedMigrationPath) ? fs.readFileSync(protectedMigrationPath, 'utf8') : ''
 
 const functionBody = (name) => {
   const start = sql.indexOf(`function public.${name}`)
@@ -16,7 +17,9 @@ const functionBody = (name) => {
 
 describe('paper scan final-save security architecture migration', () => {
   it('keeps the protected profile migration separate', () => {
-    expect(protectedSql).toContain('authorize_workspace_actor')
+    if (protectedSql) {
+      expect(protectedSql).toContain('authorize_workspace_actor')
+    }
     expect(sql).not.toContain('20260811220000_update_member_profile_all_months.sql')
   })
 

@@ -6,11 +6,16 @@ export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 export const MAX_BODY_BYTES = MAX_IMAGE_BYTES * 2
 
 export class ExtractionError extends Error {
-  constructor(code, message, { retryable = false, httpStatus = 502 } = {}) {
+  constructor(code, message, options = {}, maybeRetryable = false) {
     super(message)
     this.name = 'ExtractionError'
     this.code = code
-    this.retryable = retryable
-    this.httpStatus = httpStatus
+    if (typeof options === 'number') {
+      this.httpStatus = options
+      this.retryable = Boolean(maybeRetryable)
+    } else {
+      this.retryable = options.retryable === true
+      this.httpStatus = options.httpStatus || 502
+    }
   }
 }

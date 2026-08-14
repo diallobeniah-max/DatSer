@@ -1,5 +1,5 @@
-import { extractSheetWithGemini, ExtractionError } from '../server/geminiExtract.js'
-import { MAX_BODY_BYTES } from '../server/extractionErrors.js'
+import { extractSheetWithGemini } from '../server/geminiExtract.js'
+import { ExtractionError, MAX_BODY_BYTES } from '../server/extractionErrors.js'
 import { validateSheetImage } from '../server/imageValidation.js'
 import {
   authenticateExtractionRequest,
@@ -9,7 +9,7 @@ import {
 } from '../server/extractionGuard.js'
 
 export const config = {
-  runtime: 'nodejs20.x'
+  maxDuration: 60
 }
 
 const send = (res, status, payload) => {
@@ -19,10 +19,11 @@ const send = (res, status, payload) => {
 }
 
 const sendError = (res, error) => {
-  const code = error instanceof ExtractionError ? error.code : 'EXTRACTION_FAILED'
-  const message = error instanceof ExtractionError ? error.message : 'Extraction failed.'
-  const status = error instanceof ExtractionError ? error.httpStatus : 502
-  const retryable = error instanceof ExtractionError ? error.retryable === true : false
+  const isExtractionError = error instanceof ExtractionError || error?.name === 'ExtractionError'
+  const code = isExtractionError ? error.code : 'EXTRACTION_FAILED'
+  const message = isExtractionError ? error.message : 'Extraction failed.'
+  const status = isExtractionError ? (error.httpStatus || 502) : 502
+  const retryable = isExtractionError ? error.retryable === true : false
   send(res, status, { ok: false, error: message, code, retryable })
 }
 
