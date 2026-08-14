@@ -1,130 +1,182 @@
 # DatSer
 
-DatSer is a React + Vite attendance and member-management dashboard backed by Supabase. It is built for ministry teams that need fast Sunday attendance marking, searchable member records, collaborator access, analytics, CSV exports, offline-ready Android use, and private APK update management.
+**Open-source-ready attendance and member management for churches, youth ministries, nonprofits, and community teams.**
 
-![DatSer dashboard](docs/readme-dashboard.png)
+DatSer is a fast, offline-resilient attendance tracking and member-management dashboard built with React, Vite, and Supabase. Born out of real-world church and youth ministry workflows in Ghana, DatSer replaces fragile spreadsheets and complex enterprise software with a streamlined, secure system designed for fast Sunday check-ins, durable member registries, and multi-team collaboration.
 
-## What DatSer Does
+![DatSer Dashboard](docs/readme-dashboard.png)
 
-- **Attendance tracking**: Mark members present or absent for the selected service date, switch between month tables, and review marked attendance quickly.
-- **Member management**: Search members, add or edit profiles, manage badges, filter by profile details, and load large member lists without blocking the UI.
-- **Missing-data protection**: Prompt admins to complete important member details before saving attendance when required.
-- **Analytics and exports**: Review attendance trends and export monthly data to CSV.
-- **Collaborator workspaces**: Invite collaborators and keep them aligned with the workspace owner while preserving Supabase access boundaries.
-- **Offline mode**: Prepare local member and attendance data, keep working in the Android APK or mobile webview while offline, queue attendance changes, and sync them when online again.
-- **Private Android updates**: Manage APK releases from the admin area with Supabase-backed release metadata, force-update support, and a fallback version file.
-- **Accessibility and preferences**: Sync theme, font size, font family, and OpenDyslexic settings across devices.
+---
+
+## Why DatSer Exists
+
+Many local churches, youth fellowships, community organizations, and small nonprofits struggle with attendance tracking. They are often caught between two extremes:
+
+1. **Fragile Spreadsheets & Paper Rosters**: Manual paper lists are easily misplaced, and multi-tab spreadsheets are prone to duplicate rows, accidental overwrites, formatting corruption, and zero mobile offline reliability.
+2. **Expensive Enterprise Church Management Systems**: Bulky, costly platforms designed for large Western institutions that require high monthly subscriptions, complex onboarding, and constant high-speed connectivity.
+
+**DatSer solves this problem** by providing a lightweight, purpose-built dashboard that works seamlessly on desktop browsers, mobile screens, and Android devices—even when internet access is spotty or unavailable during services.
+
+---
+
+## Key Features
+
+### ⚡ Fast Attendance Check-in
+- **Instant Marking**: Mark members present or absent with single-tap controls and instant summary counters.
+- **Sunday Service Calendar**: Automatically identifies and tracks Sunday services across any calendar month.
+- **Missing-Data Prompts**: Optional guided reminders to collect important missing member profile details (phone, level, etc.) during check-in.
+
+### 👥 Member Directory & Real-time Search
+- **Instant Search**: Real-time filtering across member names, phone numbers, unique member codes, and custom tags.
+- **Rich Profiles**: Track full names, contact info, school/work level, date of birth, emergency contacts, and attendance history.
+- **Cross-Month Lookup**: Search and present members from historical month tables without manual re-entry.
+
+### 🔒 Workspace Isolation & Multi-Month Tracking
+- **Dedicated Monthly Rosters**: Organizes records into distinct monthly attendance relations (e.g., `January_2026`, `August_2026`).
+- **Workspace Security**: Complete tenant data isolation powered by PostgreSQL Row Level Security (RLS).
+- **Collaborator Team Access**: Securely invite team members and volunteers with owner-controlled permissions.
+
+### 📶 Offline-First Resilience
+- **Local Caching**: Download active workspace and month data locally via IndexedDB.
+- **Offline Queue**: Continue marking attendance without internet connectivity on mobile or desktop.
+- **Conflict-Safe Sync**: Automatically syncs queued records upon reconnection with server-side conflict verification.
+
+### 🏷️ Canonical Member Codes & Badges
+- **Monotonic Alphanumeric Codes**: Deterministic member code generation (e.g., `A01`, `001`, `AAA`) unique per workspace.
+- **Printable Badges & QR Passes**: Generate badges and evergreen QR codes for fast scanner check-in.
+
+### 📄 Paper Scan Attendance Digitization
+- **Roster Scanning**: Digitize handwritten paper attendance sheets using device camera or image upload.
+- **Compare & Correct Review**: Visual side-by-side verification interface to confirm OCR/AI extraction before saving.
+- **Durable Batch Saves**: Server-authoritative step execution with idempotent retry protection.
+
+### 📊 Analytics & Export
+- **Attendance Insights**: Review attendance trends, gender breakdowns, and regular vs. newcomer ratios.
+- **CSV Data Export**: Export filtered member rosters and monthly attendance logs to standard CSV files.
+
+### 📱 Android & Mobile App Support
+- **Capacitor Integration**: Packaged as an Android APK with offline asset bundling.
+- **Private Release Management**: In-app APK updates with Supabase Storage and version tracking.
+
+### ♿ Accessibility & Customization
+- **Visual Themes**: Built-in Light and Dark modes.
+- **Typography Support**: Scalable font sizing and dedicated **OpenDyslexic** font support for enhanced readability.
+
+---
+
+## Security & Reliability Architecture
+
+DatSer handles real-world community and member data. The platform is engineered with a security-first architecture:
+
+- **Row Level Security (RLS) as Primary Boundary**: Database queries and mutations strictly enforce PostgreSQL RLS policies tied to authenticated user IDs and verified workspace collaborator roles.
+- **Deterministic Transactional Advisory Locking**: Critical operations (e.g., member code allocations, paper scan batch commits) use `pg_advisory_xact_lock` to eliminate concurrency races and dual-ownership collisions.
+- **Provenance Verification**: Strict database constraints and migration-level integrity guards prevent orphaned or cross-workspace member adoption.
+- **Automated Quality Verification**: Comprehensive automated test coverage spanning frontend components, state management, offline sync coordinators, and PostgreSQL migration security invariants.
+
+---
 
 ## Tech Stack
 
-- **Frontend**: React 18, Vite, Capacitor
-- **Styling**: Tailwind CSS, PostCSS, custom responsive UI
-- **Backend**: Supabase Auth, PostgreSQL, Realtime, Storage, RLS
-- **State**: React Context (`AppContext`, `AuthContext`, `ThemeContext`)
-- **Testing**: Vitest, Playwright smoke tests
-- **Icons**: Lucide React
+| Layer | Technology |
+| --- | --- |
+| **Frontend Framework** | [React 18](https://react.dev/) + [Vite](https://vitejs.dev/) |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) + PostCSS + Custom Design Tokens |
+| **Backend & Database** | [Supabase](https://supabase.com/) (PostgreSQL 17, PostgREST, Auth, Realtime, Storage) |
+| **Client Storage** | IndexedDB + `localStorage` |
+| **Mobile Runtime** | [Capacitor](https://capacitorjs.com/) (Android) |
+| **Icons** | [Lucide React](https://lucide.dev/) |
+| **Testing** | [Vitest](https://vitest.dev/), React Testing Library, Playwright |
+
+---
 
 ## Getting Started
 
-Install dependencies:
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) (v18.0.0 or higher recommended)
+- [npm](https://www.npmjs.com/) (v9.0.0 or higher)
+- A [Supabase](https://supabase.com/) project (or local Supabase instance)
+
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/diallobeniah-max/DatSer.git
+   cd DatSer
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Configure Environment Variables**:
+   Copy `.env.example` to `.env.local`:
+   ```bash
+   cp .env.example .env.local
+   ```
+   Fill in your Supabase credentials:
+   ```env
+   VITE_SUPABASE_URL=https://your-project-id.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-public-key
+   VITE_SUPABASE_REDIRECT_URL=http://localhost:5173
+   ```
+
+4. **Start Local Development**:
+   ```bash
+   npm run dev
+   ```
+   Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+---
+
+## Quality Assurance & Testing
+
+DatSer maintains an extensive automated test suite covering unit logic, state synchronization, UI interactions, and database migration safety.
 
 ```bash
-npm install
-```
-
-Run the local website:
-
-```bash
-npm run dev
-```
-
-Build for production:
-
-```bash
-npm run build
-```
-
-Preview the production build:
-
-```bash
-npm run preview
-```
-
-## Environment Variables
-
-Create `.env` or `.env.local` in the project root:
-
-```bash
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-VITE_SUPABASE_REDIRECT_URL=http://localhost:5173
-```
-
-Do not commit private passwords, service-role keys, signing keys, or personal login details. The frontend anon key is expected to be protected by Supabase Row Level Security.
-
-## Supabase Requirements
-
-DatSer expects Supabase tables, RPCs, storage policies, and RLS rules for the attendance app. Important pieces include:
-
-- Monthly attendance/member tables such as `January_2026`
-- `user_preferences` for theme, font, selected month, and workspace settings
-- `collaborators` for invite and workspace access
-- `app_releases` plus the `app-updates` storage bucket for private APK updates
-- RPC helpers such as `get_owner_workspace_name(owner_uuid)` and `get_table_columns(table_name)`
-
-Run the migrations in `supabase/migrations/` before using all production features.
-
-## Offline Mode
-
-Offline mode is designed for previously authenticated users and cached workspace data. From Settings, use `Download Offline Data` while online to save members, month metadata, selected date, and attendance data locally. Offline attendance changes are queued in IndexedDB and synced later with conflict checks instead of blindly overwriting server data.
-
-More details are in [OFFLINE_MODE.md](OFFLINE_MODE.md).
-
-## Android APK
-
-The Capacitor Android app can either load the live website or bundle the current local build:
-
-```bash
-npm run android:apk
-npm run android:apk:local
-```
-
-The Android package name is `com.datser.app`. Keep the same package name and signing key for future updates.
-
-More details are in [ANDROID_APK.md](ANDROID_APK.md) and [APP_UPDATES.md](APP_UPDATES.md).
-
-## Verification
-
-Use these checks before shipping changes:
-
-```bash
+# Run complete test suite (75+ test files, 780+ automated tests)
 npm test
+
+# Run code style & static analysis check
 npm run lint
+
+# Verify production Vite build bundle
 npm run build
+
+# Run Playwright smoke tests
 npm run test:smoke
-npm run test:smoke:prod
 ```
 
-For local Android QA:
+---
 
-```bash
-npm run android:apk:local
-```
+## Project Documentation
 
-Debug APK output:
+Detailed guides and architecture specifications are available in the repository:
 
-```text
-android\app\build\outputs\apk\debug\app-debug.apk
-```
+- 📶 **[Offline Mode Architecture](OFFLINE_MODE.md)** — IndexedDB queuing, synchronization, and conflict resolution.
+- 📱 **[Android APK Guide](ANDROID_APK.md)** — Capacitor setup, local bundling, and APK compilation.
+- 🔄 **[In-App Updates](APP_UPDATES.md)** — Private APK update distribution via Supabase Storage.
+- ♿ **[Accessibility Features](ACCESSIBILITY_FEATURES.md)** — High contrast, font scaling, and OpenDyslexic support.
+- 🔒 **[Security Policy](SECURITY.md)** — Vulnerability reporting and security architecture.
+- 🤝 **[Contributing Guidelines](CONTRIBUTING.md)** — Code standards, PR workflow, and quality rules.
 
-## Deployment
+---
 
-Deploy the Vite build to Vercel or another static host, set the Supabase environment variables in the host settings, and confirm the production bundle with `npm run test:smoke:prod`. The Android live-wrapper APK points at the deployed DatSer website, while local bundled APKs use the current `dist` output.
+## Project Status & Roadmap
 
-## Security
+DatSer is actively developed and maintained for local ministry operations. Ongoing areas of development include:
 
-Supabase RLS is the security boundary. Users should only see data they own or have explicitly been granted through collaborator access. Offline mode must remain scoped to the authenticated/cached workspace user and should not weaken online permissions.
+- [x] Fast Sunday attendance tracking & real-time search
+- [x] Multi-month workspace isolation with PostgreSQL RLS
+- [x] Offline-first IndexedDB sync coordinator
+- [x] Paper Scan OCR extraction & compare-and-correct workflow
+- [x] Deterministic member-code allocation & advisory locking
+- [ ] Automated multi-service attendance reporting (Morning / Evening sessions)
+- [ ] Enhanced SMS and parent notification integrations
+
+---
 
 ## License
 
-Proprietary. All rights reserved.
+DatSer is open-source software licensed under the [MIT License](LICENSE).
