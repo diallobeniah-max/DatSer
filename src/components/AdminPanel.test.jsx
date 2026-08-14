@@ -6,7 +6,7 @@ import AdminPanel from './AdminPanel'
 
 const mockSetCurrentView = vi.fn()
 
-const mockAppState = {
+let mockAppState = {
   currentTable: 'August_2026',
   members: [
     { id: '1', 'Full Name': 'Alice Smith', attendance_2026_08_02: true },
@@ -28,13 +28,15 @@ const mockAppState = {
   addMember: vi.fn()
 }
 
+let mockAuthUser = { id: 'owner-uuid', email: 'test@example.com', app_metadata: {} }
+
 vi.mock('../context/AppContext', () => ({
   useApp: () => mockAppState
 }))
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'owner-uuid', email: 'test@example.com' },
+    user: mockAuthUser,
     preferences: {}
   })
 }))
@@ -75,7 +77,7 @@ const createStorageMock = () => {
   }
 }
 
-describe('AdminPanel Scan Document entry points', () => {
+describe('AdminPanel navigation and maintenance tools', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'localStorage', {
       value: createStorageMock(),
@@ -87,6 +89,7 @@ describe('AdminPanel Scan Document entry points', () => {
     })
     window.sessionStorage.setItem('adminAuthenticated', 'true')
     mockSetCurrentView.mockReset()
+    mockAuthUser = { id: 'owner-uuid', email: 'test@example.com', app_metadata: {} }
   })
 
   afterEach(() => {
@@ -95,10 +98,22 @@ describe('AdminPanel Scan Document entry points', () => {
     window.localStorage.clear()
   })
 
+  it('renders normal Admin header with Back, Overview, Member Data Review, and Scan Document', () => {
+    render(<AdminPanel setCurrentView={mockSetCurrentView} />)
+
+    expect(screen.getByTitle('Back to Dashboard')).toBeDefined()
+    expect(screen.getByTitle('Overview')).toBeDefined()
+    expect(screen.getByText('Member Data Review')).toBeDefined()
+    expect(screen.getByTestId('admin-header-scan-document')).toBeDefined()
+
+    // Historic Reconciliation must NOT be in the normal header
+    expect(screen.queryByTitle('Operator-only historic member workspace reconciliation')).toBeNull()
+    expect(screen.queryByTestId('admin-maintenance-tools')).toBeNull()
+  })
+
   it('renders prominent Scan Document card and routes to paper-scan-review', () => {
     render(<AdminPanel setCurrentView={mockSetCurrentView} />)
 
-    // The primary action card must be present and display the exact text
     const scanCard = screen.getByTestId('admin-scan-document-card')
     expect(scanCard).toBeDefined()
     expect(scanCard.textContent).toContain('Scan Document')
@@ -111,17 +126,27 @@ describe('AdminPanel Scan Document entry points', () => {
     expect(mockSetCurrentView).toHaveBeenCalledWith('paper-scan-review')
   })
 
-  it('renders header Scan Document button without hiding classes', () => {
+  it('renders collapsed Maintenance Tools for operators and routes to reconciliation', () => {
+    mockAuthUser = {
+      id: 'owner-uuid',
+      email: 'operator@example.com',
+      app_metadata: { datser_provenance_operator: true }
+    }
+
     render(<AdminPanel setCurrentView={mockSetCurrentView} />)
 
-    const headerBtn = screen.getByTestId('admin-header-scan-document')
-    expect(headerBtn).toBeDefined()
-    expect(headerBtn.textContent).toContain('Scan Document')
+    // Normal header still does not have historic reconciliation
+    expect(screen.queryByTitle('Operator-only historic member workspace reconciliation')).toBeNull()
 
-    // Ensure Member Data Review is also present separately
-    expect(screen.getByText('Member Data Review')).toBeDefined()
+    // Secondary Maintenance Tools section is rendered
+    const maintenanceSection = screen.getByTestId('admin-maintenance-tools')
+    expect(maintenanceSection).toBeDefined()
+    expect(maintenanceSection.textContent).toContain('Maintenance Tools')
+    expect(maintenanceSection.textContent).toContain('Historic Reconciliation')
+    expect(maintenanceSection.textContent).toContain('Historic workspace ownership maintenance for legacy month records.')
 
-    fireEvent.click(headerBtn)
-    expect(mockSetCurrentView).toHaveBeenCalledWith('paper-scan-review')
+    const openReconciliationBtn = screen.getByText('Open Historic Reconciliation')
+    fireEvent.click(openReconciliationBtn)
+    expect(mockSetCurrentView).toHaveBeenCalledWith('historic-provenance-reconciliation')
   })
 })
