@@ -31,6 +31,7 @@ import {
   LogIn,
   ArrowLeft,
   Phone,
+  ScanLine,
   MessageCircle,
   Mail,
   Send,
@@ -99,6 +100,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
   const { isDarkMode } = useTheme()
   const { user, signInWithGoogle } = useAuth()
   const hasDeveloperAdminBypass = isLocalWebDeveloperModeAllowed() && (isDeveloperBypass || isLocalDeveloperBypassActive())
+  const isProvenanceOperator = user?.app_metadata?.datser_provenance_operator === true
 
   // Admin password protection - uses the same password as user's account
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -1068,6 +1070,22 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                 <Database className="w-4 h-4" />
                 <span className="hidden sm:inline">Member Data Review</span>
               </button>
+              <button
+                onClick={() => setCurrentView('paper-scan-review')}
+                className="flex items-center gap-2 px-3 py-2 sm:px-3 text-sm font-semibold text-orange-700 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/30 rounded-lg transition-colors"
+                title="Capture and enhance a paper attendance sheet"
+              >
+                <ScanLine className="w-4 h-4" />
+                <span className="hidden sm:inline">Paper Scan Review</span>
+              </button>
+              {isProvenanceOperator && <button
+                onClick={() => setCurrentView('historic-provenance-reconciliation')}
+                className="flex items-center gap-2 px-3 py-2 sm:px-3 text-sm font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 rounded-lg transition-colors"
+                title="Operator-only historic member workspace reconciliation"
+              >
+                <Shield size={16} />
+                <span className="hidden sm:inline">Historic Reconciliation</span>
+              </button>}
             </div>
             {showOverview && (
               <div className="absolute right-4 top-full mt-2 w-80 z-50">

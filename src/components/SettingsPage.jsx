@@ -20,10 +20,8 @@ import {
     Laptop,
     CheckCircle,
     Shield,
-    RefreshCw,
     Pencil,
     HelpCircle,
-    ChevronDown,
     X,
     Loader2,
     Search,
@@ -33,7 +31,6 @@ import {
     RotateCcw,
     Sparkles,
     Plus,
-    Archive,
     BellRing,
     GripVertical,
     ArrowUp,
@@ -68,6 +65,7 @@ const DeleteAccountModal = lazyWithRetry(() => import('./DeleteAccountModal'))
 const ExportDataModal = lazyWithRetry(() => import('./ExportDataModal'))
 const ProfilePhotoEditor = lazyWithRetry(() => import('./ProfilePhotoEditor'))
 const HelpCenterPage = lazyWithRetry(() => import('./HelpCenterPage'))
+const PaperScanStorageLimitsSection = lazyWithRetry(() => import('./PaperScanStorageLimitsSection'))
 const ActivityLogViewer = lazyWithRetry(() => import('./ActivityLogViewer'))
 const ExportCenterPage = lazyWithRetry(() => import('./ExportCenterPage'))
 const AdminControlsModal = lazyWithRetry(() => import('./AdminControlsModal'))
@@ -309,7 +307,7 @@ const areMemberCodesVisible = (preferences = {}) => (
 const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMember }) => {
     const { user, signOut, preferences, resetPassword, savePersonalPreferences, saveWorkspacePreferences, saveUserPreferences, updatePreference, isDeveloperBypass } = useAuth()
     const { isDarkMode, toggleTheme, themeMode, setThemeMode, commandKEnabled, setCommandKEnabled } = useTheme()
-    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, isPersonalManualMode, manualMonthTable, manualSundayDate, personalManualExpiryWarning, setPersonalCalendarMode, refreshPersonalManualInactivity, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
+    const { members, monthlyTables, currentTable, setCurrentTable, isSupabaseConfigured, createNewMonth, deleteMonthTable, isCollaborator, isAdminCollaborator, dataOwnerId, lockedDefaultDate, setCollaboratorOverride, selectedAttendanceDate, setAndSaveAttendanceDate, deleteMember, forceRefreshMembersSilent, loadAllAttendanceData, loadAllBadgeData, refreshSearch, validateMemberData, getPastSundays, getMissingAttendance, autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, isPersonalManualMode, manualMonthTable, manualSundayDate, personalManualExpiryWarning, setPersonalCalendarMode, refreshPersonalManualInactivity, isOnline, offlineMode, setOfflineMode, isOfflineModeActive, offlineModeStatus, offlineCacheMeta, pendingSyncCount, offlinePendingChanges, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, isPreparingOffline, isSyncingOffline, prepareOfflineData, clearOfflineCacheData, syncOfflineChanges } = useApp()
     const { selection } = useHapticFeedback()
     const isAdminCodeLogin = preferences?.admin_code_login === true || user?.app_metadata?.provider === 'admin-code'
     const isDeveloperToolsEnabled = import.meta.env.DEV
@@ -1022,66 +1020,12 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         return monthTables[monthTables.length - 1] || monthTables[0]
     }, [dbUsage])
 
-    // Email usage tracking for Supabase free-tier awareness
-    const EMAIL_RATE_LIMIT = 3 // Supabase free tier: 3 emails per hour
-    const EMAIL_WINDOW_MS = 60 * 60 * 1000 // 1 hour
-
-    const getEmailSends = useCallback(() => {
-        try {
-            const raw = localStorage.getItem('email_send_timestamps')
-            if (!raw) return []
-            const timestamps = JSON.parse(raw)
-            const cutoff = Date.now() - EMAIL_WINDOW_MS
-            return timestamps.filter(ts => ts > cutoff)
-        } catch { return [] }
-    }, [])
-
-    const [emailSends, setEmailSends] = useState(() => {
-        try {
-            const raw = localStorage.getItem('email_send_timestamps')
-            if (!raw) return []
-            const timestamps = JSON.parse(raw)
-            const cutoff = Date.now() - EMAIL_WINDOW_MS
-            return timestamps.filter(ts => ts > cutoff)
-        } catch { return [] }
-    })
-    const [emailCountdown, setEmailCountdown] = useState('')
-
-    // Refresh email sends and countdown every second
-    useEffect(() => {
-        const tick = () => {
-            const current = getEmailSends()
-            setEmailSends(current)
-            if (current.length >= EMAIL_RATE_LIMIT && current.length > 0) {
-                const oldest = Math.min(...current)
-                const resetAt = oldest + EMAIL_WINDOW_MS
-                const remaining = resetAt - Date.now()
-                if (remaining > 0) {
-                    const mins = Math.floor(remaining / 60000)
-                    const secs = Math.floor((remaining % 60000) / 1000)
-                    setEmailCountdown(`${mins}m ${secs}s`)
-                } else {
-                    setEmailCountdown('')
-                }
-            } else {
-                setEmailCountdown('')
-            }
-        }
-        tick()
-        const interval = setInterval(tick, 1000)
-        return () => clearInterval(interval)
-    }, [getEmailSends])
-
-    const emailsRemaining = Math.max(0, EMAIL_RATE_LIMIT - emailSends.length)
-    const emailPct = Math.round((emailSends.length / EMAIL_RATE_LIMIT) * 100)
-
     const [removeDelay, setRemoveDelay] = useState(0)
     const [isRemovingCollaborator, setIsRemovingCollaborator] = useState(false)
     const [isExportingCollaborator, setIsExportingCollaborator] = useState(false)
     const removeTimerRef = useRef(null)
     const removeCountdownRef = useRef(null)
     const [removeCountdownMs, setRemoveCountdownMs] = useState(0)
-    const [showUsageDetails, setShowUsageDetails] = useState(false)
 
     const fetchCollaborators = useCallback(async ({ background = false } = {}) => {
         if (!user?.id || isDeveloperBypass || !isSupabaseConfigured()) {
@@ -1727,6 +1671,8 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                     <React.Suspense fallback={<LazyPanelFallback />}>
                         <DataSettingsSection
                             isOnline={isOnline}
+                            dataOwnerId={dataOwnerId}
+                            offlinePendingChanges={offlinePendingChanges}
                             offlineMode={offlineMode}
                             setOfflineMode={setOfflineMode}
                             isOfflineModeActive={isOfflineModeActive}
@@ -1751,125 +1697,20 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 )
             case 'storage':
                 return (
-                    <div className="space-y-6">
-                        <div>
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Storage & Limits</h3>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">Database usage, free-plan limits, and cleanup tools.</p>
-                        </div>
-
-                        <div data-setting-id="storage_limits" tabIndex={-1} className={`bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden ${getSettingTargetClass('storage_limits')}`}>
-                            <div className="p-4 flex items-start justify-between gap-4 border-b border-gray-100 dark:border-gray-700">
-                                <div>
-                                    <h4 className="font-semibold text-gray-900 dark:text-white">Database Storage</h4>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400">Member data, attendance, badges, tags, and monthly tables.</p>
-                                </div>
-                                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300">Free Plan</span>
-                            </div>
-                            <div className="p-4 space-y-3">
-                                <div className="flex items-center justify-between text-sm">
-                                    <span className="font-semibold text-gray-800 dark:text-gray-200">Used</span>
-                                    {dbLoading ? (
-                                        <span className="text-gray-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Loading...</span>
-                                    ) : dbUsage ? (
-                                        <span className={`font-bold ${dbUsage.db_size_mb > DB_LIMIT_MB * 0.8 ? 'text-orange-600 dark:text-orange-400' : 'text-gray-900 dark:text-white'}`}>
-                                            {dbUsage.db_size_mb} / {DB_LIMIT_MB} MB
-                                        </span>
-                                    ) : (
-                                        <span className="text-gray-400">Unavailable</span>
-                                    )}
-                                </div>
-                                <div className="h-4 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden border border-gray-200 dark:border-gray-600">
-                                    <div
-                                        className={`h-full rounded-full transition-all ${dbUsage && dbUsage.db_size_mb > DB_LIMIT_MB * 0.8 ? 'bg-gradient-to-r from-orange-400 to-red-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'}`}
-                                        style={{ width: `${dbUsage ? Math.max(1, Math.min(100, Math.round((dbUsage.db_size_mb / DB_LIMIT_MB) * 100))) : 0}%` }}
-                                    />
-                                </div>
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                                        {dbUsage ? `${(DB_LIMIT_MB - dbUsage.db_size_mb).toFixed(1)} MB free` : 'Run refresh to check usage'}
-                                    </span>
-                                    <button onClick={fetchDbUsage} className="text-orange-500 hover:text-orange-600 dark:hover:text-orange-400 flex items-center gap-1 transition-colors font-semibold">
-                                        <RefreshCw className={`w-3 h-3 ${dbLoading ? 'animate-spin' : ''}`} /> Refresh
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                            <div className="p-4 flex items-start justify-between gap-4 border-b border-gray-100 dark:border-gray-700">
-                                <div>
-                                    <h4 className="font-semibold text-gray-900 dark:text-white">Auth Emails</h4>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400">Magic links, password resets, invites, and signup confirmations.</p>
-                                </div>
-                                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${emailsRemaining === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200' : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-200'}`}>
-                                    {emailSends.length} / {EMAIL_RATE_LIMIT}
-                                </span>
-                            </div>
-                            <div className="p-4 space-y-3">
-                                <div className="h-4 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden border border-gray-200 dark:border-gray-600">
-                                    <div
-                                        className={`h-full rounded-full transition-all ${emailsRemaining === 0 ? 'bg-gradient-to-r from-red-400 to-red-500' : emailPct >= 66 ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-gradient-to-r from-purple-400 to-purple-500'}`}
-                                        style={{ width: `${Math.max(emailPct > 0 ? 4 : 0, Math.min(100, emailPct))}%` }}
-                                    />
-                                </div>
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className={`${emailsRemaining === 0 ? 'text-red-600 dark:text-red-400' : 'text-purple-600 dark:text-purple-400'} font-medium`}>
-                                        {emailsRemaining > 0 ? `${emailsRemaining} email${emailsRemaining !== 1 ? 's' : ''} remaining` : 'Rate limit reached'}
-                                    </span>
-                                    {emailCountdown ? (
-                                        <span className="text-orange-600 dark:text-orange-400 font-medium">Resets in {emailCountdown}</span>
-                                    ) : (
-                                        <span className="text-gray-400">Resets hourly</span>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {oldestMonthTable && (
-                            <div className="bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800/50 rounded-2xl p-4 flex items-start gap-3">
-                                <Archive className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                    <h4 className="font-semibold text-amber-900 dark:text-amber-200">Archive recommendation</h4>
-                                    <p className="mt-1 text-sm text-amber-800 dark:text-amber-300">
-                                        Archive <strong>{oldestMonthTable.table_name.replace('_', ' ')}</strong> ({oldestMonthTable.size_mb} MB) to free up space.
-                                    </p>
-                                    <button
-                                        onClick={() => { openSettingsSection('data'); setArchiveMonth(oldestMonthTable.table_name) }}
-                                        className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700"
-                                    >
-                                        Archive Month
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 overflow-hidden">
-                            <button
-                                type="button"
-                                onClick={() => setShowUsageDetails((current) => !current)}
-                                className="w-full p-4 flex items-center justify-between gap-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
-                            >
-                                <div>
-                                    <h4 className="font-semibold text-gray-900 dark:text-white">Plan details</h4>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400">See what counts toward storage and when to archive old months.</p>
-                                </div>
-                                <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${showUsageDetails ? 'rotate-180' : ''}`} />
-                            </button>
-                            {showUsageDetails && (
-                                <div className="px-4 pb-4 space-y-3 text-sm text-gray-600 dark:text-gray-300">
-                                    <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
-                                        Member records, attendance tables, tags, notes, and badges all count toward database storage.
-                                    </div>
-                                    <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
-                                        Archive older month tables when they are no longer actively edited. Exports stay available while the database gets lighter.
-                                    </div>
-                                    <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
-                                        Supabase auth emails reset on a rolling hourly window, so invites and password emails may pause until the limit refreshes.
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                    <React.Suspense fallback={<LazyPanelFallback />}>
+                        <PaperScanStorageLimitsSection
+                            ownerId={dataOwnerId || user?.id}
+                            user={user}
+                            dbUsage={dbUsage}
+                            dbLoading={dbLoading}
+                            fetchDbUsage={fetchDbUsage}
+                            dbLimitMb={DB_LIMIT_MB}
+                            oldestMonthTable={oldestMonthTable}
+                            setArchiveMonth={setArchiveMonth}
+                            openSettingsSection={openSettingsSection}
+                            getSettingTargetClass={getSettingTargetClass}
+                        />
+                    </React.Suspense>
                 )
             case 'appearance':
                 return (
@@ -2183,7 +2024,6 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 return
             case 'storage_limits':
                 navigateToSetting('storage', item.id)
-                setShowUsageDetails(true)
                 return
             case 'theme_light':
                 setThemeMode('light')

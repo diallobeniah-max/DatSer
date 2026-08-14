@@ -535,6 +535,16 @@
   @keyframes qr-scanner-sweep { to { transform: translateY(14rem); } }
   @media (prefers-reduced-motion: reduce) { .qr-scanner-line { animation: none; top: 50%; } }
 
+  .paper-scan-line {
+    position: absolute;
+    left: 6%; right: 6%; top: 8%; height: 3px;
+    background: linear-gradient(90deg, transparent, #fb923c 15%, #fdba74 50%, #fb923c 85%, transparent);
+    box-shadow: 0 0 22px 6px rgba(249, 115, 22, 0.4);
+    animation: paper-scan-sweep 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+  }
+  @keyframes paper-scan-sweep { to { transform: translateY(min(30rem, 88%)); } }
+  @media (prefers-reduced-motion: reduce) { .paper-scan-line { animation: none; top: 50%; } }
+
   .live-feature-preview {
     isolation: isolate;
   }

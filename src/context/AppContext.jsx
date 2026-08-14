@@ -173,6 +173,7 @@ const MEMBER_PREVIEW_SELECT = [
   'notes',
   'ministry',
   'date_of_birth',
+  'workspace_owner_id',
   'user_id'
 ].join(',')
 const MEMBER_BADGE_SELECT = 'id,"Member","Regular","Newcomer","Manual Badge","Badge Type"'
@@ -197,6 +198,16 @@ const readStoredRecentMemberEdits = (scope = 'guest') => {
   } catch {
     return []
   }
+}
+
+const resolveLogicalMonthStart = (tableName) => {
+  if (!tableName || typeof tableName !== 'string') return null
+  const [monthName, yearStr] = tableName.split('_')
+  const monthIdx = MONTHS_IN_YEAR.indexOf(monthName)
+  const yearNum = Number(yearStr)
+  if (monthIdx === -1 || !Number.isInteger(yearNum)) return null
+  const monthPad = String(monthIdx + 1).padStart(2, '0')
+  return `${yearNum}-${monthPad}-01`
 }
 
 const getMemberPreviewCacheKey = (scope = 'guest', tableName = 'default') => (
@@ -622,7 +633,7 @@ const normalizeMemberRecord = (member, identity = {}) => {
   )
 }
 
-const buildMemberTableRow = (memberData = {}, { id = null, workspaceName = null, userId = null } = {}) => {
+const buildMemberTableRow = (memberData = {}, { id = null, workspaceName = null, userId = null, workspaceOwnerId = null } = {}) => {
   const genRaw = memberData.gender || memberData['Gender']
   const gen = typeof genRaw === 'string'
     ? (genRaw.trim().toLowerCase() === 'male' ? 'Male' : genRaw.trim().toLowerCase() === 'female' ? 'Female' : genRaw)
@@ -649,6 +660,7 @@ const buildMemberTableRow = (memberData = {}, { id = null, workspaceName = null,
     parent_phone_2: memberData.parent_phone_2 || null,
     notes: memberData.notes || null,
     is_visitor: memberData.is_visitor || false,
+    workspace_owner_id: workspaceOwnerId || userId,
     user_id: userId
   }
 }
@@ -852,6 +864,9 @@ export const AppProvider = ({ children }) => {
   const searchRequestRef = useRef(0)
   const attendanceSnapshotVersionRef = useRef(createAttendanceSnapshotVersionRegistry())
   const qrCheckInRunRef = useRef({ key: '', running: false })
+  const hasInitialAppLoadRunRef = useRef(false)
+  const resumeSyncCoordinatorRef = useRef(null)
+  const resumeSyncCallbackRef = useRef(null)
   const workspaceCacheScope = useMemo(() => getWorkspaceCacheScope({
     userId: user?.id,
     dataOwnerId,
@@ -1854,11 +1869,12 @@ export const AppProvider = ({ children }) => {
     return next
   }, [])
 
-  const readConfirmedWorkspaceMemberCodeAssignments = useCallback(async (ownerId) => {
+  const readConfirmedWorkspaceMemberCodeAssignments = useCallback(async (ownerId, { force = false } = {}) => {
     return runScopedRequest(
       `${ownerId}:workspace`,
       'member-code-assignments',
-      () => readWorkspaceMemberCodeAssignments(ownerId)
+      () => readWorkspaceMemberCodeAssignments(ownerId),
+      { force, cacheResult: true }
     )
   }, [readWorkspaceMemberCodeAssignments])
 
@@ -1886,7 +1902,7 @@ export const AppProvider = ({ children }) => {
     }, delay)
   }, [])
 
-  const loadWorkspaceMemberCodes = useCallback(async ({ ensure = false, membersToEnsure = [] } = {}) => {
+  const loadWorkspaceMemberCodes = useCallback(async ({ ensure = false, membersToEnsure = [], force = false } = {}) => {
     const ownerId = dataOwnerId || user?.id
     if (!ownerId || isDeveloperBypass || !isSupabaseConfigured()) return []
     if (!isBackendHealthy()) {
@@ -1926,7 +1942,7 @@ export const AppProvider = ({ children }) => {
         if (error) throw error
         invalidateRequestScope(`${ownerId}:workspace`, 'member-code-assignments')
       }
-      const data = await readConfirmedWorkspaceMemberCodeAssignments(ownerId)
+      const data = await readConfirmedWorkspaceMemberCodeAssignments(ownerId, { force: force || (shouldEnsure && memberPayload.length > 0) })
       if (!isCurrentRequest()) return data
       mergeConfirmedWorkspaceMemberCodeAssignments(ownerId, data)
       setWorkspaceMemberCodeStatus('ready')
@@ -2590,7 +2606,7 @@ export const AppProvider = ({ children }) => {
   const applyWorkspaceOwnerFilter = useCallback((query) => {
     const ownerId = dataOwnerId || user?.id
     if (!query || !ownerId || typeof query.eq !== 'function') return query
-    return query.eq('user_id', ownerId)
+    return query.eq('workspace_owner_id', ownerId)
   }, [dataOwnerId, user?.id])
 
 
@@ -3356,7 +3372,8 @@ export const AppProvider = ({ children }) => {
       const transformedData = buildMemberTableRow(memberData, {
         id: localId,
         workspaceName,
-        userId: dataOwnerId || user?.id
+        userId: user?.id,
+        workspaceOwnerId: dataOwnerId || user?.id
       })
       transformedDataForQueue = transformedData
 
@@ -4335,6 +4352,7 @@ export const AppProvider = ({ children }) => {
       const attendanceStatus = present === null ? 'Cleared' : present ? 'Present' : 'Absent'
       logActivity('MARK_ATTENDANCE', `Marked ${memberName} as ${attendanceStatus} on ${effectiveDate.toLocaleDateString()}`)
 
+      invalidateRequestScope(`${dataOwnerId || user?.id || 'guest'}:${currentTable}`, 'attendance-reconciliation')
       setOfflineStatusMessage('Attendance saved.')
       return { success: true }
     } catch (error) {
@@ -4548,6 +4566,7 @@ export const AppProvider = ({ children }) => {
         setTimeout(() => processEndOfMonthBadges(), 500)
       }
 
+      invalidateRequestScope(`${dataOwnerId || user?.id || 'guest'}:${currentTable}`, 'attendance-reconciliation')
       toast.success(`Bulk attendance marked successfully for ${memberIds.length} members!`)
       return { success: true }
     } catch (error) {
@@ -4585,7 +4604,7 @@ export const AppProvider = ({ children }) => {
           .from(currentTable)
           .select(`id, "${attendanceColumn}"`)
         const ownerId = dataOwnerId || user?.id
-        if (ownerId) query = query.eq('user_id', ownerId)
+        if (ownerId) query = query.eq('workspace_owner_id', ownerId)
         query = query.is('deleted_at', null)
         const { data: pg, error: pgErr } = await query
           .range(fetchOff, fetchOff + PG_SIZE - 1)
@@ -4649,7 +4668,7 @@ export const AppProvider = ({ children }) => {
             .from(tableName)
             .select(`id, "${attendanceColumn}"`)
           const ownerId = dataOwnerId || user?.id
-          if (ownerId) query = query.eq('user_id', ownerId)
+          if (ownerId) query = query.eq('workspace_owner_id', ownerId)
           query = query.is('deleted_at', null)
           const { data: pg, error: pgErr } = await query
             .range(fetchOff, fetchOff + PG_SIZE - 1)
@@ -5531,7 +5550,7 @@ export const AppProvider = ({ children }) => {
   }, [isSupabaseConfigured])
 
   // Fetch available month tables from database
-  const fetchMonthlyTables = useCallback(async () => {
+  const fetchMonthlyTables = useCallback(async (options = {}) => {
     // Helper to clear invalid table selection
     const clearInvalidTable = () => {
       console.log('Clearing invalid/empty table selection')
@@ -5603,9 +5622,14 @@ export const AppProvider = ({ children }) => {
 
       // 3. Fetch tables using RPC to bypass RLS for collaborators
       // We use 'get_available_month_tables' which checks 'collaborators' table for permission
-      const { data, error } = await supabase.rpc('get_available_month_tables', {
-        target_user_id: ownerId
-      })
+      const { data, error } = await runScopedRequest(
+        `${ownerId}:workspace`,
+        'available-month-tables',
+        () => supabase.rpc('get_available_month_tables', {
+          target_user_id: ownerId
+        }),
+        { force: options?.forceRefresh || false, cacheResult: true }
+      )
 
       if (error) {
         // If RPC is missing (legacy), try fallback to direct select if we are the owner
@@ -5751,7 +5775,10 @@ export const AppProvider = ({ children }) => {
         return nextTables
       })
 
-      await fetchMonthlyTables()
+      if (ownerId) {
+        invalidateRequestScope(`${ownerId}:workspace`, 'available-month-tables')
+      }
+      await fetchMonthlyTables({ forceRefresh: true })
       toast.success(`Deleted ${tableName.replace('_', ' ')}`)
       if (dropWarning) {
         toast.warn(dropWarning, { autoClose: 7000 })
@@ -5776,8 +5803,12 @@ export const AppProvider = ({ children }) => {
 
     pruneMissingTable(tableName)
     toast.warn(`${tableName.replace('_', ' ')} no longer exists in Supabase. Please recreate it if needed.`)
-    await fetchMonthlyTables()
-  }, [fetchMonthlyTables, pruneMissingTable])
+    const ownerId = dataOwnerId || user?.id
+    if (ownerId) {
+      invalidateRequestScope(`${ownerId}:workspace`, 'available-month-tables')
+    }
+    await fetchMonthlyTables({ forceRefresh: true })
+  }, [dataOwnerId, fetchMonthlyTables, pruneMissingTable, user?.id])
 
   // Create new month by copying from the most recent month
   const createNewMonth = async ({
@@ -5827,41 +5858,28 @@ export const AppProvider = ({ children }) => {
 
       // If no current table or we want to ensure we use the most recent, find it
       if (!sourceTable && monthlyTables.length > 0) {
-        // Sort tables to find the most recent one
-        const sortedTables = [...monthlyTables].sort((a, b) => {
-          const [monthA, yearA] = a.split('_')
-          const [monthB, yearB] = b.split('_')
-
-          if (yearA !== yearB) {
-            return parseInt(yearB) - parseInt(yearA) // Descending (most recent first)
-          }
-
-          const monthIndexA = MONTHS_IN_YEAR.indexOf(monthA)
-          const monthIndexB = MONTHS_IN_YEAR.indexOf(monthB)
-          return monthIndexB - monthIndexA // Descending (most recent first)
-        })
-
-        // Use the most recent table as source
+        const sortedTables = sortMonthTables([...monthlyTables])
         if (sortedTables.length > 0) {
-          sourceTable = sortedTables[0]
+          sourceTable = sortedTables[sortedTables.length - 1]
         }
       }
 
+      const sourceMonthStart = resolvedCopyMode === 'empty'
+        ? null
+        : (resolveLogicalMonthStart(sourceTable) || null)
+
       console.log(`Creating new month table: ${monthIdentifier}`)
-      console.log(`Copying from most recent table: ${sourceTable}`)
-      console.log(`New month will have ${sundays.length} Sundays:`, sundays.map(s => s.toISOString().split('T')[0]))
+      console.log(`Copying from source logical month: ${sourceMonthStart || '(none - empty)'}`)
 
-      // Format Sunday dates as YYYY-MM-DD strings for the database function
-      const sundayDates = sundays.map(sunday => sunday.toISOString().split('T')[0])
-
-      // Use RPC function to create month table by copying from most recent month
-      // This will also enable RLS and copy all policies automatically
       const { data: result, error: createError } = await supabase.rpc(
-        'create_month_from_current',
+        'create_workspace_month',
         {
-          source_table: sourceTable,
-          new_table_name: monthIdentifier,
-          sunday_dates: sundayDates
+          p_owner_id: ownerId,
+          p_year: Number(year),
+          p_month: MONTHS_IN_YEAR.indexOf(monthName) + 1,
+          p_source_month: sourceMonthStart,
+          p_copy_mode: resolvedCopyMode,
+          p_member_ids: resolvedCopyMode === 'custom' ? selectedMemberIds : []
         }
       )
 
@@ -5873,88 +5891,6 @@ export const AppProvider = ({ children }) => {
       console.log('Month table creation result:', result)
 
       await ensureTableReady(monthIdentifier)
-
-      if (resolvedCopyMode === 'custom' || resolvedCopyMode === 'empty') {
-        const { error: clearError } = await supabase.rpc(
-          'reset_month_members',
-          { target_table: monthIdentifier }
-        )
-
-        if (clearError) {
-          console.error('Failed clearing auto-copied rows:', clearError)
-          throw new Error(`Failed to reset new month data: ${clearError.message}`)
-        }
-      }
-
-      if (resolvedCopyMode === 'custom' && selectedMemberIds.length > 0) {
-        const { data: insertedCount, error: insertError } = await supabase.rpc(
-          'insert_selected_members',
-          {
-            source_table: sourceTable,
-            target_table: monthIdentifier,
-            member_ids: selectedMemberIds
-          }
-        )
-
-        if (insertError) {
-          console.error('Failed inserting selected members:', insertError)
-          throw new Error(`Failed to insert selected members: ${insertError.message}`)
-        }
-
-        if (insertedCount === 0) {
-          throw new Error('No members were inserted. Please confirm your selection.')
-        }
-      }
-
-
-      const { error: ownerAssignError } = await supabase.rpc(
-        'set_month_owner_user',
-        {
-          target_table: monthIdentifier,
-          owner_user_id: ownerId
-        }
-      )
-
-      if (ownerAssignError) {
-        console.error('Failed to assign owner user_id on new month rows:', ownerAssignError)
-        throw new Error(`Failed to finalize month ownership: ${ownerAssignError.message}`)
-      }
-
-      const { error: registerError } = await supabase
-        .from('user_month_tables')
-        .upsert({
-          user_id: ownerId,
-          table_name: monthIdentifier,
-          month_year: `${monthName} ${year}`
-        }, {
-          onConflict: 'user_id,table_name'
-        })
-
-      if (registerError) {
-        console.warn('Could not register month table for user:', registerError)
-      }
-
-      // Auto-register all invited collaborators for this new month
-      try {
-        const { data: registeredCount, error: collabRegError } = await supabase.rpc(
-          'register_collaborators_for_month',
-          {
-            p_owner_id: ownerId,
-            p_table_name: monthIdentifier,
-            p_month_year: `${monthName} ${year}`
-          }
-        )
-
-        if (collabRegError) {
-          console.warn('Error calling register_collaborators_for_month:', collabRegError)
-          // Don't throw - collaborators can still use RLS, they just won't see it in the list immediately
-        } else if (registeredCount > 0) {
-          console.log(`Successfully registered ${registeredCount} collaborators for ${monthIdentifier}`)
-        }
-      } catch (collabRegError) {
-        console.warn('Could not register collaborators for new month:', collabRegError)
-      }
-
 
       if (resolvedCopyMode === 'empty') {
         toast.success(`${monthName} ${year} ready`)
@@ -5972,7 +5908,10 @@ export const AppProvider = ({ children }) => {
       })
 
       // Refresh the monthly tables list from database
-      await fetchMonthlyTables()
+      if (ownerId) {
+        invalidateRequestScope(`${ownerId}:workspace`, 'available-month-tables')
+      }
+      await fetchMonthlyTables({ forceRefresh: true })
 
       // Clear cache for the new month to ensure fresh data fetch
       membersCacheRef.current.delete(monthIdentifier)
@@ -6367,10 +6306,19 @@ export const AppProvider = ({ children }) => {
 
           for (const table of targetTables) {
             try {
-              const { data, error } = await supabase
+              let { data, error } = await supabase
                 .from(table)
-                .select('*')
+                .select(MEMBER_PREVIEW_SELECT)
                 .limit(100)
+
+              if (error) {
+                const fallback = await supabase
+                  .from(table)
+                  .select('*')
+                  .limit(100)
+                data = fallback.data
+                error = fallback.error
+              }
 
               if (error || !Array.isArray(data)) continue
 
@@ -6443,6 +6391,14 @@ export const AppProvider = ({ children }) => {
       return { success: false, error_message: 'Missing required parameters' }
     }
 
+    const sourceMonthStart = resolveLogicalMonthStart(sourceTable)
+    const targetMonthStart = resolveLogicalMonthStart(targetTable)
+    if (!sourceMonthStart || !targetMonthStart) {
+      const msg = 'Source and target must be registered logical months'
+      toast.error(msg)
+      return { success: false, error_message: msg }
+    }
+
     const targetOwnerId = dataOwnerId || user?.id
     if (!targetOwnerId) {
       return { success: false, error_message: 'Owner identification missing' }
@@ -6466,9 +6422,9 @@ export const AppProvider = ({ children }) => {
 
     if (import.meta.env.DEV) {
       console.assert(
-        memberId && sourceTable && targetTable && dateStr && normStatus,
+        memberId && sourceMonthStart && targetMonthStart && dateStr && normStatus,
         'setMemberAttendanceFromOtherMonth parameter verification before RPC',
-        { memberId, sourceTable, targetTable, dateStr, normStatus }
+        { memberId, sourceMonthStart, targetMonthStart, dateStr, normStatus }
       )
     }
 
@@ -6479,10 +6435,10 @@ export const AppProvider = ({ children }) => {
         return { success: false, error_message: msg }
       }
 
-      const { data, error } = await supabase.rpc('set_member_attendance_from_other_month', {
+      const { data, error } = await supabase.rpc('set_member_attendance_from_logical_month', {
         p_owner_id: targetOwnerId,
-        p_source_table: sourceTable,
-        p_target_table: targetTable,
+        p_source_month: sourceMonthStart,
+        p_target_month: targetMonthStart,
         p_member_id: memberId,
         p_attendance_date: dateStr,
         p_attendance_status: normStatus,
@@ -6492,18 +6448,18 @@ export const AppProvider = ({ children }) => {
       const isTransportError = Boolean(error)
       const isSuccessTrue = Boolean(data && data.success === true)
       const hasMemberObj = Boolean(data && data.member && data.member.id)
-      const isMemberIdMatch = Boolean(hasMemberObj && String(data.member.id) === String(memberId) && String(data.member_id) === String(memberId))
-      const isTargetTableMatch = Boolean(data && String(data.target_table) === String(targetTable))
+      const isMemberIdMatch = Boolean(hasMemberObj && String(data.member.id) === String(memberId) && (data.member_id == null || String(data.member_id) === String(memberId)))
+      const isTargetMatch = Boolean(data && (String(data.target_table) === String(targetTable) || String(data.target_month) === String(targetMonthStart)))
       const isAttendanceDateMatch = Boolean(data && String(data.attendance_date) === String(dateStr))
       const isAttendanceStatusMatch = Boolean(data && String(data.attendance_status) === String(normStatus))
 
-      const isValidResponse = !isTransportError && isSuccessTrue && hasMemberObj && isMemberIdMatch && isTargetTableMatch && isAttendanceDateMatch && isAttendanceStatusMatch
+      const isValidResponse = !isTransportError && isSuccessTrue && hasMemberObj && isMemberIdMatch && isTargetMatch && isAttendanceDateMatch && isAttendanceStatusMatch
 
       if (!isValidResponse) {
         if (hasMemberObj && !isMemberIdMatch) {
           console.error('HIGH-SEVERITY IDENTITY MISMATCH: RPC returned member ID', data.member?.id, 'expected', memberId)
         }
-        console.error('set_member_attendance_from_other_month RPC error or invalid response:', error || data?.error_message || data)
+        console.error('set_member_attendance_from_logical_month RPC error or invalid response:', error || data?.error_message || data)
         const msg = `${memberNameHint} could not be added. No member data was changed.`
         toast.error(msg)
         return { success: false, error_message: msg, serverError: error?.message || data?.error_message }
@@ -6546,6 +6502,8 @@ export const AppProvider = ({ children }) => {
       persistMemberPreviewIndex(targetTable, [normalizedMember], {
         workspaceScope: workspaceCacheScope
       }).catch(() => {})
+
+      invalidateRequestScope(`${targetOwnerId || 'guest'}:${targetTable}`, 'attendance-reconciliation')
 
       // 5. Toast message
       const memberName = getSearchableMemberName(normalizedMember)
@@ -7227,8 +7185,12 @@ export const AppProvider = ({ children }) => {
       if (currentTable && monthlyTables.includes(currentTable)) {
         return
       }
-      // Current table is invalid - try localStorage, then DEFAULT_TABLE, then latest
-      const saved = localStorage.getItem('selectedMonthTable')
+      // Current table is invalid - try localStorage for active workspace, then owner sticky month, then DEFAULT_TABLE, then latest
+      const storageKey = isCollaborator && dataOwnerId ? `selectedMonthTable_${dataOwnerId}` : 'selectedMonthTable'
+      const saved = (typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null) ||
+        (typeof window !== 'undefined' ? localStorage.getItem('selectedMonthTable') : null) ||
+        ownerStickyMonth ||
+        authContext?.preferences?.current_month_table
       // Only override if we have real data from Supabase (not just fallback)
       // If saved month exists and we're still on fallback, wait for real data to load
       if (saved && !monthlyTables.includes(saved) && monthlyTables.length === 1 && monthlyTables[0] === DEFAULT_TABLE) {
@@ -7238,14 +7200,14 @@ export const AppProvider = ({ children }) => {
         setCurrentTable(saved)
       } else if (monthlyTables.includes(DEFAULT_TABLE)) {
         setCurrentTable(DEFAULT_TABLE)
-        localStorage.setItem('selectedMonthTable', DEFAULT_TABLE)
+        localStorage.setItem(storageKey, DEFAULT_TABLE)
       } else {
         const latest = monthlyTables[monthlyTables.length - 1]
         setCurrentTable(latest)
-        localStorage.setItem('selectedMonthTable', latest)
+        localStorage.setItem(storageKey, latest)
       }
     }
-  }, [monthlyTables])
+  }, [authContext?.preferences?.current_month_table, authContext?.user, currentTable, dataOwnerId, isCollaborator, monthlyTables, ownerStickyMonth])
 
   // Fetch members on component mount and when current table changes
   // Wait for auth to finish loading before fetching to avoid race condition
@@ -7353,6 +7315,10 @@ export const AppProvider = ({ children }) => {
 
       devCountersRef.current.attendanceFetchCount = (devCountersRef.current.attendanceFetchCount || 0) + 1
 
+      const attendanceColumns = getAttendanceColumnsForMonthTable(currentTable)
+      const attendanceColNames = (attendanceColumns || []).map(c => `"${c.column_name}"`)
+      const attendanceSelect = ['id', ...attendanceColNames].join(',')
+
       const allData = await runScopedRequest(
         requestScope,
         'attendance-reconciliation',
@@ -7361,16 +7327,28 @@ export const AppProvider = ({ children }) => {
           let offset = 0
           const PAGE_SIZE = 1000
           while (true) {
-            // One paginated reconciliation reads the table rows once. Attendance
-            // keys are extracted locally, so no runtime schema RPC is required.
-            let query = supabase.from(currentTable).select('*')
-            if (ownerId) query = query.eq('user_id', ownerId)
+            // Project only id and attendance columns for this month table
+            let query = attendanceColNames.length > 0
+              ? supabase.from(currentTable).select(attendanceSelect)
+              : supabase.from(currentTable).select('*')
+            if (ownerId) query = query.eq('workspace_owner_id', ownerId)
             if (typeof query.is === 'function') {
               query = query.is('deleted_at', null)
             } else if (typeof query.filter === 'function') {
               query = query.filter('deleted_at', 'is', null)
             }
-            const { data: page, error: pageError } = await query.range(offset, offset + PAGE_SIZE - 1)
+            let { data: page, error: pageError } = await query.range(offset, offset + PAGE_SIZE - 1)
+            if (pageError && attendanceColNames.length > 0) {
+              // Retry with select('*') if custom column projection failed (e.g. legacy table schema)
+              let fallbackQuery = supabase.from(currentTable).select('*')
+              if (ownerId) fallbackQuery = fallbackQuery.eq('workspace_owner_id', ownerId)
+              if (typeof fallbackQuery.is === 'function') {
+                fallbackQuery = fallbackQuery.is('deleted_at', null)
+              }
+              const fallbackRes = await fallbackQuery.range(offset, offset + PAGE_SIZE - 1)
+              page = fallbackRes.data
+              pageError = fallbackRes.error
+            }
             if (pageError) throw pageError
             if (!page?.length) break
             rows.push(...page)
@@ -7381,8 +7359,6 @@ export const AppProvider = ({ children }) => {
         },
         { force: forceOnline, cacheResult: true }
       )
-
-      const attendanceColumns = getAttendanceColumnsForMonthTable(currentTable)
 
       // Transform data into the format expected by the UI
       const newAttendanceData = {}
@@ -7461,78 +7437,89 @@ export const AppProvider = ({ children }) => {
   }, [applyOfflineSnapshot, currentTable, dataOwnerId, isDeveloperBypass, pendingSyncCount, shouldUseOfflineData, user?.id])
 
   // Load all badge data for the current table
-  const loadAllBadgeData = async () => {
+  const loadAllBadgeData = useCallback(async ({ force = false } = {}) => {
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         console.log('Demo mode - badge data will be managed locally')
         return
       }
       if (!isBackendHealthy()) return
+      const ownerId = dataOwnerId || user?.id
+      const requestScope = `${ownerId || 'guest'}:${currentTable}`
 
-      appContextLog('Loading badge data from Supabase...')
+      await runScopedRequest(
+        requestScope,
+        'badge-reconciliation',
+        async () => {
+          appContextLog('Loading badge data from Supabase...')
 
-      let { data, error } = await supabase
-        .from(currentTable)
-        .select(MEMBER_BADGE_SELECT)
-
-      if (error) {
-        const message = error.message?.toLowerCase() || ''
-        const missingColumn =
-          error.code === 'PGRST100' ||
-          error.code === '42703' ||
-          message.includes('failed to parse') ||
-          message.includes('does not exist') ||
-          message.includes('column')
-
-        if (missingColumn) {
-          console.warn('Badge columns not fully available; retrying with legacy badge columns:', error)
-          const fallback = await supabase
+          let { data, error } = await supabase
             .from(currentTable)
-            .select('id,"Member","Regular","Newcomer"')
-          data = fallback.data
-          error = fallback.error
-        }
-      }
+            .select(MEMBER_BADGE_SELECT)
 
-      if (error) {
-        if (isBackendDegradedError(error)) markBackendDegraded(error)
-        console.error('Error loading badge data:', error)
+          if (error) {
+            const message = error.message?.toLowerCase() || ''
+            const missingColumn =
+              error.code === 'PGRST100' ||
+              error.code === '42703' ||
+              message.includes('failed to parse') ||
+              message.includes('does not exist') ||
+              message.includes('column')
 
-        // Only treat as missing table if it's actually a missing TABLE error
-        const missingTable =
-          error.code === '42P01' || // undefined_table
-          error.code === 'PGRST205' ||
-          (error.message?.includes('relation') && error.message?.includes('does not exist'))
-
-        if (missingTable) {
-          console.warn('Table appears to be missing during badge load:', currentTable)
-          // Don't trigger full table deletion here to be safe
-        }
-        return
-      }
-
-      appContextLog('Badge data loaded:', data?.slice(0, 3))
-
-      // Update members with badge data
-      setMembers(prev => prev.map(member => {
-        const badgeData = data.find(d => d.id === member.id)
-        if (badgeData) {
-          return {
-            ...member,
-            'Member': badgeData.Member,
-            'Regular': badgeData.Regular,
-            'Newcomer': badgeData.Newcomer,
-            'Manual Badge': badgeData['Manual Badge'],
-            'Badge Type': badgeData['Badge Type']
+            if (missingColumn) {
+              console.warn('Badge columns not fully available; retrying with legacy badge columns:', error)
+              const fallback = await supabase
+                .from(currentTable)
+                .select('id,"Member","Regular","Newcomer"')
+              data = fallback.data
+              error = fallback.error
+            }
           }
-        }
-        return member
-      }))
+
+          if (error) {
+            if (isBackendDegradedError(error)) markBackendDegraded(error)
+            console.error('Error loading badge data:', error)
+
+            // Only treat as missing table if it's actually a missing TABLE error
+            const missingTable =
+              error.code === '42P01' || // undefined_table
+              error.code === 'PGRST205' ||
+              (error.message?.includes('relation') && error.message?.includes('does not exist'))
+
+            if (missingTable) {
+              console.warn('Table appears to be missing during badge load:', currentTable)
+            }
+            return null
+          }
+
+          appContextLog('Badge data loaded:', data?.slice(0, 3))
+
+          // Update members with badge data
+          if (Array.isArray(data)) {
+            setMembers(prev => prev.map(member => {
+              const badgeData = data.find(d => d.id === member.id)
+              if (badgeData) {
+                return {
+                  ...member,
+                  'Member': badgeData.Member,
+                  'Regular': badgeData.Regular,
+                  'Newcomer': badgeData.Newcomer,
+                  'Manual Badge': badgeData['Manual Badge'],
+                  'Badge Type': badgeData['Badge Type']
+                }
+              }
+              return member
+            }))
+          }
+          return data
+        },
+        { force, cacheResult: true }
+      )
 
     } catch (error) {
       console.error('Error loading badge data:', error)
     }
-  }
+  }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, user?.id])
 
   const prepareOfflineData = async () => {
     if (!isOnline) {
@@ -8018,6 +8005,7 @@ export const AppProvider = ({ children }) => {
             console.warn('Background normalized attendance sync failed:', error)
           })
           await removeOfflineChange(change.local_change_id)
+          invalidateRequestScope(`${dataOwnerId || user?.id || 'guest'}:${changeTable}`, 'attendance-reconciliation')
           synced += 1
         } catch (error) {
           // The member disappeared between the pre-check and the write.
@@ -8109,7 +8097,7 @@ export const AppProvider = ({ children }) => {
     }
 
     const now = Date.now()
-    const minGapMs = options.force ? 0 : 3500
+    const minGapMs = options.force ? 0 : 15000
     if (backgroundRefreshRef.current.running) return
     if (!options.force && now - backgroundRefreshRef.current.lastRun < minGapMs) return
 
@@ -8122,15 +8110,15 @@ export const AppProvider = ({ children }) => {
       }))
       await Promise.all([
         fetchMembers(currentTable, {
-          forceRefresh: true,
+          forceRefresh: options.force || false,
           background: true,
-          forceOnline: true
+          forceOnline: options.force || false
         }).catch((error) => {
           console.warn(`Background member refresh failed (${source}):`, error)
           return null
         }),
-        loadAllBadgeData().catch((error) => {
-          console.warn(`Background badge refresh failed (${source}):`, error)
+        loadAllAttendanceData({ forceOnline: options.force || false }).catch((error) => {
+          console.warn(`Background attendance refresh failed (${source}):`, error)
           return null
         })
       ])
@@ -8146,7 +8134,7 @@ export const AppProvider = ({ children }) => {
         lastRun: Date.now()
       }
     }
-  }, [currentTable, isDeveloperBypass, isOnline, isSupabaseConfigured, offlineMode, shouldUseOfflineData])
+  }, [currentTable, isDeveloperBypass, isOnline, isSupabaseConfigured, loadAllAttendanceData, offlineMode, shouldUseOfflineData])
 
   useEffect(() => {
     if (typeof window === 'undefined' || import.meta.env.MODE === 'test') return undefined
@@ -8179,15 +8167,23 @@ export const AppProvider = ({ children }) => {
 
       if (currentTable && !isDeveloperBypass && isSupabaseConfigured() && !shouldUseOfflineData) {
         memberPreviewBackgroundSyncRunnerRef.current?.(currentTable, { source })
-        await refreshSyncedDataInBackground(source)
+        await loadAllAttendanceData().catch((error) => {
+          console.warn(`Resume attendance refresh failed (${source}):`, error)
+          return null
+        })
       }
       return { success: true }
     }
 
-    const coordinator = createResumeSyncCoordinator({
-      refresh: runResumeSync,
-      cooldownMs: 1800
-    })
+    resumeSyncCallbackRef.current = runResumeSync
+
+    if (!resumeSyncCoordinatorRef.current) {
+      resumeSyncCoordinatorRef.current = createResumeSyncCoordinator({
+        refresh: (source, options) => resumeSyncCallbackRef.current?.(source, options),
+        cooldownMs: 15000
+      })
+    }
+    const coordinator = resumeSyncCoordinatorRef.current
     const trigger = (source, options) => coordinator.trigger(source, options)
     const handleVisible = () => {
       if (document.visibilityState === 'visible') trigger('visible')
@@ -8196,7 +8192,10 @@ export const AppProvider = ({ children }) => {
     const handleFocus = () => trigger('focus')
     const handleOnline = () => trigger('online', { force: true })
 
-    trigger('app-load', { force: true })
+    if (!hasInitialAppLoadRunRef.current) {
+      hasInitialAppLoadRunRef.current = true
+      trigger('app-load')
+    }
     const intervalId = window.setInterval(() => trigger('interval'), MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS)
     window.addEventListener('focus', handleFocus)
     window.addEventListener('online', handleOnline)
@@ -8204,14 +8203,13 @@ export const AppProvider = ({ children }) => {
     document.addEventListener('visibilitychange', handleVisible)
 
     return () => {
-      coordinator.dispose()
       window.clearInterval(intervalId)
       window.removeEventListener('focus', handleFocus)
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('pageshow', handlePageShow)
       document.removeEventListener('visibilitychange', handleVisible)
     }
-  }, [currentTable, dataOwnerId, fetchOwnerStickyDefaults, isCollaborator, isDeveloperBypass, isSupabaseConfigured, offlineMode, refreshSyncedDataInBackground, shouldUseOfflineData])
+  }, [currentTable, dataOwnerId, fetchOwnerStickyDefaults, isCollaborator, isDeveloperBypass, isSupabaseConfigured, loadAllAttendanceData, offlineMode, shouldUseOfflineData])
 
   // Reconcile attendance once for the active workspace/month. The shared
   // registry coalesces StrictMode and provider re-entry into one request.
@@ -8219,8 +8217,7 @@ export const AppProvider = ({ children }) => {
     const ownerId = dataOwnerId || user?.id
     if (!currentTable || (!ownerId && !isDeveloperBypass && isSupabaseConfigured())) return
     loadAllAttendanceData()
-    loadAllBadgeData()
-  }, [currentTable, dataOwnerId, isDeveloperBypass, user?.id])
+  }, [currentTable, dataOwnerId, isDeveloperBypass, loadAllAttendanceData, user?.id])
 
   // QR-based member lookup. Passes are evergreen: the active table and Sunday
   // come from the scanner's current workspace, never from an old shared image.
@@ -8345,6 +8342,7 @@ export const AppProvider = ({ children }) => {
 
     const handleMemberPayload = (payload) => {
       signalRealtimeSyncStatus(`members-${String(payload.eventType || 'change').toLowerCase()}`)
+      invalidateRequestScope(scopeKey, 'attendance-reconciliation')
       if (payload.eventType === 'INSERT') {
         const prepared = prepareRealtimeMember(payload.new)
         const incoming = prepared.member

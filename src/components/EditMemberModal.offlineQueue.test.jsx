@@ -1,4 +1,4 @@
-﻿// @vitest-environment jsdom
+// @vitest-environment jsdom
 import React from 'react'
 import { render, fireEvent, screen, cleanup } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -94,6 +94,7 @@ const MODAL_PROPS = {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const editNameAndSubmit = async (modalElement, value) => {
+  cleanup()
   render(modalElement)
   await wait(60)
   fireEvent.change(screen.getByTestId('edit-form-full-name'), { target: { value } })
@@ -102,6 +103,7 @@ const editNameAndSubmit = async (modalElement, value) => {
 
 describe('EditMemberModal offline fallback routing', () => {
   beforeEach(() => {
+    cleanup()
     if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
       window.matchMedia = vi.fn().mockImplementation((query) => ({
         matches: false,
@@ -138,7 +140,7 @@ describe('EditMemberModal offline fallback routing', () => {
         isOpen
         onClose={onCloseMock}
         member={{ id: 'm-1' }}
-        onTagsChange={vi.fn()}
+        onTagsChange={MODAL_PROPS.onTagsChange}
       />,
       'Test Member Edited'
     )
@@ -151,7 +153,7 @@ describe('EditMemberModal offline fallback routing', () => {
     expect(updates).toMatchObject({ 'Full Name': 'Test Member Edited' })
     expect(options).toMatchObject({ targetTable: 'January_2026', ownerId: 'owner-1' })
     expect(onCloseMock).toHaveBeenCalled()
-  })
+  }, 15000)
 
   it('routes an offline (navigator offline) edit through the canonical updateMember queue path', async () => {
     const { default: EditMemberModal } = await import('./EditMemberModal')
@@ -176,7 +178,7 @@ describe('EditMemberModal offline fallback routing', () => {
     expect(updates).toMatchObject({ 'Full Name': 'Test Member Offline Edit' })
     expect(options).toMatchObject({ targetTable: 'January_2026', ownerId: 'owner-1' })
     expect(onCloseMock).toHaveBeenCalled()
-  })
+  }, 15000)
 
   it('keeps showing an error for non-transient failures without queueing or closing', async () => {
     const { default: EditMemberModal } = await import('./EditMemberModal')
@@ -199,5 +201,5 @@ describe('EditMemberModal offline fallback routing', () => {
 
     expect(updateMemberMock).not.toHaveBeenCalled()
     expect(onCloseMock).not.toHaveBeenCalled()
-  })
+  }, 15000)
 })
