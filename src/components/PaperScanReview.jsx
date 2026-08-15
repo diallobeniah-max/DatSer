@@ -2533,6 +2533,7 @@ finalSaveInFlightRef.current = true
       && !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
       && !attentionFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
     ))
+    const remainingFinalRowCount = readyFinalRows.length + attentionRowCount
     const visibleFinalRows = finalGroupFilter === 'saved'
       ? savedFinalRows
       : finalGroupFilter === 'ready'
@@ -3039,6 +3040,21 @@ finalSaveInFlightRef.current = true
                   </p>
                 ) : (
                   <>
+                    <div className="mt-4 rounded-2xl border border-stone-200 bg-stone-50/80 px-4 py-3 dark:border-stone-700 dark:bg-stone-800/50">
+                      <p className="text-[10px] font-black uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">Selected Sunday progress</p>
+                      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span className="text-xl font-black text-emerald-700 dark:text-emerald-300">{savedFinalRows.length} saved</span>
+                        <span className="text-sm font-bold text-stone-400">·</span>
+                        <span className="text-xl font-black text-sky-700 dark:text-sky-300">{remainingFinalRowCount} left</span>
+                      </div>
+                      <p className="mt-1 text-xs font-semibold text-stone-600 dark:text-stone-300">
+                        {readyFinalRows.length > 0
+                          ? `${readyFinalRows.length} can be saved now${attentionRowCount > 0 ? `; ${attentionRowCount} still need attention.` : '.'}`
+                          : attentionRowCount > 0
+                            ? `${attentionRowCount} need attention before they can be saved.`
+                            : 'Everything selected for these Sundays is safely saved.'}
+                      </p>
+                    </div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-3" role="group" aria-label="Final save groups">
                       <button
                         type="button"
