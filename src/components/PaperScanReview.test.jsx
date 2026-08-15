@@ -3,6 +3,7 @@ import React from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PaperScanReview from './PaperScanReview'
+import { supabase } from '../lib/supabase'
 
 const mocks = vi.hoisted(() => ({
   applyEnhancement: vi.fn(),
@@ -18,7 +19,8 @@ const mocks = vi.hoisted(() => ({
   removeStagedSheet: vi.fn(),
   getSavedScan: vi.fn(),
   listSavedScans: vi.fn(),
-  createSheetImageSignedUrl: vi.fn()
+  createSheetImageSignedUrl: vi.fn(),
+  extractSheetWithGemini: vi.fn()
 }))
 
 vi.mock('../utils/paperScanImage', async (importOriginal) => {
@@ -72,6 +74,10 @@ vi.mock('../services/paperScanSavedScans', async (importOriginal) => {
     createSheetImageSignedUrl: mocks.createSheetImageSignedUrl
   }
 })
+
+vi.mock('../services/paperScanExtraction', () => ({
+  extractSheetWithGemini: mocks.extractSheetWithGemini
+}))
 
 const FAKE_DATA_URL = 'data:image/jpeg;base64,c2hlZXQ='
 const FAKE_ENHANCED = 'data:image/jpeg;base64,ZW5oYW5jZWQ='
@@ -129,6 +135,13 @@ describe('PaperScanReview', () => {
     }))
     mocks.listSavedScans.mockResolvedValue([])
     mocks.createSheetImageSignedUrl.mockImplementation(async ({ path }) => `signed:${path}`)
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
+    mocks.extractSheetWithGemini.mockResolvedValue({
+      sheet: { detected_headers: [], attendance_dates: [] },
+      rows: [],
+      warnings: [],
+      usageMetadata: null
+    })
   })
 
   afterEach(() => {
@@ -524,6 +537,13 @@ describe('PaperScanReview staging durability', () => {
     }))
     mocks.listSavedScans.mockResolvedValue([])
     mocks.createSheetImageSignedUrl.mockImplementation(async ({ path }) => `signed:${path}`)
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
+    mocks.extractSheetWithGemini.mockResolvedValue({
+      sheet: { detected_headers: [], attendance_dates: [] },
+      rows: [],
+      warnings: [],
+      usageMetadata: null
+    })
   })
 
   afterEach(() => {
@@ -598,6 +618,27 @@ describe('PaperScanReview staging durability', () => {
     })
     expect(screen.getByText(/needs to finish saving before processing/i)).toBeTruthy()
     expect(screen.queryByText(/Processing sheets/)).toBeNull()
+  })
+
+  it('processes exactly the selected durable sheet', async () => {
+    render(<PaperScanReview onBack={() => {}} />)
+    await uploadSheet('a.jpg')
+    await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
+    await uploadSheet('b.jpg')
+    await waitFor(() => expect(screen.getByText('Sheets (2)')).toBeTruthy())
+
+    fireEvent.click(selectSheetByLabel(1))
+    vi.useFakeTimers()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /process this sheet/i }))
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+    expect(screen.getByText('1 sheet in this batch')).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /extract with gemini/i }))
+    })
+    await waitFor(() => expect(mocks.extractSheetWithGemini).toHaveBeenCalledTimes(1))
   })
 
   it('retry after a failed upload reuses the same object path and merges once', async () => {

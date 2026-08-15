@@ -724,6 +724,10 @@ const PaperScanReview = ({ onBack }) => {
   const [finalEditingRowKey, setFinalEditingRowKey] = useState(null)
   const [applySundaysToast, setApplySundaysToast] = useState('')
   const finalSaveInFlightRef = useRef(false)
+  // Process-one must carry its target synchronously through the local
+  // preparation timer. React state alone would not be available to the
+  // immediately-following handleContinue call.
+  const extractionTargetSheetIdsRef = useRef(null)
   const savedScanIdRef = useRef(null)
   const savedScanNameRef = useRef('')
   const stagedSaveQueueRef = useRef(null)
@@ -1136,7 +1140,7 @@ const PaperScanReview = ({ onBack }) => {
   const handleProcessSingleSheet = (sheetId) => {
     if (!sheetId) return
     selectSheet(sheetId)
-    handleContinue()
+    handleContinue(new Set([sheetId]))
   }
 
   const handleToggleSheetCompleted = (sheetId) => {
@@ -1164,8 +1168,14 @@ const PaperScanReview = ({ onBack }) => {
     }
   }
 
-  const handleContinue = async () => {
+  const handleContinue = async (requestedTargetIds = null) => {
     if (!sheets.length || stage !== 'idle') return
+    const targetIds = requestedTargetIds instanceof Set ? requestedTargetIds : null
+    extractionTargetSheetIdsRef.current = targetIds
+    const extractionTargets = targetIds
+      ? sheets.filter((sheet) => targetIds.has(sheet.id))
+      : sheets
+    if (!extractionTargets.length) return
     if (user?.id) {
       await Promise.allSettled(Array.from(stagedSaveTasksRef.current.values()))
       // Process One / Process All must PROVE durability: a sheet only counts
@@ -1181,7 +1191,7 @@ const PaperScanReview = ({ onBack }) => {
         }
       }
       const durableIds = durableSheetIdsFromScan(durable)
-      const missing = sheets.filter((sheet) => !durableIds.has(sheet.id))
+      const missing = extractionTargets.filter((sheet) => !durableIds.has(sheet.id))
       if (missing.length) {
         setSheets((prev) => prev.map((s) => (
           !durableIds.has(s.id) && s.saveState !== 'local'
@@ -1212,6 +1222,7 @@ const PaperScanReview = ({ onBack }) => {
 
   const handleBackToEditing = () => {
     if (phaseTimerRef.current) window.clearTimeout(phaseTimerRef.current)
+    extractionTargetSheetIdsRef.current = null
     setStage('idle')
     setPhaseIndex(0)
   }
@@ -1252,7 +1263,8 @@ const PaperScanReview = ({ onBack }) => {
     extractionCancelledRef.current = false
     const controller = new AbortController()
     activeAbortRef.current = controller
-    const target = sheets.slice()
+    const targetIds = extractionTargetSheetIdsRef.current
+    const target = targetIds ? sheets.filter((sheet) => targetIds.has(sheet.id)) : sheets.slice()
     const bearerToken = await getSessionToken()
     if (!bearerToken) {
       extractionActiveRef.current = false
@@ -4753,7 +4765,7 @@ finalSaveInFlightRef.current = true
               <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
                 {stage === 'extracting'
                   ? `${extractStatus.index} of ${extractStatus.total} sheets read so far`
-                  : `${sheets.length} ${sheets.length === 1 ? 'sheet' : 'sheets'} in this batch`}
+                  : `${extractionTargetSheetIdsRef.current?.size || sheets.length} ${(extractionTargetSheetIdsRef.current?.size || sheets.length) === 1 ? 'sheet' : 'sheets'} in this batch`}
               </p>
             </div>
           </div>
@@ -4797,7 +4809,7 @@ finalSaveInFlightRef.current = true
           {stage === 'ready' && (
             <div className="mt-5 rounded-2xl border border-orange-200 bg-orange-50/70 p-4 dark:border-orange-900/40 dark:bg-orange-950/20">
               <p className="text-xs font-bold leading-relaxed text-orange-800 dark:text-orange-200">
-                All {sheets.length} enhanced sheet{sheets.length === 1 ? '' : 's'} are ready. Extract will send these to the DatSer server, which forwards them to Google&apos;s Gemini API. The Gemini API key lives server-side — never in your browser.
+                All {extractionTargetSheetIdsRef.current?.size || sheets.length} enhanced sheet{(extractionTargetSheetIdsRef.current?.size || sheets.length) === 1 ? '' : 's'} are ready. Extract will send these to the DatSer server, which forwards them to Google&apos;s Gemini API. The Gemini API key lives server-side — never in your browser.
               </p>
               <button
                 type="button"
