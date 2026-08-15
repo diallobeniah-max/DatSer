@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/ai-providers/routing",
+      "destination": "/api/ai-providers?routing=1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

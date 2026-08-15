@@ -123,7 +123,10 @@ export default async function handler(req, res) {
   const url = new URL(req.url, 'http://localhost')
   const ownerId = url.searchParams.get('ownerId') || identity.ownerId
   const provider = url.searchParams.get('provider') || 'gemini'
-  const isRouting = url.pathname.endsWith('/routing')
+  // Routing can be reached via the direct subpath (/api/ai-providers/routing) or,
+  // when Vercel's file-based routing falls the subpath through to the SPA rewrite,
+  // via the /api/ai-providers?routing=1 rewrite defined in vercel.json.
+  const isRouting = url.pathname.endsWith('/routing') || url.searchParams.get('routing') === '1'
   const encryptionKey = process.env.AI_PROVIDER_ENCRYPTION_KEY || ''
   if (!encryptionKey) {
     send(res, 503, { ok: false, error: 'Server encryption is not configured.' })
