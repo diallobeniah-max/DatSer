@@ -51,6 +51,13 @@ export const FINAL_SAVE_STATUS = {
   SKIPPED: 'skipped'
 }
 
+// A profile checkpoint can succeed without a corresponding attendance write.
+// Final Review must never colour that row as attendance sent.
+export const isAttendanceWriteConfirmed = (member) => (
+  (member?.status === FINAL_SAVE_STATUS.SAVED || member?.status === FINAL_SAVE_STATUS.CREATED)
+  && Number(member?.attendanceUpdated || 0) > 0
+)
+
 const EMPTY_ATTENDANCE_SETTINGS = { month: '', convention: '', columnCount: 0 }
 
 const asTrimmed = (value) => String(value ?? '').trim()

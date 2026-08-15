@@ -68,17 +68,29 @@ export const buildExtractionSnapshot = (resultsBySheet) => {
 // many field decisions (matching choices: scan / datser / edited) were made.
 // The decisions themselves live per-row inside extraction so the choice and its
 // original value always stay together.
-export const buildReviewState = (sheets, resultsBySheet) => {
+export const buildReviewState = (sheets, resultsBySheet, attendanceScopes = {}) => {
   const state = {}
   const sheetList = Array.isArray(sheets) ? sheets : []
   for (const sheet of sheetList) {
     const result = resultsBySheet?.[sheet.id]
     if (result?.status !== 'ok' || !result?.payload) continue
     const rows = Array.isArray(result.payload.rows) ? result.payload.rows : []
+    const scope = attendanceScopes?.[sheet.id] || {}
+    const months = Array.isArray(scope.months) ? [...new Set(scope.months.filter(Boolean))] : []
+    const sundays = scope.sundays && typeof scope.sundays === 'object'
+      ? Object.fromEntries(Object.entries(scope.sundays).map(([month, dates]) => [
+          month,
+          Array.isArray(dates) ? [...new Set(dates.filter(Boolean))].sort() : []
+        ]))
+      : {}
     state[sheet.id] = {
       excludedIndices: Array.isArray(result.excludedIndices) ? result.excludedIndices : [],
       rowCount: rows.length,
-      decisionCount: rows.reduce((sum, row) => sum + Object.keys(row?.reviewedValues || {}).length, 0)
+      decisionCount: rows.reduce((sum, row) => sum + Object.keys(row?.reviewedValues || {}).length, 0),
+      // The operator's date choice is part of the saved review, not a
+      // temporary screen preference. Reopening must never broaden or erase
+      // the attendance scope before Final Save.
+      attendanceScope: { months, sundays }
     }
   }
   return state
@@ -179,7 +191,7 @@ const upsertSavedScanRecord = async ({ supabase, record }) => {
 
 // Builds the full row payload (no I/O). Keep pure for deterministic tests.
 // `extraMeta` (e.g. the final-save result) is merged verbatim into the record.
-export const buildSavedScanRecord = ({ scanId, userId, ownerId, name, sheets, resultsBySheet, extraMeta = null }) => {
+export const buildSavedScanRecord = ({ scanId, userId, ownerId, name, sheets, resultsBySheet, attendanceScopes = {}, extraMeta = null }) => {
   const sheetList = Array.isArray(sheets) ? sheets : []
   const sheetImages = sheetList
     .filter((sheet) => hasOkResult(resultsBySheet, sheet.id))
@@ -195,7 +207,7 @@ export const buildSavedScanRecord = ({ scanId, userId, ownerId, name, sheets, re
     name,
     sheet_images: sheetImages,
     extraction: buildExtractionSnapshot(resultsBySheet),
-    review_state: buildReviewState(sheetList, resultsBySheet),
+    review_state: buildReviewState(sheetList, resultsBySheet, attendanceScopes),
     attendance: buildAttendanceExtraction(resultsBySheet),
     usage_metadata: buildUsageMetadataSnapshot(resultsBySheet)
   }
@@ -216,6 +228,7 @@ export const savePaperScan = async ({
   name,
   sheets,
   resultsBySheet,
+  attendanceScopes = {},
   uploadImage = uploadSheetImage,
   storedSheetImages = [],
   extraMeta = null
@@ -230,7 +243,7 @@ export const savePaperScan = async ({
     sheetImages.push({ sheetId: sheet.id, source: sheet.source || '', path })
   }
 
-  const record = buildSavedScanRecord({ scanId, userId, ownerId, name, sheets: sheetList, resultsBySheet, extraMeta })
+  const record = buildSavedScanRecord({ scanId, userId, ownerId, name, sheets: sheetList, resultsBySheet, attendanceScopes, extraMeta })
   record.sheet_images = sheetImages
 
   return { scan: await upsertSavedScanRecord({ supabase, record }) }

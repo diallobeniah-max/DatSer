@@ -60,6 +60,7 @@ import {
   executeFinalSave,
   finalSaveResultFromOperation,
   getDurableSaveOperation,
+  isAttendanceWriteConfirmed,
   previewFinalSave,
   retryPersistedFinalSave,
   summarizeFinalSaveMembers
@@ -1812,6 +1813,8 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
       const sheetList = []
       const results = {}
+      const restoredAttendanceMonths = {}
+      const restoredAttendanceSundays = {}
       let firstId = null
       for (const image of images) {
         const url = await createSheetImageSignedUrl({ supabase, path: image.path })
@@ -1827,6 +1830,21 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
           storedPath: image.path
         })
         const snapshot = record.extraction?.[sheetId] || {}
+        const persistedScope = record.review_state?.[sheetId]?.attendanceScope || {}
+        const persistedMonths = Array.isArray(persistedScope.months) ? persistedScope.months : []
+        const persistedSundays = persistedScope.sundays && typeof persistedScope.sundays === 'object'
+          ? persistedScope.sundays
+          : {}
+        const snapshotMonths = Array.isArray(snapshot.sheet?.attendance_months)
+          ? snapshot.sheet.attendance_months
+          : (snapshot.sheet?.attendance_month ? [snapshot.sheet.attendance_month] : [])
+        const snapshotSundays = snapshot.sheet?.attendance_sundays && typeof snapshot.sheet.attendance_sundays === 'object'
+          ? snapshot.sheet.attendance_sundays
+          : {}
+        const months = [...new Set((persistedMonths.length ? persistedMonths : snapshotMonths).filter(Boolean))]
+        const sundays = Object.keys(persistedSundays).length ? persistedSundays : snapshotSundays
+        if (months.length) restoredAttendanceMonths[sheetId] = months
+        if (Object.keys(sundays).length) restoredAttendanceSundays[sheetId] = sundays
         results[sheetId] = {
           status: 'ok',
           sheetId,
@@ -1858,7 +1876,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
         ...(cachedFinalSave?.members || []),
         ...(restoredFinalSave?.members || [])
       ]
-        .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
+        .filter(isAttendanceWriteConfirmed)
         .map((member) => [`${member.sheetId}:${member.rowIndex}`, member])))
       setPendingDuplicates(null)
       setSheets(sheetList)
@@ -1869,8 +1887,8 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       setEditingField(null)
       setReviewActiveId(firstId)
       setReviewStep('members')
-      setAttendanceMonths({})
-      setAttendanceSundays({})
+      setAttendanceMonths(restoredAttendanceMonths)
+      setAttendanceSundays(restoredAttendanceSundays)
       setFinalEditedRowKeys(new Set())
       setFinalEditedChanges({})
       setFinalViewMode('table')
@@ -1901,6 +1919,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
         name,
         sheets,
         resultsBySheet,
+        attendanceScopes: attendanceScopeSnapshot(),
         // Reuse the already-normalized, byte-bounded durable objects from
         // staging instead of re-uploading raw previews (which could exceed the
         // Storage limit). Every ok sheet was durably staged before review.
@@ -1967,6 +1986,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       name,
       sheets,
       resultsBySheet,
+      attendanceScopes: attendanceScopeSnapshot(),
       storedSheetImages: okSheets
         .map((sheet) => (sheet.storedPath ? { sheetId: sheet.id, path: sheet.storedPath } : null))
         .filter(Boolean),
@@ -2013,7 +2033,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
   const rememberConfirmedFinalRows = (members = []) => {
     const confirmed = Object.fromEntries(members
-      .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
+      .filter(isAttendanceWriteConfirmed)
       .map((member) => [`${member.sheetId}:${member.rowIndex}`, member]))
     if (Object.keys(confirmed).length > 0) {
       setFinalSaveHistory((previous) => ({ ...previous, ...confirmed }))
@@ -2121,6 +2141,14 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     sheets.forEach((sheet) => {
       settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
     })
+    const hasSelectedSunday = Object.values(settingsBySheet).some((settings) => (
+      Object.values(settings.sundays || {}).some((dates) => Array.isArray(dates) && dates.length > 0)
+    ))
+    if (!editedOnly && !hasSelectedSunday) {
+      setSavedScansError('Choose the Sundays to save first. DatSer will not count a profile-only change as attendance saved.')
+      setReviewStep('attendance')
+      return
+    }
     const editedRowKeys = editedOnly
       ? new Set(finalEditedRowKeys)
       : (onlyRowKeys ? new Set(onlyRowKeys) : null)
@@ -2377,6 +2405,14 @@ finalSaveInFlightRef.current = true
     return { months, month: months[0] || '', convention, columnCount, sundays }
   }
 
+  const attendanceScopeSnapshot = () => Object.fromEntries(sheets.map((sheet) => {
+    const settings = getAttendanceSettings(sheet.id)
+    return [sheet.id, {
+      months: settings.months,
+      sundays: settings.sundays
+    }]
+  }))
+
   const attendanceSettings = reviewActiveId ? getAttendanceSettings(reviewActiveId) : { months: [], month: '', convention: ATTENDANCE_CONVENTIONS.TICK_X, columnCount: 0, sundays: {} }
 
   const renderReviewPanel = () => {
@@ -2520,7 +2556,7 @@ finalSaveInFlightRef.current = true
       ...Object.values(finalSaveHistory),
       ...(finalSaveResult?.members || [])
     ]
-      .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
+      .filter(isAttendanceWriteConfirmed)
       .map((member) => finalOperationRowKey(member.sheetId, member.rowIndex)))
     // A server-confirmed row is sent, even if its original scan had an
     // advisory review note. The three groups are deliberately exclusive.
@@ -2528,11 +2564,12 @@ finalSaveInFlightRef.current = true
     const attentionRowCount = remainingAttentionRows.length
     const attentionFinalRowKeys = new Set(remainingAttentionRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.index)))
     const savedFinalRows = finalPreview.plan.rows.filter((entry) => savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex)))
-    const readyFinalRows = finalPreview.plan.rows.filter((entry) => (
+    const hasSelectedSundayScope = finalSundayDates.length > 0
+    const readyFinalRows = hasSelectedSundayScope ? finalPreview.plan.rows.filter((entry) => (
       entry.hasWrites
       && !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
       && !attentionFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
-    ))
+    )) : []
     const remainingFinalRowCount = readyFinalRows.length + attentionRowCount
     const visibleFinalRows = finalGroupFilter === 'saved'
       ? savedFinalRows
@@ -3018,7 +3055,7 @@ finalSaveInFlightRef.current = true
                           ? null
                           : readyFinalRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.rowIndex))
                       })}
-                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : readyFinalRows.length === 0)}
+                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : !hasSelectedSundayScope || readyFinalRows.length === 0)}
                       data-testid="confirm-save-to-datser"
                       className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
                     >
@@ -3029,7 +3066,9 @@ finalSaveInFlightRef.current = true
                         ? 'Saving to DatSer…'
                         : finalEditedRowKeys.size > 0
                           ? `Save edited rows (${editedRowsPreview?.plan.rows.length || 0})`
-                          : `Save ready (${readyFinalRows.length})`}
+                          : hasSelectedSundayScope
+                            ? `Save ready (${readyFinalRows.length})`
+                            : 'Choose Sundays first'}
                     </button>
                   </div>
                 </div>
@@ -3042,18 +3081,26 @@ finalSaveInFlightRef.current = true
                   <>
                     <div className="mt-4 rounded-2xl border border-stone-200 bg-stone-50/80 px-4 py-3 dark:border-stone-700 dark:bg-stone-800/50">
                       <p className="text-[10px] font-black uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">Selected Sunday progress</p>
-                      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                        <span className="text-xl font-black text-emerald-700 dark:text-emerald-300">{savedFinalRows.length} saved</span>
-                        <span className="text-sm font-bold text-stone-400">·</span>
-                        <span className="text-xl font-black text-sky-700 dark:text-sky-300">{remainingFinalRowCount} left</span>
-                      </div>
-                      <p className="mt-1 text-xs font-semibold text-stone-600 dark:text-stone-300">
-                        {readyFinalRows.length > 0
-                          ? `${readyFinalRows.length} can be saved now${attentionRowCount > 0 ? `; ${attentionRowCount} still need attention.` : '.'}`
-                          : attentionRowCount > 0
-                            ? `${attentionRowCount} need attention before they can be saved.`
-                            : 'Everything selected for these Sundays is safely saved.'}
-                      </p>
+                      {hasSelectedSundayScope ? (
+                        <>
+                          <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                            <span className="text-xl font-black text-emerald-700 dark:text-emerald-300">{savedFinalRows.length} attendance saved</span>
+                            <span className="text-sm font-bold text-stone-400">·</span>
+                            <span className="text-xl font-black text-sky-700 dark:text-sky-300">{remainingFinalRowCount} left</span>
+                          </div>
+                          <p className="mt-1 text-xs font-semibold text-stone-600 dark:text-stone-300">
+                            {readyFinalRows.length > 0
+                              ? `${readyFinalRows.length} can be saved now${attentionRowCount > 0 ? `; ${attentionRowCount} still need attention.` : '.'}`
+                              : attentionRowCount > 0
+                                ? `${attentionRowCount} need attention before they can be saved.`
+                                : 'Everything selected for these Sundays is safely saved.'}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="mt-1 text-sm font-bold text-amber-800 dark:text-amber-200">
+                          {savedFinalRows.length} attendance rows were confirmed earlier. Choose the Sundays before calculating or saving what remains.
+                        </p>
+                      )}
                     </div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-3" role="group" aria-label="Final save groups">
                       <button
@@ -3066,8 +3113,8 @@ finalSaveInFlightRef.current = true
                             : 'border-emerald-200 bg-emerald-50/60 text-emerald-900 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-200'
                         }`}
                       >
-                        <span className="block text-sm font-black">Sent · {savedFinalRows.length}</span>
-                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Confirmed by DatSer</span>
+                        <span className="block text-sm font-black">Attendance sent · {savedFinalRows.length}</span>
+                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Confirmed attendance write</span>
                       </button>
                       <button
                         type="button"

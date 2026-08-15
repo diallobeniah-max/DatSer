@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import { buildFinalSavePlan, detectNewMemberDuplicates, executeFinalSave, finalSaveResultFromOperation, retryPersistedFinalSave, resolveMembersForDuplicateCheck, FINAL_SAVE_STATUS } from './paperScanFinalSave'
+import { buildFinalSavePlan, detectNewMemberDuplicates, executeFinalSave, finalSaveResultFromOperation, isAttendanceWriteConfirmed, retryPersistedFinalSave, resolveMembersForDuplicateCheck, FINAL_SAVE_STATUS } from './paperScanFinalSave'
 
 const member = { id: 'm1', 'Full Name': 'Ama Serwaa', 'Phone Number': '0241111111', Gender: 'Female', 'Current Level': 'SHS1' }
 const sheet = [{ id: 'sheet-1' }]
@@ -181,6 +181,11 @@ describe('paperScanFinalSave durable operation client', () => {
     expect(calls.find((call) => call.name === 'paper_scan_execute_save_step').args.p_step_id).toBe('profile-0')
     expect(result.members[0]).toMatchObject({ status: FINAL_SAVE_STATUS.SAVED, profileChanges: 1 })
     expect(finalSaveResultFromOperation(operation).members[0].memberId).toBe('m1')
+  })
+
+  it('does not report a profile-only checkpoint as confirmed attendance', () => {
+    expect(isAttendanceWriteConfirmed({ status: FINAL_SAVE_STATUS.SAVED, profileChanges: 1, attendanceUpdated: 0 })).toBe(false)
+    expect(isAttendanceWriteConfirmed({ status: FINAL_SAVE_STATUS.SAVED, attendanceUpdated: 1 })).toBe(true)
   })
 
   it('collects explicit attendance across multiple months without leaking between them', () => {

@@ -164,10 +164,16 @@ describe('record builders', () => {
   })
 
   it('builds review state with excluded rows and decision counts', () => {
-    const state = buildReviewState([okSheet], { 'sheet-1': okResult })
+    const state = buildReviewState([okSheet], { 'sheet-1': okResult }, {
+      'sheet-1': { months: ['2026-07'], sundays: { '2026-07': ['2026-07-05', '2026-07-12'] } }
+    })
     expect(state['sheet-1'].excludedIndices).toEqual([2])
     expect(state['sheet-1'].decisionCount).toBe(1)
     expect(state['sheet-1'].rowCount).toBe(1)
+    expect(state['sheet-1'].attendanceScope).toEqual({
+      months: ['2026-07'],
+      sundays: { '2026-07': ['2026-07-05', '2026-07-12'] }
+    })
   })
 
   it('rolls up usage metadata per sheet and a total', () => {
@@ -191,7 +197,8 @@ describe('record builders', () => {
       ownerId: 'owner-1',
       name: 'My scan',
       sheets: [okSheet],
-      resultsBySheet: { 'sheet-1': okResult }
+      resultsBySheet: { 'sheet-1': okResult },
+      attendanceScopes: { 'sheet-1': { months: ['2026-07'], sundays: { '2026-07': ['2026-07-05'] } } }
     })
     expect(record.id).toBe('scan-1')
     expect(record.user_id).toBe('u1')
@@ -199,6 +206,7 @@ describe('record builders', () => {
     expect(record.sheet_images[0].path).toBe('u1/scan-1/sheet-1.jpg')
     expect(record.extraction['sheet-1'].rows[0].originalGeminiValue.phone_number).toBe('0249999999')
     expect(record.usage_metadata['sheet-1'].candidatesTokenCount).toBe(34)
+    expect(record.review_state['sheet-1'].attendanceScope.sundays).toEqual({ '2026-07': ['2026-07-05'] })
   })
 })
 
