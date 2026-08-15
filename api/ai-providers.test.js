@@ -20,6 +20,22 @@ describe('ai-providers routing deployment contract (vercel.json)', () => {
   })
 })
 
+describe('AI provider runtime boundary regressions', () => {
+  it('handles the verification RPC result explicitly instead of calling .catch on it', () => {
+    const source = readFileSync(resolve(repo, 'api/ai-providers.js'), 'utf8')
+    expect(source).not.toMatch(/\.rpc\([\s\S]{0,500}?\)\.catch\(/)
+    expect(source).toContain('const { error: verificationError } = await client.rpc')
+  })
+
+  it('keeps provider and Paper Scan API clients same-origin', () => {
+    const providersSource = readFileSync(resolve(repo, 'src/services/aiProviders.js'), 'utf8')
+    const extractionSource = readFileSync(resolve(repo, 'src/services/paperScanExtraction.js'), 'utf8')
+    expect(providersSource).toContain("AI_PROVIDERS_ENDPOINT = '/api/ai-providers'")
+    expect(extractionSource).toContain("GEMINI_EXTRACT_ENDPOINT = '/api/gemini-extract'")
+    expect(`${providersSource}\n${extractionSource}`).not.toMatch(/vercel\.app|VERCEL_URL|https:\/\//)
+  })
+})
+
 describe('ai-providers classifyRpcError', () => {
   it('maps a missing pgp function (42883) to STORAGE_UNAVAILABLE, never a bad-key hint', () => {
     const err = { message: 'function pgp_sym_encrypt(text,text) does not exist (code 42883)' }

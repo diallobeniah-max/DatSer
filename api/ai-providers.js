@@ -212,7 +212,23 @@ export default async function handler(req, res) {
         }
         const result = await testProviderKey({ provider, apiKey, model })
         if (result.ok) {
-          await client.rpc('ai_provider_mark_verified', { p_owner_id: ownerId, p_provider: provider }).catch(() => {})
+          // Supabase RPC resolves to { data, error }; it is not a promise-like
+          // object with a catch method. Verification metadata is best-effort,
+          // but a failure must be handled explicitly and must not turn a valid
+          // provider health check into a generic server error.
+          try {
+            const { error: verificationError } = await client.rpc('ai_provider_mark_verified', {
+              p_owner_id: ownerId,
+              p_provider: provider
+            })
+            if (verificationError) {
+              // The health result is authoritative. Do not expose database
+              // details or fail a successful provider check over audit metadata.
+            }
+          } catch {
+            // The health result is authoritative. Network failures while
+            // recording verification are intentionally non-fatal.
+          }
         }
         send(res, 200, { ok: true, ...result, credentialSource })
         return
