@@ -29,6 +29,15 @@ export const createScanName = (sheetCount = 1) => {
   return `Attendance sheet · ${dateLabel}${countLabel}`
 }
 
+// Derives a clean batch title for display. A legacy `name` may embed a stale
+// "(N sheets)" count (e.g. captured when the extraction-ok count differed from
+// the durably staged count) — that suffix is stripped. The count is NOT added to
+// the title; it is shown separately as a badge derived from sheet_images.length.
+export const deriveBatchTitle = (scan = {}, fallback = 'Attendance batch') => {
+  const base = String(scan?.name || fallback).replace(/\s*\(\d+ sheets?\)\s*$/i, '')
+  return base
+}
+
 export const buildSheetImagePath = ({ userId, scanId, sheetId }) => `${userId}/${scanId}/${sheetId}.jpg`
 
 const hasOkResult = (resultsBySheet, sheetId) => {

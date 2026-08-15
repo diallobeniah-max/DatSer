@@ -6,7 +6,7 @@ export { ExtractionError, MAX_IMAGE_BYTES } from './extractionErrors.js'
 
 export const GEMINI_MODEL = 'gemini-3.1-flash-lite'
 
-const EXTRACTION_PROMPT = `You are an attendance-sheet OCR assistant. Inspect the paper sheet image and return STRICT JSON only, matching exactly this schema:
+export const EXTRACTION_PROMPT = `You are an attendance-sheet OCR assistant. Inspect the paper sheet image and return STRICT JSON only, matching exactly this schema:
 
 {
   "sheet": {
@@ -165,7 +165,9 @@ const extractJsonText = (response) => {
   return response?.text || ''
 }
 
-const parseJsonLoose = (text) => {
+export { extractJsonText }
+
+export const parseJsonLoose = (text) => {
   const trimmed = String(text || '').trim()
   const cleaned = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   try {

@@ -4,22 +4,20 @@ import { ExtractionError, MAX_BODY_BYTES, MAX_IMAGE_BYTES } from '../server/extr
 import handler from './gemini-extract.js'
 
 const mocks = vi.hoisted(() => ({
-  extractSheetWithGemini: vi.fn(),
+  extractPaperScan: vi.fn(),
+  resolveProviderKeys: vi.fn(),
   validateSheetImage: vi.fn(),
   authenticateExtractionRequest: vi.fn(),
   claimImageSlot: vi.fn(),
   readBearerToken: vi.fn(),
-  readWorkspaceId: vi.fn()
+  readWorkspaceId: vi.fn(),
+  resolveRouting: vi.fn()
 }))
 
-vi.mock('../server/geminiExtract.js', async () => {
-  const errors = await import('../server/extractionErrors.js')
-  return {
-    MAX_IMAGE_BYTES: errors.MAX_IMAGE_BYTES,
-    ExtractionError: errors.ExtractionError,
-    extractSheetWithGemini: mocks.extractSheetWithGemini
-  }
-})
+vi.mock('../server/providerRouting.js', () => ({
+  extractPaperScan: mocks.extractPaperScan,
+  resolveProviderKeys: mocks.resolveProviderKeys
+}))
 
 vi.mock('../server/imageValidation.js', () => ({
   validateSheetImage: mocks.validateSheetImage
@@ -29,7 +27,9 @@ vi.mock('../server/extractionGuard.js', () => ({
   authenticateExtractionRequest: mocks.authenticateExtractionRequest,
   claimImageSlot: mocks.claimImageSlot,
   readBearerToken: mocks.readBearerToken,
-  readWorkspaceId: mocks.readWorkspaceId
+  readWorkspaceId: mocks.readWorkspaceId,
+  resolveRouting: mocks.resolveRouting,
+  resolveStoredProviderKey: vi.fn(async () => ({ key: '', model: '' }))
 }))
 
 const OWNER = 'owner-workspace-id'
@@ -72,7 +72,9 @@ describe('api/gemini-extract', () => {
     mocks.authenticateExtractionRequest.mockResolvedValue({ supabase: {}, user: { id: 'u' }, ownerId: OWNER })
     mocks.validateSheetImage.mockReturnValue({ bytes: Buffer.from('img'), mimeType: 'image/png', width: 100, height: 100, sha256: SHA })
     mocks.claimImageSlot.mockResolvedValue({ extractionId: 'extraction-1' })
-    mocks.extractSheetWithGemini.mockResolvedValue({ sheet: {}, rows: [], warnings: [] })
+    mocks.extractPaperScan.mockResolvedValue({ sheet: {}, rows: [], warnings: [], metadata: { provider: 'gemini', model: '', fallbackUsed: false } })
+    mocks.resolveProviderKeys.mockResolvedValue({ gemini: { key: 'gemini-key', model: '' } })
+    mocks.resolveRouting.mockResolvedValue({ primaryProvider: 'gemini', fallbackProvider: null })
   })
 
   afterEach(() => {
@@ -94,7 +96,7 @@ describe('api/gemini-extract', () => {
     // The body contract must never reach validation, claim, or Gemini.
     expect(mocks.validateSheetImage).not.toHaveBeenCalled()
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('returns 403 when the caller is not authorized for the workspace', async () => {
@@ -104,7 +106,7 @@ describe('api/gemini-extract', () => {
     const res = await callHandler({ body: { requestId: REQUEST_ID } })
     expect(res.status).toBe(403)
     expect(res.body.code).toBe('WORKSPACE_NOT_AUTHORIZED')
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
   })
 
@@ -116,25 +118,25 @@ describe('api/gemini-extract', () => {
     expect(res.status).toBe(403)
     expect(res.body.code).toBe('ANONYMOUS_NOT_ALLOWED')
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('rejects oversized payloads with 413 and never calls Gemini', async () => {
     const res = await callHandler({ body: { tooLarge: true } })
     expect(res.status).toBe(413)
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('enforces the body budget in received BYTES, not UTF-16 character count', async () => {
     // 7M multi-byte characters: character count (~7M) is well under
     // MAX_BODY_BYTES, but UTF-8 bytes (~21MB) exceed it. Only a byte-based
     // limit can reject this payload.
-    const multiByte = '€'.repeat(7_000_000)
+    const multiByte = 'â‚¬'.repeat(7_000_000)
     const res = await callStreamHandler(multiByte)
     expect(res.status).toBe(413)
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('does not 413 a small payload on the stream path', async () => {
@@ -147,7 +149,7 @@ describe('api/gemini-extract', () => {
     expect(res.status).toBe(400)
     expect(mocks.validateSheetImage).not.toHaveBeenCalled()
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('rejects invalid images before reaching Gemini or claiming quota', async () => {
@@ -158,7 +160,7 @@ describe('api/gemini-extract', () => {
     expect(res.status).toBe(400)
     expect(res.body.code).toBe('INVALID_IMAGE_DATA')
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('returns 409 for a duplicate extraction attempt and never calls Gemini', async () => {
@@ -168,7 +170,7 @@ describe('api/gemini-extract', () => {
     const res = await callHandler({ body: { requestId: REQUEST_ID, image: IMAGE } })
     expect(res.status).toBe(409)
     expect(res.body.code).toBe('DUPLICATE_REQUEST')
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('returns 429 when quota is exhausted and never calls Gemini', async () => {
@@ -178,7 +180,7 @@ describe('api/gemini-extract', () => {
     const res = await callHandler({ body: { requestId: REQUEST_ID, image: IMAGE } })
     expect(res.status).toBe(429)
     expect(res.body.code).toBe('QUOTA_EXCEEDED')
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('fails closed with 503 when the claim cannot be resolved and never calls Gemini', async () => {
@@ -188,11 +190,11 @@ describe('api/gemini-extract', () => {
     const res = await callHandler({ body: { requestId: REQUEST_ID, image: IMAGE } })
     expect(res.status).toBe(503)
     expect(res.body.code).toBe('QUOTA_UNAVAILABLE')
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('marks transient Gemini failures as retryable in the error payload', async () => {
-    mocks.extractSheetWithGemini.mockRejectedValue(
+    mocks.extractPaperScan.mockRejectedValue(
       new ExtractionError('RATE_LIMITED', 'rate limited', { retryable: true, httpStatus: 429 })
     )
     const res = await callHandler({ body: { requestId: REQUEST_ID, image: IMAGE } })
@@ -201,7 +203,7 @@ describe('api/gemini-extract', () => {
   })
 
   it('keeps permanent failures non-retryable in the error payload', async () => {
-    mocks.extractSheetWithGemini.mockRejectedValue(
+    mocks.extractPaperScan.mockRejectedValue(
       new ExtractionError('MALFORMED_RESPONSE', 'bad json', { httpStatus: 502 })
     )
     const res = await callHandler({ body: { requestId: REQUEST_ID, image: IMAGE } })
@@ -221,12 +223,13 @@ describe('api/gemini-extract', () => {
       sha256: SHA,
       requestId: REQUEST_ID
     })
-    expect(mocks.extractSheetWithGemini).toHaveBeenCalledWith(expect.objectContaining({ imageBytes: Buffer.from('img'), mimeType: 'image/png' }))
-    // The resolver is wired so a stored provider credential can power extraction.
-    const callArgs = mocks.extractSheetWithGemini.mock.calls[0][0]
-    expect(typeof callArgs.storedCredentialResolver).toBe('function')
+    expect(mocks.extractPaperScan).toHaveBeenCalledWith(expect.objectContaining({ imageBytes: Buffer.from('img'), mimeType: 'image/png' }))
+    // Routing + provider keys are wired so stored credentials power extraction.
+    const callArgs = mocks.extractPaperScan.mock.calls[0][0]
+    expect(callArgs.routing).toEqual({ primaryProvider: 'gemini', fallbackProvider: null })
+    expect(callArgs.providerKeys).toBeTruthy()
     // The claim must finish before any Gemini spend.
-    expect(mocks.claimImageSlot.mock.invocationCallOrder[0]).toBeLessThan(mocks.extractSheetWithGemini.mock.invocationCallOrder[0])
+    expect(mocks.claimImageSlot.mock.invocationCallOrder[0]).toBeLessThan(mocks.extractPaperScan.mock.invocationCallOrder[0])
     expect(res.status).toBe(200)
     expect(res.body.ok).toBe(true)
     expect(res.body.extractionId).toBe('extraction-1')
@@ -234,7 +237,7 @@ describe('api/gemini-extract', () => {
   })
 
   it('forwards Gemini usageMetadata to the caller for later persistence', async () => {
-    mocks.extractSheetWithGemini.mockResolvedValue({
+    mocks.extractPaperScan.mockResolvedValue({
       sheet: {},
       rows: [],
       warnings: [],
@@ -249,7 +252,7 @@ describe('api/gemini-extract', () => {
     const res = await callHandler({ body: { parseError: true } })
     expect(res.status).toBe(400)
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
-    expect(mocks.extractSheetWithGemini).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })
 
   it('keeps the body budget tied to the shared maximum image size', () => {

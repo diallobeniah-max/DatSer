@@ -16,16 +16,16 @@ export const getSupabaseServerConfig = () => {
 
 const getServiceRoleKey = () => process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 
-// Server-side resolver for a stored AI-provider credential. Returns the
-// DECRYPTED provider key ONLY to the server runtime (never to a browser). Uses a
-// service-role client so it can call the SECURITY DEFINER ai_provider_resolve_key
-// RPC, which is revoked from browser roles. Falls back to '' when the stored
-// credential is absent or the service key is not configured (the caller then
-// falls through to the GEMINI_API_KEY environment variable).
-export const resolveStoredGeminiKey = async ({ ownerId, provider = 'gemini' }) => {
+// Server-side resolver for a stored AI-provider credential. Returns an object
+// { key, model } where key is the DECRYPTED provider key — ONLY to the server
+// runtime (never to a browser). Uses a service-role client so it can call the
+// SECURITY DEFINER ai_provider_resolve_key RPC, which is revoked from browser
+// roles. Returns '' key when the stored credential is absent or the service key
+// is not configured (the caller then falls through to env vars).
+export const resolveStoredProviderKey = async ({ ownerId, provider = 'gemini' }) => {
   const { url } = getSupabaseServerConfig()
   const serviceRoleKey = getServiceRoleKey()
-  if (!url || !serviceRoleKey || !ownerId) return ''
+  if (!url || !serviceRoleKey || !ownerId) return { key: '', model: '' }
   try {
     const serviceClient = createClient(url, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
@@ -36,10 +36,41 @@ export const resolveStoredGeminiKey = async ({ ownerId, provider = 'gemini' }) =
       p_provider: provider,
       p_encryption_key: encryptionKey
     })
-    if (error || typeof data !== 'string' || !data) return ''
-    return data
+    if (error || !data || typeof data !== 'object') return { key: '', model: '' }
+    return { key: typeof data.key === 'string' ? data.key : '', model: typeof data.model === 'string' ? data.model : '' }
   } catch {
-    return ''
+    return { key: '', model: '' }
+  }
+}
+
+// Backward-compatible alias used by the existing single-provider path.
+export const resolveStoredGeminiKey = async ({ ownerId, provider = 'gemini' }) => {
+  const resolved = await resolveStoredProviderKey({ ownerId, provider })
+  return resolved.key
+}
+
+// Reads the routing preference server-side. Falls back to gemini-primary with no
+// fallback when the routing row is absent or the service key is unavailable.
+export const resolveRouting = async ({ ownerId }) => {
+  const { url } = getSupabaseServerConfig()
+  const serviceRoleKey = getServiceRoleKey()
+  if (!url || !serviceRoleKey || !ownerId) {
+    return { primaryProvider: 'gemini', fallbackProvider: null }
+  }
+  try {
+    const serviceClient = createClient(url, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    })
+    const { data, error } = await serviceClient.rpc('ai_provider_get_routing', { p_owner_id: ownerId })
+    if (error || !data || typeof data !== 'object') {
+      return { primaryProvider: 'gemini', fallbackProvider: null }
+    }
+    return {
+      primaryProvider: data.primaryProvider || 'gemini',
+      fallbackProvider: data.fallbackProvider || null
+    }
+  } catch {
+    return { primaryProvider: 'gemini', fallbackProvider: null }
   }
 }
 

@@ -25,7 +25,8 @@ import {
   savePaperScan,
   saveStagedPaperScan,
   uploadSheetImage,
-  usageMetadataFromSavedScan
+  usageMetadataFromSavedScan,
+  deriveBatchTitle
 } from './paperScanSavedScans'
 
 // Tiny supabase-like builder returning a chain of stubs.
@@ -452,5 +453,29 @@ describe('data-scope guarantees', () => {
     for (const table of touched) {
       expect(table).not.toMatch(/^(members|attendance|paper_scan_extraction)$/)
     }
+  })
+})
+
+// Batch presentation: the authoritative sheet count is sheet_images.length and a
+// stale count embedded in a legacy `name` is never trusted for display.
+describe('deriveBatchTitle', () => {
+  const elevenImages = Array.from({ length: 11 }, (_, index) => ({ sheetId: `s${index}`, source: `IMG_${index}.jpg`, path: `u/${index}.jpg` }))
+
+  it('strips a stale embedded count from the name (the count is shown as a badge, not in the title)', () => {
+    const scan = { name: 'Attendance sheet · Aug 15, 2026 (2 sheets)', sheet_images: elevenImages }
+    expect(deriveBatchTitle(scan)).toBe('Attendance sheet · Aug 15, 2026')
+  })
+
+  it('returns the clean title for a single-sheet batch', () => {
+    const scan = { name: 'Attendance sheet · Aug 14, 2026 (1 sheet)', sheet_images: [elevenImages[0]] }
+    expect(deriveBatchTitle(scan)).toBe('Attendance sheet · Aug 14, 2026')
+  })
+
+  it('uses the fallback when no name is present', () => {
+    expect(deriveBatchTitle({ sheet_images: elevenImages }, 'Attendance batch')).toBe('Attendance batch')
+  })
+
+  it('handles a scan with no sheet_images', () => {
+    expect(deriveBatchTitle({ name: 'Empty batch (2 sheets)' }, 'Attendance batch')).toBe('Empty batch')
   })
 })

@@ -2,6 +2,7 @@
 // browser or stored client-side; the server returns only status + maskedSuffix.
 
 export const AI_PROVIDERS_ENDPOINT = '/api/ai-providers'
+export const PROVIDERS = ['gemini', 'qwen']
 
 export const toProviderHeaders = (bearerToken, workspaceId) => {
   const headers = { 'Content-Type': 'application/json' }
@@ -23,11 +24,11 @@ export const fetchProviderStatus = async ({ bearerToken, workspaceId, provider =
   return payload
 }
 
-export const setProviderSecret = async ({ bearerToken, workspaceId, provider = 'gemini', secret }) => {
+export const setProviderSecret = async ({ bearerToken, workspaceId, provider = 'gemini', secret, model = '' }) => {
   const response = await fetch(AI_PROVIDERS_ENDPOINT, {
     method: 'POST',
     headers: toProviderHeaders(bearerToken, workspaceId),
-    body: JSON.stringify({ action: 'set', provider, secret })
+    body: JSON.stringify({ action: 'set', provider, secret, model })
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || !payload?.ok) {
@@ -36,11 +37,11 @@ export const setProviderSecret = async ({ bearerToken, workspaceId, provider = '
   return payload
 }
 
-export const testProviderConnection = async ({ bearerToken, workspaceId, provider = 'gemini', secret = '' }) => {
+export const testProviderConnection = async ({ bearerToken, workspaceId, provider = 'gemini', secret = '', model = '' }) => {
   const response = await fetch(AI_PROVIDERS_ENDPOINT, {
     method: 'POST',
     headers: toProviderHeaders(bearerToken, workspaceId),
-    body: JSON.stringify({ action: 'test', provider, secret })
+    body: JSON.stringify({ action: 'test', provider, secret, model })
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || !payload?.ok) {
@@ -58,6 +59,32 @@ export const removeProviderSecret = async ({ bearerToken, workspaceId, provider 
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || !payload?.ok) {
     throw new Error(payload?.error || 'Could not remove the provider key.')
+  }
+  return payload
+}
+
+export const fetchRouting = async ({ bearerToken, workspaceId }) => {
+  const qs = new URLSearchParams({ ownerId: workspaceId || '' })
+  const response = await fetch(`${AI_PROVIDERS_ENDPOINT}/routing?${qs.toString()}`, {
+    method: 'GET',
+    headers: toProviderHeaders(bearerToken, workspaceId)
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || 'Could not load extraction routing.')
+  }
+  return payload
+}
+
+export const saveRouting = async ({ bearerToken, workspaceId, primary, fallback }) => {
+  const response = await fetch(`${AI_PROVIDERS_ENDPOINT}/routing`, {
+    method: 'POST',
+    headers: toProviderHeaders(bearerToken, workspaceId),
+    body: JSON.stringify({ primary, fallback })
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || 'Could not save extraction routing.')
   }
   return payload
 }

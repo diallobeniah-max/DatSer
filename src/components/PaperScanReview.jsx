@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ChevronUp,
   Eye,
+  ImageIcon,
   ImagePlus,
   Layers,
   Loader2,
@@ -48,7 +49,8 @@ import {
   renameSavedScan,
   savePaperScan,
   uploadSheetImage,
-  usageMetadataFromSavedScan
+  usageMetadataFromSavedScan,
+  deriveBatchTitle
 } from '../services/paperScanSavedScans'
 import {
   FINAL_SAVE_STATUS,
@@ -697,6 +699,8 @@ const PaperScanReview = ({ onBack }) => {
   const [savedScansStatus, setSavedScansStatus] = useState('idle') // idle | loading | ready | error
   const [savedScansError, setSavedScansError] = useState('')
   const [scanThumbnails, setScanThumbnails] = useState({}) // scanId -> signed thumbnail url
+  const [expandedScanIds, setExpandedScanIds] = useState(() => new Set()) // scanId -> batch expanded
+  const [sheetThumbnails, setSheetThumbnails] = useState({}) // `${scanId}:${sheetId}` -> signed url
   const [renamingScanId, setRenamingScanId] = useState(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
@@ -1582,6 +1586,44 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     const next = !showSavedScans
     setShowSavedScans(next)
     if (next) loadSavedScans()
+  }
+
+  // Batch title derived from the DURABLE sheet set. A legacy `name` may embed a
+  // stale "(N sheets)" count (e.g. created when extraction-ok count differed
+  // from the durably staged count). The authoritative count is always
+  // sheet_images.length; we never trust the name's embedded count.
+  const batchTitleFor = (scan) => deriveBatchTitle(scan)
+
+  // Lazy-loads one signed thumbnail per sheet when a batch is expanded. Uses
+  // signed URLs so no full-resolution image is downloaded merely by expanding.
+  const loadSheetThumbnails = async (scan) => {
+    const images = Array.isArray(scan?.sheet_images) ? scan.sheet_images : []
+    const missing = images.filter((image) => image?.path && !sheetThumbnails[`${scan.id}:${image.sheetId}`])
+    if (!missing.length) return
+    const entries = {}
+    await Promise.all(missing.map(async (image) => {
+      try {
+        const url = await createSheetImageSignedUrl({ supabase, path: image.path })
+        if (url) entries[`${scan.id}:${image.sheetId}`] = url
+      } catch {
+        // thumbnail failure is non-fatal; filename/status still show
+      }
+    }))
+    if (Object.keys(entries).length) {
+      setSheetThumbnails((prev) => ({ ...prev, ...entries }))
+    }
+  }
+
+  const toggleScanExpanded = (scan) => {
+    setExpandedScanIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(scan.id)) next.delete(scan.id)
+      else {
+        next.add(scan.id)
+        void loadSheetThumbnails(scan)
+      }
+      return next
+    })
   }
 
   // Re-opens a saved scan. A staging batch (review_state._staging) returns to
@@ -4386,7 +4428,7 @@ finalSaveInFlightRef.current = true
             <div>
               <p className="text-sm font-black text-gray-900 dark:text-white">Saved scans</p>
               <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                {savedScans.length} {savedScans.length === 1 ? 'scan' : 'scans'} · opening never re-bills Gemini
+                {savedScans.length} saved {savedScans.length === 1 ? 'batch' : 'batches'} · each batch holds 1 or more sheets · opening never re-bills Gemini
                 {totalTokens > 0 ? ` · ${totalTokens} tokens used` : ''}
               </p>
             </div>
@@ -4448,100 +4490,159 @@ finalSaveInFlightRef.current = true
               const updatedLabel = scan.updated_at
                 ? new Date(scan.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
                 : ''
+              const batchTitle = batchTitleFor(scan)
+              const isExpanded = expandedScanIds.has(scan.id)
+              const sheetImages = Array.isArray(scan.sheet_images) ? scan.sheet_images : []
+              const allSheetsSaved = sheetImages.length > 0 && sheetImages.every((image) => Boolean(image?.path))
               return (
-                <li key={scan.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
-                  <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40">
-                    {thumb ? (
-                      <img src={thumb} alt={`${scan.name} thumbnail`} className="h-full w-full object-cover" />
-                    ) : (
-                      <ScanLine className="h-6 w-6 text-gray-400 dark:text-gray-500" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    {isRenaming ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={renameDraft}
-                          onChange={(event) => setRenameDraft(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') commitRename(scan)
-                            if (event.key === 'Escape') cancelRename()
-                          }}
-                          autoFocus
-                          aria-label={`Rename ${scan.name}`}
-                          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-900 outline-none focus:border-orange-400 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => commitRename(scan)}
-                          aria-label={`Confirm rename of ${scan.name}`}
-                          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-orange-600 text-white transition-colors hover:bg-orange-700"
-                        >
-                          <Check className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={cancelRename}
-                          aria-label="Cancel rename"
-                          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-gray-200 bg-white text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
+                <li key={scan.id} className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+                  <div className="flex flex-wrap items-center gap-3 p-3">
+                    <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40">
+                      {thumb ? (
+                        <img src={thumb} alt={`${batchTitle} thumbnail`} className="h-full w-full object-cover" />
+                      ) : (
+                        <ScanLine className="h-6 w-6 text-gray-400 dark:text-gray-500" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      {isRenaming ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={renameDraft}
+                            onChange={(event) => setRenameDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') commitRename(scan)
+                              if (event.key === 'Escape') cancelRename()
+                            }}
+                            autoFocus
+                            aria-label={`Rename ${scan.name}`}
+                            className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-900 outline-none focus:border-orange-400 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => commitRename(scan)}
+                            aria-label={`Confirm rename of ${scan.name}`}
+                            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-orange-600 text-white transition-colors hover:bg-orange-700"
+                          >
+                            <Check className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelRename}
+                            aria-label="Cancel rename"
+                            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-gray-200 bg-white text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="truncate text-sm font-black text-gray-900 dark:text-white">{batchTitle}</p>
+                      )}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-black ${sheetCount > 0 ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}>
+                          <Layers className="h-3 w-3" />
+                          {sheetCount} sheet{sheetCount === 1 ? '' : 's'}
+                        </span>
+                        {allSheetsSaved ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-black text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                            <CheckCircle2 className="h-3 w-3" />
+                            ✓ {sheetCount} of {sheetCount} sheets safely saved
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-black text-amber-800 dark:bg-amber-900/35 dark:text-amber-200">
+                            <AlertTriangle className="h-3 w-3" />
+                            {sheetCount} sheet{sheetCount === 1 ? '' : 's'} staged
+                          </span>
+                        )}
+                        {updatedLabel ? <span className="text-xs font-medium text-gray-500 dark:text-gray-400">saved {updatedLabel}</span> : null}
+                        {tokenCount > 0 ? <span className="text-xs font-medium text-gray-500 dark:text-gray-400">{tokenCount} tokens</span> : null}
                       </div>
-                    ) : (
-                      <p className="truncate text-sm font-black text-gray-900 dark:text-white">{scan.name}</p>
-                    )}
-                    <p className="mt-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">
-                      {sheetCount} sheet{sheetCount === 1 ? '' : 's'}
-                      {updatedLabel ? ` · saved ${updatedLabel}` : ''}
-                      {tokenCount > 0 ? ` · ${tokenCount} tokens` : ''}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenScan(scan)}
-                      aria-label={`Open ${scan.name}`}
-                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-orange-600 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-orange-700"
-                    >
-                      <ScanLine className="h-3.5 w-3.5" />
-                      Open
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => startRename(scan)}
-                      aria-label={`Rename ${scan.name}`}
-                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 transition-colors hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      Rename
-                    </button>
-                    {isConfirming ? (
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleDeleteScan(scan)}
-                        aria-label={`Confirm delete ${scan.name}`}
-                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-red-700"
+                        onClick={() => toggleScanExpanded(scan)}
+                        aria-expanded={isExpanded}
+                        aria-label={isExpanded ? `Collapse ${batchTitle}` : `Expand ${batchTitle} to see all ${sheetCount} sheets`}
+                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 transition-colors hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Confirm
+                        {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        {isExpanded ? 'Collapse' : 'Sheets'}
                       </button>
-                    ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (confirmDeleteId && confirmDeleteId !== scan.id) setConfirmDeleteId(null)
-                          setConfirmDeleteId(scan.id)
-                        }}
-                        aria-label={`Delete ${scan.name}`}
-                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 dark:border-red-900/40 dark:bg-gray-800 dark:text-red-300"
+                        onClick={() => handleOpenScan(scan)}
+                        aria-label={`Open ${batchTitle}`}
+                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-orange-600 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-orange-700"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Delete
+                        <ScanLine className="h-3.5 w-3.5" />
+                        Open
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => startRename(scan)}
+                        aria-label={`Rename ${scan.name}`}
+                        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 transition-colors hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Rename
+                      </button>
+                      {isConfirming ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteScan(scan)}
+                          aria-label={`Confirm delete ${scan.name}`}
+                          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-red-700"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Confirm
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirmDeleteId && confirmDeleteId !== scan.id) setConfirmDeleteId(null)
+                            setConfirmDeleteId(scan.id)
+                          }}
+                          aria-label={`Delete ${scan.name}`}
+                          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 dark:border-red-900/40 dark:bg-gray-800 dark:text-red-300"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  {isExpanded && sheetImages.length > 0 && (
+                    <div className="border-t border-gray-100 bg-gray-50/60 px-3 py-3 dark:border-gray-800 dark:bg-gray-900/40">
+                      <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">All {sheetImages.length} sheets in this batch</p>
+                      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                        {sheetImages.map((image, index) => {
+                          const thumbUrl = sheetThumbnails[`${scan.id}:${image.sheetId}`]
+                          const sourceName = String(image.source || `Sheet ${index + 1}`)
+                          return (
+                            <li key={image.sheetId || index} className="flex min-w-0 items-center gap-2 rounded-xl border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-800">
+                              <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/50">
+                                {thumbUrl ? (
+                                  <img src={thumbUrl} alt={sourceName} className="h-full w-full object-cover" />
+                                ) : (
+                                  <ImageIcon className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-semibold text-gray-900 dark:text-white" title={sourceName}>{sourceName}</p>
+                                <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                                  {image.path ? 'Saved' : 'Pending'}
+                                </p>
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  )}
                 </li>
               )
             })}

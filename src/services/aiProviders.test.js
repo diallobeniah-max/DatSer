@@ -2,10 +2,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
   AI_PROVIDERS_ENDPOINT,
+  PROVIDERS,
   fetchProviderStatus,
   setProviderSecret,
   testProviderConnection,
-  removeProviderSecret
+  removeProviderSecret,
+  fetchRouting,
+  saveRouting
 } from './aiProviders'
 
 const statusPayload = {
@@ -78,5 +81,41 @@ describe('aiProviders client service', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(init.method).toBe('DELETE')
     expect(String(url)).toContain('ownerId=owner-1')
+  })
+
+  it('exposes both gemini and qwen providers for the settings page', () => {
+    expect(PROVIDERS).toContain('gemini')
+    expect(PROVIDERS).toContain('qwen')
+  })
+
+  it('setProviderSecret sends the model alongside the key', async () => {
+    await setProviderSecret({ bearerToken: 'tok', workspaceId: 'owner-1', provider: 'qwen', secret: 'sk-12345678901234', model: 'qwen-vl-max' })
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(init.body)
+    expect(body.provider).toBe('qwen')
+    expect(body.model).toBe('qwen-vl-max')
+  })
+
+  it('fetchRouting GETs the routing endpoint', async () => {
+    await fetchRouting({ bearerToken: 'tok', workspaceId: 'owner-1' })
+    const [url] = fetchMock.mock.calls[0]
+    expect(String(url)).toContain('/routing')
+  })
+
+  it('saveRouting POSTs primary and fallback providers', async () => {
+    await saveRouting({ bearerToken: 'tok', workspaceId: 'owner-1', primary: 'gemini', fallback: 'qwen' })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toContain('/routing')
+    expect(init.method).toBe('POST')
+    const body = JSON.parse(init.body)
+    expect(body.primary).toBe('gemini')
+    expect(body.fallback).toBe('qwen')
+  })
+
+  it('saveRouting supports disabling fallback with a null fallback', async () => {
+    await saveRouting({ bearerToken: 'tok', workspaceId: 'owner-1', primary: 'qwen', fallback: null })
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(init.body)
+    expect(body.fallback).toBe(null)
   })
 })

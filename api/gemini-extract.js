@@ -1,4 +1,3 @@
-import { extractSheetWithGemini } from '../server/geminiExtract.js'
 import { ExtractionError, MAX_BODY_BYTES } from '../server/extractionErrors.js'
 import { validateSheetImage } from '../server/imageValidation.js'
 import {
@@ -6,8 +5,10 @@ import {
   claimImageSlot,
   readBearerToken,
   readWorkspaceId,
-  resolveStoredGeminiKey
+  resolveRouting,
+  resolveStoredProviderKey
 } from '../server/extractionGuard.js'
+import { extractPaperScan, resolveProviderKeys } from '../server/providerRouting.js'
 
 export const config = {
   maxDuration: 60
@@ -121,10 +122,20 @@ export default async function handler(req, res) {
       requestId
     })
 
-    const payload = await extractSheetWithGemini({
+    const payload = await extractPaperScan({
       imageBytes: image.bytes,
       mimeType: image.mimeType,
-      storedCredentialResolver: () => resolveStoredGeminiKey({ ownerId: identity.ownerId })
+      providerKeys: await resolveProviderKeys({
+        storedResolvers: {
+          gemini: () => resolveStoredProviderKey({ ownerId: identity.ownerId, provider: 'gemini' }),
+          qwen: () => resolveStoredProviderKey({ ownerId: identity.ownerId, provider: 'qwen' })
+        },
+        envKeys: {
+          gemini: process.env.GEMINI_API_KEY || '',
+          qwen: process.env.QWEN_API_KEY || ''
+        }
+      }),
+      routing: await resolveRouting({ ownerId: identity.ownerId })
     })
 
     send(res, 200, { ok: true, ...payload, ownerId: identity.ownerId, extractionId })
