@@ -1,6 +1,7 @@
 import React from 'react'
 import { Download, Upload, RefreshCw, Trash2, Archive, ChevronLeft, Loader2 } from 'lucide-react'
 import SearchOtherMonthsSettingsSection from './SearchOtherMonthsSettingsSection'
+import OfflineSyncHealthSection from './OfflineSyncHealthSection'
 
 const DataSettingsSection = ({
     offlineModeStatus,
@@ -14,6 +15,8 @@ const DataSettingsSection = ({
     syncOfflineChanges,
     clearOfflineCacheData,
     isOnline,
+    dataOwnerId,
+    offlinePendingChanges,
     monthlyTables,
     currentTable,
     members,
@@ -170,6 +173,13 @@ const DataSettingsSection = ({
                     </div>
                 </div>
             </div>
+
+<OfflineSyncHealthSection
+                isOnline={isOnline}
+                offlineModeStatus={offlineModeStatus}
+                offlineCacheMeta={offlineCacheMeta}
+                offlinePendingChanges={offlinePendingChanges}
+            />
 
             {/* Export/Import/Archive */}
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-200 dark:divide-gray-700">

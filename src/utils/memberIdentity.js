@@ -5,7 +5,7 @@ export const getMemberSourceTable = (member, fallbackTable = '') => (
 )
 
 export const getMemberOwnerId = (member, fallbackOwnerId = null) => (
-  member?.__owner_id || member?.user_id || fallbackOwnerId || null
+  member?.__owner_id || member?.workspace_owner_id || member?.user_id || fallbackOwnerId || null
 )
 
 // A member can be represented by a monthly row, a preview row, or a search

@@ -1,9 +1,10 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createClient } from '@supabase/supabase-js'
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import geminiExtractHandler from './api/gemini-extract.js'
 
 const APP_UPDATES_BUCKET = 'app-updates'
 const APP_RELEASE_SELECT = 'id,version_name,version_code,title,description,apk_url,force_update,is_active,published_at,created_at,created_by'
@@ -398,8 +399,36 @@ const createDatserApkDevPlugin = () => {
   }
 }
 
+const createGeminiExtractDevPlugin = () => {
+  const handle = (req, res) => {
+    geminiExtractHandler(req, res)
+  }
+  return {
+    name: 'datser-gemini-extract-dev',
+    configureServer(server) {
+      // Vite exposes .env / .env.local values to the client via import.meta.env,
+      // but NOT to server-side plugin code. The extraction guard reads
+      // process.env.VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY to authenticate
+      // and claim quota, so surface the loaded env into process.env for this
+      // local handler only. Secrets never leave the server.
+      try {
+        const loaded = loadEnv(server.config.mode || 'development', process.cwd(), '')
+        for (const [key, value] of Object.entries(loaded)) {
+          if (process.env[key] === undefined) process.env[key] = value
+        }
+      } catch {
+        // The guard falls back to whatever env the shell already exported.
+      }
+      server.middlewares.use('/api/gemini-extract', handle)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use('/api/gemini-extract', handle)
+    }
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), createDatserApkDevPlugin()],
+  plugins: [react(), createDatserApkDevPlugin(), createGeminiExtractDevPlugin()],
   base: '/',
   define: {
     __BUILD_COMMIT__: JSON.stringify(getBuildCommit()),
@@ -414,6 +443,6 @@ export default defineConfig({
   },
   test: {
     setupFiles: ['./src/test/setup.js'],
-    exclude: ['node_modules/**', 'tests/**', 'test-results/**']
+    exclude: ['node_modules/**', '.opencode/**', 'tests/**', 'test-results/**']
   }
 })

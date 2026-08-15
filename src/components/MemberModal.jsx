@@ -350,11 +350,14 @@ const MemberModal = ({ isOpen, onClose }) => {
           parent_phone_2: parentInfo.parent_phone_2 || null,
           notes: formData.notes || null,
           is_visitor: formData.is_visitor || false,
-          user_id: user?.id || ownerId
+          // The server owns the workspace boundary; keep the client payload
+          // explicit too so the local confirmed record matches its final row.
+          user_id: ownerId,
+          workspace_owner_id: ownerId
         }
 
         const { data: bundleResult } = await executeSupabaseWrite(
-          () => supabase.rpc('save_member_bundle', {
+          () => supabase.rpc('save_member_bundle_resilient', {
             p_table_name: currentTable,
             p_owner_id: ownerId,
             p_request_id: submitRequestIdRef.current,

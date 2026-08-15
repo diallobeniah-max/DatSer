@@ -25,7 +25,7 @@ const isNumericCodeEquivalent = (query, code) => {
   return Number(query) === Number(code)
 }
 
-const getPhoneVariants = (value) => {
+export const getPhoneVariants = (value) => {
   const digits = normalizePhoneForSearch(value)
   if (!digits) return []
 

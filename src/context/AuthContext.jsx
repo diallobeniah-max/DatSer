@@ -417,7 +417,13 @@ export const AuthProvider = ({ children }) => {
             if (error) {
               console.error('[AUTH] Error processing auth callback:', error)
             }
-            if (data?.session) {
+            if (mounted && data?.session?.user) {
+              setUser(markUserAsAdminCodeSession(data.session.user))
+              setLoading(false)
+              rememberOnlineSession(data.session)
+              loadUserPreferencesBackground(data.session.user.id)
+              if (data.session.user.email) autoAcceptInvite(data.session.user.email)
+            } else if (data?.session) {
               rememberOnlineSession(data.session)
             }
             // Clear the hash from URL

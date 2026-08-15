@@ -10,34 +10,68 @@ const mocks = vi.hoisted(() => ({
   loadImageElement: vi.fn(),
   readFileAsDataUrl: vi.fn(),
   validateImageFile: vi.fn(),
-  getQrCameraConstraintCandidates: vi.fn()
+  decodeOrientedImage: vi.fn(),
+  prepareSheetForUpload: vi.fn(),
+  getQrCameraConstraintCandidates: vi.fn(),
+  uploadSheetImage: vi.fn(),
+  mergeStagedSheet: vi.fn(),
+  removeStagedSheet: vi.fn(),
+  getSavedScan: vi.fn(),
+  listSavedScans: vi.fn(),
+  createSheetImageSignedUrl: vi.fn()
 }))
 
-vi.mock('../utils/paperScanImage', () => ({
-  ENHANCEMENT_PRESETS: [
-    { id: 'original', label: 'Original' },
-    { id: 'grayscale', label: 'Grayscale' },
-    { id: 'high-contrast', label: 'High Contrast' },
-    { id: 'darken-handwriting', label: 'Darken Handwriting' },
-    { id: 'sharpen', label: 'Sharpen' }
-  ],
-  PRESET_DEFAULT_INTENSITY: {
-    original: null,
-    grayscale: 100,
-    'high-contrast': 75,
-    'darken-handwriting': 75,
-    sharpen: 50
-  },
-  applyEnhancement: mocks.applyEnhancement,
-  canvasToDataUrl: mocks.canvasToDataUrl,
-  loadImageElement: mocks.loadImageElement,
-  readFileAsDataUrl: mocks.readFileAsDataUrl,
-  validateImageFile: mocks.validateImageFile
+vi.mock('../utils/paperScanImage', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    applyEnhancement: mocks.applyEnhancement,
+    canvasToDataUrl: mocks.canvasToDataUrl,
+    loadImageElement: mocks.loadImageElement,
+    readFileAsDataUrl: mocks.readFileAsDataUrl,
+    validateImageFile: mocks.validateImageFile,
+    decodeOrientedImage: mocks.decodeOrientedImage,
+    prepareSheetForUpload: mocks.prepareSheetForUpload
+  }
+})
+
+vi.mock('../context/AppContext', () => ({
+  useApp: () => ({
+    dataOwnerId: 'owner-1',
+    currentTable: 'August_2026',
+    monthlyTables: [],
+    updateMember: vi.fn(),
+    refreshSyncedDataInBackground: vi.fn(),
+    loadAllAttendanceData: vi.fn(),
+    fetchMembers: vi.fn(),
+    isOnline: true,
+    offlineMode: false,
+    memberCodeMap: {}
+  })
+}))
+
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: 'user-1' }
+  })
 }))
 
 vi.mock('../utils/qrCheckIn', () => ({
   getQrCameraConstraintCandidates: mocks.getQrCameraConstraintCandidates
 }))
+
+vi.mock('../services/paperScanSavedScans', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    uploadSheetImage: mocks.uploadSheetImage,
+    mergeStagedSheet: mocks.mergeStagedSheet,
+    removeStagedSheet: mocks.removeStagedSheet,
+    getSavedScan: mocks.getSavedScan,
+    listSavedScans: mocks.listSavedScans,
+    createSheetImageSignedUrl: mocks.createSheetImageSignedUrl
+  }
+})
 
 const FAKE_DATA_URL = 'data:image/jpeg;base64,c2hlZXQ='
 const FAKE_ENHANCED = 'data:image/jpeg;base64,ZW5oYW5jZWQ='
@@ -54,13 +88,47 @@ const uploadSheet = async (name) => {
 }
 
 describe('PaperScanReview', () => {
+  let stagedEntries = []
+
   beforeEach(() => {
+    stagedEntries = []
     mocks.validateImageFile.mockReturnValue({ ok: true })
     mocks.readFileAsDataUrl.mockResolvedValue(FAKE_DATA_URL)
     mocks.loadImageElement.mockResolvedValue({ naturalWidth: 100, naturalHeight: 100 })
+    mocks.decodeOrientedImage.mockResolvedValue(null)
     mocks.applyEnhancement.mockReturnValue({})
     mocks.canvasToDataUrl.mockReturnValue(FAKE_ENHANCED)
+    mocks.prepareSheetForUpload.mockImplementation(async () => ({
+      dataUrl: FAKE_DATA_URL,
+      blob: new Blob(['x'], { type: 'image/jpeg' }),
+      mimeType: 'image/jpeg',
+      extension: '.jpg',
+      width: 100,
+      height: 100,
+      encodedBytes: 1
+    }))
     mocks.getQrCameraConstraintCandidates.mockReturnValue([])
+    mocks.uploadSheetImage.mockImplementation(async ({ userId, scanId, sheetId }) => {
+      const path = `${userId}/${scanId}/${sheetId}.jpg`
+      stagedEntries = [...stagedEntries.filter((entry) => entry.sheetId !== sheetId), { sheetId, source: 'Camera capture', path }]
+      return path
+    })
+    mocks.mergeStagedSheet.mockImplementation(async ({ sheet }) => {
+      stagedEntries = [...stagedEntries.filter((entry) => entry.sheetId !== sheet.sheetId), sheet]
+      return { id: 'scan-1', name: 'Staged scan', sheet_images: stagedEntries, review_state: { _staging: true } }
+    })
+    mocks.removeStagedSheet.mockImplementation(async ({ sheetId }) => {
+      stagedEntries = stagedEntries.filter((entry) => entry.sheetId !== sheetId)
+      return { id: 'scan-1', sheet_images: stagedEntries, review_state: { _staging: true } }
+    })
+    mocks.getSavedScan.mockImplementation(async () => ({
+      id: 'scan-1',
+      name: 'Staged scan',
+      sheet_images: stagedEntries,
+      review_state: { _staging: true }
+    }))
+    mocks.listSavedScans.mockResolvedValue([])
+    mocks.createSheetImageSignedUrl.mockImplementation(async ({ path }) => `signed:${path}`)
   })
 
   afterEach(() => {
@@ -166,15 +234,17 @@ describe('PaperScanReview', () => {
     await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
 
     vi.useFakeTimers()
-    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      await Promise.resolve()
+    })
     expect(screen.getByText(/Processing sheets/)).toBeTruthy()
     expect(screen.getByText('1 sheet in this batch')).toBeTruthy()
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000)
     })
-    expect(screen.getByText('Ready for AI connection')).toBeTruthy()
-    expect(screen.getByText(/not connected yet/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /extract with gemini/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Back to editing' })).toBeTruthy()
   })
 
@@ -193,6 +263,38 @@ describe('PaperScanReview', () => {
     expect(selectSheetByLabel(2)).toBeTruthy()
     expect(selectSheetByLabel(3)).toBeTruthy()
     expect(mocks.readFileAsDataUrl).toHaveBeenCalledTimes(3)
+  })
+
+  it('limits background sheet saves to three concurrent uploads', async () => {
+    const pending = []
+    mocks.uploadSheetImage.mockImplementation(() => new Promise((resolve) => pending.push(resolve)))
+    render(<PaperScanReview onBack={() => {}} />)
+    const input = screen.getByLabelText('Upload an image')
+    fireEvent.change(input, {
+      target: { files: [
+        new File(['a'], 'one.jpg', { type: 'image/jpeg' }),
+        new File(['b'], 'two.jpg', { type: 'image/jpeg' }),
+        new File(['c'], 'three.jpg', { type: 'image/jpeg' }),
+        new File(['d'], 'four.jpg', { type: 'image/jpeg' })
+      ] }
+    })
+    await waitFor(() => expect(mocks.uploadSheetImage).toHaveBeenCalledTimes(3))
+    pending.shift()('user-1/scan-1/sheet-1.jpg')
+    await waitFor(() => expect(mocks.uploadSheetImage).toHaveBeenCalledTimes(4))
+    pending.splice(0).forEach((resolve, index) => resolve(`user-1/scan-1/sheet-${index + 2}.jpg`))
+  })
+
+  it('blocks processing until a failed staging save is retried', async () => {
+    mocks.uploadSheetImage.mockRejectedValue(new Error('Saved Scan storage upload failed (400): The object exceeded the maximum allowed size.'))
+    render(<PaperScanReview onBack={() => {}} />)
+    await uploadSheet('sheet-a.jpg')
+    await waitFor(() => expect(screen.getByText('Save failed')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      await Promise.resolve()
+    })
+    expect(screen.getByText(/needs to finish saving before processing/i)).toBeTruthy()
+    expect(screen.queryByText(/Processing sheets/)).toBeNull()
   })
 
   it('keeps existing sheets when new files are added', async () => {
@@ -342,7 +444,7 @@ describe('PaperScanReview camera handling', () => {
     await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(4))
     const constraints = getUserMedia.mock.calls[3][0]
     expect(constraints).toEqual({ audio: false, video: true })
-    expect(screen.getByText(/Hold the sheet steady/)).toBeTruthy()
+    expect(screen.getByText('SEARCHING FOR DOCUMENT')).toBeTruthy()
   })
 
   it('surfaces a recoverable message when play() fails', async () => {
@@ -380,5 +482,210 @@ describe('PaperScanReview camera handling', () => {
     openCamera()
     await waitFor(() => expect(screen.getAllByText(/Could not open a usable camera/).length).toBeGreaterThan(0))
     expect(getUserMedia).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('PaperScanReview staging durability', () => {
+  let stagedEntries = []
+
+  beforeEach(() => {
+    stagedEntries = []
+    mocks.validateImageFile.mockReturnValue({ ok: true })
+    mocks.readFileAsDataUrl.mockResolvedValue(FAKE_DATA_URL)
+    mocks.loadImageElement.mockResolvedValue({ naturalWidth: 100, naturalHeight: 100 })
+    mocks.decodeOrientedImage.mockResolvedValue(null)
+    mocks.prepareSheetForUpload.mockImplementation(async () => ({
+      dataUrl: FAKE_DATA_URL,
+      blob: new Blob(['x'], { type: 'image/jpeg' }),
+      mimeType: 'image/jpeg',
+      extension: '.jpg',
+      width: 100,
+      height: 100,
+      encodedBytes: 1
+    }))
+    mocks.uploadSheetImage.mockImplementation(async ({ userId, scanId, sheetId }) => {
+      const path = `${userId}/${scanId}/${sheetId}.jpg`
+      stagedEntries = [...stagedEntries.filter((entry) => entry.sheetId !== sheetId), { sheetId, source: 'Camera capture', path }]
+      return path
+    })
+    mocks.mergeStagedSheet.mockImplementation(async ({ sheet }) => {
+      stagedEntries = [...stagedEntries.filter((entry) => entry.sheetId !== sheet.sheetId), sheet]
+      return { id: 'scan-1', name: 'Staged scan', sheet_images: stagedEntries, review_state: { _staging: true } }
+    })
+    mocks.removeStagedSheet.mockImplementation(async ({ sheetId }) => {
+      stagedEntries = stagedEntries.filter((entry) => entry.sheetId !== sheetId)
+      return { id: 'scan-1', sheet_images: stagedEntries, review_state: { _staging: true } }
+    })
+    mocks.getSavedScan.mockImplementation(async () => ({
+      id: 'scan-1',
+      name: 'Staged scan',
+      sheet_images: stagedEntries,
+      review_state: { _staging: true }
+    }))
+    mocks.listSavedScans.mockResolvedValue([])
+    mocks.createSheetImageSignedUrl.mockImplementation(async ({ path }) => `signed:${path}`)
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('keeps every sheet in durable metadata even when merges resolve out of order', async () => {
+    const resolvers = new Map()
+    mocks.mergeStagedSheet.mockImplementation(({ sheet }) => new Promise((resolve) => {
+      resolvers.set(sheet.sheetId, () => {
+        stagedEntries = [...stagedEntries.filter((entry) => entry.sheetId !== sheet.sheetId), sheet]
+        resolve({ id: 'scan-1', name: 'Staged scan', sheet_images: stagedEntries, review_state: { _staging: true } })
+      })
+    }))
+    render(<PaperScanReview onBack={() => {}} />)
+    const input = screen.getByLabelText('Upload an image')
+    fireEvent.change(input, {
+      target: { files: [
+        new File(['a'], 'a.jpg', { type: 'image/jpeg' }),
+        new File(['b'], 'b.jpg', { type: 'image/jpeg' })
+      ] }
+    })
+    await waitFor(() => expect(resolvers.size).toBe(2))
+    const ids = [...resolvers.keys()]
+    // B's metadata resolves first, then A's — the durable merge must keep BOTH.
+    resolvers.get(ids[1])()
+    resolvers.get(ids[0])()
+    await waitFor(() => expect(screen.getAllByText('Saved').length).toBeGreaterThanOrEqual(2))
+    const durable = await mocks.getSavedScan()
+    expect(durable.sheet_images.map((entry) => entry.sheetId).sort()).toEqual([...ids].sort())
+  })
+
+  it('never marks a sheet Saved when the durable metadata lacks its reference', async () => {
+    mocks.mergeStagedSheet.mockResolvedValue({ id: 'scan-1', name: 'Staged scan', sheet_images: [], review_state: { _staging: true } })
+    render(<PaperScanReview onBack={() => {}} />)
+    await uploadSheet('a.jpg')
+    await waitFor(() => expect(screen.getByText('Save failed')).toBeTruthy())
+    expect(screen.queryByText('Saved')).toBeNull()
+  })
+
+  it('blocks Process when local state says Saved but durable metadata does not contain the sheet', async () => {
+    render(<PaperScanReview onBack={() => {}} />)
+    await uploadSheet('a.jpg')
+    await waitFor(() => expect(screen.getAllByText('Saved').length).toBeGreaterThan(0))
+    // Simulate a stale overwrite: the latest durable record lost the sheet.
+    mocks.getSavedScan.mockResolvedValue({ id: 'scan-1', name: 'Staged scan', sheet_images: [], review_state: { _staging: true } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      await Promise.resolve()
+    })
+    expect(screen.getByText(/needs to finish saving before processing/i)).toBeTruthy()
+    expect(screen.queryByText(/Processing sheets/)).toBeNull()
+  })
+
+  it('blocks "Process this sheet" when that sheet is missing from durable metadata', async () => {
+    render(<PaperScanReview onBack={() => {}} />)
+    await uploadSheet('a.jpg')
+    await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
+    await uploadSheet('b.jpg')
+    await waitFor(() => expect(screen.getByText('Sheets (2)')).toBeTruthy())
+    // Sheet A's reference was lost from durable metadata; only B remains.
+    mocks.getSavedScan.mockResolvedValue({
+      id: 'scan-1',
+      name: 'Staged scan',
+      sheet_images: stagedEntries.filter((_, index) => index === 1),
+      review_state: { _staging: true }
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /process this sheet/i }))
+      await Promise.resolve()
+    })
+    expect(screen.getByText(/needs to finish saving before processing/i)).toBeTruthy()
+    expect(screen.queryByText(/Processing sheets/)).toBeNull()
+  })
+
+  it('retry after a failed upload reuses the same object path and merges once', async () => {
+    const uploadPaths = []
+    let failFirst = true
+    mocks.uploadSheetImage.mockImplementation(async ({ userId, scanId, sheetId }) => {
+      const path = `${userId}/${scanId}/${sheetId}.jpg`
+      uploadPaths.push(path)
+      if (failFirst) {
+        failFirst = false
+        throw new Error('Saved Scan storage upload failed (400): boom')
+      }
+      return path
+    })
+    render(<PaperScanReview onBack={() => {}} />)
+    await uploadSheet('a.jpg')
+    await waitFor(() => expect(screen.getByText('Save failed')).toBeTruthy())
+    // The failed upload reached neither Storage nor the metadata merge.
+    expect(mocks.mergeStagedSheet).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(screen.getAllByText('Saved').length).toBeGreaterThan(0))
+    // Repeated attempts use ONE stable object path and produce ONE durable entry.
+    expect(new Set(uploadPaths).size).toBe(1)
+    expect(mocks.mergeStagedSheet).toHaveBeenCalledTimes(1)
+  })
+
+  it('removing a sheet updates durable metadata and never deletes the remote object', async () => {
+    render(<PaperScanReview onBack={() => {}} />)
+    await uploadSheet('a.jpg')
+    await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
+    await uploadSheet('b.jpg')
+    await waitFor(() => expect(screen.getByText('Sheets (2)')).toBeTruthy())
+    const keptPath = stagedEntries.find((entry) => entry.sheetId !== stagedEntries[0].sheetId)?.path
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove sheet 1' }))
+    await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
+    await waitFor(() => expect(mocks.removeStagedSheet).toHaveBeenCalled())
+    const removedSheetId = mocks.removeStagedSheet.mock.calls[0][0].sheetId
+    expect(removedSheetId).toBeTruthy()
+    const durable = await mocks.getSavedScan()
+    expect(durable.sheet_images).toHaveLength(1)
+    expect(durable.sheet_images.some((entry) => entry.sheetId === removedSheetId)).toBe(false)
+    expect(durable.sheet_images[0].path).toBe(keptPath)
+    // The remote object is NOT deleted by remove-from-batch.
+    expect(mocks.uploadSheetImage).toHaveBeenCalled()
+  })
+
+  it('reopens a _staging batch back to preparation without fabricating extraction results', async () => {
+    mocks.listSavedScans.mockResolvedValue([
+      { id: 'scan-staging', name: 'Staged batch', sheet_images: [{ sheetId: 'sheet-1', source: 'Camera capture', path: 'u1/scan-staging/sheet-1.jpg' }], usage_metadata: {}, updated_at: '2026-08-14T00:00:00Z' }
+    ])
+    mocks.getSavedScan.mockResolvedValue({
+      id: 'scan-staging',
+      name: 'Staged batch',
+      user_id: 'user-1',
+      owner_id: 'owner-1',
+      sheet_images: [{ sheetId: 'sheet-1', source: 'Camera capture', path: 'u1/scan-staging/sheet-1.jpg' }],
+      review_state: { _staging: true },
+      extraction: {},
+      created_at: '2026-08-14T00:00:00Z',
+      updated_at: '2026-08-14T00:00:00Z'
+    })
+    render(<PaperScanReview onBack={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /saved scans/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open Staged batch' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Open Staged batch' }))
+
+    // Returns to batch preparation with the sheet restored, NOT to Review.
+    await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
+    expect(screen.getByRole('button', { name: /camera capture/i })).toBeTruthy()
+    expect(screen.queryByText(/Review extracted data/i)).toBeNull()
+    expect(screen.queryByText(/people found/i)).toBeNull()
+    expect(screen.getAllByText('Saved').length).toBeGreaterThan(0)
+    // The unprocessed sheet stays ready for processing.
+    expect(screen.getByRole('button', { name: /continue/i })).toBeTruthy()
+  })
+
+  it('rejects an unsupported image format with a clear message', async () => {
+    mocks.validateImageFile.mockImplementation((file) => {
+      if (file.type === 'image/gif') return { ok: false, reason: 'Unsupported image format. Use JPG, PNG, or WEBP.' }
+      return { ok: true }
+    })
+    render(<PaperScanReview onBack={() => {}} />)
+    const input = screen.getByLabelText('Upload an image')
+    fireEvent.change(input, {
+      target: { files: [new File(['gif'], 'x.gif', { type: 'image/gif' })] }
+    })
+    await waitFor(() => expect(screen.getByText(/unsupported image format/i)).toBeTruthy())
+    expect(screen.queryByText('Sheets (1)')).toBeNull()
   })
 })

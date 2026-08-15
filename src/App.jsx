@@ -33,6 +33,7 @@ const SetPasswordModal = lazyWithRetry(() => import('./components/SetPasswordMod
 const ResetPasswordModal = lazyWithRetry(() => import('./components/ResetPasswordModal'))
 const MonthModal = lazyWithRetry(() => import('./components/MonthModal'))
 const PaperScanReview = lazyWithRetry(() => import('./components/PaperScanReview'))
+const HistoricProvenanceReconciliation = lazyWithRetry(() => import('./components/HistoricProvenanceReconciliation'))
 
 // Minimal loading fallback for lazy components
 const LazyFallback = memo(() => (
@@ -659,6 +660,12 @@ function AppContent({ isMobile }) {
         {currentView === 'paper-scan-review' && (
           <Suspense fallback={<LazyFallback />}>
             <PaperScanReview onBack={() => setCurrentView('admin')} />
+          </Suspense>
+        )}
+
+        {currentView === 'historic-provenance-reconciliation' && (
+          <Suspense fallback={<LazyFallback />}>
+            <HistoricProvenanceReconciliation onBack={() => setCurrentView('admin')} />
           </Suspense>
         )}
 

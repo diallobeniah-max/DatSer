@@ -57,10 +57,10 @@ const getDevAdminPassword = () => (
     : ''
 )
 
-const isLocalDeveloperBypassActive = () => (
+const isLocalDeveloperBypassActive = () => Boolean(
   isLocalWebDeveloperModeAllowed() &&
   typeof window !== 'undefined' &&
-  window.localStorage.getItem(DEV_BYPASS_STORAGE_KEY) === 'true'
+  window.localStorage?.getItem?.(DEV_BYPASS_STORAGE_KEY) === 'true'
 )
 
 const normalizeSundayDate = (dateValue) => {
@@ -100,6 +100,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
   const { isDarkMode } = useTheme()
   const { user, signInWithGoogle } = useAuth()
   const hasDeveloperAdminBypass = isLocalWebDeveloperModeAllowed() && (isDeveloperBypass || isLocalDeveloperBypassActive())
+  const isProvenanceOperator = user?.app_metadata?.datser_provenance_operator === true
 
   // Admin password protection - uses the same password as user's account
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -1072,10 +1073,11 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
               <button
                 onClick={() => setCurrentView('paper-scan-review')}
                 className="flex items-center gap-2 px-3 py-2 sm:px-3 text-sm font-semibold text-orange-700 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/30 rounded-lg transition-colors"
-                title="Capture and enhance a paper attendance sheet"
+                title="Scan attendance sheets, review extracted data, choose months and Sundays, and save attendance"
+                data-testid="admin-header-scan-document"
               >
-                <ScanLine className="w-4 h-4" />
-                <span className="hidden sm:inline">Paper Scan Review</span>
+                <ScanLine className="w-4 h-4 flex-shrink-0" />
+                <span>Scan Document</span>
               </button>
             </div>
             {showOverview && (
@@ -1156,6 +1158,42 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
       </div>
 
       <div className="mx-auto grid max-w-[1600px] grid-cols-1 gap-4 px-3 py-3 sm:px-4 sm:py-4 xl:grid-cols-[minmax(340px,420px)_minmax(0,1fr)] xl:items-start xl:gap-5">
+
+        {/* Scan Document Primary Action Card */}
+        <div
+          className="xl:col-span-2 bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-950/40 dark:via-amber-950/30 dark:to-orange-950/20 rounded-2xl border-2 border-orange-300 dark:border-orange-700/60 p-4 sm:p-5 shadow-sm transition-all hover:shadow-md"
+          data-testid="admin-scan-document-card"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="p-3 rounded-xl bg-orange-600 text-white shadow-sm flex-shrink-0">
+                <ScanLine className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                    Scan Document
+                  </h3>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300">
+                    Attendance Sheets
+                  </span>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mt-1 max-w-2xl">
+                  Scan attendance sheets, review extracted data, choose months and Sundays, and save attendance.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCurrentView('paper-scan-review')}
+              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm bg-orange-600 hover:bg-orange-700 active:bg-orange-800 text-white shadow-sm transition-colors flex-shrink-0 w-full sm:w-auto cursor-pointer"
+              data-testid="admin-open-scan-document"
+            >
+              <ScanLine className="w-4 h-4" />
+              <span>Open Scan</span>
+            </button>
+          </div>
+        </div>
 
         {canUseLocalApkBuilder && (
           <div className="xl:col-span-2">
@@ -1515,6 +1553,44 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
           </div>
         </div>
       </div>
+
+      {/* Operator Maintenance Tools */}
+      {isProvenanceOperator && (
+        <div className="mx-auto max-w-[1600px] px-3 pt-2 pb-6 sm:px-4" data-testid="admin-maintenance-tools">
+          <details className="group rounded-2xl border border-dashed border-amber-300/80 bg-amber-50/40 p-4 dark:border-amber-700/40 dark:bg-amber-950/10">
+            <summary className="flex cursor-pointer items-center justify-between font-bold text-amber-900 dark:text-amber-200 select-none">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                <span>Maintenance Tools</span>
+                <span className="rounded-full bg-amber-200/60 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/60 dark:text-amber-300">
+                  Operator
+                </span>
+              </div>
+              <ChevronDown className="h-4 w-4 text-amber-600 transition-transform group-open:rotate-180 dark:text-amber-400" />
+            </summary>
+            <div className="mt-4 border-t border-amber-200/60 pt-4 dark:border-amber-800/40">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-bold text-gray-900 dark:text-white">
+                    Historic Reconciliation
+                  </h4>
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
+                    Historic workspace ownership maintenance for legacy month records.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentView('historic-provenance-reconciliation')}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-amber-800 active:bg-amber-900 cursor-pointer"
+                >
+                  <Shield className="h-3.5 w-3.5" />
+                  <span>Open Historic Reconciliation</span>
+                </button>
+              </div>
+            </div>
+          </details>
+        </div>
+      )}
 
       {selectedFollowUpRecord && (
         <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/55 px-3 pb-3 backdrop-blur-sm sm:items-center sm:p-6">

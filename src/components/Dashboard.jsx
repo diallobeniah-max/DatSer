@@ -400,6 +400,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const {
     filteredMembers: contextFilteredMembers,
     loading,
+    memberHydrationState,
     searchTerm,
     setSearchTerm,
     searchResultSections,
@@ -2533,7 +2534,7 @@ const Dashboard = ({ isAdmin = false }) => {
     )
   }
 
-  if (loading && (!members || members.length === 0)) {
+  if ((loading || memberHydrationState !== 'HYDRATED') && (!members || members.length === 0)) {
     return (
       <div className={`${dashboardShellClass} mx-auto mt-8`}>
         <TableSkeleton />
@@ -3083,7 +3084,7 @@ const Dashboard = ({ isAdmin = false }) => {
       )}
 
       {/* Empty State - use the same getTabFilteredMembers() for consistency */}
-      {!isShortSearchDisplayActive && getTabFilteredMembers().length === 0 && !loading && (
+      {!isShortSearchDisplayActive && getTabFilteredMembers().length === 0 && !loading && memberHydrationState === 'HYDRATED' && (
         <div className="mx-auto my-6 max-w-2xl rounded-3xl border border-orange-200/80 bg-white/90 px-5 py-9 text-center shadow-sm dark:border-orange-500/25 dark:bg-gray-900/85 sm:px-8">
           {searchTerm ? <UserX className="mx-auto mb-4 h-12 w-12 text-orange-500" /> : <Users className="mx-auto mb-4 h-12 w-12 text-gray-400 dark:text-gray-500" />}
           <h3 className="mb-2 text-lg font-bold text-gray-900 dark:text-white">

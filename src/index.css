@@ -5721,6 +5721,12 @@ html:not(.dark) .member-code-pass-responsive .member-code-pass-expand-qr {
   touch-action: manipulation;
 }
 
+.dark .attendance-choice__button {
+  border-color: #3b3733;
+  background: #23201d;
+  color: #e5e3df;
+}
+
 .attendance-choice__button:not(:disabled):active {
   transform: scale(var(--ds-attendance-pressed-scale));
 }
