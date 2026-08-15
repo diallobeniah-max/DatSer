@@ -691,7 +691,6 @@ const PaperScanReview = ({ onBack }) => {
   const [finalViewMode, setFinalViewMode] = useState('table') // table | attention | cards on the final review step
   const [expandedFinalRows, setExpandedFinalRows] = useState(() => new Set()) // expanded keys on the final card view
   const [viewer, setViewer] = useState(null) // { sheetId, mode: 'original' | 'enhanced' }
-  const [showChanges, setShowChanges] = useState(false)
   const [showOriginalPreview, setShowOriginalPreview] = useState(false)
   const [editDraft, setEditDraft] = useState('')
   const [showSavedScans, setShowSavedScans] = useState(false)
@@ -2370,11 +2369,8 @@ finalSaveInFlightRef.current = true
     const totalRows = allRowData.length
     const excludedRows = allRowData.filter(({ sheetId, index }) => (resultsBySheet[sheetId]?.excludedIndices || []).includes(index)).length
     const includedRows = totalRows - excludedRows
-    const differingTotal = allRowData.reduce((sum, entry) => sum + entry.summary.totals.different + entry.summary.totals['low-confidence'], 0)
-    const unresolvedTotal = allRowData.reduce((sum, entry) => sum + entry.summary.totals.unresolved, 0)
     const safeRowIndex = Math.min(reviewIndex, Math.max(rowReviewData.length - 1, 0))
     const activeRowData = rowReviewData[safeRowIndex] || null
-    const changesEntries = allRowData.filter((entry) => entry.summary.totals.unresolved > 0 || entry.summary.totals.resolved > 0)
 
     // Database search results for the member search bar on the active row.
     const query = memberSearchQuery.trim().toLowerCase()
@@ -2462,16 +2458,6 @@ finalSaveInFlightRef.current = true
     }
     const finalRowKey = (entry) => `${entry.sheetId}-${entry.rowIndex}`
 
-    // ---- Workflow state / save gating ------------------------------------
-    // A scanned row still needs an explicit member decision when it has no
-    // confident match and the reviewer hasn't chosen another member or created
-    // a new one. Weak matches are never silently picked.
-    const memberBlocking = allRowData.filter(({ row, match }) => {
-      if (row.memberAction === 'create-new') return false
-      if (row.selectedMemberId) return false
-      return match.status === 'possible' || match.status === 'none'
-    }).length
-
     const countAttendanceBlocking = (sheetId, row) => {
       const settings = getAttendanceSettings(sheetId)
       let count = 0
@@ -2488,14 +2474,9 @@ finalSaveInFlightRef.current = true
       })
       return count
     }
-    const attendanceBlocking = allRowData.reduce((sum, entry) => sum + countAttendanceBlocking(entry.sheetId, entry.row), 0)
-    const blockingCount = unresolvedTotal + memberBlocking + attendanceBlocking
-    const existingMemberCount = allRowData.filter(({ row, match }) => row.memberAction !== 'create-new' && (row.selectedMemberId || match.status === 'matched')).length
-    const newMemberCount = allRowData.filter(({ row }) => row.memberAction === 'create-new').length
-
     // Keep the work DatSer cannot safely apply out of the ready-to-save table.
-    // The attention view makes every reason visible and offers a direct return
-    // to the exact row, rather than leaving a single confusing total.
+    // Each item represents exactly one extracted line from a saved sheet photo;
+    // it deliberately does not count each field or attendance cell separately.
     const finalAttentionRows = allRowData.flatMap((entry) => {
       if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return []
       const reasons = []
@@ -2509,6 +2490,7 @@ finalSaveInFlightRef.current = true
       if (attendanceCount > 0) reasons.push(`${attendanceCount} attendance mark${attendanceCount === 1 ? '' : 's'} need review`)
       return reasons.length ? [{ ...entry, reasons, attendanceCount }] : []
     })
+    const attentionRowCount = finalAttentionRows.length
 
     const openFinalAttentionRow = (entry) => {
       if (entry.sheetId === reviewActiveId) {
@@ -2518,16 +2500,6 @@ finalSaveInFlightRef.current = true
         setReviewActiveId(entry.sheetId)
       }
       setReviewStep(entry.attendanceCount > 0 ? 'attendance' : 'members')
-    }
-
-    const jumpToFirstBlocking = () => {
-      const rowIndex = allRowData.findIndex((entry) => {
-        const memberBlock = entry.row.memberAction !== 'create-new' && !entry.row.selectedMemberId && (entry.match.status === 'possible' || entry.match.status === 'none')
-        return entry.summary.totals.unresolved > 0 || memberBlock || countAttendanceBlocking(entry.sheetId, entry.row) > 0
-      })
-      if (rowIndex >= 0 && allRowData[rowIndex].sheetId === reviewActiveId) setReviewIndex(allRowData[rowIndex].index)
-      if (attendanceBlocking > 0) setReviewStep('attendance')
-      else setReviewStep('members')
     }
 
     // Detected headers — relocated to the top of the review panel for visibility.
@@ -2554,9 +2526,9 @@ finalSaveInFlightRef.current = true
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <p className="text-xs font-black text-stone-900 dark:text-white uppercase tracking-wider">Review status</p>
-              {blockingCount > 0 ? (
+              {attentionRowCount > 0 ? (
                 <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-black text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                  {blockingCount} items still need review
+                  {attentionRowCount} scanned {attentionRowCount === 1 ? 'row needs' : 'rows need'} attention
                 </span>
               ) : (
                 <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
@@ -2565,11 +2537,8 @@ finalSaveInFlightRef.current = true
               )}
             </div>
             <ul className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs font-medium text-stone-600 dark:text-stone-300">
-              <li>{includedRows} people found</li>
-              <li>{existingMemberCount} existing members</li>
-              <li>{newMemberCount} new members</li>
-              <li className="hidden sm:inline">{Math.max(0, differingTotal - unresolvedTotal)} profile differences resolved</li>
-              {attendanceBlocking > 0 && <li className="text-amber-700 dark:text-amber-300">{attendanceBlocking} attendance marks need review</li>}
+              <li>{includedRows} scanned {includedRows === 1 ? 'row' : 'rows'} from your saved sheet photos</li>
+              <li>{finalPreview.plan.rows.length} ready to save</li>
             </ul>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2591,26 +2560,20 @@ finalSaveInFlightRef.current = true
               <Table2 className="h-3.5 w-3.5" />
               Open final preview
             </button>
-            {blockingCount > 0 ? (
+            {attentionRowCount > 0 ? (
               <button
                 type="button"
-                onClick={jumpToFirstBlocking}
+                onClick={() => {
+                  setFinalViewMode('attention')
+                  setReviewStep('final')
+                }}
                 data-testid="review-remaining-items"
                 className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-3 py-1.5 text-xs font-bold text-white transition-colors shadow-sm"
               >
                 <AlertTriangle className="h-3.5 w-3.5" />
-                Review {blockingCount} remaining {blockingCount === 1 ? 'item' : 'items'}
+                Needs attention ({attentionRowCount})
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => setShowChanges((open) => !open)}
-              aria-expanded={showChanges}
-              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5 text-orange-600" />
-              Review Changes{unresolvedTotal > 0 ? ` (${unresolvedTotal} unresolved)` : ''}
-            </button>
             <button
               type="button"
               onClick={handleSaveScan}
@@ -2639,46 +2602,6 @@ finalSaveInFlightRef.current = true
           )}
         </div>
 
-        {showChanges && (
-          <div className="mt-4 border-t border-stone-200 pt-3 dark:border-stone-700">
-            <p className="text-[11px] font-black uppercase tracking-wider text-stone-500 dark:text-stone-400">Pending review choices</p>
-            {changesEntries.length === 0 ? (
-              <p className="mt-2 text-xs font-medium text-stone-500 dark:text-stone-400">
-                No conflicting fields — every scanned value already matches DatSer.
-              </p>
-            ) : (
-              <ul className="mt-2 space-y-2">
-                {changesEntries.map((entry) => (
-                  <li key={`${entry.sheetId}-${entry.index}`} className="rounded-xl border border-stone-200 bg-white p-3 text-xs dark:border-stone-700 dark:bg-stone-800">
-                    <p className="font-black text-stone-900 dark:text-white">
-                      {entry.row.full_name || `Member ${entry.index + 1}`}
-                      <span className="font-semibold text-stone-400 dark:text-stone-500"> · {entry.sheetSource}</span>
-                    </p>
-                    {entry.summary.compares.filter((compare) => compare.state === FIELD_STATES.DIFFERENT || compare.state === FIELD_STATES.LOW_CONFIDENCE).map((compare) => {
-                      const fieldMeta = COMPARE_FIELDS.find((field) => field.key === compare.field)
-                      const decision = entry.row.reviewedValues?.[compare.field]
-                      const geminiValue = entry.row.originalGeminiValue?.[compare.field] ?? entry.row[compare.field]
-                      const existingValue = getExistingValue(entry.match.member, compare.field)
-                      return (
-                        <p key={compare.field} className="mt-1 font-medium leading-relaxed text-stone-600 dark:text-stone-300">
-                          {fieldMeta?.label}: {decision ? (
-                            <span className="font-black text-emerald-700 dark:text-emerald-400">
-                              → {decision.value || '—'} ({DECISION_SOURCE_LABEL[decision.source] || decision.source})
-                            </span>
-                          ) : (
-                            <span className="font-black text-orange-700 dark:text-orange-400">
-                              needs a choice — scan: {geminiValue || '—'} · DatSer: {existingValue || '—'}
-                            </span>
-                          )}
-                        </p>
-                      )
-                    })}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
       </div>
     )
 
@@ -3060,9 +2983,9 @@ finalSaveInFlightRef.current = true
                     }`}
                   >
                     <span>{step.label}</span>
-                    {step.id === 'final' && blockingCount > 0 ? (
+                    {step.id === 'final' && attentionRowCount > 0 ? (
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'}`}>
-                        {blockingCount}
+                        {attentionRowCount}
                       </span>
                     ) : null}
                   </button>
@@ -3081,14 +3004,14 @@ finalSaveInFlightRef.current = true
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {blockingCount > 0 && (
+                    {attentionRowCount > 0 && (
                       <button
                         type="button"
-                        onClick={jumpToFirstBlocking}
+                        onClick={() => setFinalViewMode('attention')}
                         className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-amber-700 shadow-sm"
                       >
                         <AlertTriangle className="h-4 w-4" />
-                        Review {blockingCount} remaining {blockingCount === 1 ? 'item' : 'items'}
+                        Needs attention ({attentionRowCount})
                       </button>
                     )}
                     <button
@@ -3138,19 +3061,6 @@ finalSaveInFlightRef.current = true
                         </button>
                         <button
                           type="button"
-                          onClick={() => setFinalViewMode('cards')}
-                          aria-pressed={finalViewMode === 'cards'}
-                          className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-black transition-colors ${
-                            finalViewMode === 'cards'
-                              ? 'bg-white text-stone-900 shadow-sm dark:bg-stone-700 dark:text-white'
-                              : 'text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-200'
-                          }`}
-                        >
-                          <Layers className="h-3.5 w-3.5" />
-                          Cards
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => setFinalViewMode('attention')}
                           aria-pressed={finalViewMode === 'attention'}
                           className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-black transition-colors ${
@@ -3160,14 +3070,14 @@ finalSaveInFlightRef.current = true
                           }`}
                         >
                           <AlertTriangle className="h-3.5 w-3.5" />
-                          Needs attention ({blockingCount})
+                          Needs attention ({attentionRowCount})
                         </button>
                       </div>
                     </div>
 
-                    {blockingCount > 0 && (
+                    {attentionRowCount > 0 && (
                       <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                        {blockingCount} item{blockingCount === 1 ? '' : 's'} need attention. Open the separate Needs attention view to see exactly why each row was not included.
+                        {attentionRowCount} scanned {attentionRowCount === 1 ? 'row needs' : 'rows need'} attention. Each entry is one line from a saved sheet photo, even when that line has several details to check.
                       </p>
                     )}
 
@@ -3339,7 +3249,7 @@ finalSaveInFlightRef.current = true
                         <div className="border-b border-amber-200/80 px-4 py-3 dark:border-amber-900/50">
                           <p className="text-sm font-black text-amber-900 dark:text-amber-100">Needs attention</p>
                           <p className="mt-0.5 text-xs font-medium text-amber-800/80 dark:text-amber-200/80">
-                            These rows are not included in the ready-to-save count. Open one to choose a member, confirm the profile, or settle the attendance mark.
+                            One entry per extracted line from your saved sheet photos. These rows are not included in the ready-to-save count until you choose a member, confirm the profile, or settle attendance.
                           </p>
                         </div>
                         {finalAttentionRows.length === 0 ? (
@@ -3352,6 +3262,7 @@ finalSaveInFlightRef.current = true
                                 <div key={`${entry.sheetId}:${entry.index}`} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                                   <div className="min-w-0">
                                     <p className="truncate text-sm font-black text-stone-900 dark:text-white">{name}</p>
+                                    <p className="mt-0.5 text-[11px] font-bold text-stone-500 dark:text-stone-400">From: {entry.sheetSource || 'saved sheet photo'}</p>
                                     <p className="mt-1 text-xs font-semibold text-amber-800 dark:text-amber-200">{entry.reasons.join(' · ')}</p>
                                   </div>
                                   <button
