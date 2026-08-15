@@ -188,12 +188,12 @@ export const toExtractionError = (error) => {
   if (error instanceof ExtractionError) return error
   const status = error?.status || error?.code
   const message = String(error?.message || 'Gemini request failed.')
-  const isInvalidKey = /API_KEY_INVALID|API key not valid/i.test(message)
+  const isInvalidKey = /API_KEY_INVALID|API key not valid|invalid authentication credentials|unauthenticated/i.test(message)
   const isRateLimited = status === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(message)
   const isModelUnavailable = status === 404 || /models?\/[a-z0-9.-]+ is no longer|NOT_FOUND/i.test(message)
   const isTimeout = status === 504 || status === 408 || /DEADLINE_EXCEEDED|timed out|timeout|ETIMEDOUT/i.test(message)
   if (isInvalidKey) {
-    return new ExtractionError('INVALID_API_KEY', 'The Gemini API key is rejected by Google.', { httpStatus: 500 })
+    return new ExtractionError('INVALID_API_KEY', 'The Gemini API key is rejected by Google.', { httpStatus: 401 })
   }
   if (isRateLimited) {
     return new ExtractionError('RATE_LIMITED', 'Gemini rate limit or quota reached.', { retryable: true, httpStatus: 429 })

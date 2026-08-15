@@ -155,6 +155,16 @@ describe('geminiExtract error mapping', () => {
     expect(error.code).toBe('INVALID_API_KEY')
   })
 
+  it('maps Google UNAUTHENTICATED responses to INVALID_API_KEY', async () => {
+    mocks.generateContent.mockRejectedValue(Object.assign(
+      new Error('UNAUTHENTICATED: Request had invalid authentication credentials.'),
+      { status: 401 }
+    ))
+    const error = await testGeminiConnection({ apiKey: 'invalid-key' }).then(() => null, (e) => e)
+    expect(error.code).toBe('INVALID_API_KEY')
+    expect(error.httpStatus).toBe(401)
+  })
+
   it('maps HTTP 429 / RESOURCE_EXHAUSTED to RATE_LIMITED as retryable', async () => {
     mocks.generateContent.mockRejectedValue(Object.assign(new Error('RESOURCE_EXHAUSTED quota'), { status: 429 }))
     const error = await extractSheetWithGemini({ imageBytes: IMAGE_BYTES, mimeType: MIME })

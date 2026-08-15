@@ -183,19 +183,28 @@ export default async function handler(req, res) {
         const secret = typeof body?.secret === 'string' ? body.secret.trim() : ''
         let model = typeof body?.model === 'string' ? body.model.trim() : ''
         let apiKey = secret
+        let credentialSource = secret ? 'submitted' : 'stored'
         if (!apiKey) {
           const resolved = await resolveStoredProviderKey({ ownerId, provider })
           if (resolved.status === 'unavailable' || resolved.status === 'unreadable') {
-            send(res, 200, {
-              ok: true,
-              status: 'credential_unavailable',
-              code: resolved.code || 'STORED_CREDENTIAL_UNREADABLE',
-              error: 'The stored provider credential could not be read by the server.'
-            })
-            return
+            // A server-only provider key is an intentional reliability fallback
+            // for an unavailable encrypted-store resolver. It remains private to
+            // the API runtime and is never sent to the browser.
+            apiKey = provider === 'gemini' ? (process.env.GEMINI_API_KEY || '') : ''
+            credentialSource = apiKey ? 'environment' : 'stored'
+            if (!apiKey) {
+              send(res, 200, {
+                ok: true,
+                status: 'credential_unavailable',
+                code: resolved.code || 'STORED_CREDENTIAL_UNREADABLE',
+                error: 'The stored provider credential could not be read by the server.'
+              })
+              return
+            }
+          } else {
+            apiKey = resolved.key || ''
+            if (!model) model = resolved.model || ''
           }
-          apiKey = resolved.key || ''
-          if (!model) model = resolved.model || ''
         }
         if (!apiKey) {
           send(res, 200, { ok: true, status: 'not_configured' })
@@ -205,7 +214,7 @@ export default async function handler(req, res) {
         if (result.ok) {
           await client.rpc('ai_provider_mark_verified', { p_owner_id: ownerId, p_provider: provider }).catch(() => {})
         }
-        send(res, 200, { ok: true, ...result })
+        send(res, 200, { ok: true, ...result, credentialSource })
         return
       }
 
