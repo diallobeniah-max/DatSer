@@ -149,11 +149,13 @@ const attendanceMonthsForSettings = (settings) => {
 }
 
 // Per-month Sunday gate: which exact Sundays of `month` the operator selected.
-// null/undefined means every mapped Sunday is eligible (legacy behavior).
+// An absent map preserves the legacy all-Sundays behavior. Once the Paper Scan
+// UI supplies a map, a missing month entry means no dates were selected.
 const selectedSundaysForMonth = (settings, month) => {
-  const map = settings?.sundays && typeof settings.sundays === 'object' ? settings.sundays : {}
-  const list = map[month]
-  return Array.isArray(list) ? new Set(list) : null
+  const hasMap = settings?.sundays && typeof settings.sundays === 'object'
+  if (!hasMap) return null
+  const list = settings.sundays[month]
+  return new Set(Array.isArray(list) ? list : [])
 }
 
 // Attendance items that may be written: explicit Present/Absent decisions on a

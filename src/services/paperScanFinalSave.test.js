@@ -261,6 +261,41 @@ describe('paperScanFinalSave durable operation client', () => {
     expect(plan.rows[0].attendance).toEqual([])
   })
 
+  it('does not write or flag a month when the Paper Scan date selection is empty', () => {
+    const plan = buildFinalSavePlan({
+      sheets: sheet,
+      resultsBySheet: {
+        'sheet-1': {
+          status: 'ok',
+          excludedIndices: [],
+          payload: {
+            rows: [{
+              full_name: 'Ama Serwaa',
+              phone_number: '0241111111',
+              gender: 'Female',
+              current_level: 'SHS1',
+              attendance: { 1: { mark: 'tick', status: 'Present' } },
+              warnings: [],
+              reviewedAttendance: { '2026-06-07': { value: 'Present', source: 'scan' } }
+            }]
+          }
+        }
+      },
+      currentMembers: [member],
+      monthlyTables: ['June_2026'],
+      settingsBySheet: {
+        'sheet-1': {
+          months: ['2026-06'],
+          convention: 'tick_x',
+          columnCount: 1,
+          sundays: {}
+        }
+      }
+    })
+    expect(plan.rows[0].attendance).toEqual([])
+    expect(plan.rows[0].unresolvedAttendance).toBe(0)
+  })
+
   it('refreshes the member snapshot before final-save duplicate detection', async () => {
     const freshMembers = [{ id: 'existing', 'Full Name': 'Kojo', 'Phone Number': '0240000000' }]
     const fetchFreshMembers = vi.fn(async () => freshMembers)

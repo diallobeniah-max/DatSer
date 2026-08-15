@@ -83,7 +83,6 @@ import {
   formatDateKey,
   getSundaysForMonth,
   interpretAttendanceMark,
-  mapAttendanceColumns,
   missingMonthsInYear,
   monthKeyFromDate,
   monthKeyFromTableName,
@@ -726,7 +725,6 @@ const PaperScanReview = ({ onBack }) => {
   // whole batch when an operator is fixing one person or one Sunday.
   const [finalEditedRowKeys, setFinalEditedRowKeys] = useState(() => new Set())
   const [finalEditedChanges, setFinalEditedChanges] = useState({})
-  const [applySundaysToast, setApplySundaysToast] = useState('')
   const finalSaveInFlightRef = useRef(false)
   // Process-one must carry its target synchronously through the local
   // preparation timer. React state alone would not be available to the
@@ -1417,10 +1415,10 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     })
   }
 
-  // Sheet-scoped multi-month selection. Every decision stays keyed by Sunday
-  // date, so months never share decisions; removing a month also drops every
-  // pending attendance write whose date belongs to that month.
-  const defaultSundaysForMonth = (monthKey) => getSundaysForMonth(monthKey).map(formatDateKey)
+  // Sunday dates are an explicit saving scope. An unselected date is neither
+  // a review problem nor a pending attendance write. This prevents a paper
+  // sheet with five columns from silently treating all five Sundays as chosen.
+  const defaultSundaysForMonth = () => []
 
   const addAttendanceMonth = (sheetId, monthKey) => {
     if (!monthKey) return
@@ -2337,23 +2335,6 @@ finalSaveInFlightRef.current = true
 
   const attendanceSettings = reviewActiveId ? getAttendanceSettings(reviewActiveId) : { months: [], month: '', convention: ATTENDANCE_CONVENTIONS.TICK_X, columnCount: 0, sundays: {} }
 
-  // Standard dashboard month selection: workspace month tables grouped by year,
-  // mirroring the header month picker so the review flow reuses the app's own
-  // month-selection look and feel.
-  const monthOptionsByYear = useMemo(() => {
-    const grouped = {}
-    ;(Array.isArray(monthlyTables) ? monthlyTables : []).forEach((table) => {
-      const key = monthKeyFromTableName(table)
-      if (!key) return
-      const year = key.slice(0, 4)
-      if (!grouped[year]) grouped[year] = []
-      grouped[year].push({ key, label: monthKeyLabel(key).split(' ')[0] })
-    })
-    return Object.entries(grouped)
-      .sort(([yearA], [yearB]) => yearB.localeCompare(yearA))
-      .map(([year, months]) => [year, months.sort((a, b) => a.key.localeCompare(b.key))])
-  }, [monthlyTables])
-
   const renderReviewPanel = () => {
     const excludedSet = new Set(reviewResult?.excludedIndices || [])
     const okCount = sheets.filter((sheet) => resultsBySheet[sheet.id]?.status === 'ok').length
@@ -2502,24 +2483,8 @@ finalSaveInFlightRef.current = true
       setReviewStep(entry.attendanceCount > 0 ? 'attendance' : 'members')
     }
 
-    // Detected headers — relocated to the top of the review panel for visibility.
-    // Detected headers — sleek compact chip strip
-    const detectedHeadersBar = reviewSheet && reviewResult?.payload?.sheet ? (
-      <div className="mb-3.5 flex flex-wrap items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400">
-        <span className="text-[11px] font-black uppercase tracking-wider text-stone-400 dark:text-stone-500">Detected headers:</span>
-        {reviewResult.payload.sheet.detected_headers.length ? (
-          reviewResult.payload.sheet.detected_headers.map((header, index) => (
-            <span key={index} className="rounded-lg bg-stone-100 dark:bg-stone-800/90 border border-stone-200/60 dark:border-stone-700/60 px-2 py-0.5 text-[11px] font-mono font-bold text-stone-700 dark:text-stone-300 shadow-2xs">
-              {header}
-            </span>
-          ))
-        ) : (
-          <span className="text-xs font-medium text-stone-400 dark:text-stone-500">None detected</span>
-        )}
-      </div>
-    ) : null
-
-    // Review status panel — sleek single-bar status
+    // One short status line keeps the batch clear without repeating every
+    // extraction detail above the actual review work.
     const reviewStatusPanel = (
       <div className="mb-4 rounded-2xl border border-stone-200/90 bg-white/95 dark:border-stone-800/90 dark:bg-stone-900/90 p-3.5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2536,10 +2501,9 @@ finalSaveInFlightRef.current = true
                 </span>
               )}
             </div>
-            <ul className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs font-medium text-stone-600 dark:text-stone-300">
-              <li>{includedRows} scanned {includedRows === 1 ? 'row' : 'rows'} from your saved sheet photos</li>
-              <li>{finalPreview.plan.rows.length} ready to save</li>
-            </ul>
+            <p className="mt-1 text-xs font-medium text-stone-600 dark:text-stone-300">
+              {includedRows} scanned {includedRows === 1 ? 'row' : 'rows'} · {finalPreview.plan.rows.length} ready to save
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -2549,31 +2513,8 @@ finalSaveInFlightRef.current = true
               className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-black text-white transition-colors hover:bg-emerald-700 shadow-sm"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              Use AI results &amp; review final
+              Review final
             </button>
-            <button
-              type="button"
-              onClick={() => setReviewStep('final')}
-              data-testid="open-final-review"
-              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-1.5 text-xs font-black text-emerald-800 transition-colors hover:border-emerald-500 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
-            >
-              <Table2 className="h-3.5 w-3.5" />
-              Open final preview
-            </button>
-            {attentionRowCount > 0 ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setFinalViewMode('attention')
-                  setReviewStep('final')
-                }}
-                data-testid="review-remaining-items"
-                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-3 py-1.5 text-xs font-bold text-white transition-colors shadow-sm"
-              >
-                <AlertTriangle className="h-3.5 w-3.5" />
-                Needs attention ({attentionRowCount})
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={handleSaveScan}
@@ -2765,9 +2706,9 @@ finalSaveInFlightRef.current = true
           </div>
         </div>
 
-        {/* Sheet navigator & batch controls */}
+        {/* The compact selector beside the sheet replaces this older full batch rail. */}
         {sheets.length > 0 && (
-          <div className="mb-4 rounded-2xl border border-stone-200/90 bg-white/95 p-3.5 shadow-sm dark:border-stone-800 dark:bg-stone-900/95">
+          <div className="hidden">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -2957,16 +2898,14 @@ finalSaveInFlightRef.current = true
               </div>
             )}
 
-            {/* Detected headers + review status live at the top for immediate visibility */}
-            {detectedHeadersBar}
             {reviewStatusPanel}
 
             {/* Step indicator */}
             <div className="mb-5 inline-flex p-1 rounded-2xl bg-stone-200/70 dark:bg-stone-800/70 gap-1 overflow-x-auto max-w-full" role="tablist" aria-label="Review steps">
               {[
-                { id: 'members', label: '1. People & profile' },
-                { id: 'attendance', label: '2. Attendance' },
-                { id: 'final', label: '3. Final review' }
+                { id: 'members', label: 'People' },
+                { id: 'attendance', label: 'Sundays' },
+                { id: 'final', label: 'Save' }
               ].map((step) => {
                 const isActive = reviewStep === step.id
                 return (
@@ -3545,9 +3484,9 @@ finalSaveInFlightRef.current = true
                     <div>
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="min-w-0">
-                          <h2 className="text-base font-black text-stone-900 dark:text-white">Apply this sheet to:</h2>
+                          <h2 className="text-base font-black text-stone-900 dark:text-white">Sundays to save</h2>
                           <p className="mt-0.5 text-xs font-medium text-stone-500 dark:text-stone-400">
-                            Pick one or more months. Each month keeps its own Sundays.
+                            Choose the dates once for this sheet. Only these dates can appear in attention or be saved.
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -3576,40 +3515,6 @@ finalSaveInFlightRef.current = true
                         </div>
                       </div>
 
-                      {/* Standard dashboard month selection grid */}
-                      {monthOptionsByYear.length > 0 && (
-                        <div className="mt-3.5 rounded-2xl border border-stone-200/80 bg-stone-50/80 p-3.5 dark:border-stone-800 dark:bg-stone-800/40">
-                          <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-stone-400 dark:text-stone-500">Quick pick</p>
-                          {monthOptionsByYear.map(([year, months]) => (
-                            <div key={year} className="mb-3 last:mb-0">
-                              <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-stone-400 dark:text-stone-500">{year}</p>
-                              <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
-                                {months.map(({ key, label }) => {
-                                  const isSelected = attendanceSettings.months.includes(key)
-                                  return (
-                                    <button
-                                      key={key}
-                                      type="button"
-                                      onClick={() => (isSelected
-                                        ? removeAttendanceMonth(reviewActiveId, key)
-                                        : addAttendanceMonth(reviewActiveId, key))}
-                                      aria-pressed={isSelected}
-                                      aria-label={`${isSelected ? 'Remove' : 'Add'} ${label}`}
-                                      className={`relative flex items-center justify-center gap-1.5 rounded-xl px-2.5 py-2.5 text-xs font-black transition-all ${isSelected
-                                        ? 'bg-orange-600 text-white shadow-md shadow-orange-600/30'
-                                        : 'bg-white text-stone-700 hover:bg-orange-50 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700/80 border border-stone-200/60 dark:border-stone-700/60'}`}
-                                    >
-                                      {isSelected && <Check className="h-3.5 w-3.5" />}
-                                      {label}
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
                       {attendanceSettings.months.length === 0 ? (
                         <p className="mt-3.5 rounded-2xl border border-dashed border-stone-200 p-6 text-center text-xs font-medium text-stone-500 dark:border-stone-800 dark:text-stone-400">
                           No month selected yet — add a month to map its Sundays to this sheet.
@@ -3620,10 +3525,7 @@ finalSaveInFlightRef.current = true
                             const selectedSundays = Array.isArray(attendanceSettings.sundays?.[monthKey])
                               ? attendanceSettings.sundays[monthKey]
                               : defaultSundaysForMonth(monthKey)
-                            const mappedColumns = mapAttendanceColumns({ month: monthKey, columnCount: attendanceSettings.columnCount })
                             const allSundays = getSundaysForMonth(monthKey)
-                            const usableColumns = mappedColumns.filter((entry) => !entry.unused)
-                            const maxColumn = usableColumns.length
                             return (
                               <div key={monthKey} className="rounded-2xl border border-stone-200/90 bg-white p-3.5 shadow-2xs dark:border-stone-800 dark:bg-stone-900">
                                 <div className="flex items-center justify-between gap-2">
@@ -3640,61 +3542,34 @@ finalSaveInFlightRef.current = true
                                   </button>
                                 </div>
                                 <p className="mt-0.5 text-[11px] font-medium text-stone-500 dark:text-stone-400">
-                                  {allSundays.length} Sunday{allSundays.length === 1 ? '' : 's'} · sheet covers {maxColumn} column{maxColumn === 1 ? '' : 's'}
+                                  Choose only the Sundays you want to save. Unselected dates are ignored completely.
                                 </p>
-                                <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
+                                <div className="mt-3 flex flex-wrap gap-2">
                                   {allSundays.map((date, index) => {
                                     const dateKey = formatDateKey(date)
-                                    const column = index + 1
-                                    const hasColumn = column <= maxColumn
+                                    const hasColumn = index < attendanceSettings.columnCount
                                     const checked = selectedSundays.includes(dateKey)
-                                    const dateLabel = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                                    const dateLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                                     return (
-                                      <label
+                                      <button
                                         key={dateKey}
-                                        className={`flex items-center gap-1.5 text-xs font-semibold ${hasColumn ? 'text-stone-700 dark:text-stone-300' : 'text-stone-400 dark:text-stone-500'}`}
+                                        type="button"
+                                        onClick={() => toggleAttendanceSunday(reviewActiveId, monthKey, dateKey)}
+                                        disabled={!hasColumn}
+                                        aria-pressed={checked && hasColumn}
+                                        aria-label={`${checked ? 'Remove' : 'Include'} ${dateLabel} in ${monthKeyLabel(monthKey)}`}
+                                        className={`rounded-xl border px-3 py-2 text-xs font-black transition-colors ${
+                                          checked && hasColumn
+                                            ? 'border-emerald-500 bg-emerald-600 text-white shadow-sm'
+                                            : hasColumn
+                                              ? 'border-stone-200 bg-white text-stone-600 hover:border-emerald-400 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300'
+                                              : 'cursor-not-allowed border-stone-100 bg-stone-50 text-stone-400 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-600'
+                                        }`}
                                       >
-                                        <input
-                                          type="checkbox"
-                                          checked={checked && hasColumn}
-                                          disabled={!hasColumn}
-                                          onChange={() => toggleAttendanceSunday(reviewActiveId, monthKey, dateKey)}
-                                          aria-label={`Include ${dateLabel} in ${monthKeyLabel(monthKey)}`}
-                                          className="h-4 w-4 accent-orange-600"
-                                        />
                                         {dateLabel}
-                                        {!hasColumn && <span className="text-[10px] font-medium">(no column)</span>}
-                                      </label>
+                                      </button>
                                     )
                                   })}
-                                </div>
-                                {(() => {
-                                  const unusedColumns = mappedColumns.filter((entry) => entry.unused)
-                                  return unusedColumns.length > 0 ? (
-                                    <p className="mt-2 text-[11px] font-medium text-stone-400 dark:text-stone-500">
-                                      Column{unusedColumns.length > 1 ? 's' : ''} {unusedColumns.map((entry) => entry.column).join(', ')} — Unused (no Sunday in {monthKeyLabel(monthKey)}).
-                                    </p>
-                                  ) : null
-                                })()}
-                                {/* Apply Sundays to all action */}
-                                <div className="mt-3.5 flex flex-wrap items-center gap-2.5 pt-3 border-t border-stone-100 dark:border-stone-800">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setApplySundaysToast(`Sunday date mapping active for all ${rowReviewData.length} members`)
-                                      setTimeout(() => setApplySundaysToast(''), 4000)
-                                    }}
-                                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3.5 py-1.5 text-xs font-black text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
-                                    title="Apply this month & Sunday date mapping to all members in this sheet"
-                                  >
-                                    <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                                    Apply Sundays to all
-                                  </button>
-                                  {applySundaysToast && (
-                                    <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                                      {applySundaysToast}
-                                    </span>
-                                  )}
                                 </div>
                               </div>
                             )
@@ -3820,15 +3695,6 @@ finalSaveInFlightRef.current = true
                               )}
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => setSheetRailExpanded((prev) => !prev)}
-                              aria-label="Toggle expanded sheet manager"
-                              aria-expanded={sheetRailExpanded}
-                              className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-stone-200 bg-stone-50 text-stone-600 hover:border-orange-300 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-400 dark:hover:text-white transition-colors"
-                            >
-                              <Menu className="h-4 w-4" />
-                            </button>
                           </div>
                         </div>
                       )}
