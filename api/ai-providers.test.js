@@ -34,6 +34,12 @@ describe('AI provider runtime boundary regressions', () => {
     expect(extractionSource).toContain("GEMINI_EXTRACT_ENDPOINT = '/api/gemini-extract'")
     expect(`${providersSource}\n${extractionSource}`).not.toMatch(/vercel\.app|VERCEL_URL|https:\/\//)
   })
+
+  it('uses the server-only Gemini fallback before a stale stored credential for health checks', () => {
+    const source = readFileSync(resolve(repo, 'api/ai-providers.js'), 'utf8')
+    expect(source).toContain("const environmentGeminiKey = provider === 'gemini' ? (process.env.GEMINI_API_KEY || '').trim() : ''")
+    expect(source).toContain("let apiKey = secret || environmentGeminiKey")
+  })
 })
 
 describe('ai-providers classifyRpcError', () => {

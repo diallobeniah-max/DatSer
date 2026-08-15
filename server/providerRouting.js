@@ -54,7 +54,10 @@ export const resolveProviderKeys = async ({
         // fall through to env
       }
     }
-    if (!key && envKeys?.[provider]) key = envKeys[provider]
+    // Server environment credentials are deployment-managed and take
+    // precedence over a stale encrypted record. This is deliberately a
+    // server-only choice: neither source is ever returned to the browser.
+    if (envKeys?.[provider]) key = envKeys[provider]
     if (key) result[provider] = { key, model }
   }
   return result

@@ -182,8 +182,13 @@ export default async function handler(req, res) {
       if (body?.action === 'test') {
         const secret = typeof body?.secret === 'string' ? body.secret.trim() : ''
         let model = typeof body?.model === 'string' ? body.model.trim() : ''
-        let apiKey = secret
-        let credentialSource = secret ? 'submitted' : 'stored'
+        // A deployment-managed Gemini credential is the runtime source of
+        // truth. It lets Paper Scan recover from a stale or unreadable legacy
+        // encrypted record without sending any key to the browser. An explicit
+        // key submitted for this one health check still wins intentionally.
+        const environmentGeminiKey = provider === 'gemini' ? (process.env.GEMINI_API_KEY || '').trim() : ''
+        let apiKey = secret || environmentGeminiKey
+        let credentialSource = secret ? 'submitted' : (environmentGeminiKey ? 'environment' : 'stored')
         if (!apiKey) {
           const resolved = await resolveStoredProviderKey({ ownerId, provider })
           if (resolved.status === 'unavailable' || resolved.status === 'unreadable') {
