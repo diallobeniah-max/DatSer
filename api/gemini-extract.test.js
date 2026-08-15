@@ -221,7 +221,10 @@ describe('api/gemini-extract', () => {
       sha256: SHA,
       requestId: REQUEST_ID
     })
-    expect(mocks.extractSheetWithGemini).toHaveBeenCalledWith({ imageBytes: Buffer.from('img'), mimeType: 'image/png' })
+    expect(mocks.extractSheetWithGemini).toHaveBeenCalledWith(expect.objectContaining({ imageBytes: Buffer.from('img'), mimeType: 'image/png' }))
+    // The resolver is wired so a stored provider credential can power extraction.
+    const callArgs = mocks.extractSheetWithGemini.mock.calls[0][0]
+    expect(typeof callArgs.storedCredentialResolver).toBe('function')
     // The claim must finish before any Gemini spend.
     expect(mocks.claimImageSlot.mock.invocationCallOrder[0]).toBeLessThan(mocks.extractSheetWithGemini.mock.invocationCallOrder[0])
     expect(res.status).toBe(200)

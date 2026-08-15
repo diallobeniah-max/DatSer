@@ -205,14 +205,14 @@ const toExtractionError = (error) => {
   return new ExtractionError('GEMINI_API_ERROR', 'Gemini could not complete the request.', { retryable: true, httpStatus: 502 })
 }
 
-export const extractSheetWithGemini = async ({ imageBytes, mimeType }) => {
+export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCredentialResolver = null }) => {
   if (!imageBytes || !(imageBytes instanceof Uint8Array) || imageBytes.length === 0) {
     throw new ExtractionError('MISSING_IMAGE', 'An image payload is required.', { httpStatus: 400 })
   }
   if (imageBytes.length > MAX_IMAGE_BYTES) {
     throw new ExtractionError('IMAGE_TOO_LARGE', 'The image is too large to process.', { httpStatus: 413 })
   }
-  const apiKey = getGeminiApiKey()
+  const apiKey = await getGeminiApiKey({ storedCredentialResolver })
   if (!apiKey) {
     throw new ExtractionError('SERVER_NOT_CONFIGURED', 'The server is missing its Gemini API key.', { httpStatus: 500 })
   }

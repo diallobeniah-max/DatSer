@@ -25,7 +25,8 @@ import {
     BellRing,
     Shield,
     BadgeCheck,
-    Search
+    Search,
+    Cpu
 } from 'lucide-react'
 
 // Main Application Views
@@ -112,6 +113,14 @@ export const SETTINGS_SECTIONS = [
         keywords: 'member codes workspace member codes index badge quick pass profile preview check in lookup attendance code number id qr pass share scanner camera scan code name'
     },
     {
+        id: 'ai_providers',
+        label: 'AI Providers',
+        icon: Cpu,
+        color: 'purple',
+        content: 'Manage AI provider credentials for Paper Scan extraction (Gemini). Configure, replace, test, or remove the server-side provider key securely.',
+        keywords: 'ai providers gemini extraction paper scan api key credential configuration secure provider openai deepseek model'
+    },
+    {
         id: 'accessibility',
         label: 'Accessibility',
         icon: Zap,
@@ -156,6 +165,13 @@ export const SETTINGS_SECTIONS = [
 ]
 
 export const SETTINGS_SEARCH_INDEX = [
+    {
+        id: 'ai_providers_gemini',
+        section: 'ai_providers',
+        label: 'Gemini API Key',
+        description: 'Configure, replace, test, or remove the Gemini extraction API key securely.',
+        keywords: 'ai providers gemini extraction api key credential secure provider paper scan openai deepseek'
+    },
     {
         id: 'profile_photo',
         section: 'account',

@@ -14,6 +14,35 @@ export const getSupabaseServerConfig = () => {
   return { url, anonKey }
 }
 
+const getServiceRoleKey = () => process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+
+// Server-side resolver for a stored AI-provider credential. Returns the
+// DECRYPTED provider key ONLY to the server runtime (never to a browser). Uses a
+// service-role client so it can call the SECURITY DEFINER ai_provider_resolve_key
+// RPC, which is revoked from browser roles. Falls back to '' when the stored
+// credential is absent or the service key is not configured (the caller then
+// falls through to the GEMINI_API_KEY environment variable).
+export const resolveStoredGeminiKey = async ({ ownerId, provider = 'gemini' }) => {
+  const { url } = getSupabaseServerConfig()
+  const serviceRoleKey = getServiceRoleKey()
+  if (!url || !serviceRoleKey || !ownerId) return ''
+  try {
+    const serviceClient = createClient(url, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    })
+    const encryptionKey = process.env.AI_PROVIDER_ENCRYPTION_KEY || ''
+    const { data, error } = await serviceClient.rpc('ai_provider_resolve_key', {
+      p_owner_id: ownerId,
+      p_provider: provider,
+      p_encryption_key: encryptionKey
+    })
+    if (error || typeof data !== 'string' || !data) return ''
+    return data
+  } catch {
+    return ''
+  }
+}
+
 const createUserScopedClient = ({ url, anonKey, accessToken }) => {
   return createClient(url, anonKey, {
     auth: {

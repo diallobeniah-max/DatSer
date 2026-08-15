@@ -84,6 +84,7 @@ const MemberCodeSettingsSection = lazyWithRetry(() => import('./MemberCodeSettin
 const UpdatesSettingsSection = lazyWithRetry(() => import('./UpdatesSettingsSection'))
 const DangerSettingsSection = lazyWithRetry(() => import('./DangerSettingsSection'))
 const DeveloperToolsPanel = lazyWithRetry(() => import('./DeveloperToolsPanel'))
+const AiProvidersSection = lazyWithRetry(() => import('./AiProvidersSection'))
 
 const PreviewInput = ({ children, compact = false }) => (
     <div className={`guided-preview-input ${compact ? 'guided-preview-input-compact' : ''}`}>
@@ -1734,6 +1735,12 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             isAdminAccess={hasAdminAccess}
                             getSettingTargetClass={getSettingTargetClass}
                         />
+                    </React.Suspense>
+                )
+            case 'ai_providers':
+                return (
+                    <React.Suspense fallback={<LazyPanelFallback />}>
+                        <AiProvidersSection />
                     </React.Suspense>
                 )
             case 'updates':

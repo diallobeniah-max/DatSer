@@ -5,7 +5,8 @@ import {
   authenticateExtractionRequest,
   claimImageSlot,
   readBearerToken,
-  readWorkspaceId
+  readWorkspaceId,
+  resolveStoredGeminiKey
 } from '../server/extractionGuard.js'
 
 export const config = {
@@ -122,7 +123,8 @@ export default async function handler(req, res) {
 
     const payload = await extractSheetWithGemini({
       imageBytes: image.bytes,
-      mimeType: image.mimeType
+      mimeType: image.mimeType,
+      storedCredentialResolver: () => resolveStoredGeminiKey({ ownerId: identity.ownerId })
     })
 
     send(res, 200, { ok: true, ...payload, ownerId: identity.ownerId, extractionId })
