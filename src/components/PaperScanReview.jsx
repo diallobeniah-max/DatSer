@@ -25,7 +25,6 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  Table2,
   Trash2,
   Upload,
   UserPlus,
@@ -47,6 +46,7 @@ import {
   mergeStagedSheet,
   removeStagedSheet,
   renameSavedScan,
+  saveResultFromSavedScan,
   savePaperScan,
   uploadSheetImage,
   usageMetadataFromSavedScan,
@@ -725,6 +725,11 @@ const PaperScanReview = ({ onBack }) => {
   // whole batch when an operator is fixing one person or one Sunday.
   const [finalEditedRowKeys, setFinalEditedRowKeys] = useState(() => new Set())
   const [finalEditedChanges, setFinalEditedChanges] = useState({})
+  const [finalGroupFilter, setFinalGroupFilter] = useState('ready') // ready | saved | attention | all
+  // A saved scan can be applied in more than one deliberate group. Keep the
+  // confirmed rows from this open session visible while the latest operation
+  // remains available for safe retry/recovery.
+  const [finalSaveHistory, setFinalSaveHistory] = useState({})
   const finalSaveInFlightRef = useRef(false)
   // Process-one must carry its target synchronously through the local
   // preparation timer. React state alone would not be available to the
@@ -1846,7 +1851,15 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
         savedScanId: record.id,
         operationId: null
       })
-      setFinalSaveResult(operation ? finalSaveResultFromOperation(operation) : null)
+      const restoredFinalSave = operation ? finalSaveResultFromOperation(operation) : null
+      const cachedFinalSave = saveResultFromSavedScan(record)
+      setFinalSaveResult(restoredFinalSave)
+      setFinalSaveHistory(Object.fromEntries([
+        ...(cachedFinalSave?.members || []),
+        ...(restoredFinalSave?.members || [])
+      ]
+        .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
+        .map((member) => [`${member.sheetId}:${member.rowIndex}`, member])))
       setPendingDuplicates(null)
       setSheets(sheetList)
       setIsScanning(false)
@@ -1998,6 +2011,30 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     return { operationId: finalSaveResult?.operationId || null, persistedMemberIds }
   }
 
+  const rememberConfirmedFinalRows = (members = []) => {
+    const confirmed = Object.fromEntries(members
+      .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
+      .map((member) => [`${member.sheetId}:${member.rowIndex}`, member]))
+    if (Object.keys(confirmed).length > 0) {
+      setFinalSaveHistory((previous) => ({ ...previous, ...confirmed }))
+    }
+  }
+
+  // The Saved Scan cache is display-only. It lets a reopened scan retain the
+  // green rows from earlier deliberate save groups; retry authorization stays
+  // tied to the latest immutable server operation.
+  const resultWithSavedHistory = (result) => {
+    const merged = new Map()
+    Object.values(finalSaveHistory).forEach((member) => {
+      merged.set(`${member.sheetId}:${member.rowIndex}`, member)
+    })
+    ;(result?.members || []).forEach((member) => {
+      merged.set(`${member.sheetId}:${member.rowIndex}`, member)
+    })
+    const members = [...merged.values()]
+    return { ...result, members, summary: summarizeFinalSaveMembers(members) }
+  }
+
   // Runs the controlled save. Double-save protection is both a state flag and a
   // ref so two rapid Confirm clicks can never start two passes.
   const runFinalSave = async ({ confirmedKeys, plan: frozenPlan = null, editedRowKeys = null, editedChanges = null }) => {
@@ -2009,8 +2046,10 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     setSavedScansError('')
     try {
       const plan = frozenPlan || buildFinalSavePlanNow({ onlyRowKeys: editedRowKeys, onlyEditedChanges: editedChanges })
-      const priorOperation = durableSaveContext().operationId
-      const operationId = priorOperation || createSavedScanId()
+      // Every newly confirmed group becomes its own durable operation. Failed
+      // operations are resumed exclusively through the retry path below, so a
+      // later "save ready" action can never reuse a completed operation.
+      const operationId = createSavedScanId()
       // This upsert is a required precondition, not best-effort audit logging:
       // a durable scan id + operation id exists before Final Save may mutate.
       const saved = await persistFinalSaveMetadata({
@@ -2046,6 +2085,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       }
 
       setFinalSaveResult(result)
+      rememberConfirmedFinalRows(result.members)
       if (editedRowKeys) {
         const completedKeys = new Set((result.members || [])
           .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
@@ -2056,7 +2096,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
         }
       }
       try {
-        const { id, name } = await persistFinalSaveMetadata(buildSaveResultMetadata({ result }))
+        const { id, name } = await persistFinalSaveMetadata(buildSaveResultMetadata({ result: resultWithSavedHistory(result) }))
         setFinalSaveResult((prev) => ({ ...prev, savedScan: { id, name } }))
       } catch (persistError) {
         console.warn('Final save result could not be persisted to the saved scan:', persistError)
@@ -2072,7 +2112,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     }
   }
 
-  const handleConfirmFinalSave = ({ editedOnly = false } = {}) => {
+  const handleConfirmFinalSave = ({ editedOnly = false, onlyRowKeys = null } = {}) => {
     if (finalSaving) return
     // Refresh the member snapshot so the save-time duplicate check runs against
     // the latest data. Likely duplicates STOP the save before any write; the
@@ -2081,7 +2121,9 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     sheets.forEach((sheet) => {
       settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
     })
-    const editedRowKeys = editedOnly ? new Set(finalEditedRowKeys) : null
+    const editedRowKeys = editedOnly
+      ? new Set(finalEditedRowKeys)
+      : (onlyRowKeys ? new Set(onlyRowKeys) : null)
     const editedChanges = editedOnly ? finalEditedChanges : null
     const preview = previewFinalSave({
       sheets,
@@ -2152,9 +2194,10 @@ finalSaveInFlightRef.current = true
         const summary = summarizeFinalSaveMembers(mergedMembers)
         const nextResult = { ...finalSaveResult, summary, members: mergedMembers, savedAt: new Date().toISOString() }
         setFinalSaveResult(nextResult)
+        rememberConfirmedFinalRows(nextResult.members)
         if (retry.blockedDuplicates.length === 0) {
           try {
-            await persistFinalSaveMetadata(buildSaveResultMetadata({ result: nextResult }))
+            await persistFinalSaveMetadata(buildSaveResultMetadata({ result: resultWithSavedHistory(nextResult) }))
           } catch (persistError) {
             console.warn('Retry result could not be persisted to the saved scan:', persistError)
           }
@@ -2174,6 +2217,7 @@ finalSaveInFlightRef.current = true
 
   const handleDismissSaveResult = () => {
     setFinalSaveResult(null)
+    setFinalSaveHistory({})
     setPendingDuplicates(null)
     setConfirmedDuplicateKeys([])
   }
@@ -2471,7 +2515,29 @@ finalSaveInFlightRef.current = true
       if (attendanceCount > 0) reasons.push(`${attendanceCount} attendance mark${attendanceCount === 1 ? '' : 's'} need review`)
       return reasons.length ? [{ ...entry, reasons, attendanceCount }] : []
     })
-    const attentionRowCount = finalAttentionRows.length
+    const finalOperationRowKey = (sheetId, rowIndex) => `${sheetId}:${rowIndex}`
+    const savedFinalRowKeys = new Set([
+      ...Object.values(finalSaveHistory),
+      ...(finalSaveResult?.members || [])
+    ]
+      .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
+      .map((member) => finalOperationRowKey(member.sheetId, member.rowIndex)))
+    // A server-confirmed row is sent, even if its original scan had an
+    // advisory review note. The three groups are deliberately exclusive.
+    const remainingAttentionRows = finalAttentionRows.filter((entry) => !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.index)))
+    const attentionRowCount = remainingAttentionRows.length
+    const attentionFinalRowKeys = new Set(remainingAttentionRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.index)))
+    const savedFinalRows = finalPreview.plan.rows.filter((entry) => savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex)))
+    const readyFinalRows = finalPreview.plan.rows.filter((entry) => (
+      entry.hasWrites
+      && !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
+      && !attentionFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
+    ))
+    const visibleFinalRows = finalGroupFilter === 'saved'
+      ? savedFinalRows
+      : finalGroupFilter === 'ready'
+        ? readyFinalRows
+        : finalPreview.plan.rows
 
     const openFinalAttentionRow = (entry) => {
       if (entry.sheetId === reviewActiveId) {
@@ -2939,24 +3005,19 @@ finalSaveInFlightRef.current = true
                   <div>
                     <h2 className="text-base font-black text-stone-900 dark:text-white">Final review</h2>
                     <p className="text-xs font-medium text-stone-500 dark:text-stone-400">
-                      Save the approved items now. Anything still needing review stays here for you to finish later.
+                      Green is already in DatSer. Blue is approved and waiting to save. Amber needs your decision.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {attentionRowCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setFinalViewMode('attention')}
-                        className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-amber-700 shadow-sm"
-                      >
-                        <AlertTriangle className="h-4 w-4" />
-                        Needs attention ({attentionRowCount})
-                      </button>
-                    )}
                     <button
                       type="button"
-                      onClick={() => handleConfirmFinalSave({ editedOnly: finalEditedRowKeys.size > 0 })}
-                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : finalPreview.plan.rows.length === 0)}
+                      onClick={() => handleConfirmFinalSave({
+                        editedOnly: finalEditedRowKeys.size > 0,
+                        onlyRowKeys: finalEditedRowKeys.size > 0
+                          ? null
+                          : readyFinalRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.rowIndex))
+                      })}
+                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : readyFinalRows.length === 0)}
                       data-testid="confirm-save-to-datser"
                       className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
                     >
@@ -2967,7 +3028,7 @@ finalSaveInFlightRef.current = true
                         ? 'Saving to DatSer…'
                         : finalEditedRowKeys.size > 0
                           ? `Save edited rows (${editedRowsPreview?.plan.rows.length || 0})`
-                          : 'Confirm Save to DatSer'}
+                          : `Save ready (${readyFinalRows.length})`}
                     </button>
                   </div>
                 </div>
@@ -2978,47 +3039,53 @@ finalSaveInFlightRef.current = true
                   </p>
                 ) : (
                   <>
-                    <div className="mt-4 flex items-center justify-between gap-3">
-                      <p className="text-xs font-black uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                        {finalEditedRowKeys.size > 0
-                          ? `${editedRowsPreview?.plan.rows.length || 0} edited ${editedRowsPreview?.plan.rows.length === 1 ? 'member' : 'members'} ready to save`
-                          : `${finalPreview.plan.rows.length} ${finalPreview.plan.rows.length === 1 ? 'member' : 'members'} ready to save`}
-                      </p>
-                      <div className="inline-flex rounded-xl border border-stone-200/80 bg-stone-100 p-1 dark:border-stone-700 dark:bg-stone-800/80" role="group" aria-label="Final review view">
-                        <button
-                          type="button"
-                          onClick={() => setFinalViewMode('table')}
-                          aria-pressed={finalViewMode === 'table'}
-                          className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-black transition-colors ${
-                            finalViewMode === 'table'
-                              ? 'bg-white text-stone-900 shadow-sm dark:bg-stone-700 dark:text-white'
-                              : 'text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-200'
-                          }`}
-                        >
-                          <Table2 className="h-3.5 w-3.5" />
-                          Spreadsheet
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setFinalViewMode('attention')}
-                          aria-pressed={finalViewMode === 'attention'}
-                          className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-black transition-colors ${
-                            finalViewMode === 'attention'
-                              ? 'bg-amber-500 text-white shadow-sm'
-                              : 'text-amber-700 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200'
-                          }`}
-                        >
-                          <AlertTriangle className="h-3.5 w-3.5" />
-                          Needs attention ({attentionRowCount})
-                        </button>
-                      </div>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3" role="group" aria-label="Final save groups">
+                      <button
+                        type="button"
+                        onClick={() => { setFinalGroupFilter('saved'); setFinalViewMode('table') }}
+                        aria-pressed={finalViewMode === 'table' && finalGroupFilter === 'saved'}
+                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          finalViewMode === 'table' && finalGroupFilter === 'saved'
+                            ? 'border-emerald-500 bg-emerald-100 text-emerald-950 dark:bg-emerald-950/50 dark:text-emerald-100'
+                            : 'border-emerald-200 bg-emerald-50/60 text-emerald-900 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-200'
+                        }`}
+                      >
+                        <span className="block text-sm font-black">Sent · {savedFinalRows.length}</span>
+                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Confirmed by DatSer</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setFinalGroupFilter('ready'); setFinalViewMode('table') }}
+                        aria-pressed={finalViewMode === 'table' && finalGroupFilter === 'ready'}
+                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          finalViewMode === 'table' && finalGroupFilter === 'ready'
+                            ? 'border-sky-500 bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-100'
+                            : 'border-sky-200 bg-sky-50/60 text-sky-900 hover:bg-sky-100 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-200'
+                        }`}
+                      >
+                        <span className="block text-sm font-black">Ready to save · {readyFinalRows.length}</span>
+                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Only the selected Sundays</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setFinalGroupFilter('attention'); setFinalViewMode('attention') }}
+                        aria-pressed={finalViewMode === 'attention'}
+                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          finalViewMode === 'attention'
+                            ? 'border-amber-500 bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100'
+                            : 'border-amber-200 bg-amber-50/60 text-amber-900 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200'
+                        }`}
+                      >
+                        <span className="block text-sm font-black">Needs attention · {attentionRowCount}</span>
+                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Not included in Save ready</span>
+                      </button>
                     </div>
 
-                    {attentionRowCount > 0 && (
-                      <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                        {attentionRowCount} scanned {attentionRowCount === 1 ? 'row needs' : 'rows need'} attention. Each entry is one line from a saved sheet photo, even when that line has several details to check.
-                      </p>
-                    )}
+                    <p className="mt-3 text-xs font-semibold text-stone-500 dark:text-stone-400">
+                      {finalEditedRowKeys.size > 0
+                        ? `${editedRowsPreview?.plan.rows.length || 0} edited ${editedRowsPreview?.plan.rows.length === 1 ? 'row' : 'rows'} are ready to save.`
+                        : 'Choose a colour group to see exactly what will be saved or reviewed.'}
+                    </p>
 
                     {finalViewMode === 'table' ? (
                       /* Spreadsheet / table view — mirrors the physical sheet */
@@ -3049,10 +3116,21 @@ finalSaveInFlightRef.current = true
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-stone-100 dark:divide-stone-800/60">
-                            {finalPreview.plan.rows.map((entry, index) => {
+                            {visibleFinalRows.length === 0 ? (
+                              <tr>
+                                <td colSpan={1 + COMPARE_FIELDS.length + finalSundayDates.length + 1} className="px-4 py-10 text-center text-sm font-semibold text-stone-500 dark:text-stone-400">
+                                  {finalGroupFilter === 'saved'
+                                    ? 'No rows have been confirmed as sent yet.'
+                                    : 'No approved rows are waiting to save.'}
+                                </td>
+                              </tr>
+                            ) : visibleFinalRows.map((entry, index) => {
                               const rowKey = finalRowKey(entry)
+                              const operationRowKey = finalOperationRowKey(entry.sheetId, entry.rowIndex)
                               const isEditingThis = finalEditingRowKey === rowKey
                               const wasEditedInThisPass = finalEditedRowKeys.has(rowKey)
+                              const isSaved = savedFinalRowKeys.has(operationRowKey)
+                              const needsAttention = attentionFinalRowKeys.has(operationRowKey)
                               const attendanceMap = finalAttendanceMap(entry)
                               const isNew = entry.memberAction === 'create-new'
                               const name = isNew
@@ -3064,12 +3142,23 @@ finalSaveInFlightRef.current = true
                                   <tr className={`hover:bg-stone-50/70 dark:hover:bg-stone-800/40 transition-colors ${
                                     isEditingThis
                                       ? 'bg-orange-50/70 dark:bg-orange-950/20'
-                                      : wasEditedInThisPass
+                                      : isSaved
                                         ? 'bg-emerald-50/70 dark:bg-emerald-950/20'
-                                        : ''
+                                        : needsAttention
+                                          ? 'bg-amber-50/70 dark:bg-amber-950/20'
+                                          : wasEditedInThisPass
+                                            ? 'bg-orange-50/70 dark:bg-orange-950/20'
+                                            : 'bg-sky-50/35 dark:bg-sky-950/10'
                                   }`}>
                                     <td className="whitespace-nowrap px-3.5 py-2.5 font-mono text-[11px] text-stone-400">
-                                      {index + 1}
+                                      <span className="block">{index + 1}</span>
+                                      <span className={`mt-1 inline-flex rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide ${
+                                        isSaved
+                                          ? 'bg-emerald-200/80 text-emerald-900 dark:bg-emerald-900/70 dark:text-emerald-100'
+                                          : needsAttention
+                                            ? 'bg-amber-200/80 text-amber-900 dark:bg-amber-900/70 dark:text-amber-100'
+                                            : 'bg-sky-200/80 text-sky-900 dark:bg-sky-900/70 dark:text-sky-100'
+                                      }`}>{isSaved ? 'Sent' : needsAttention ? 'Review' : 'Ready'}</span>
                                     </td>
                                     {COMPARE_FIELDS.map(({ key }) => (
                                       <td key={key} className="whitespace-nowrap px-3.5 py-2.5 font-medium text-stone-900 dark:text-white">
@@ -3191,11 +3280,11 @@ finalSaveInFlightRef.current = true
                             One entry per extracted line from your saved sheet photos. These rows are not included in the ready-to-save count until you choose a member, confirm the profile, or settle attendance.
                           </p>
                         </div>
-                        {finalAttentionRows.length === 0 ? (
+                        {remainingAttentionRows.length === 0 ? (
                           <p className="p-6 text-center text-sm font-medium text-amber-800 dark:text-amber-200">Nothing is waiting for review.</p>
                         ) : (
                           <div className="max-h-[58dvh] overflow-auto divide-y divide-amber-100 dark:divide-amber-900/40">
-                            {finalAttentionRows.map((entry) => {
+                            {remainingAttentionRows.map((entry) => {
                               const name = entry.row.full_name || entry.row.originalGeminiValue?.full_name || `Person ${entry.index + 1}`
                               return (
                                 <div key={`${entry.sheetId}:${entry.index}`} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
