@@ -55,6 +55,43 @@ describe('paperScanFinalSave durable operation client', () => {
     expect(plan.rows).toEqual([])
   })
 
+  it('can save only the spreadsheet rows edited in the current correction pass', () => {
+    const plan = buildFinalSavePlan({
+      sheets: sheet,
+      resultsBySheet: {
+        'sheet-1': {
+          status: 'ok',
+          excludedIndices: [],
+          payload: {
+            rows: [
+              { full_name: 'Ama Serwaa', phone_number: '0240000000', attendance: {}, warnings: [], ...reviewed({ phone_number: '0242222222' }) },
+              { full_name: 'Ama Serwaa', phone_number: '0240000000', attendance: {}, warnings: [], ...reviewed({ phone_number: '0243333333' }) }
+            ]
+          }
+        }
+      },
+      currentMembers: [member],
+      monthlyTables: ['June_2026'],
+      settingsBySheet: { 'sheet-1': { month: '2026-06', convention: 'tick_x', columnCount: 4 } },
+      onlyRowKeys: new Set(['sheet-1:1'])
+    })
+    expect(plan.rows).toHaveLength(1)
+    expect(plan.rows[0].rowIndex).toBe(1)
+  })
+
+  it('limits an edited-row save to the exact profile field that changed', () => {
+    const plan = planFor([{ full_name: 'Ama Serwaa', phone_number: '0240000000', gender: 'Female', attendance: {}, warnings: [], ...reviewed({ phone_number: '0242222222', gender: 'Male' }) }])
+    const scoped = buildFinalSavePlan({
+      sheets: sheet,
+      resultsBySheet: { 'sheet-1': { status: 'ok', excludedIndices: [], payload: { rows: plan.rows.map((entry) => entry.row) } } },
+      currentMembers: [member],
+      monthlyTables: ['June_2026'],
+      settingsBySheet: { 'sheet-1': { month: '2026-06', convention: 'tick_x', columnCount: 4 } },
+      onlyEditedChanges: { 'sheet-1:0': { fields: ['phone_number'], attendanceDates: [] } }
+    })
+    expect(scoped.rows[0].profileUpdates).toEqual({ phone_number: '0242222222' })
+  })
+
   it('detects same-batch duplicate new members before mutation', () => {
     const plan = planFor([
       { full_name: 'Kojo', phone_number: '0240000000', memberAction: 'create-new', attendance: {}, warnings: [], ...reviewed({ full_name: 'Kojo', phone_number: '0240000000' }) },

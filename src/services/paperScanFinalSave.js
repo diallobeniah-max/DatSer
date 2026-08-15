@@ -201,10 +201,18 @@ export const buildFinalSavePlan = ({
   resultsBySheet = {},
   currentMembers = [],
   monthlyTables = [],
-  settingsBySheet = {}
+  settingsBySheet = {},
+  // When the spreadsheet is being used as a correction pass, limit the
+  // durable operation to only the rows the operator edited in that pass.
+  // Omit this value for the normal "save all approved" workflow.
+  onlyRowKeys = null,
+  onlyEditedChanges = null
 }) => {
   const rows = []
   const sheetList = Array.isArray(sheets) ? sheets : []
+  const selectedRowKeys = Array.isArray(onlyRowKeys) || onlyRowKeys instanceof Set
+    ? new Set(onlyRowKeys)
+    : null
   sheetList.forEach((sheet) => {
     const result = resultsBySheet?.[sheet.id]
     if (result?.status !== 'ok' || !result?.payload) return
@@ -212,8 +220,16 @@ export const buildFinalSavePlan = ({
     const settings = settingsBySheet?.[sheet.id] || EMPTY_ATTENDANCE_SETTINGS
     result.payload.rows.forEach((row, rowIndex) => {
       if (excluded.has(rowIndex)) return
+      const rowKey = `${sheet.id}:${rowIndex}`
+      if (selectedRowKeys && !selectedRowKeys.has(rowKey)) return
+      const editedScope = onlyEditedChanges?.[rowKey] || null
+      if (onlyEditedChanges && !editedScope) return
       const match = resolvePlanMatch(row, currentMembers)
-      const attendance = collectAttendanceItems({ row, settings })
+      const collectedAttendance = collectAttendanceItems({ row, settings })
+      const editedDates = new Set(editedScope?.attendanceDates || [])
+      const attendance = editedScope
+        ? { items: collectedAttendance.items.filter((item) => editedDates.has(item.dateKey)), unresolved: 0 }
+        : collectedAttendance
       if (isCreateNewRow(row)) {
         const target = row?.newMemberTarget || { mode: 'this-month', monthKey: settings.month }
         const targetMode = target?.mode === 'all-year' || target?.mode === 'all-months' ? 'all-year' : 'this-month'
@@ -264,10 +280,12 @@ export const buildFinalSavePlan = ({
       // the operator explicitly selects a member or creates a new one.
       if (match.status !== MATCH_STATUSES.MATCHED || !member) return
       const profileUpdates = {}
+      const editedFields = new Set(editedScope?.fields || [])
       let unresolvedProfile = 0
       if (member) {
         const compares = compareRowToMember(row, member)
         COMPARE_FIELDS.forEach(({ key }) => {
+          if (editedScope && !editedFields.has(key)) return
           const decision = getFieldDecision(row, key)
           if (!decision) return
           if (!fieldValuesEquivalent(key, decision.value, getExistingValue(member, key))) {
@@ -278,6 +296,7 @@ export const buildFinalSavePlan = ({
           sum + (fieldNeedsDecision(compare) && !getFieldDecision(row, compare.field) ? 1 : 0)
         ), 0)
       }
+      if (editedScope && Object.keys(profileUpdates).length === 0 && attendance.items.length === 0) return
       rows.push({
         sheetId: sheet.id,
         rowIndex,
@@ -288,8 +307,8 @@ export const buildFinalSavePlan = ({
         memberId: member?.id || null,
         profileUpdates,
         attendance: attendance.items,
-        unresolvedAttendance: attendance.unresolved,
-        unresolvedProfile,
+        unresolvedAttendance: editedScope ? 0 : attendance.unresolved,
+        unresolvedProfile: editedScope ? 0 : unresolvedProfile,
         hasWrites: Object.keys(profileUpdates).length > 0 || attendance.items.length > 0
       })
     })
@@ -809,9 +828,11 @@ export const previewFinalSave = ({
   resultsBySheet = {},
   currentMembers = [],
   monthlyTables = [],
-  settingsBySheet = {}
+  settingsBySheet = {},
+  onlyRowKeys = null,
+  onlyEditedChanges = null
 }) => {
-  const plan = buildFinalSavePlan({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet })
+  const plan = buildFinalSavePlan({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet, onlyRowKeys, onlyEditedChanges })
   const counts = { rows: plan.rows.length, newMembers: 0, profileChanges: 0, attendance: 0, unresolved: 0 }
   plan.rows.forEach((entry) => {
     if (entry.memberAction === 'create-new') counts.newMembers += 1

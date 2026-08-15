@@ -688,7 +688,7 @@ const PaperScanReview = ({ onBack }) => {
   const [memberSearchQuery, setMemberSearchQuery] = useState('') // filters the database search bar
   const [possibleMatchesOpen, setPossibleMatchesOpen] = useState(false) // accordion for possible matches
   const [crossMonthCandidates, setCrossMonthCandidates] = useState([]) // { sheetId, rowIndex, candidates } from other months
-  const [finalViewMode, setFinalViewMode] = useState('table') // table | cards on the final review step
+  const [finalViewMode, setFinalViewMode] = useState('table') // table | attention | cards on the final review step
   const [expandedFinalRows, setExpandedFinalRows] = useState(() => new Set()) // expanded keys on the final card view
   const [viewer, setViewer] = useState(null) // { sheetId, mode: 'original' | 'enhanced' }
   const [showChanges, setShowChanges] = useState(false)
@@ -722,6 +722,11 @@ const PaperScanReview = ({ onBack }) => {
   const [memberListSearch, setMemberListSearch] = useState('')
   const [completedSheets, setCompletedSheets] = useState(() => new Set())
   const [finalEditingRowKey, setFinalEditingRowKey] = useState(null)
+  // Only rows changed inside the Final Review spreadsheet belong to this
+  // correction pass. The primary save action uses this to avoid replaying a
+  // whole batch when an operator is fixing one person or one Sunday.
+  const [finalEditedRowKeys, setFinalEditedRowKeys] = useState(() => new Set())
+  const [finalEditedChanges, setFinalEditedChanges] = useState({})
   const [applySundaysToast, setApplySundaysToast] = useState('')
   const finalSaveInFlightRef = useRef(false)
   // Process-one must carry its target synchronously through the local
@@ -743,6 +748,7 @@ const PaperScanReview = ({ onBack }) => {
   const scanTimerRef = useRef(null)
   const previewTimerRef = useRef(null)
   const pendingPreviewRef = useRef(null)
+  const pendingReviewIndexRef = useRef(null)
 
   if (!stagedSaveQueueRef.current) {
     stagedSaveQueueRef.current = createLimitedTaskQueue(STAGED_SAVE_CONCURRENCY)
@@ -802,7 +808,8 @@ const PaperScanReview = ({ onBack }) => {
   }, [stage, currentTable])
 
   useEffect(() => {
-    setReviewIndex(0)
+    setReviewIndex(pendingReviewIndexRef.current ?? 0)
+    pendingReviewIndexRef.current = null
     setEditingField(null)
     setMemberSearchQuery('')
     setPossibleMatchesOpen(false)
@@ -1302,6 +1309,9 @@ const PaperScanReview = ({ onBack }) => {
       setResultsBySheet(results)
       setAttendanceMonths({})
       setAttendanceSundays({})
+      setFinalEditedRowKeys(new Set())
+      setFinalEditedChanges({})
+      setFinalViewMode('table')
       setReviewStep('members')
       const firstWithData = target.find((sheet) => results[sheet.id]?.status === 'ok') || target[0]
       setReviewActiveId(firstWithData ? firstWithData.id : null)
@@ -1569,6 +1579,40 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     })
   }
 
+  const markFinalRowEdited = (sheetId, rowIndex, kind, value) => {
+    const rowKey = `${sheetId}:${rowIndex}`
+    setFinalEditedRowKeys((previous) => {
+      const next = new Set(previous)
+      next.add(rowKey)
+      return next
+    })
+    setFinalEditedChanges((previous) => {
+      const current = previous[rowKey] || { fields: [], attendanceDates: [] }
+      const fields = new Set(current.fields)
+      const attendanceDates = new Set(current.attendanceDates)
+      if (kind === 'field') fields.add(value)
+      if (kind === 'attendance') attendanceDates.add(value)
+      return { ...previous, [rowKey]: { fields: [...fields], attendanceDates: [...attendanceDates] } }
+    })
+  }
+
+  // Final Review has its own edit scope. These wrappers preserve the same
+  // durable review decision while marking the row for an edited-rows-only save.
+  const handleFinalRowDecision = (sheetId, rowIndex, field, decision) => {
+    markFinalRowEdited(sheetId, rowIndex, 'field', field)
+    handleRowDecision(sheetId, rowIndex, field, decision)
+  }
+
+  const handleFinalAttendanceDecision = (sheetId, rowIndex, dateKey, decision) => {
+    markFinalRowEdited(sheetId, rowIndex, 'attendance', dateKey)
+    handleAttendanceDecision(sheetId, rowIndex, dateKey, decision)
+  }
+
+  const handleFinalClearAttendanceDecision = (sheetId, rowIndex, dateKey) => {
+    markFinalRowEdited(sheetId, rowIndex, 'attendance', dateKey)
+    handleClearAttendanceDecision(sheetId, rowIndex, dateKey)
+  }
+
   // One deliberate reviewer action accepts the AI's readable values, maps
   // unambiguous attendance marks, and chooses the best existing current-month
   // match when one is available. It never writes to DatSer or invents a new
@@ -1817,6 +1861,9 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       setReviewStep('members')
       setAttendanceMonths({})
       setAttendanceSundays({})
+      setFinalEditedRowKeys(new Set())
+      setFinalEditedChanges({})
+      setFinalViewMode('table')
       setStage('review')
     } catch (error) {
       setSavedScansError(error?.message || 'The saved scan could not be opened.')
@@ -1862,7 +1909,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
   // Builds the current final-save plan from the live review state. Pure: it
   // only reads, and is used for both the confirmation summary and the save.
-  const buildFinalSavePlanNow = () => {
+  const buildFinalSavePlanNow = ({ onlyRowKeys = null, onlyEditedChanges = null } = {}) => {
     const settingsBySheet = {}
     sheets.forEach((sheet) => {
       settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
@@ -1872,7 +1919,9 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       resultsBySheet,
       currentMembers,
       monthlyTables,
-      settingsBySheet
+      settingsBySheet,
+      onlyRowKeys,
+      onlyEditedChanges
     })
   }
 
@@ -1954,7 +2003,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
   // Runs the controlled save. Double-save protection is both a state flag and a
   // ref so two rapid Confirm clicks can never start two passes.
-  const runFinalSave = async ({ confirmedKeys, plan: frozenPlan = null }) => {
+  const runFinalSave = async ({ confirmedKeys, plan: frozenPlan = null, editedRowKeys = null, editedChanges = null }) => {
     if (finalSaveInFlightRef.current || finalSaving) return null
     finalSaveInFlightRef.current = true
     setFinalSaving(true)
@@ -1962,7 +2011,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     setPendingDuplicates(null)
     setSavedScansError('')
     try {
-      const plan = frozenPlan || buildFinalSavePlanNow()
+      const plan = frozenPlan || buildFinalSavePlanNow({ onlyRowKeys: editedRowKeys, onlyEditedChanges: editedChanges })
       const priorOperation = durableSaveContext().operationId
       const operationId = priorOperation || createSavedScanId()
       // This upsert is a required precondition, not best-effort audit logging:
@@ -1995,11 +2044,20 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
       if (result.blockedDuplicates.length > 0) {
         // STOP: a likely duplicate needs explicit confirmation before any write.
-        setPendingDuplicates({ entries: result.blockedDuplicates, plan })
+        setPendingDuplicates({ entries: result.blockedDuplicates, plan, editedRowKeys, editedChanges })
         return null
       }
 
       setFinalSaveResult(result)
+      if (editedRowKeys) {
+        const completedKeys = new Set((result.members || [])
+          .filter((member) => member.status === FINAL_SAVE_STATUS.SAVED || member.status === FINAL_SAVE_STATUS.CREATED)
+          .map((member) => `${member.sheetId}:${member.rowIndex}`))
+        if (completedKeys.size > 0) {
+          setFinalEditedRowKeys((previous) => new Set([...previous].filter((key) => !completedKeys.has(key))))
+          setFinalEditedChanges((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) => !completedKeys.has(key))))
+        }
+      }
       try {
         const { id, name } = await persistFinalSaveMetadata(buildSaveResultMetadata({ result }))
         setFinalSaveResult((prev) => ({ ...prev, savedScan: { id, name } }))
@@ -2017,7 +2075,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     }
   }
 
-  const handleConfirmFinalSave = () => {
+  const handleConfirmFinalSave = ({ editedOnly = false } = {}) => {
     if (finalSaving) return
     // Refresh the member snapshot so the save-time duplicate check runs against
     // the latest data. Likely duplicates STOP the save before any write; the
@@ -2026,12 +2084,28 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     sheets.forEach((sheet) => {
       settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
     })
-    const preview = previewFinalSave({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet })
-    if (preview.duplicates.length > 0) {
-      setPendingDuplicates({ entries: preview.duplicates, plan: preview.plan })
+    const editedRowKeys = editedOnly ? new Set(finalEditedRowKeys) : null
+    const editedChanges = editedOnly ? finalEditedChanges : null
+    const preview = previewFinalSave({
+      sheets,
+      resultsBySheet,
+      currentMembers,
+      monthlyTables,
+      settingsBySheet,
+      onlyRowKeys: editedRowKeys,
+      onlyEditedChanges: editedChanges
+    })
+    if (preview.plan.rows.length === 0) {
+      setSavedScansError(editedOnly
+        ? 'None of the edited rows is ready to save yet. Review the highlighted row first.'
+        : 'There are no approved rows ready to save yet.')
       return
     }
-    runFinalSave({ confirmedKeys: [], plan: preview.plan })
+    if (preview.duplicates.length > 0) {
+      setPendingDuplicates({ entries: preview.duplicates, plan: preview.plan, editedRowKeys, editedChanges })
+      return
+    }
+    runFinalSave({ confirmedKeys: [], plan: preview.plan, editedRowKeys, editedChanges })
   }
 
   const handleConfirmDuplicateAndContinue = () => {
@@ -2047,7 +2121,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     })
     const plan = pendingDuplicates.plan
     setPendingDuplicates(null)
-    runFinalSave({ confirmedKeys: [...confirmedDuplicateKeys, ...keys], plan })
+    runFinalSave({ confirmedKeys: [...confirmedDuplicateKeys, ...keys], plan, editedRowKeys: pendingDuplicates.editedRowKeys || null, editedChanges: pendingDuplicates.editedChanges || null })
   }
 
   const handleCancelDuplicateConfirm = () => {
@@ -2340,6 +2414,17 @@ finalSaveInFlightRef.current = true
       settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
     })
     const finalPreview = previewFinalSave({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet })
+    const editedRowsPreview = finalEditedRowKeys.size > 0
+      ? previewFinalSave({
+          sheets,
+          resultsBySheet,
+          currentMembers,
+          monthlyTables,
+          settingsBySheet,
+          onlyRowKeys: finalEditedRowKeys,
+          onlyEditedChanges: finalEditedChanges
+        })
+      : null
 
     // Union of every Sunday the selected months map to — the horizontal table
     // mirrors the physical sheet, so each Sunday becomes a column.
@@ -2408,6 +2493,33 @@ finalSaveInFlightRef.current = true
     const existingMemberCount = allRowData.filter(({ row, match }) => row.memberAction !== 'create-new' && (row.selectedMemberId || match.status === 'matched')).length
     const newMemberCount = allRowData.filter(({ row }) => row.memberAction === 'create-new').length
 
+    // Keep the work DatSer cannot safely apply out of the ready-to-save table.
+    // The attention view makes every reason visible and offers a direct return
+    // to the exact row, rather than leaving a single confusing total.
+    const finalAttentionRows = allRowData.flatMap((entry) => {
+      if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return []
+      const reasons = []
+      const profileCount = entry.summary.totals.unresolved || 0
+      const attendanceCount = countAttendanceBlocking(entry.sheetId, entry.row)
+      const needsMember = entry.row.memberAction !== 'create-new' && !entry.row.selectedMemberId && (entry.match.status === MATCH_STATUSES.POSSIBLE || entry.match.status === MATCH_STATUSES.NONE)
+      const reviewedNewName = entry.row.newMemberProfile?.full_name || entry.row.reviewedValues?.full_name?.value
+      if (needsMember) reasons.push('Choose the correct member')
+      if (entry.row.memberAction === 'create-new' && !String(reviewedNewName || '').trim()) reasons.push('Approve a name for the new member')
+      if (profileCount > 0) reasons.push(`${profileCount} profile value${profileCount === 1 ? '' : 's'} need review`)
+      if (attendanceCount > 0) reasons.push(`${attendanceCount} attendance mark${attendanceCount === 1 ? '' : 's'} need review`)
+      return reasons.length ? [{ ...entry, reasons, attendanceCount }] : []
+    })
+
+    const openFinalAttentionRow = (entry) => {
+      if (entry.sheetId === reviewActiveId) {
+        setReviewIndex(entry.index)
+      } else {
+        pendingReviewIndexRef.current = entry.index
+        setReviewActiveId(entry.sheetId)
+      }
+      setReviewStep(entry.attendanceCount > 0 ? 'attendance' : 'members')
+    }
+
     const jumpToFirstBlocking = () => {
       const rowIndex = allRowData.findIndex((entry) => {
         const memberBlock = entry.row.memberAction !== 'create-new' && !entry.row.selectedMemberId && (entry.match.status === 'possible' || entry.match.status === 'none')
@@ -2470,6 +2582,15 @@ finalSaveInFlightRef.current = true
               <Sparkles className="h-3.5 w-3.5" />
               Use AI results &amp; review final
             </button>
+            <button
+              type="button"
+              onClick={() => setReviewStep('final')}
+              data-testid="open-final-review"
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-1.5 text-xs font-black text-emerald-800 transition-colors hover:border-emerald-500 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+            >
+              <Table2 className="h-3.5 w-3.5" />
+              Open final preview
+            </button>
             {blockingCount > 0 ? (
               <button
                 type="button"
@@ -2480,17 +2601,7 @@ finalSaveInFlightRef.current = true
                 <AlertTriangle className="h-3.5 w-3.5" />
                 Review {blockingCount} remaining {blockingCount === 1 ? 'item' : 'items'}
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setReviewStep('final')}
-                data-testid="open-final-review"
-                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 text-xs font-bold text-white transition-colors shadow-sm"
-              >
-                <Check className="h-3.5 w-3.5" />
-                Save Everything to DatSer
-              </button>
-            )}
+            ) : null}
             <button
               type="button"
               onClick={() => setShowChanges((open) => !open)}
@@ -2982,15 +3093,19 @@ finalSaveInFlightRef.current = true
                     )}
                     <button
                       type="button"
-                      onClick={handleConfirmFinalSave}
-                      disabled={finalSaving || saving || finalPreview.plan.rows.length === 0}
+                      onClick={() => handleConfirmFinalSave({ editedOnly: finalEditedRowKeys.size > 0 })}
+                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : finalPreview.plan.rows.length === 0)}
                       data-testid="confirm-save-to-datser"
                       className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
                     >
                       {finalSaving
                         ? <Loader2 className="h-4 w-4 animate-spin" />
                         : <ShieldCheck className="h-4 w-4" />}
-                      {finalSaving ? 'Saving to DatSer…' : 'Confirm Save to DatSer'}
+                      {finalSaving
+                        ? 'Saving to DatSer…'
+                        : finalEditedRowKeys.size > 0
+                          ? `Save edited rows (${editedRowsPreview?.plan.rows.length || 0})`
+                          : 'Confirm Save to DatSer'}
                     </button>
                   </div>
                 </div>
@@ -3003,7 +3118,9 @@ finalSaveInFlightRef.current = true
                   <>
                     <div className="mt-4 flex items-center justify-between gap-3">
                       <p className="text-xs font-black uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                        {finalPreview.plan.rows.length} {finalPreview.plan.rows.length === 1 ? 'member' : 'members'} ready to save
+                        {finalEditedRowKeys.size > 0
+                          ? `${editedRowsPreview?.plan.rows.length || 0} edited ${editedRowsPreview?.plan.rows.length === 1 ? 'member' : 'members'} ready to save`
+                          : `${finalPreview.plan.rows.length} ${finalPreview.plan.rows.length === 1 ? 'member' : 'members'} ready to save`}
                       </p>
                       <div className="inline-flex rounded-xl border border-stone-200/80 bg-stone-100 p-1 dark:border-stone-700 dark:bg-stone-800/80" role="group" aria-label="Final review view">
                         <button
@@ -3032,12 +3149,25 @@ finalSaveInFlightRef.current = true
                           <Layers className="h-3.5 w-3.5" />
                           Cards
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setFinalViewMode('attention')}
+                          aria-pressed={finalViewMode === 'attention'}
+                          className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-black transition-colors ${
+                            finalViewMode === 'attention'
+                              ? 'bg-amber-500 text-white shadow-sm'
+                              : 'text-amber-700 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200'
+                          }`}
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          Needs attention ({blockingCount})
+                        </button>
                       </div>
                     </div>
 
                     {blockingCount > 0 && (
                       <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                        {blockingCount} item{blockingCount === 1 ? '' : 's'} will remain unsaved until you review them.
+                        {blockingCount} item{blockingCount === 1 ? '' : 's'} need attention. Open the separate Needs attention view to see exactly why each row was not included.
                       </p>
                     )}
 
@@ -3073,6 +3203,7 @@ finalSaveInFlightRef.current = true
                             {finalPreview.plan.rows.map((entry, index) => {
                               const rowKey = finalRowKey(entry)
                               const isEditingThis = finalEditingRowKey === rowKey
+                              const wasEditedInThisPass = finalEditedRowKeys.has(rowKey)
                               const attendanceMap = finalAttendanceMap(entry)
                               const isNew = entry.memberAction === 'create-new'
                               const name = isNew
@@ -3081,7 +3212,13 @@ finalSaveInFlightRef.current = true
 
                               return (
                                 <React.Fragment key={rowKey}>
-                                  <tr className={`hover:bg-stone-50/70 dark:hover:bg-stone-800/40 transition-colors ${isEditingThis ? 'bg-orange-50/40 dark:bg-stone-800/50' : ''}`}>
+                                  <tr className={`hover:bg-stone-50/70 dark:hover:bg-stone-800/40 transition-colors ${
+                                    isEditingThis
+                                      ? 'bg-orange-50/70 dark:bg-orange-950/20'
+                                      : wasEditedInThisPass
+                                        ? 'bg-emerald-50/70 dark:bg-emerald-950/20'
+                                        : ''
+                                  }`}>
                                     <td className="whitespace-nowrap px-3.5 py-2.5 font-mono text-[11px] text-stone-400">
                                       {index + 1}
                                     </td>
@@ -3117,7 +3254,7 @@ finalSaveInFlightRef.current = true
                                         }`}
                                       >
                                         <Pencil className="h-3 w-3" />
-                                        <span>{isEditingThis ? 'Done' : 'Edit'}</span>
+                                        <span>{isEditingThis ? 'Done' : wasEditedInThisPass ? 'Edited' : 'Edit'}</span>
                                       </button>
                                     </td>
                                   </tr>
@@ -3150,7 +3287,7 @@ finalSaveInFlightRef.current = true
                                                   <input
                                                     type="text"
                                                     value={currentValue}
-                                                    onChange={(e) => handleRowDecision(entry.sheetId, entry.rowIndex, key, { value: e.target.value, source: REVIEW_SOURCES.EDITED })}
+                                                    onChange={(e) => handleFinalRowDecision(entry.sheetId, entry.rowIndex, key, { value: e.target.value, source: REVIEW_SOURCES.EDITED })}
                                                     aria-label={`Edit ${key === 'current_level' ? 'Educational level' : label}`}
                                                     className="w-full rounded-xl border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-bold text-stone-900 outline-none focus:border-orange-500 focus:bg-white dark:border-stone-700 dark:bg-stone-800 dark:text-white"
                                                   />
@@ -3175,9 +3312,9 @@ finalSaveInFlightRef.current = true
                                                         compact
                                                         value={choiceValue}
                                                         onChange={(next) => {
-                                                          if (next === true) handleAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.PRESENT, source: REVIEW_SOURCES.EDITED })
-                                                          else if (next === false) handleAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.ABSENT, source: REVIEW_SOURCES.EDITED })
-                                                          else handleClearAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey)
+                                                          if (next === true) handleFinalAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.PRESENT, source: REVIEW_SOURCES.EDITED })
+                                                          else if (next === false) handleFinalAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.ABSENT, source: REVIEW_SOURCES.EDITED })
+                                                          else handleFinalClearAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey)
                                                         }}
                                                         ariaLabel={`Attendance for ${label}`}
                                                       />
@@ -3197,6 +3334,40 @@ finalSaveInFlightRef.current = true
                           </tbody>
                         </table>
                       </div>
+                    ) : finalViewMode === 'attention' ? (
+                      <div className="mt-4 overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/40 dark:border-amber-900/50 dark:bg-amber-950/10" data-testid="final-attention-view">
+                        <div className="border-b border-amber-200/80 px-4 py-3 dark:border-amber-900/50">
+                          <p className="text-sm font-black text-amber-900 dark:text-amber-100">Needs attention</p>
+                          <p className="mt-0.5 text-xs font-medium text-amber-800/80 dark:text-amber-200/80">
+                            These rows are not included in the ready-to-save count. Open one to choose a member, confirm the profile, or settle the attendance mark.
+                          </p>
+                        </div>
+                        {finalAttentionRows.length === 0 ? (
+                          <p className="p-6 text-center text-sm font-medium text-amber-800 dark:text-amber-200">Nothing is waiting for review.</p>
+                        ) : (
+                          <div className="max-h-[58dvh] overflow-auto divide-y divide-amber-100 dark:divide-amber-900/40">
+                            {finalAttentionRows.map((entry) => {
+                              const name = entry.row.full_name || entry.row.originalGeminiValue?.full_name || `Person ${entry.index + 1}`
+                              return (
+                                <div key={`${entry.sheetId}:${entry.index}`} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-black text-stone-900 dark:text-white">{name}</p>
+                                    <p className="mt-1 text-xs font-semibold text-amber-800 dark:text-amber-200">{entry.reasons.join(' · ')}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => openFinalAttentionRow(entry)}
+                                    className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-black text-white transition-colors hover:bg-amber-700"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    Review row
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       /* Card view — genuine responsive card grid inspired by the reference */
                       <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -3208,6 +3379,7 @@ finalSaveInFlightRef.current = true
                           const rowKey = finalRowKey(entry)
                           const isOpen = expandedFinalRows.has(rowKey)
                           const isEditingThis = finalEditingRowKey === rowKey
+                          const wasEditedInThisPass = finalEditedRowKeys.has(rowKey)
                           const profileChanges = Object.entries(entry.profileUpdates || {})
                           const attendanceMap = finalAttendanceMap(entry)
                           const memberId = entry.member?.id || entry.member?.member_uuid
@@ -3225,6 +3397,8 @@ finalSaveInFlightRef.current = true
                               className={`rounded-2xl border bg-white p-4 shadow-sm hover:shadow-md transition-all duration-200 dark:bg-stone-900/90 flex flex-col justify-between ${
                                 isEditingThis
                                   ? 'border-orange-500 ring-1 ring-orange-500/30'
+                                  : wasEditedInThisPass
+                                    ? 'border-emerald-500 ring-1 ring-emerald-500/30'
                                   : isOpen
                                     ? 'border-orange-300 dark:border-orange-800/80 ring-1 ring-orange-400/20'
                                     : 'border-stone-200/90 dark:border-stone-800'
@@ -3295,7 +3469,7 @@ finalSaveInFlightRef.current = true
                                   }`}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
-                                  <span>{isEditingThis ? 'Done' : 'Edit'}</span>
+                                  <span>{isEditingThis ? 'Done' : wasEditedInThisPass ? 'Edited' : 'Edit'}</span>
                                 </button>
 
                                 <button
@@ -3330,7 +3504,7 @@ finalSaveInFlightRef.current = true
                                             <input
                                               type="text"
                                               value={currentValue}
-                                              onChange={(e) => handleRowDecision(entry.sheetId, entry.rowIndex, key, { value: e.target.value, source: REVIEW_SOURCES.EDITED })}
+                                              onChange={(e) => handleFinalRowDecision(entry.sheetId, entry.rowIndex, key, { value: e.target.value, source: REVIEW_SOURCES.EDITED })}
                                               aria-label={`Edit ${key === 'current_level' ? 'Educational level' : label}`}
                                               className="w-full rounded-xl border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-bold text-stone-900 outline-none focus:border-orange-500 focus:bg-white dark:border-stone-700 dark:bg-stone-800 dark:text-white"
                                             />
@@ -3356,9 +3530,9 @@ finalSaveInFlightRef.current = true
                                                 compact
                                                 value={choiceValue}
                                                 onChange={(next) => {
-                                                  if (next === true) handleAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.PRESENT, source: REVIEW_SOURCES.EDITED })
-                                                  else if (next === false) handleAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.ABSENT, source: REVIEW_SOURCES.EDITED })
-                                                  else handleClearAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey)
+                                                  if (next === true) handleFinalAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.PRESENT, source: REVIEW_SOURCES.EDITED })
+                                                  else if (next === false) handleFinalAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey, { value: ATTENDANCE_STATUS.ABSENT, source: REVIEW_SOURCES.EDITED })
+                                                  else handleFinalClearAttendanceDecision(entry.sheetId, entry.rowIndex, dateKey)
                                                 }}
                                                 ariaLabel={`Attendance for ${label}`}
                                               />
