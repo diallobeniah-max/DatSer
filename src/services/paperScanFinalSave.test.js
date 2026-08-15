@@ -47,8 +47,12 @@ const deps = (supabase, overrides = {}) => ({
 describe('paperScanFinalSave durable operation client', () => {
   it('never puts undecided Gemini values in a new-member payload', () => {
     const plan = planFor([{ full_name: 'raw Gemini name', memberAction: 'create-new', attendance: {}, warnings: [] }])
-    expect(plan.rows[0].createProfile).toEqual({})
-    expect(plan.rows[0].unresolvedProfile).toBeGreaterThan(0)
+    expect(plan.rows).toEqual([])
+  })
+
+  it('leaves a weak or missing member match out of a partial save', () => {
+    const plan = planFor([{ full_name: 'Unknown person', phone_number: '0000000000', attendance: {}, warnings: [] }])
+    expect(plan.rows).toEqual([])
   })
 
   it('detects same-batch duplicate new members before mutation', () => {

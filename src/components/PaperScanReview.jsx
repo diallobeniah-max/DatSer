@@ -2410,7 +2410,7 @@ finalSaveInFlightRef.current = true
 
     const jumpToFirstBlocking = () => {
       const rowIndex = allRowData.findIndex((entry) => {
-        const memberBlock = !entry.row.memberAction === 'create-new' && !entry.row.selectedMemberId && (entry.match.status === 'possible' || entry.match.status === 'none')
+        const memberBlock = entry.row.memberAction !== 'create-new' && !entry.row.selectedMemberId && (entry.match.status === 'possible' || entry.match.status === 'none')
         return entry.summary.totals.unresolved > 0 || memberBlock || countAttendanceBlocking(entry.sheetId, entry.row) > 0
       })
       if (rowIndex >= 0 && allRowData[rowIndex].sheetId === reviewActiveId) setReviewIndex(allRowData[rowIndex].index)
@@ -2966,19 +2966,33 @@ finalSaveInFlightRef.current = true
                   <div>
                     <h2 className="text-base font-black text-stone-900 dark:text-white">Final review</h2>
                     <p className="text-xs font-medium text-stone-500 dark:text-stone-400">
-                      Everything below will be written to DatSer when you confirm. This is your one save.
+                      Save the approved items now. Anything still needing review stays here for you to finish later.
                     </p>
                   </div>
-                  {blockingCount > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {blockingCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={jumpToFirstBlocking}
+                        className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-amber-700 shadow-sm"
+                      >
+                        <AlertTriangle className="h-4 w-4" />
+                        Review {blockingCount} remaining {blockingCount === 1 ? 'item' : 'items'}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={jumpToFirstBlocking}
-                      className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-amber-700 shadow-sm"
+                      onClick={handleConfirmFinalSave}
+                      disabled={finalSaving || saving || finalPreview.plan.rows.length === 0}
+                      data-testid="confirm-save-to-datser"
+                      className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
                     >
-                      <AlertTriangle className="h-4 w-4" />
-                      Review {blockingCount} remaining {blockingCount === 1 ? 'item' : 'items'}
+                      {finalSaving
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <ShieldCheck className="h-4 w-4" />}
+                      {finalSaving ? 'Saving to DatSer…' : 'Confirm Save to DatSer'}
                     </button>
-                  )}
+                  </div>
                 </div>
 
                 {finalPreview.plan.rows.length === 0 ? (
@@ -3021,9 +3035,15 @@ finalSaveInFlightRef.current = true
                       </div>
                     </div>
 
+                    {blockingCount > 0 && (
+                      <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                        {blockingCount} item{blockingCount === 1 ? '' : 's'} will remain unsaved until you review them.
+                      </p>
+                    )}
+
                     {finalViewMode === 'table' ? (
                       /* Spreadsheet / table view — mirrors the physical sheet */
-                      <div className="mt-4 overflow-x-auto rounded-2xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900 shadow-2xs">
+                      <div className="mt-4 max-h-[58dvh] overflow-auto rounded-2xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900 shadow-2xs">
                         <table className="min-w-full text-left text-xs" data-testid="final-table-view">
                           <thead>
                             <tr className="border-b border-stone-200 bg-stone-50/80 dark:border-stone-800 dark:bg-stone-800/50">
@@ -3045,7 +3065,7 @@ finalSaveInFlightRef.current = true
                                 )
                               })}
                               <th scope="col" className="whitespace-nowrap px-3.5 py-2.5 text-right font-black uppercase tracking-wider text-stone-500 dark:text-stone-400 w-16">
-                                Edit
+                                <span className="inline-flex items-center gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</span>
                               </th>
                             </tr>
                           </thead>
@@ -3089,7 +3109,8 @@ finalSaveInFlightRef.current = true
                                         type="button"
                                         onClick={() => setFinalEditingRowKey(isEditingThis ? null : rowKey)}
                                         aria-label={`Edit ${name}`}
-                                        className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold transition-colors ${
+                                        title={`Edit ${name} in the spreadsheet`}
+                                        className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold transition-colors ${
                                           isEditingThis
                                             ? 'bg-orange-600 text-white'
                                             : 'border border-stone-200 bg-white text-stone-700 hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200'
@@ -3420,26 +3441,14 @@ finalSaveInFlightRef.current = true
                   </>
                 )}
 
-                <div className="mt-6 flex flex-wrap items-center justify-end gap-2 border-t border-stone-100 dark:border-stone-800 pt-4">
+                <div className="mt-4 flex items-center border-t border-stone-100 pt-4 dark:border-stone-800">
                   <button
                     type="button"
                     onClick={() => setReviewStep('members')}
-                    className="inline-flex min-h-[44px] items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-xs font-black text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+                    className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
                   >
                     <ArrowLeft className="h-4 w-4" />
                     Back to review
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmFinalSave}
-                    disabled={finalSaving || saving || totalRows === 0 || blockingCount > 0}
-                    data-testid="confirm-save-to-datser"
-                    className="inline-flex min-h-[44px] items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
-                  >
-                    {finalSaving
-                      ? <Loader2 className="h-4 w-4 animate-spin" />
-                      : <ShieldCheck className="h-4 w-4" />}
-                    {finalSaving ? 'Saving to DatSer…' : 'Confirm Save to DatSer'}
                   </button>
                 </div>
               </div>

@@ -235,6 +235,11 @@ export const buildFinalSavePlan = ({
           const scanValue = row?.originalGeminiValue?.[key] ?? row?.[key]
           return count + (asTrimmed(scanValue) && !row?.reviewedValues?.[key] ? 1 : 0)
         }, 0)
+        // Allow an operator to save the reviewed rows without turning an
+        // incomplete new-member choice into a failed write. This row remains
+        // visible as needing review in the UI, but it never reaches the
+        // durable operation until its name was explicitly approved.
+        if (!asTrimmed(createProfile.full_name)) return
         rows.push({
           sheetId: sheet.id,
           rowIndex,
@@ -253,6 +258,11 @@ export const buildFinalSavePlan = ({
         return
       }
       const member = match.member
+      // A possible/no match is deliberately not a write target. Saving the
+      // approved portion of a batch must never attach profile or attendance
+      // data to a weakly matched member; the row stays in Final Review until
+      // the operator explicitly selects a member or creates a new one.
+      if (match.status !== MATCH_STATUSES.MATCHED || !member) return
       const profileUpdates = {}
       let unresolvedProfile = 0
       if (member) {
