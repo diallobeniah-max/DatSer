@@ -4584,14 +4584,21 @@ export const AppProvider = ({ children }) => {
   const bulkAttendance = async (memberIds, date, present) => {
     let rollbackState = null
     let rollbackDate = null
+    let shouldRollback = true
+    const uniqueMemberIds = Array.from(new Set((Array.isArray(memberIds) ? memberIds : [memberIds])
+      .filter((memberId) => memberId !== null && memberId !== undefined && memberId !== '')))
     try {
+      if (uniqueMemberIds.length === 0) {
+        return { success: true, updated: 0 }
+      }
+
       const effectiveDate = normalizeDateToSundayForTable(date, currentTable)
       if (!effectiveDate) {
         return { success: false, error: 'No valid Sunday found for this month' }
       }
 
       if (shouldUseOfflineData) {
-        return queueOfflineAttendanceChanges(memberIds, effectiveDate, present, 'bulk_attendance_mark')
+        return queueOfflineAttendanceChanges(uniqueMemberIds, effectiveDate, present, 'bulk_attendance_mark')
       }
 
       if (offlineMode === 'online' && !isOnline) {
@@ -4600,9 +4607,9 @@ export const AppProvider = ({ children }) => {
 
       if (!isSupabaseConfigured()) {
         // Demo mode - update local state
-        applyLocalAttendanceState(memberIds, effectiveDate, present)
+        applyLocalAttendanceState(uniqueMemberIds, effectiveDate, present)
         toast.success('Bulk attendance marked! (Demo Mode)')
-        return { success: true }
+        return { success: true, updated: uniqueMemberIds.length }
       }
 
       rollbackDate = effectiveDate
@@ -4610,7 +4617,7 @@ export const AppProvider = ({ children }) => {
       const dateKey = getLocalDateString(effectiveDate)
       const previousDateAttendance = attendanceData?.[dateKey] || {}
       rollbackState = {
-        byId: Object.fromEntries(memberIds.map((memberId) => {
+        byId: Object.fromEntries(uniqueMemberIds.map((memberId) => {
           const previousMember = members.find((member) => member.id === memberId) || {}
           return [memberId, {
             columnName: optimisticColumn,
@@ -4621,7 +4628,7 @@ export const AppProvider = ({ children }) => {
           }]
         }))
       }
-      applyLocalAttendanceState(memberIds, effectiveDate, present, optimisticColumn)
+      applyLocalAttendanceState(uniqueMemberIds, effectiveDate, present, optimisticColumn)
 
       const attendanceColumn = await findAttendanceColumnForDate(effectiveDate)
 
@@ -4629,33 +4636,40 @@ export const AppProvider = ({ children }) => {
         throw new Error(`No attendance column found for this date in ${currentTable}`)
       }
 
-      const attendanceValue = present ? 'Present' : 'Absent'
+      const attendanceValue = present === null ? null : (present ? 'Present' : 'Absent')
       const bulkAttendanceUpdatedAt = new Date().toISOString()
       const canWritePreviewSyncColumns = await ensureMemberPreviewSyncColumns(currentTable)
 
-      // Update each member's attendance in the monthly table
-      const updatePromises = memberIds.map(async (memberId) => {
-        const result = await executeSupabaseWrite(
-          () => supabase
-            .from(currentTable)
-            .update({
-              [attendanceColumn]: attendanceValue,
-              ...(canWritePreviewSyncColumns ? { updated_at: bulkAttendanceUpdatedAt } : {})
-            })
-            .eq('id', memberId)
-            .select('id'),
-          { action: `Save bulk attendance in ${currentTable}` }
-        )
-        return assertSupabaseMutationAffected(result, 'Bulk attendance save')
-      })
-
-      await Promise.all(updatePromises)
+      // One write for the selected records is much faster than a request per
+      // card. Returned ids make a partial RLS/stale-record result fail closed.
+      const result = await executeSupabaseWrite(
+        () => supabase
+          .from(currentTable)
+          .update({
+            [attendanceColumn]: attendanceValue,
+            ...(canWritePreviewSyncColumns ? { updated_at: bulkAttendanceUpdatedAt } : {})
+          })
+          .in('id', uniqueMemberIds)
+          .select('id'),
+        { action: `Save bulk attendance in ${currentTable}` }
+      )
+      assertSupabaseMutationAffected(result, 'Bulk attendance save')
+      if ((result.data || []).length !== uniqueMemberIds.length) {
+        // A partial write is never described as complete. Refresh the one
+        // affected Sunday before surfacing the error so the screen reflects
+        // the server rather than rolling back to an equally inaccurate view.
+        await fetchAndApplyAttendanceForDate(effectiveDate)
+        shouldRollback = false
+        const mismatch = new Error(`Only ${(result.data || []).length} of ${uniqueMemberIds.length} attendance records were updated. Nothing is reported as complete.`)
+        mismatch.code = 'DATSER_PARTIAL_BULK_ATTENDANCE'
+        throw mismatch
+      }
 
       // Update local state for members and attendanceData (for real-time UI updates)
-      applyLocalAttendanceState(memberIds, effectiveDate, present, attendanceColumn)
+      applyLocalAttendanceState(uniqueMemberIds, effectiveDate, present, attendanceColumn)
 
-      const bulkAttendanceValue = present ? 'Present' : 'Absent'
-      const updatedBulkAttendanceMembers = memberIds.map((memberId) => normalizeMemberRecord({
+      const bulkAttendanceValue = attendanceValue
+      const updatedBulkAttendanceMembers = uniqueMemberIds.map((memberId) => normalizeMemberRecord({
         ...(members.find((member) => member.id === memberId) || { id: memberId }),
         [attendanceColumn]: bulkAttendanceValue,
         updated_at: bulkAttendanceUpdatedAt
@@ -4679,14 +4693,15 @@ export const AppProvider = ({ children }) => {
       }
 
       invalidateRequestScope(`${dataOwnerId || user?.id || 'guest'}:${currentTable}`, 'attendance-reconciliation')
-      toast.success(`Bulk attendance marked successfully for ${memberIds.length} members!`)
-      return { success: true }
+      const actionLabel = present === null ? 'cleared' : 'saved'
+      toast.success(`Bulk attendance ${actionLabel} for ${uniqueMemberIds.length} members.`)
+      return { success: true, updated: uniqueMemberIds.length }
     } catch (error) {
       console.error('Error marking bulk attendance:', error)
-      if (rollbackDate && rollbackState) {
-        rollbackLocalAttendanceState(memberIds, rollbackDate, rollbackState)
+      if (shouldRollback && rollbackDate && rollbackState) {
+        rollbackLocalAttendanceState(uniqueMemberIds, rollbackDate, rollbackState)
       }
-      toast.error('Failed to mark bulk attendance')
+      toast.error(present === null ? 'Failed to clear attendance' : 'Failed to mark bulk attendance')
       return { success: false, error }
     }
   }

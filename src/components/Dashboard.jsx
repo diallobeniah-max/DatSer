@@ -1593,6 +1593,49 @@ const Dashboard = ({ isAdmin = false }) => {
     })
   }
 
+  // This is intentionally limited to the currently selected Sunday. It lets a
+  // coordinator reset a mistaken import without touching profiles, other dates,
+  // or every month in the workspace.
+  const handleClearSelectedSunday = () => {
+    if (!selectedSundayDate) return
+
+    const markedMemberIds = members
+      .filter((member) => getCanonicalAttendanceValue(member, selectedSundayDate) !== undefined)
+      .map((member) => member.id)
+
+    if (markedMemberIds.length === 0) {
+      toast.info('There are no attendance marks to clear for this Sunday.')
+      return
+    }
+
+    const dateLabel = new Date(selectedSundayDate).toLocaleDateString('en-US', {
+      weekday: 'long', month: 'long', day: 'numeric'
+    })
+
+    showConfirmModal({
+      title: `Clear ${markedMemberIds.length} attendance marks?`,
+      message: `This removes only the ${markedMemberIds.length} Present or Absent marks for ${dateLabel}. Member profiles and every other Sunday stay unchanged. You can then save the corrected Paper Scan results for this date.`,
+      confirmText: 'Clear this Sunday',
+      confirmButtonClass: 'bg-red-600 hover:bg-red-700 text-white',
+      onConfirm: async () => {
+        setIsBulkApplying(true)
+        try {
+          const result = await bulkAttendance(markedMemberIds, new Date(selectedSundayDate), null)
+          if (!result?.success) throw result?.error || new Error('Attendance clear could not be verified.')
+          await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
+          selection()
+          toast.success(`Cleared ${result.updated ?? markedMemberIds.length} attendance marks for ${dateLabel}.`)
+        } catch (error) {
+          console.error('Error clearing selected Sunday attendance:', error)
+          errorHaptic()
+          toast.error(error?.message || 'Attendance was not cleared. Nothing is reported as complete.')
+        } finally {
+          setIsBulkApplying(false)
+        }
+      }
+    })
+  }
+
   // Function to fetch tags for a member
   const fetchMemberTags = async (memberId) => {
     if (!showOptionalTags) return
@@ -2663,11 +2706,11 @@ const Dashboard = ({ isAdmin = false }) => {
                   <>
                     {/* Summary Header */}
                     <div className="bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 p-2.5 sm:p-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-0">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <div className="text-sm sm:text-base font-medium text-gray-900 dark:text-white">
                           {labelFull}
                         </div>
-                        <div className="flex items-center gap-3 text-xs sm:text-sm">
+                        <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
                           <span className="flex items-center gap-1.5">
                             <span className="w-2 h-2 rounded-full bg-green-500"></span>
                             <span className="text-green-600 dark:text-green-400 font-medium">{presentCount} Present</span>
@@ -2676,6 +2719,17 @@ const Dashboard = ({ isAdmin = false }) => {
                             <span className="w-2 h-2 rounded-full bg-red-500"></span>
                             <span className="text-red-600 dark:text-red-400 font-medium">{absentCount} Absent</span>
                           </span>
+                          {(presentCount > 0 || absentCount > 0) && (
+                            <button
+                              type="button"
+                              onClick={handleClearSelectedSunday}
+                              disabled={isBulkApplying}
+                              className="min-h-9 rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-300 dark:hover:bg-red-950/50"
+                              title="Clear attendance marks for this Sunday only"
+                            >
+                              {isBulkApplying ? 'Clearing…' : `Clear ${presentCount + absentCount} marks`}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
