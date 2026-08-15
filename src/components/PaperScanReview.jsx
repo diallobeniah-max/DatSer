@@ -1215,9 +1215,11 @@ const PaperScanReview = ({ onBack }) => {
       setPhaseIndex(index)
       const phase = PROCESSING_PHASES[index]
       index += 1
-      phaseTimerRef.current = window.setTimeout(advance, index === 1 ? 500 : phase.progress === 100 ? 600 : 700)
+      // This sequence only reports local preparation that is already complete.
+      // Keep the feedback, but never make the reviewer wait on decorative timers.
+      phaseTimerRef.current = window.setTimeout(advance, 90)
     }
-    phaseTimerRef.current = window.setTimeout(advance, 300)
+    phaseTimerRef.current = window.setTimeout(advance, 40)
   }
 
   const handleBackToEditing = () => {
@@ -1565,6 +1567,61 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       })
       return { ...prev, [sheetId]: { ...result, payload: { ...result.payload, rows } } }
     })
+  }
+
+  // One deliberate reviewer action accepts the AI's readable values, maps
+  // unambiguous attendance marks, and chooses the best existing current-month
+  // match when one is available. It never writes to DatSer or invents a new
+  // member; Final Review remains the single confirmation point.
+  const handleApplyAiResultsAndOpenFinalReview = () => {
+    const settingsBySheet = Object.fromEntries(sheets.map((sheet) => [sheet.id, getAttendanceSettings(sheet.id)]))
+    setResultsBySheet((prev) => {
+      const next = { ...prev }
+      Object.entries(prev).forEach(([sheetId, result]) => {
+        if (result?.status !== 'ok') return
+        const settings = settingsBySheet[sheetId]
+        const selectedDatesByMonth = new Map((settings?.months || []).map((month) => [
+          month,
+          new Set(Array.isArray(settings?.sundays?.[month]) ? settings.sundays[month] : defaultSundaysForMonth(month))
+        ]))
+        const rows = result.payload.rows.map((row, rowIndex) => {
+          if (result.excludedIndices?.includes(rowIndex)) return row
+          const reviewedValues = { ...(row.reviewedValues || {}) }
+          COMPARE_FIELDS.forEach(({ key }) => {
+            const value = String(row?.[key] ?? '').trim()
+            if (value) reviewedValues[key] = { value, source: REVIEW_SOURCES.SCAN }
+          })
+
+          const reviewedAttendance = { ...(row.reviewedAttendance || {}) }
+          selectedDatesByMonth.forEach((selectedDates, month) => {
+            resolveAttendanceEntries({
+              attendance: row.attendance,
+              month,
+              columnCount: settings.columnCount,
+              convention: settings.convention
+            }).forEach((entry) => {
+              if (!entry.dateKey || !selectedDates.has(entry.dateKey) || entry.interpreted.needsReview) return
+              if (entry.interpreted.status === ATTENDANCE_STATUS.PRESENT || entry.interpreted.status === ATTENDANCE_STATUS.ABSENT) {
+                reviewedAttendance[entry.dateKey] = { value: entry.interpreted.status, source: REVIEW_SOURCES.SCAN }
+              }
+            })
+          })
+
+          const automaticMatch = !row.memberAction && !row.selectedMemberId
+            ? computeRowMatch(row, currentMembers).member
+            : null
+          return {
+            ...row,
+            reviewedValues,
+            reviewedAttendance,
+            ...(automaticMatch?.id ? { selectedMemberId: automaticMatch.id } : {})
+          }
+        })
+        next[sheetId] = { ...result, payload: { ...result.payload, rows } }
+      })
+      return next
+    })
+    setReviewStep('final')
   }
 
   const loadSavedScans = async () => {
@@ -2404,6 +2461,15 @@ finalSaveInFlightRef.current = true
             </ul>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleApplyAiResultsAndOpenFinalReview}
+              data-testid="apply-ai-results-final-review"
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-black text-white transition-colors hover:bg-emerald-700 shadow-sm"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Use AI results &amp; review final
+            </button>
             {blockingCount > 0 ? (
               <button
                 type="button"

@@ -141,6 +141,10 @@ const DEFAULT_SEARCH_SUGGESTION_VIEW = 'full'
 const RECENT_MEMBER_EDITS_STORAGE_KEY = 'datser_recent_member_edits'
 const RECENT_MEMBER_EDITS_LIMIT = 80
 const MEMBER_PREVIEW_PAGE_SIZE = 20
+// The dashboard paints the first 20 members immediately. Background indexing
+// can use larger pages so it does not compete with the interactive UI through
+// dozens of tiny requests on larger workspaces.
+const MEMBER_PREVIEW_SYNC_PAGE_SIZE = 100
 const MEMBER_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000
 const MEMBER_PREVIEW_BACKGROUND_SYNC_TTL_MS = 90 * 1000
 const MEMBER_PREVIEW_SYNC_OVERLAP_MS = 5000
@@ -2633,9 +2637,9 @@ export const AppProvider = ({ children }) => {
   }, [dataOwnerId, user?.id])
 
 
-  const fetchMemberPreviewPage = async (tableName, offset = 0) => {
+  const fetchMemberPreviewPage = async (tableName, offset = 0, pageSize = MEMBER_PREVIEW_PAGE_SIZE) => {
     const from = Math.max(0, offset)
-    const to = from + MEMBER_PREVIEW_PAGE_SIZE - 1
+    const to = from + Math.max(1, pageSize) - 1
     await ensureMemberPreviewSyncColumns(tableName)
     let response = await applyDeletedAtFilter(applyWorkspaceOwnerFilter(
       supabase
@@ -2851,22 +2855,22 @@ export const AppProvider = ({ children }) => {
       let offset = 0
       let remoteRows = []
       let latestRemoteUpdatedAt = syncSince || null
-      let pageSize = MEMBER_PREVIEW_PAGE_SIZE
+      let pageSize = MEMBER_PREVIEW_SYNC_PAGE_SIZE
       let remoteTotalCount = 0
 
-      while (pageSize === MEMBER_PREVIEW_PAGE_SIZE) {
+      while (pageSize === MEMBER_PREVIEW_SYNC_PAGE_SIZE) {
         let data
         let error
         let count
         if (!syncSince) {
-          ({ data, error, count } = await fetchMemberPreviewPage(tableName, offset))
+          ({ data, error, count } = await fetchMemberPreviewPage(tableName, offset, MEMBER_PREVIEW_SYNC_PAGE_SIZE))
         } else {
           let query = supabase
             .from(tableName)
             .select(MEMBER_PREVIEW_SELECT, { count: 'exact' })
             .order('updated_at', { ascending: true })
           query = applyWorkspaceOwnerFilter(query).gt('updated_at', syncSince)
-          ;({ data, error, count } = await query.range(offset, offset + MEMBER_PREVIEW_PAGE_SIZE - 1))
+          ;({ data, error, count } = await query.range(offset, offset + MEMBER_PREVIEW_SYNC_PAGE_SIZE - 1))
         }
         if (error) throw error
 
@@ -2888,8 +2892,8 @@ export const AppProvider = ({ children }) => {
           remoteTotalCount = count
         }
 
-        if (pageRows.length < MEMBER_PREVIEW_PAGE_SIZE) break
-        offset += MEMBER_PREVIEW_PAGE_SIZE
+        if (pageRows.length < MEMBER_PREVIEW_SYNC_PAGE_SIZE) break
+        offset += MEMBER_PREVIEW_SYNC_PAGE_SIZE
         await sleep(60)
       }
 
@@ -7325,7 +7329,7 @@ export const AppProvider = ({ children }) => {
       return // Don't fetch while auth is still loading, table is null, or month not resolved
     }
     fetchMembers()
-  }, [currentTable, authLoading, monthResolved])
+  }, [currentTable, authLoading, dataOwnerId, monthResolved, user?.id])
 
   // Initialize attendance dates when current table or collaborator sticky Sundays change
   useEffect(() => {

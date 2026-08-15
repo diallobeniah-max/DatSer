@@ -163,13 +163,14 @@ describe('AppContext member hydration', () => {
       return null
     }
     let latest = null
-    const { unmount } = render(
+    const renderTree = () => (
       <AppProvider>
         <StateProbe onState={(s) => { latest = s }} />
       </AppProvider>
     )
+    const { unmount, rerender } = render(renderTree())
     currentUnmount = unmount
-    return { unmount, getLatest: () => latest }
+    return { unmount, rerender: () => rerender(renderTree()), getLatest: () => latest }
   }
 
   it('hydrates to HYDRATED with auto-loaded members on a clean startup', async () => {
@@ -195,6 +196,24 @@ describe('AppContext member hydration', () => {
     await waitFor(() => expect(getLatest()).toBeTruthy())
     expect(getLatest().memberHydrationState).not.toBe('HYDRATED')
     expect(getLatest().loading).toBe(true)
+  })
+
+  it('loads members as soon as a refreshed session becomes available', async () => {
+    testConfig.user = null
+    testConfig.session = null
+    testConfig.rangeResult = {
+      data: [{ id: 'm1', name: 'Ama', phone: '111', deleted_at: null, updated_at: '2026-08-10T00:00:00Z' }],
+      error: null
+    }
+    const { getLatest, rerender } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.currentTable).toBe('August_2026'))
+
+    testConfig.user = { id: 'owner-1', email: 'owner@example.com' }
+    testConfig.session = { user: { id: 'owner-1' } }
+    rerender()
+
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
+    expect(getLatest()?.members?.map((member) => member.id)).toContain('m1')
   })
 
   it('does not fetch members until the saved month is resolved', async () => {
