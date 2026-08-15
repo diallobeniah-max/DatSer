@@ -136,4 +136,39 @@ describe('extractPaperScan routing', () => {
       routing: { primaryProvider: 'gemini', fallbackProvider: null }
     })).rejects.toThrow(/not configured/i)
   })
+
+  it('only calls the primary provider when no fallback is configured', async () => {
+    geminiMock.extractSheetWithGemini.mockResolvedValue(sampleResult)
+    const result = await extractPaperScan({
+      imageBytes,
+      mimeType,
+      providerKeys: {
+        gemini: { key: 'gemini-key', model: '' },
+        qwen: { key: 'qwen-key', model: '' }
+      },
+      routing: { primaryProvider: 'gemini', fallbackProvider: null }
+    })
+    expect(result.metadata.provider).toBe('gemini')
+    expect(result.metadata.fallbackUsed).toBe(false)
+    expect(geminiMock.extractSheetWithGemini).toHaveBeenCalledTimes(1)
+    expect(qwenMock.extractSheetWithQwen).not.toHaveBeenCalled()
+  })
+
+  it('surfaces the fallback error when both primary and fallback fail', async () => {
+    geminiMock.extractSheetWithGemini.mockRejectedValue(
+      new ExtractionError('RATE_LIMITED', 'primary rate limited', { retryable: true, httpStatus: 429 })
+    )
+    qwenMock.extractSheetWithQwen.mockRejectedValue(
+      new ExtractionError('PROVIDER_TIMEOUT', 'fallback timeout', { retryable: true, httpStatus: 504 })
+    )
+    await expect(extractPaperScan({
+      imageBytes,
+      mimeType,
+      providerKeys: {
+        gemini: { key: 'gemini-key', model: '' },
+        qwen: { key: 'qwen-key', model: '' }
+      },
+      routing: { primaryProvider: 'gemini', fallbackProvider: 'qwen' }
+    })).rejects.toMatchObject({ code: 'PROVIDER_TIMEOUT' })
+  })
 })

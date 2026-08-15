@@ -39,8 +39,34 @@ const readJsonBody = async (req) => {
   })
 }
 
+// Classifies a Supabase RPC/PostgREST error. Returns a stable code + a safe,
+// sanitized message. DB/infrastructure failures (missing function, schema issue,
+// RLS/authorization) are surfaced truthfully and NOT conflated with a bad key.
+export const classifyRpcError = (error, fallbackCode = 'STORAGE_UNAVAILABLE') => {
+  const raw = String(error?.message || error?.error || error?.details || '')
+  const lower = raw.toLowerCase()
+  // Storage/function/pgcrypto/config failures must be reported as storage
+  // unavailability, NOT conflated with a bad key or with RLS.
+  if (/function.*does not exist|pgp_sym|pgcrypto|could not find a function|42883/i.test(lower)) {
+    return { code: 'STORAGE_UNAVAILABLE', httpStatus: 503, error: 'Provider credential storage is temporarily unavailable.' }
+  }
+  if (/encryption key|encryption/i.test(lower)) {
+    return { code: 'STORAGE_UNAVAILABLE', httpStatus: 503, error: 'Provider credential storage is not fully configured.' }
+  }
+  // Authorization/RLS errors (distinct from the storage errors above).
+  if (/authorized|admin|owner|workspace|42501|permission|not allowed|not authorized/i.test(lower)) {
+    return { code: 'FORBIDDEN', httpStatus: 403, error: 'You are not authorized to manage AI provider credentials.' }
+  }
+  // Anything else is a generic storage/infrastructure failure — never leak the
+  // raw database internals to the normal UI.
+  return { code: fallbackCode, httpStatus: 503, error: 'Provider credential storage is temporarily unavailable.' }
+}
+
 // Minimal provider call purely to verify a credential. Uses a tiny prompt so it
-// is inexpensive; any non-credential failure surfaces a sanitized error.
+// is inexpensive; any non-credential failure surfaces a sanitized error. This
+// maps ONLY provider errors (bad key / quota / model / timeout). Infrastructure
+// failures (storage/unresolvable credential) are handled by the caller and are
+// never conflated with a bad key.
 const testProviderKey = async ({ provider, apiKey, model }) => {
   try {
     if (provider === 'qwen') {
@@ -55,7 +81,8 @@ const testProviderKey = async ({ provider, apiKey, model }) => {
     await extractSheetWithGemini({
       imageBytes: new Uint8Array([0xff, 0xd8, 0xff]),
       mimeType: 'image/jpeg',
-      storedCredentialResolver: () => apiKey
+      storedCredentialResolver: () => apiKey,
+      model: model || undefined
     })
     return { ok: true, status: 'connected' }
   } catch (error) {
@@ -66,10 +93,16 @@ const testProviderKey = async ({ provider, apiKey, model }) => {
     if (code === 'RATE_LIMITED') {
       return { ok: false, status: 'quota_unavailable', error: 'Provider quota is currently unavailable.' }
     }
-    if (code === 'MODEL_UNAVAILABLE' || code === 'SERVER_NOT_CONFIGURED') {
-      return { ok: false, status: 'provider_unavailable', error: 'The provider is unavailable.' }
+    if (code === 'PROVIDER_TIMEOUT') {
+      return { ok: false, status: 'provider_timeout', error: 'The provider took too long to respond. Try again.' }
     }
-    return { ok: false, status: 'provider_unavailable', error: 'Could not reach the provider. Check the key and try again.' }
+    if (code === 'MODEL_UNAVAILABLE') {
+      return { ok: false, status: 'model_unavailable', error: 'The selected model is unavailable.' }
+    }
+    if (code === 'SERVER_NOT_CONFIGURED') {
+      return { ok: false, status: 'server_not_configured', error: 'The provider is not configured.' }
+    }
+    return { ok: false, status: 'provider_unavailable', error: 'The provider could not be reached. Try again shortly.' }
   }
 }
 
@@ -126,8 +159,8 @@ export default async function handler(req, res) {
           p_owner_id: ownerId, p_primary: primary, p_fallback: fallback
         })
         if (error) {
-          const isAuthz = /authorized|admin|owner|workspace|42501/i.test(String(error.message || ''))
-          send(res, isAuthz ? 403 : 503, { ok: false, error: error.message || 'Could not save routing.' })
+          const mapped = classifyRpcError(error)
+          send(res, mapped.httpStatus, { ok: false, code: mapped.code, error: mapped.error })
           return
         }
         send(res, 200, { ok: true, ...(Array.isArray(data) ? (data[0] || {}) : data || {}) })
@@ -153,15 +186,28 @@ export default async function handler(req, res) {
         const model = typeof body?.model === 'string' ? body.model.trim() : ''
         let apiKey = secret
         if (!apiKey) {
+          // No pasted key: resolve the stored credential server-side. This
+          // requires the service-role client. If the service role key is absent,
+          // stored-credential testing is unavailable (truthful, not a bad key).
+          const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+          if (!serviceRoleKey) {
+            send(res, 200, { ok: true, status: 'server_not_configured', error: 'Server credential storage is not fully configured.' })
+            return
+          }
           const serviceClient = createClient(
             process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '',
-            process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+            serviceRoleKey,
             { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
           )
           const { data: resolved, error: resolveError } = await serviceClient.rpc('ai_provider_resolve_key', {
             p_owner_id: ownerId, p_provider: provider, p_encryption_key: encryptionKey
           })
-          if (!resolveError && resolved && typeof resolved === 'object') apiKey = resolved.key || ''
+          if (resolveError) {
+            const mapped = classifyRpcError(resolveError, 'STORAGE_UNAVAILABLE')
+            send(res, 200, { ok: true, status: 'server_not_configured', error: mapped.error })
+            return
+          }
+          if (resolved && typeof resolved === 'object') apiKey = resolved.key || ''
         }
         if (!apiKey) {
           send(res, 200, { ok: true, status: 'not_configured' })
@@ -190,8 +236,8 @@ export default async function handler(req, res) {
         p_model: model
       })
       if (error) {
-        const isAuthz = /authorized|admin|owner|workspace|42501/i.test(String(error.message || ''))
-        send(res, isAuthz ? 403 : 503, { ok: false, error: error.message || 'Could not save the provider key.' })
+        const mapped = classifyRpcError(error, 'STORAGE_UNAVAILABLE')
+        send(res, mapped.httpStatus, { ok: false, code: mapped.code, error: mapped.error })
         return
       }
       send(res, 200, { ok: true, ...(Array.isArray(data) ? (data[0] || {}) : data || {}) })
@@ -201,8 +247,8 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const { data, error } = await client.rpc('ai_provider_remove', { p_owner_id: ownerId, p_provider: provider })
       if (error) {
-        const isAuthz = /authorized|admin|owner|workspace|42501/i.test(String(error.message || ''))
-        send(res, isAuthz ? 403 : 503, { ok: false, error: error.message || 'Could not remove the provider key.' })
+        const mapped = classifyRpcError(error, 'STORAGE_UNAVAILABLE')
+        send(res, mapped.httpStatus, { ok: false, code: mapped.code, error: mapped.error })
         return
       }
       send(res, 200, { ok: true, ...(Array.isArray(data) ? (data[0] || {}) : data || {}) })

@@ -65,7 +65,8 @@ const runProvider = async ({ provider, config, imageBytes, mimeType }) => {
     return extractSheetWithGemini({
       imageBytes,
       mimeType,
-      storedCredentialResolver: () => config.key
+      storedCredentialResolver: () => config.key,
+      model: config.model || undefined
     })
   }
   if (provider === 'qwen') {
@@ -73,7 +74,7 @@ const runProvider = async ({ provider, config, imageBytes, mimeType }) => {
       imageBytes,
       mimeType,
       apiKey: config.key,
-      model: config.model
+      model: config.model || undefined
     })
   }
   throw new ExtractionError('PROVIDER_UNAVAILABLE', `Unknown provider: ${provider}`, { httpStatus: 503 })

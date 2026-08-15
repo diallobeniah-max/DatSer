@@ -52,6 +52,13 @@ describe('geminiExtract successful extraction path', () => {
     expect(result.sheet.detected_headers).toEqual(['Name'])
   })
 
+  it('uses the explicitly selected model when provided', async () => {
+    mocks.generateContent.mockResolvedValue(genaiResponse(JSON.stringify({ sheet: {}, rows: [] })))
+    await extractSheetWithGemini({ imageBytes: IMAGE_BYTES, mimeType: MIME, model: 'gemini-3.1-pro' })
+    expect(mocks.generateContent).toHaveBeenCalledWith(expect.objectContaining({ model: 'gemini-3.1-pro' }))
+  })
+
+
   it('strips markdown fences from the Gemini JSON response', async () => {
     mocks.generateContent.mockResolvedValue(genaiResponse('```json\n{"sheet":{},"rows":[]}\n```'))
     const result = await extractSheetWithGemini({ imageBytes: IMAGE_BYTES, mimeType: MIME })

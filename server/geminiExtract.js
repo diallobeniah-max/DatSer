@@ -207,7 +207,7 @@ const toExtractionError = (error) => {
   return new ExtractionError('GEMINI_API_ERROR', 'Gemini could not complete the request.', { retryable: true, httpStatus: 502 })
 }
 
-export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCredentialResolver = null }) => {
+export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCredentialResolver = null, model = GEMINI_MODEL }) => {
   if (!imageBytes || !(imageBytes instanceof Uint8Array) || imageBytes.length === 0) {
     throw new ExtractionError('MISSING_IMAGE', 'An image payload is required.', { httpStatus: 400 })
   }
@@ -222,7 +222,7 @@ export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCrede
   const genai = new GoogleGenAI({ apiKey })
   try {
     const response = await genai.models.generateContent({
-      model: GEMINI_MODEL,
+      model: model || GEMINI_MODEL,
       contents: [
         {
           role: 'user',
