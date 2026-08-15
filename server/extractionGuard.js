@@ -17,15 +17,17 @@ export const getSupabaseServerConfig = () => {
 const getServiceRoleKey = () => process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 
 // Server-side resolver for a stored AI-provider credential. Returns an object
-// { key, model } where key is the DECRYPTED provider key — ONLY to the server
+// { key, model, status, code } where key is the DECRYPTED provider key — ONLY to the server
 // runtime (never to a browser). Uses a service-role client so it can call the
 // SECURITY DEFINER ai_provider_resolve_key RPC, which is revoked from browser
-// roles. Returns '' key when the stored credential is absent or the service key
-// is not configured (the caller then falls through to env vars).
+// roles. Resolution states are intentionally safe to return to API handlers:
+// they never contain a secret or database exception text.
 export const resolveStoredProviderKey = async ({ ownerId, provider = 'gemini' }) => {
   const { url } = getSupabaseServerConfig()
   const serviceRoleKey = getServiceRoleKey()
-  if (!url || !serviceRoleKey || !ownerId) return { key: '', model: '' }
+  if (!url || !serviceRoleKey || !ownerId) {
+    return { key: '', model: '', status: 'unavailable', code: 'STORED_CREDENTIAL_RESOLUTION_UNAVAILABLE' }
+  }
   try {
     const serviceClient = createClient(url, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
@@ -36,10 +38,18 @@ export const resolveStoredProviderKey = async ({ ownerId, provider = 'gemini' })
       p_provider: provider,
       p_encryption_key: encryptionKey
     })
-    if (error || !data || typeof data !== 'object') return { key: '', model: '' }
-    return { key: typeof data.key === 'string' ? data.key : '', model: typeof data.model === 'string' ? data.model : '' }
+    if (error || !data || typeof data !== 'object') {
+      return { key: '', model: '', status: 'unavailable', code: 'STORED_CREDENTIAL_RESOLUTION_UNAVAILABLE' }
+    }
+    const key = typeof data.key === 'string' ? data.key : ''
+    const model = typeof data.model === 'string' ? data.model : ''
+    const status = typeof data.status === 'string'
+      ? data.status
+      : key ? 'resolved' : model ? 'unreadable' : 'not_found'
+    const code = typeof data.code === 'string' ? data.code : ''
+    return { key, model, status, code }
   } catch {
-    return { key: '', model: '' }
+    return { key: '', model: '', status: 'unavailable', code: 'STORED_CREDENTIAL_RESOLUTION_UNAVAILABLE' }
   }
 }
 

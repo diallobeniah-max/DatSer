@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => ({
   claimImageSlot: vi.fn(),
   readBearerToken: vi.fn(),
   readWorkspaceId: vi.fn(),
-  resolveRouting: vi.fn()
+  resolveRouting: vi.fn(),
+  resolveStoredProviderKey: vi.fn()
 }))
 
 vi.mock('../server/providerRouting.js', () => ({
@@ -29,7 +30,7 @@ vi.mock('../server/extractionGuard.js', () => ({
   readBearerToken: mocks.readBearerToken,
   readWorkspaceId: mocks.readWorkspaceId,
   resolveRouting: mocks.resolveRouting,
-  resolveStoredProviderKey: vi.fn(async () => ({ key: '', model: '' }))
+  resolveStoredProviderKey: mocks.resolveStoredProviderKey
 }))
 
 const OWNER = 'owner-workspace-id'
@@ -75,6 +76,7 @@ describe('api/gemini-extract', () => {
     mocks.extractPaperScan.mockResolvedValue({ sheet: {}, rows: [], warnings: [], metadata: { provider: 'gemini', model: '', fallbackUsed: false } })
     mocks.resolveProviderKeys.mockResolvedValue({ gemini: { key: 'gemini-key', model: '' } })
     mocks.resolveRouting.mockResolvedValue({ primaryProvider: 'gemini', fallbackProvider: null })
+    mocks.resolveStoredProviderKey.mockResolvedValue({ key: 'gemini-key', model: '', status: 'resolved' })
   })
 
   afterEach(() => {
@@ -159,6 +161,18 @@ describe('api/gemini-extract', () => {
     const res = await callHandler({ body: { requestId: REQUEST_ID, image: { data: 'abc' } } })
     expect(res.status).toBe(400)
     expect(res.body.code).toBe('INVALID_IMAGE_DATA')
+    expect(mocks.claimImageSlot).not.toHaveBeenCalled()
+    expect(mocks.extractPaperScan).not.toHaveBeenCalled()
+  })
+
+  it('fails before claiming quota when the stored primary credential cannot be resolved', async () => {
+    mocks.resolveProviderKeys.mockResolvedValue({})
+    mocks.resolveStoredProviderKey.mockResolvedValue({
+      key: '', model: 'gemini-3.1-flash-lite', status: 'unreadable', code: 'CREDENTIAL_DECRYPT_FAILED'
+    })
+    const res = await callHandler({ body: { requestId: REQUEST_ID, image: IMAGE } })
+    expect(res.status).toBe(503)
+    expect(res.body.code).toBe('CREDENTIAL_DECRYPT_FAILED')
     expect(mocks.claimImageSlot).not.toHaveBeenCalled()
     expect(mocks.extractPaperScan).not.toHaveBeenCalled()
   })

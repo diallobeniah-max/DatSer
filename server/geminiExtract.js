@@ -184,7 +184,7 @@ export const parseJsonLoose = (text) => {
   }
 }
 
-const toExtractionError = (error) => {
+export const toExtractionError = (error) => {
   if (error instanceof ExtractionError) return error
   const status = error?.status || error?.code
   const message = String(error?.message || 'Gemini request failed.')
@@ -205,6 +205,30 @@ const toExtractionError = (error) => {
     return new ExtractionError('PROVIDER_TIMEOUT', 'Gemini took too long to respond. Try again.', { retryable: true, httpStatus: 504 })
   }
   return new ExtractionError('GEMINI_API_ERROR', 'Gemini could not complete the request.', { retryable: true, httpStatus: 502 })
+}
+
+// A credential health check must not pretend to be an image extraction. In
+// particular, sending a truncated JPEG validates neither the stored key nor
+// the configured model and makes Google return an image error. This performs
+// the smallest text-only request that exercises the exact Gemini adapter.
+export const testGeminiConnection = async ({ apiKey, model = GEMINI_MODEL }) => {
+  if (!apiKey) {
+    throw new ExtractionError('SERVER_NOT_CONFIGURED', 'The server is missing its Gemini API key.', { httpStatus: 500 })
+  }
+
+  const genai = new GoogleGenAI({ apiKey })
+  try {
+    const response = await genai.models.generateContent({
+      model: model || GEMINI_MODEL,
+      contents: [{ role: 'user', parts: [{ text: 'Reply with exactly OK.' }] }]
+    })
+    if (!extractJsonText(response).trim()) {
+      throw new ExtractionError('EMPTY_RESPONSE', 'Gemini returned no readable content.', { httpStatus: 502 })
+    }
+    return { status: 'connected' }
+  } catch (error) {
+    throw toExtractionError(error)
+  }
 }
 
 export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCredentialResolver = null, model = GEMINI_MODEL }) => {

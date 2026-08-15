@@ -14,9 +14,9 @@
 //
 // The encryption key (AI_PROVIDER_ENCRYPTION_KEY) lives ONLY in the server env.
 import { createClient } from '@supabase/supabase-js'
-import { authenticateExtractionRequest, readBearerToken, readWorkspaceId, resolveRouting } from '../server/extractionGuard.js'
+import { authenticateExtractionRequest, readBearerToken, readWorkspaceId, resolveRouting, resolveStoredProviderKey } from '../server/extractionGuard.js'
 import { ExtractionError } from '../server/extractionErrors.js'
-import { extractSheetWithGemini } from '../server/geminiExtract.js'
+import { testGeminiConnection } from '../server/geminiExtract.js'
 import { extractSheetWithQwen } from '../server/qwenExtract.js'
 
 export const config = { maxDuration: 30 }
@@ -78,12 +78,7 @@ const testProviderKey = async ({ provider, apiKey, model }) => {
       })
       return { ok: true, status: 'connected' }
     }
-    await extractSheetWithGemini({
-      imageBytes: new Uint8Array([0xff, 0xd8, 0xff]),
-      mimeType: 'image/jpeg',
-      storedCredentialResolver: () => apiKey,
-      model: model || undefined
-    })
+    await testGeminiConnection({ apiKey, model: model || undefined })
     return { ok: true, status: 'connected' }
   } catch (error) {
     const code = error?.code || 'PROVIDER_ERROR'
@@ -186,31 +181,21 @@ export default async function handler(req, res) {
 
       if (body?.action === 'test') {
         const secret = typeof body?.secret === 'string' ? body.secret.trim() : ''
-        const model = typeof body?.model === 'string' ? body.model.trim() : ''
+        let model = typeof body?.model === 'string' ? body.model.trim() : ''
         let apiKey = secret
         if (!apiKey) {
-          // No pasted key: resolve the stored credential server-side. This
-          // requires the service-role client. If the service role key is absent,
-          // stored-credential testing is unavailable (truthful, not a bad key).
-          const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-          if (!serviceRoleKey) {
-            send(res, 200, { ok: true, status: 'server_not_configured', error: 'Server credential storage is not fully configured.' })
+          const resolved = await resolveStoredProviderKey({ ownerId, provider })
+          if (resolved.status === 'unavailable' || resolved.status === 'unreadable') {
+            send(res, 200, {
+              ok: true,
+              status: 'credential_unavailable',
+              code: resolved.code || 'STORED_CREDENTIAL_UNREADABLE',
+              error: 'The stored provider credential could not be read by the server.'
+            })
             return
           }
-          const serviceClient = createClient(
-            process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '',
-            serviceRoleKey,
-            { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
-          )
-          const { data: resolved, error: resolveError } = await serviceClient.rpc('ai_provider_resolve_key', {
-            p_owner_id: ownerId, p_provider: provider, p_encryption_key: encryptionKey
-          })
-          if (resolveError) {
-            const mapped = classifyRpcError(resolveError, 'STORAGE_UNAVAILABLE')
-            send(res, 200, { ok: true, status: 'server_not_configured', error: mapped.error })
-            return
-          }
-          if (resolved && typeof resolved === 'object') apiKey = resolved.key || ''
+          apiKey = resolved.key || ''
+          if (!model) model = resolved.model || ''
         }
         if (!apiKey) {
           send(res, 200, { ok: true, status: 'not_configured' })

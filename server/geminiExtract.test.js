@@ -15,7 +15,7 @@ vi.mock('@google/genai', () => ({
   }))
 }))
 
-const { extractSheetWithGemini, GEMINI_MODEL, normalizeExtraction, normalizeUsageMetadata } = await import('./geminiExtract.js')
+const { extractSheetWithGemini, testGeminiConnection, GEMINI_MODEL, normalizeExtraction, normalizeUsageMetadata } = await import('./geminiExtract.js')
 const { ExtractionError } = await import('./extractionErrors.js')
 
 const IMAGE_BYTES = new Uint8Array([1, 2, 3, 4])
@@ -35,6 +35,15 @@ afterEach(() => {
 })
 
 describe('geminiExtract successful extraction path', () => {
+  it('uses a text-only request for the credential health check', async () => {
+    mocks.generateContent.mockResolvedValue(genaiResponse('OK'))
+    await expect(testGeminiConnection({ apiKey: 'AIzaSyValidTestKey123456' })).resolves.toEqual({ status: 'connected' })
+    const call = mocks.generateContent.mock.calls[0][0]
+    expect(call.model).toBe(GEMINI_MODEL)
+    expect(call.contents[0].parts).toEqual([{ text: 'Reply with exactly OK.' }])
+    expect(call.contents[0].parts.some((part) => part.inlineData)).toBe(false)
+  })
+
   it('uses the configured model and returns normalized rows', async () => {
     mocks.generateContent.mockResolvedValue(genaiResponse(JSON.stringify({
       sheet: { detected_headers: ['Name'], attendance_dates: ['2026-07-05'] },
@@ -124,6 +133,12 @@ describe('geminiExtract successful extraction path', () => {
 })
 
 describe('geminiExtract error mapping', () => {
+  it('maps a text-only health-check invalid key to INVALID_API_KEY', async () => {
+    mocks.generateContent.mockRejectedValue(new Error('API key not valid.'))
+    const error = await testGeminiConnection({ apiKey: 'invalid-key' }).then(() => null, (e) => e)
+    expect(error.code).toBe('INVALID_API_KEY')
+  })
+
   it('throws SERVER_NOT_CONFIGURED when no API key resolves', async () => {
     mocks.getGeminiApiKey.mockReturnValue('')
     const error = await extractSheetWithGemini({ imageBytes: IMAGE_BYTES, mimeType: MIME })

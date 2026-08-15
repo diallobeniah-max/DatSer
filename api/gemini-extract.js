@@ -112,6 +112,31 @@ export default async function handler(req, res) {
       data: body?.image?.data
     })
 
+    // Resolve configuration before creating a quota claim. A server-side
+    // credential fault is not an extraction attempt and must not consume one of
+    // the user's ledger slots. This does not contact Gemini.
+    const routing = await resolveRouting({ ownerId: identity.ownerId })
+    const providers = [...new Set([routing.primaryProvider, routing.fallbackProvider].filter(Boolean))]
+    const storedCredentials = {}
+    for (const provider of providers) {
+      storedCredentials[provider] = await resolveStoredProviderKey({ ownerId: identity.ownerId, provider })
+    }
+    const providerKeys = await resolveProviderKeys({
+      storedResolvers: Object.fromEntries(providers.map((provider) => [provider, () => storedCredentials[provider]])),
+      envKeys: {
+        gemini: process.env.GEMINI_API_KEY || '',
+        qwen: process.env.QWEN_API_KEY || ''
+      }
+    })
+    const primaryCredential = storedCredentials[routing.primaryProvider]
+    if (!providerKeys[routing.primaryProvider] && ['unavailable', 'unreadable'].includes(primaryCredential?.status)) {
+      throw new ExtractionError(
+        primaryCredential.code || 'STORED_CREDENTIAL_UNREADABLE',
+        'The stored primary-provider credential could not be read by the server.',
+        { httpStatus: 503 }
+      )
+    }
+
     // Atomic claim BEFORE Gemini: quota, idempotency and the ledger insert all
     // happen in one RPC transaction. A failed claim means no Gemini spend.
     const { extractionId } = await claimImageSlot({
@@ -125,17 +150,8 @@ export default async function handler(req, res) {
     const payload = await extractPaperScan({
       imageBytes: image.bytes,
       mimeType: image.mimeType,
-      providerKeys: await resolveProviderKeys({
-        storedResolvers: {
-          gemini: () => resolveStoredProviderKey({ ownerId: identity.ownerId, provider: 'gemini' }),
-          qwen: () => resolveStoredProviderKey({ ownerId: identity.ownerId, provider: 'qwen' })
-        },
-        envKeys: {
-          gemini: process.env.GEMINI_API_KEY || '',
-          qwen: process.env.QWEN_API_KEY || ''
-        }
-      }),
-      routing: await resolveRouting({ ownerId: identity.ownerId })
+      providerKeys,
+      routing
     })
 
     send(res, 200, { ok: true, ...payload, ownerId: identity.ownerId, extractionId })
