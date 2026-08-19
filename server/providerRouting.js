@@ -2,7 +2,7 @@ import { ExtractionError } from './extractionErrors.js'
 import { extractSheetWithGemini } from './geminiExtract.js'
 import { extractSheetWithQwen } from './qwenExtract.js'
 
-// Paper Scan provider routing — OpenCode-style, deliberately simple.
+// Paper Scan provider routing — deliberately simple.
 //
 // extractPaperScan():
 //   1. resolve the configured primary provider
@@ -22,6 +22,9 @@ import { extractSheetWithQwen } from './qwenExtract.js'
 
 const PROVIDERS = ['gemini', 'qwen']
 
+// Credentials are resolved before reaching this router.  In particular Gemini
+// must arrive here through server/geminiKey.js, which guards against a stale
+// Windows PROCESS-scoped key shadowing the configured User-scoped key.
 // A provider failure is temporary/retryable when it might succeed on another
 // provider or after a short wait. Permanent credential/request errors never
 // trigger a fallback.
@@ -54,22 +57,23 @@ export const resolveProviderKeys = async ({
         // fall through to env
       }
     }
-    // Server environment credentials are deployment-managed and take
-    // precedence over a stale encrypted record. This is deliberately a
-    // server-only choice: neither source is ever returned to the browser.
-    if (envKeys?.[provider]) key = envKeys[provider]
+    // The endpoint supplies a canonical, server-resolved environment fallback
+    // for Gemini. Never let a raw process value override a valid stored
+    // credential here: doing so reintroduced the stale PROCESS-key regression.
+    if (!key && envKeys?.[provider]) key = envKeys[provider]
     if (key) result[provider] = { key, model }
   }
   return result
 }
 
-const runProvider = async ({ provider, config, imageBytes, mimeType }) => {
+const runProvider = async ({ provider, config, imageBytes, mimeType, mode }) => {
   if (provider === 'gemini') {
     return extractSheetWithGemini({
       imageBytes,
       mimeType,
       storedCredentialResolver: () => config.key,
-      model: config.model || undefined
+      model: config.model || undefined,
+      mode
     })
   }
   if (provider === 'qwen') {
@@ -86,6 +90,7 @@ const runProvider = async ({ provider, config, imageBytes, mimeType }) => {
 export const extractPaperScan = async ({
   imageBytes,
   mimeType,
+  mode = 'attendance-sheet',
   providerKeys = {}, // { provider: { key, model } } (already resolved)
   routing = { primaryProvider: 'gemini', fallbackProvider: null }
 }) => {
@@ -102,7 +107,7 @@ export const extractPaperScan = async ({
     if (!config?.key) {
       throw new ExtractionError('SERVER_NOT_CONFIGURED', `The ${provider} provider is not configured.`, { httpStatus: 500 })
     }
-    return runProvider({ provider, config, imageBytes, mimeType })
+    return runProvider({ provider, config, imageBytes, mimeType, mode })
   }
 
   try {

@@ -4,6 +4,8 @@ import {
   ATTENDANCE_CONVENTIONS,
   ATTENDANCE_STATUS,
   attendanceColumnNameForDate,
+  attendanceMatchesExpected,
+  collectMonthSundays,
   formatDateKey,
   getSundaysForMonth,
   interpretAttendanceMark,
@@ -34,6 +36,20 @@ describe('paperScanAttendance sunday mapping', () => {
     expect(columns[5].unused).toBe(true)
   })
 
+  it('verifies exact server attendance values for a single date', () => {
+    const member = { attendance_2026_08_09: 'Present' }
+    expect(attendanceMatchesExpected(member, '2026-08-09', ATTENDANCE_STATUS.PRESENT)).toBe(true)
+    expect(attendanceMatchesExpected(member, '2026-08-09', ATTENDANCE_STATUS.ABSENT)).toBe(false)
+    expect(attendanceMatchesExpected(member, '2026-08-09', ATTENDANCE_STATUS.NEEDS_REVIEW)).toBe(false)
+  })
+
+  it('never treats a missing or wrong value as a saved match', () => {
+    const member = { attendance_2026_08_09: 'Absent' }
+    expect(attendanceMatchesExpected(member, '2026-08-09', ATTENDANCE_STATUS.PRESENT)).toBe(false)
+    expect(attendanceMatchesExpected({}, '2026-08-09', ATTENDANCE_STATUS.PRESENT)).toBe(false)
+    expect(attendanceMatchesExpected(null, '2026-08-09', ATTENDANCE_STATUS.PRESENT)).toBe(false)
+  })
+
   it('handles a month whose first Sunday is the 1st (March 2028)', () => {
     // March 2028: Sundays 5, 12, 19, 26
     expect(sundayKeys('2028-03')[0]).toBe('2028-03-05')
@@ -43,6 +59,18 @@ describe('paperScanAttendance sunday mapping', () => {
     expect(getSundaysForMonth('2026-13')).toEqual([])
     expect(getSundaysForMonth('garbage')).toEqual([])
     expect(getSundaysForMonth('')).toEqual([])
+  })
+
+  it('shows every Sunday of a selected month while keeping only explicit dates selected', () => {
+    const state = collectMonthSundays(['2026-08'], { '2026-08': ['2026-08-09'] })
+    expect(state.dates).toEqual(['2026-08-02', '2026-08-09', '2026-08-16', '2026-08-23', '2026-08-30'])
+    expect([...state.selectedSet]).toEqual(['2026-08-09'])
+  })
+
+  it('never treats a visible Sunday as selected just because it was rendered', () => {
+    const state = collectMonthSundays(['2026-08'], { '2026-08': [] })
+    expect(state.dates).toHaveLength(5)
+    expect(state.selectedSet.size).toBe(0)
   })
 })
 

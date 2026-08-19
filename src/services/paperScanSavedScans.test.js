@@ -20,6 +20,7 @@ import {
   listSavedScans,
   mergeStagedSheet,
   removeStagedSheet,
+  removeSavedScanSheets,
   renameSavedScan,
   rowsFromSavedScan,
   savePaperScan,
@@ -208,6 +209,50 @@ describe('record builders', () => {
     expect(record.usage_metadata['sheet-1'].candidatesTokenCount).toBe(34)
     expect(record.review_state['sheet-1'].attendanceScope.sundays).toEqual({ '2026-07': ['2026-07-05'] })
   })
+
+  it('clearSaveResult resets the stale save_result display cache without touching scan data', () => {
+    const record = buildSavedScanRecord({
+      scanId: 'scan-1',
+      userId: 'u1',
+      ownerId: 'owner-1',
+      name: 'My scan',
+      sheets: [okSheet],
+      resultsBySheet: { 'sheet-1': okResult },
+      attendanceScopes: {},
+      extraMeta: { summary: { saved: 1 } },
+      clearSaveResult: true
+    })
+    expect(record.save_result).toBeNull()
+    expect(record.sheet_images[0].path).toBe('u1/scan-1/sheet-1.jpg')
+    expect(record.extraction['sheet-1'].rows[0].originalGeminiValue.phone_number).toBe('0249999999')
+    expect(record.extraction['sheet-1'].rows[0].reviewedValues).toBeDefined()
+  })
+
+  it('persists optional image byte metadata in sheet_images without binary data', () => {
+    const record = buildSavedScanRecord({
+      scanId: 'scan-1', userId: 'u1', ownerId: 'owner-1', name: 'My scan',
+      sheets: [{ ...okSheet, originalBytes: 2_845_120, compressedBytes: 842_113, mimeType: 'image/jpeg', width: 1600, height: 1200 }],
+      resultsBySheet: { 'sheet-1': okResult }
+    })
+    expect(record.sheet_images[0]).toMatchObject({ original_bytes: 2_845_120, optimized_bytes: 842_113, mime_type: 'image/jpeg', width: 1600, height: 1200 })
+    expect(record.sheet_images[0].dataUrl).toBeUndefined()
+  })
+
+  it('persists the reviewed Quick Sunday List state separately from normal extraction data', () => {
+    const record = buildSavedScanRecord({
+      scanId: 'scan-quick', userId: 'u1', ownerId: 'owner-1', name: 'Quick Sunday List',
+      sheets: [okSheet], resultsBySheet: { 'sheet-1': okResult },
+      quickSunday: {
+        mode: 'quick-sunday-list', month: '2026-08', sunday: '2026-08-16',
+        rows: [{ id: 'quick-name-0', full_name: 'Ama Doe', status: 'ready', selectedMemberId: 'member-1' }],
+        saveResult: { saved: 1, skipped: 0 }
+      }
+    })
+    expect(record.review_state._quick_sunday).toMatchObject({
+      month: '2026-08', sunday: '2026-08-16', saveResult: { saved: 1, skipped: 0 }
+    })
+    expect(record.review_state._quick_sunday.rows[0].selectedMemberId).toBe('member-1')
+  })
 })
 
 describe('savePaperScan (idempotent save)', () => {
@@ -386,6 +431,49 @@ describe('list / get / rename / signed urls', () => {
     expect(sb.calls.from[0]).not.toMatch(/attendance/)
   })
 
+  it('light list projection avoids downloading full extraction payloads', async () => {
+    const selections = []
+    const supabase = {
+      from: () => ({
+        select: vi.fn((selection) => {
+          selections.push(selection)
+          return {
+            order: () => ({
+              eq: () => Promise.resolve({ data: [{ id: 'scan-1', name: 'A', sheet_images: [] }], error: null })
+            })
+          }
+        }),
+        eq: () => ({ order: () => Promise.resolve({ data: [], error: null }) })
+      })
+    }
+    await listSavedScans({ supabase, ownerId: 'owner-1', light: true })
+    expect(selections[0]).not.toContain('extraction')
+    expect(selections[0]).not.toContain('usage_metadata')
+    expect(selections[0]).not.toContain('review_state')
+    expect(selections[0]).not.toContain('save_result')
+    expect(selections[0]).toContain('sheet_images')
+  })
+
+  it('full list projection keeps usage and review metadata', async () => {
+    const selections = []
+    const supabase = {
+      from: () => ({
+        select: vi.fn((selection) => {
+          selections.push(selection)
+          return {
+            order: () => ({
+              eq: () => Promise.resolve({ data: [], error: null })
+            })
+          }
+        }),
+        eq: () => ({ order: () => Promise.resolve({ data: [], error: null }) })
+      })
+    }
+    await listSavedScans({ supabase, ownerId: 'owner-1' })
+    expect(selections[0]).toContain('usage_metadata')
+    expect(selections[0]).toContain('review_state')
+  })
+
   it('loads a stored scan with all columns including usage metadata', async () => {
     const sb = mockSupabase()
     const scan = await getSavedScan({ supabase: sb, id: 'scan-1' })
@@ -414,12 +502,13 @@ describe('list / get / rename / signed urls', () => {
 })
 
 describe('deleteSavedScan', () => {
-  it('removes only the scan folder objects then the row itself', async () => {
+  it('deletes the scan row before removing only its own folder objects', async () => {
     const sb = mockSupabase()
-    await deleteSavedScan({ supabase: sb, scan: { id: 'scan-1', user_id: 'u1', owner_id: 'owner-1' } })
+    const result = await deleteSavedScan({ supabase: sb, scan: { id: 'scan-1', user_id: 'u1', owner_id: 'owner-1' } })
+    expect(result).toEqual({ storageWarning: '' })
+    expect(sb.calls.from[0]).toBe(SAVED_SCANS_TABLE)
     expect(sb.calls.storageLists).toEqual([{ name: SAVED_SCANS_BUCKET, path: 'u1/scan-1', options: { limit: 100, offset: 0 } }])
     expect(sb.calls.storageRemoves).toEqual([{ name: SAVED_SCANS_BUCKET, paths: ['u1/scan-1/img.jpg'] }])
-    expect(sb.calls.from[0]).toBe(SAVED_SCANS_TABLE)
     // No member, attendance, or extraction-quota table is ever touched.
     const touchedTables = sb.calls.from
     expect(touchedTables).not.toContain('members')
@@ -435,7 +524,49 @@ describe('deleteSavedScan', () => {
       list: async () => ({ data: [], error: null }),
       createSignedUrl: async () => ({ data: { signedUrl: '' }, error: null })
     }))
-    await expect(deleteSavedScan({ supabase: sb, scan: { id: 'scan-1', user_id: 'u1' } })).resolves.toBe(true)
+    await expect(deleteSavedScan({ supabase: sb, scan: { id: 'scan-1', user_id: 'u1' } })).resolves.toEqual({ storageWarning: '' })
+  })
+
+  it('does not remove any sheet files when the database delete is rejected', async () => {
+    const sb = mockSupabase()
+    sb.from.mockImplementation(() => ({
+      delete: () => ({ eq: async () => ({ error: { message: 'dependent Final Save operation' } }) })
+    }))
+    await expect(deleteSavedScan({ supabase: sb, scan: { id: 'scan-1', user_id: 'u1' } }))
+      .rejects.toThrow('dependent Final Save operation')
+    expect(sb.calls.storageLists).toHaveLength(0)
+    expect(sb.calls.storageRemoves).toHaveLength(0)
+  })
+})
+
+describe('removeSavedScanSheets', () => {
+  const scan = {
+    id: 'scan-1', user_id: 'u1', owner_id: 'owner-1',
+    sheet_images: [
+      { sheetId: 'sheet-1', path: 'u1/scan-1/sheet-1.jpg' },
+      { sheetId: 'sheet-2', path: 'u1/scan-1/sheet-2.jpg' }
+    ],
+    extraction: { 'sheet-1': { rows: [{ full_name: 'A' }] }, 'sheet-2': { rows: [{ full_name: 'B' }] } },
+    review_state: { 'sheet-1': { rowCount: 1 }, 'sheet-2': { rowCount: 1 } },
+    attendance: { 'sheet-1': {}, 'sheet-2': {} },
+    usage_metadata: { 'sheet-1': { totalTokenCount: 1 }, 'sheet-2': { totalTokenCount: 1 } }
+  }
+
+  it('updates only saved-scan metadata then removes only the selected image object', async () => {
+    const sb = mockSupabase()
+    const result = await removeSavedScanSheets({ supabase: sb, scan, sheetIds: ['sheet-1'] })
+    expect(result.deletedScan).toBe(false)
+    expect(sb.calls.from).toEqual([SAVED_SCANS_TABLE])
+    expect(sb.calls.storageRemoves).toEqual([{ name: SAVED_SCANS_BUCKET, paths: ['u1/scan-1/sheet-1.jpg'] }])
+    expect(sb.calls.from).not.toContain('members')
+    expect(sb.calls.from.some((table) => /attendance/.test(String(table)))).toBe(false)
+  })
+
+  it('deletes the empty Saved Scan container only when every sheet is selected', async () => {
+    const sb = mockSupabase()
+    const result = await removeSavedScanSheets({ supabase: sb, scan, sheetIds: ['sheet-1', 'sheet-2'] })
+    expect(result.deletedScan).toBe(true)
+    expect(sb.calls.from).toEqual([SAVED_SCANS_TABLE])
   })
 })
 

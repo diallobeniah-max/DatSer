@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   readBearerToken: vi.fn(),
   readWorkspaceId: vi.fn(),
   resolveRouting: vi.fn(),
-  resolveStoredProviderKey: vi.fn()
+  resolveStoredProviderKey: vi.fn(),
+  resolveServerGeminiCredential: vi.fn()
 }))
 
 vi.mock('../server/providerRouting.js', () => ({
@@ -31,6 +32,10 @@ vi.mock('../server/extractionGuard.js', () => ({
   readWorkspaceId: mocks.readWorkspaceId,
   resolveRouting: mocks.resolveRouting,
   resolveStoredProviderKey: mocks.resolveStoredProviderKey
+}))
+
+vi.mock('../server/geminiKey.js', () => ({
+  resolveServerGeminiCredential: mocks.resolveServerGeminiCredential
 }))
 
 const OWNER = 'owner-workspace-id'
@@ -77,6 +82,7 @@ describe('api/gemini-extract', () => {
     mocks.resolveProviderKeys.mockResolvedValue({ gemini: { key: 'gemini-key', model: '' } })
     mocks.resolveRouting.mockResolvedValue({ primaryProvider: 'gemini', fallbackProvider: null })
     mocks.resolveStoredProviderKey.mockResolvedValue({ key: 'gemini-key', model: '', status: 'resolved' })
+    mocks.resolveServerGeminiCredential.mockResolvedValue({ key: 'gemini-key', source: 'windows-user' })
   })
 
   afterEach(() => {
@@ -238,6 +244,9 @@ describe('api/gemini-extract', () => {
       requestId: REQUEST_ID
     })
     expect(mocks.extractPaperScan).toHaveBeenCalledWith(expect.objectContaining({ imageBytes: Buffer.from('img'), mimeType: 'image/png' }))
+    expect(mocks.resolveServerGeminiCredential).toHaveBeenCalledWith(expect.objectContaining({
+      storedCredentialResolver: expect.any(Function)
+    }))
     // Routing + provider keys are wired so stored credentials power extraction.
     const callArgs = mocks.extractPaperScan.mock.calls[0][0]
     expect(callArgs.routing).toEqual({ primaryProvider: 'gemini', fallbackProvider: null })

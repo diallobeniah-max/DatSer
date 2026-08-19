@@ -111,6 +111,16 @@ describe('AdminPanel navigation and maintenance tools', () => {
     expect(screen.queryByTestId('admin-maintenance-tools')).toBeNull()
   })
 
+  it('opens Admin directly from an existing Google-authenticated DatSer session', () => {
+    window.sessionStorage.removeItem('adminAuthenticated')
+    render(<AdminPanel setCurrentView={mockSetCurrentView} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in with Google' }))
+
+    expect(window.sessionStorage.getItem('adminAuthenticated')).toBe('true')
+    expect(screen.getByTestId('admin-header-scan-document')).toBeDefined()
+  })
+
   it('renders prominent Scan Document card and routes to paper-scan-review', () => {
     render(<AdminPanel setCurrentView={mockSetCurrentView} />)
 

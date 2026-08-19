@@ -106,6 +106,30 @@ export const getSundaysForMonth = (monthKey) => {
   return sundays
 }
 
+// Collects every Sunday across one or more selected months for the Final Review
+// table. Only explicitly selected dates belong in `selectedSet`; every other
+// Sunday is still returned in `dates` so the UI can render it greyed out.
+export const collectMonthSundays = (months, sundaysByMonth = {}) => {
+  const dates = []
+  const seen = new Set()
+  const selectedSet = new Set()
+  ;(Array.isArray(months) ? months : []).forEach((month) => {
+    const selected = Array.isArray(sundaysByMonth?.[month]) ? sundaysByMonth[month] : []
+    ;(selected || []).forEach((dateKey) => {
+      if (dateKey) selectedSet.add(dateKey)
+    })
+    getSundaysForMonth(month).forEach((date) => {
+      const dateKey = formatDateKey(date)
+      if (dateKey && !seen.has(dateKey)) {
+        seen.add(dateKey)
+        dates.push(dateKey)
+      }
+    })
+  })
+  dates.sort()
+  return { dates, selectedSet }
+}
+
 // Maps attendance columns to the Sundays of `month`. Columns beyond the month's
 // real Sunday count get `unused: true` and a null date — they are never pushed
 // into the adjacent month.
@@ -191,6 +215,33 @@ export const resolveAttendanceEntries = ({ attendance, month, columnCount, conve
 }
 
 export const attendanceColumnNameForDate = (dateKey) => `attendance_${String(dateKey || '').replace(/-/g, '_')}`
+
+const getLegacyAttendanceColumnName = (dateKey) => {
+  if (!dateKey) return null
+  const day = Number(String(dateKey).split('-')[2])
+  if (!Number.isFinite(day)) return null
+  return `Attendance ${day}${['st', 'nd', 'rd'][((day % 100) - 20) % 10] || 'th'}`
+}
+
+// Reads the canonical Present/Absent status stored on a member row for a date,
+// supporting both the modern attendance_YYYY_MM_DD column and the legacy
+// "Attendance Nth" column. Returns null when the row has no explicit mark.
+export const readAttendanceStatusFromMember = (member, dateKey) => {
+  if (!member || !dateKey) return null
+  const column = attendanceColumnNameForDate(dateKey)
+  const legacyColumn = getLegacyAttendanceColumnName(dateKey)
+  const raw = member[column] ?? (legacyColumn ? member[legacyColumn] : undefined)
+  if (raw === 'Present' || raw === true) return ATTENDANCE_STATUS.PRESENT
+  if (raw === 'Absent' || raw === false) return ATTENDANCE_STATUS.ABSENT
+  return null
+}
+
+// True only when the server row contains the EXACT status the review intended.
+// Needs Review / unresolved / missing values are never treated as a match.
+export const attendanceMatchesExpected = (member, dateKey, expected) => {
+  if (expected !== ATTENDANCE_STATUS.PRESENT && expected !== ATTENDANCE_STATUS.ABSENT) return false
+  return readAttendanceStatusFromMember(member, dateKey) === expected
+}
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',

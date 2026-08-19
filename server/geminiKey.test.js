@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getGeminiApiKey, hasGeminiApiKey } from './geminiKey.js'
+import { getGeminiApiKey, hasGeminiApiKey, resolveServerGeminiCredential } from './geminiKey.js'
 
 let platformGetter
 let envGetter
@@ -29,6 +29,13 @@ describe('geminiKey resolution', () => {
     const exec = stubExec(`${VALID_USER_KEY}\r\n`)
     expect(await getGeminiApiKey({ exec })).toBe(VALID_USER_KEY)
     expect(exec).toHaveBeenCalled()
+  })
+
+  it('returns safe source metadata without exposing the selected key to callers that only need diagnostics', async () => {
+    envGetter.mockReturnValue({ GEMINI_API_KEY: STALE_PROCESS_KEY })
+    const credential = await resolveServerGeminiCredential({ exec: stubExec(`${VALID_USER_KEY}\r\n`) })
+    expect(credential.source).toBe('windows-user')
+    expect(credential.key).toBe(VALID_USER_KEY)
   })
 
   it('uses the Windows User-scope key when the PROCESS value is malformed', async () => {

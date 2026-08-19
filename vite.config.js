@@ -400,28 +400,31 @@ const createDatserApkDevPlugin = () => {
 }
 
 const createGeminiExtractDevPlugin = () => {
+  const hydrateServerEnv = (mode) => {
+    // Vite keeps .env values separate from process.env. API middleware is a
+    // server concern, so make its required Supabase configuration available
+    // without exposing it to the renderer. Gemini itself remains resolved by
+    // server/geminiKey.js rather than copied into a VITE_ variable.
+    try {
+      const loaded = loadEnv(mode || 'development', process.cwd(), '')
+      for (const [key, value] of Object.entries(loaded)) {
+        if (process.env[key] === undefined) process.env[key] = value
+      }
+    } catch {
+      // The guard falls back to the inherited server environment.
+    }
+  }
   const handle = (req, res) => {
     geminiExtractHandler(req, res)
   }
   return {
     name: 'datser-gemini-extract-dev',
     configureServer(server) {
-      // Vite exposes .env / .env.local values to the client via import.meta.env,
-      // but NOT to server-side plugin code. The extraction guard reads
-      // process.env.VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY to authenticate
-      // and claim quota, so surface the loaded env into process.env for this
-      // local handler only. Secrets never leave the server.
-      try {
-        const loaded = loadEnv(server.config.mode || 'development', process.cwd(), '')
-        for (const [key, value] of Object.entries(loaded)) {
-          if (process.env[key] === undefined) process.env[key] = value
-        }
-      } catch {
-        // The guard falls back to whatever env the shell already exported.
-      }
+      hydrateServerEnv(server.config.mode)
       server.middlewares.use('/api/gemini-extract', handle)
     },
     configurePreviewServer(server) {
+      hydrateServerEnv(server.config.mode)
       server.middlewares.use('/api/gemini-extract', handle)
     }
   }

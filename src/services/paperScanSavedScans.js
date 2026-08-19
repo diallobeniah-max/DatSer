@@ -40,6 +40,19 @@ export const deriveBatchTitle = (scan = {}, fallback = 'Attendance batch') => {
 
 export const buildSheetImagePath = ({ userId, scanId, sheetId }) => `${userId}/${scanId}/${sheetId}.jpg`
 
+// JSONB metadata only: no image bytes are duplicated in the database.  Older
+// rows simply omit these optional values and remain fully readable.
+const sheetImageMetadata = ({ sheet, userId, scanId, path }) => ({
+  sheetId: sheet.id,
+  source: sheet.source || '',
+  path: path || buildSheetImagePath({ userId, scanId, sheetId: sheet.id }),
+  ...(Number.isFinite(Number(sheet.originalBytes)) && Number(sheet.originalBytes) > 0 ? { original_bytes: Number(sheet.originalBytes) } : {}),
+  ...(Number.isFinite(Number(sheet.compressedBytes)) && Number(sheet.compressedBytes) > 0 ? { optimized_bytes: Number(sheet.compressedBytes) } : {}),
+  ...(sheet.mimeType ? { mime_type: sheet.mimeType } : {}),
+  ...(Number.isFinite(Number(sheet.width)) && Number(sheet.width) > 0 ? { width: Number(sheet.width) } : {}),
+  ...(Number.isFinite(Number(sheet.height)) && Number(sheet.height) > 0 ? { height: Number(sheet.height) } : {})
+})
+
 const hasOkResult = (resultsBySheet, sheetId) => {
   const result = resultsBySheet?.[sheetId]
   return result?.status === 'ok' && Boolean(result?.payload)
@@ -191,15 +204,13 @@ const upsertSavedScanRecord = async ({ supabase, record }) => {
 
 // Builds the full row payload (no I/O). Keep pure for deterministic tests.
 // `extraMeta` (e.g. the final-save result) is merged verbatim into the record.
-export const buildSavedScanRecord = ({ scanId, userId, ownerId, name, sheets, resultsBySheet, attendanceScopes = {}, extraMeta = null }) => {
+// `clearSaveResult` explicitly resets a stale final-save display cache to NULL
+// without touching the Saved Scan row, its images, or any member/attendance data.
+export const buildSavedScanRecord = ({ scanId, userId, ownerId, name, sheets, resultsBySheet, attendanceScopes = {}, extraMeta = null, clearSaveResult = false, quickSunday = null }) => {
   const sheetList = Array.isArray(sheets) ? sheets : []
   const sheetImages = sheetList
     .filter((sheet) => hasOkResult(resultsBySheet, sheet.id))
-    .map((sheet) => ({
-      sheetId: sheet.id,
-      source: sheet.source || '',
-      path: buildSheetImagePath({ userId, scanId, sheetId: sheet.id })
-    }))
+    .map((sheet) => sheetImageMetadata({ sheet, userId, scanId }))
   const record = {
     id: scanId,
     user_id: userId,
@@ -207,11 +218,16 @@ export const buildSavedScanRecord = ({ scanId, userId, ownerId, name, sheets, re
     name,
     sheet_images: sheetImages,
     extraction: buildExtractionSnapshot(resultsBySheet),
-    review_state: buildReviewState(sheetList, resultsBySheet, attendanceScopes),
+    review_state: {
+      ...buildReviewState(sheetList, resultsBySheet, attendanceScopes),
+      ...(quickSunday && typeof quickSunday === 'object' ? { _quick_sunday: quickSunday } : {})
+    },
     attendance: buildAttendanceExtraction(resultsBySheet),
     usage_metadata: buildUsageMetadataSnapshot(resultsBySheet)
   }
-  if (extraMeta && typeof extraMeta === 'object') {
+  if (clearSaveResult) {
+    record.save_result = null
+  } else if (extraMeta && typeof extraMeta === 'object') {
     record.save_result = extraMeta
   }
   return record
@@ -231,7 +247,9 @@ export const savePaperScan = async ({
   attendanceScopes = {},
   uploadImage = uploadSheetImage,
   storedSheetImages = [],
-  extraMeta = null
+  extraMeta = null,
+  clearSaveResult = false,
+  quickSunday = null
 }) => {
   const sheetImages = []
   const sheetList = Array.isArray(sheets) ? sheets : []
@@ -240,10 +258,10 @@ export const savePaperScan = async ({
     const stored = (Array.isArray(storedSheetImages) ? storedSheetImages : []).find((entry) => entry.sheetId === sheet.id)
     const path = stored?.path
       || await uploadImage({ supabase, userId, scanId, sheetId: sheet.id, dataUrl: sheet.preview || sheet.dataUrl })
-    sheetImages.push({ sheetId: sheet.id, source: sheet.source || '', path })
+    sheetImages.push(sheetImageMetadata({ sheet, userId, scanId, path }))
   }
 
-  const record = buildSavedScanRecord({ scanId, userId, ownerId, name, sheets: sheetList, resultsBySheet, attendanceScopes, extraMeta })
+  const record = buildSavedScanRecord({ scanId, userId, ownerId, name, sheets: sheetList, resultsBySheet, attendanceScopes, extraMeta, clearSaveResult, quickSunday })
   record.sheet_images = sheetImages
 
   return { scan: await upsertSavedScanRecord({ supabase, record }) }
@@ -324,10 +342,13 @@ export const durableSheetIdsFromScan = (record) => {
 // batch prepared for AI processing but never extracted into a full Saved Scan.
 export const isStagingRecord = (record) => record?.review_state?._staging === true
 
-export const listSavedScans = async ({ supabase, ownerId }) => {
+export const listSavedScans = async ({ supabase, ownerId, light = false }) => {
+  const selection = light
+    ? 'id,name,user_id,owner_id,sheet_images,updated_at'
+    : 'id,name,user_id,owner_id,sheet_images,usage_metadata,review_state,created_at,updated_at'
   let query = supabase
     .from(SAVED_SCANS_TABLE)
-    .select('id,name,user_id,owner_id,sheet_images,usage_metadata,review_state,created_at,updated_at')
+    .select(selection)
     .order('updated_at', { ascending: false })
   if (ownerId) query = query.eq('owner_id', ownerId)
   const { data, error } = await query
@@ -395,15 +416,69 @@ export const deleteStorageFolder = async ({ supabase, userId, scanId }) => {
   }
 }
 
-// Deletes ONLY this scan's storage objects and its row. Members, attendance,
-// the quota/security ledger, and unrelated scans are untouched.
+// Delete the database row before the Storage folder. If the private Final Save
+// history still prevents the row delete, its sheets must remain available for
+// recovery instead of disappearing first. The database FK cascade removes only
+// this scan's private operation/step records; it never reaches member or
+// attendance data.
 export const deleteSavedScan = async ({ supabase, scan }) => {
-  await deleteStorageFolder({ supabase, userId: scan.user_id, scanId: scan.id })
   const { error } = await supabase.from(SAVED_SCANS_TABLE).delete().eq('id', scan.id)
   if (error) {
     throw new Error(error.message || 'The scan could not be deleted.')
   }
-  return true
+  try {
+    await deleteStorageFolder({ supabase, userId: scan.user_id, scanId: scan.id })
+    return { storageWarning: '' }
+  } catch (storageError) {
+    // The record is gone; this is a safe-to-retry cleanup warning rather than
+    // a failed delete or an excuse to restore stale private scan metadata.
+    return {
+      storageWarning: storageError?.message || 'The scan was deleted, but some sheet files could not be removed automatically.'
+    }
+  }
+}
+
+// Removes only selected sheet references from one private Saved Scan.  The row
+// is updated before its Storage objects are removed, so a failed metadata write
+// never makes a still-referenced image disappear.  Final Save operations are
+// deliberately left alone: they are batch-level recovery history, not sheet
+// images, and deleting a sheet must never mutate members or attendance.
+export const removeSavedScanSheets = async ({ supabase, scan, sheetIds }) => {
+  const selectedIds = new Set((Array.isArray(sheetIds) ? sheetIds : []).filter(Boolean))
+  const images = Array.isArray(scan?.sheet_images) ? scan.sheet_images : []
+  const selected = images.filter((image) => selectedIds.has(image?.sheetId))
+  if (!selected.length) return { scan, storageWarning: '', deletedScan: false }
+
+  if (selected.length === images.length) {
+    const result = await deleteSavedScan({ supabase, scan })
+    return { scan: null, ...result, deletedScan: true }
+  }
+
+  const keepIds = new Set(images.filter((image) => !selectedIds.has(image?.sheetId)).map((image) => image.sheetId))
+  const keepBySheet = (value) => Object.fromEntries(
+    Object.entries(value && typeof value === 'object' ? value : {}).filter(([sheetId]) => keepIds.has(sheetId))
+  )
+  const { data, error } = await supabase
+    .from(SAVED_SCANS_TABLE)
+    .update({
+      sheet_images: images.filter((image) => !selectedIds.has(image?.sheetId)),
+      extraction: keepBySheet(scan.extraction),
+      review_state: keepBySheet(scan.review_state),
+      attendance: keepBySheet(scan.attendance),
+      usage_metadata: keepBySheet(scan.usage_metadata)
+    })
+    .eq('id', scan.id)
+    .select('*')
+    .single()
+  if (error) throw new Error(error.message || 'The selected sheet images could not be removed.')
+
+  let storageWarning = ''
+  const paths = selected.map((image) => image?.path).filter(Boolean)
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from(SAVED_SCANS_BUCKET).remove(paths)
+    if (storageError) storageWarning = storageError.message || 'The scan was updated, but some selected image files could not be removed automatically.'
+  }
+  return { scan: data, storageWarning, deletedScan: false }
 }
 
 // Reopening helpers: reconstruct the Compare & Correct state from one saved row.

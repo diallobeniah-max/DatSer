@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
   Bot,
+  Calendar,
   Camera,
   Check,
   CheckCircle2,
@@ -44,6 +45,7 @@ import {
   isStagingRecord,
   listSavedScans,
   mergeStagedSheet,
+  removeSavedScanSheets,
   removeStagedSheet,
   renameSavedScan,
   saveResultFromSavedScan,
@@ -129,6 +131,7 @@ const PROCESSING_PHASES = [
   { label: 'Ready for AI connection', progress: 100 }
 ]
 
+const EMPTY_ARRAY = Object.freeze([])
 const STAGED_SAVE_CONCURRENCY = 3
 
 const createLimitedTaskQueue = (limit) => {
@@ -207,6 +210,35 @@ const profileForNewMember = (row) => {
     profile[key] = decision?.value || ''
   }
   return profile
+}
+
+export const reviewBaselineResults = (resultsBySheet) => {
+  if (!resultsBySheet || typeof resultsBySheet !== 'object') return {}
+  const next = {}
+  Object.entries(resultsBySheet).forEach(([sheetId, result]) => {
+    if (!result || typeof result !== 'object') return
+    const payload = result.payload
+    const rows = Array.isArray(payload?.rows)
+      ? payload.rows.map((row) => ({
+          full_name: row.originalGeminiValue?.full_name || row.full_name,
+          originalGeminiValue: row.originalGeminiValue || { full_name: row.full_name }
+        }))
+      : []
+    const sheetMeta = { ...(payload?.sheet || {}) }
+    delete sheetMeta.attendance_months
+    next[sheetId] = {
+      ...result,
+      excludedIndices: [],
+      payload: payload
+        ? {
+            ...payload,
+            sheet: sheetMeta,
+            rows
+          }
+        : undefined
+    }
+  })
+  return next
 }
 
 
@@ -703,10 +735,24 @@ const PaperScanReview = ({ onBack }) => {
   const [renamingScanId, setRenamingScanId] = useState(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [savedScanView, setSavedScanView] = useState(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        return window.localStorage.getItem('datser_saved_scan_layout') || 'horizontal'
+      }
+      return 'horizontal'
+    } catch {
+      return 'horizontal'
+    }
+  })
+  const [selectedSavedSheetIdsByScan, setSelectedSavedSheetIdsByScan] = useState({})
+  const [confirmDeleteSheetModal, setConfirmDeleteSheetModal] = useState(null) // { scan, sheetIds, sheetSources }
+  const [isDeletingSavedSheets, setIsDeletingSavedSheets] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
   const [reviewStep, setReviewStep] = useState('members') // members | attendance | final
-  const [monthAddDraft, setMonthAddDraft] = useState('')
+  const [addMonthPickerOpen, setAddMonthPickerOpen] = useState(false)
+  const [addMonthPickerYear, setAddMonthPickerYear] = useState(() => new Date().getFullYear())
   const [savedScanRecord, setSavedScanRecord] = useState(null) // { id, name, savedAt } for the active session
   const [finalSaving, setFinalSaving] = useState(false)
   const [finalSaveResult, setFinalSaveResult] = useState(null) // { summary, members, savedAt } or the restored metadata
@@ -720,6 +766,45 @@ const PaperScanReview = ({ onBack }) => {
   const [selectedBatchSheetIds, setSelectedBatchSheetIds] = useState(() => new Set())
   const [memberListSearch, setMemberListSearch] = useState('')
   const [completedSheets, setCompletedSheets] = useState(() => new Set())
+  const [isApplyingAiReview, setIsApplyingAiReview] = useState(false)
+  const [reviewHeaderExpanded, setReviewHeaderExpanded] = useState(false)
+  const [pageWidth, setPageWidth] = useState(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        return window.localStorage.getItem('datser_paper_scan_width') || 'standard'
+      }
+      return 'standard'
+    } catch {
+      return 'standard'
+    }
+  })
+  const [widthDropdownOpen, setWidthDropdownOpen] = useState(false)
+  const [bulkMonthDropdownOpen, setBulkMonthDropdownOpen] = useState(false)
+  const [isCompactFinalView, setIsCompactFinalView] = useState(true)
+
+  const handleSetSavedScanView = (view) => {
+    setSavedScanView(view)
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('datser_saved_scan_layout', view)
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const handleSetPageWidth = (width) => {
+    setPageWidth(width)
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('datser_paper_scan_width', width)
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const [bulkMonthKey, setBulkMonthKey] = useState('')
   const [finalEditingRowKey, setFinalEditingRowKey] = useState(null)
   // Only rows changed inside the Final Review spreadsheet belong to this
   // correction pass. The primary save action uses this to avoid replaying a
@@ -752,6 +837,7 @@ const PaperScanReview = ({ onBack }) => {
   const previewTimerRef = useRef(null)
   const pendingPreviewRef = useRef(null)
   const pendingReviewIndexRef = useRef(null)
+  const deletingScanIdRef = useRef(null)
 
   if (!stagedSaveQueueRef.current) {
     stagedSaveQueueRef.current = createLimitedTaskQueue(STAGED_SAVE_CONCURRENCY)
@@ -1494,6 +1580,40 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     setEditingField(null)
   }
 
+  const handleSelectAllSundaysForMonth = (sheetId, monthKey) => {
+    const settings = getAttendanceSettings(sheetId)
+    const allSundays = getSundaysForMonth(monthKey).slice(0, settings.columnCount || undefined).map(formatDateKey)
+    setAttendanceSundays((prev) => {
+      const byMonth = prev[sheetId] && typeof prev[sheetId] === 'object' ? prev[sheetId] : {}
+      return {
+        ...prev,
+        [sheetId]: { ...byMonth, [monthKey]: allSundays }
+      }
+    })
+    updateSheetMeta(sheetId, { attendance_sundays: { ...(attendanceSundays[sheetId] || {}), [monthKey]: allSundays } })
+  }
+
+  const handleClearAllSundaysForMonth = (sheetId, monthKey) => {
+    setAttendanceSundays((prev) => {
+      const byMonth = prev[sheetId] && typeof prev[sheetId] === 'object' ? prev[sheetId] : {}
+      return {
+        ...prev,
+        [sheetId]: { ...byMonth, [monthKey]: [] }
+      }
+    })
+    updateSheetMeta(sheetId, { attendance_sundays: { ...(attendanceSundays[sheetId] || {}), [monthKey]: [] } })
+    setResultsBySheet((prev) => {
+      const result = prev[sheetId]
+      if (!result || result.status !== 'ok') return prev
+      const rows = result.payload.rows.map((row) => {
+        const reviewedAttendance = row.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
+        const next = Object.fromEntries(Object.entries(reviewedAttendance).filter(([dateKey]) => !dateKey.startsWith(monthKey)))
+        return { ...row, reviewedAttendance: next }
+      })
+      return { ...prev, [sheetId]: { ...result, payload: { ...result.payload, rows } } }
+    })
+  }
+
   // The convention is no longer surfaced as a review-step selector; it still
   // feeds the mark interpreter via getAttendanceSettings (defaults to tick_x).
 
@@ -1616,20 +1736,65 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     handleClearAttendanceDecision(sheetId, rowIndex, dateKey)
   }
 
+  const handleApplyBulkMonthToAllSheets = (monthKey) => {
+    if (!monthKey) return
+    const allSundays = getSundaysForMonth(monthKey).map(formatDateKey)
+    const nextMonths = {}
+    const nextSundays = {}
+    sheets.forEach((sheet) => {
+      nextMonths[sheet.id] = [monthKey]
+      nextSundays[sheet.id] = { [monthKey]: allSundays }
+    })
+    setAttendanceMonths(nextMonths)
+    setAttendanceSundays(nextSundays)
+    setBulkMonthKey(monthKey)
+    setSaveMessage(`Applied ${monthKeyLabel(monthKey)} to all sheets.`)
+  }
+
   // One deliberate reviewer action accepts the AI's readable values, maps
   // unambiguous attendance marks, and chooses the best existing current-month
   // match when one is available. It never writes to DatSer or invents a new
   // member; Final Review remains the single confirmation point.
   const handleApplyAiResultsAndOpenFinalReview = () => {
-    const settingsBySheet = Object.fromEntries(sheets.map((sheet) => [sheet.id, getAttendanceSettings(sheet.id)]))
+    setIsApplyingAiReview(true)
+    const fallbackMonth = monthKeyFromTableName(currentTable) || monthKeyFromDate(new Date())
+    const nextMonths = { ...attendanceMonths }
+    const nextSundays = { ...attendanceSundays }
+
+    sheets.forEach((sheet) => {
+      const sheetResult = resultsBySheet[sheet.id]
+      const existingMonths = nextMonths[sheet.id]
+      const detectedMonths = sheetResult?.payload?.sheet?.attendance_months || (sheetResult?.payload?.sheet?.attendance_month ? [sheetResult.payload.sheet.attendance_month] : [])
+      const detectedDateMonth = sheetResult?.payload?.sheet?.attendance_dates?.[0]?.slice(0, 7)
+      const targetMonths = (Array.isArray(existingMonths) && existingMonths.length > 0)
+        ? existingMonths
+        : (detectedMonths.length > 0 ? detectedMonths : (detectedDateMonth ? [detectedDateMonth] : [fallbackMonth]))
+
+      nextMonths[sheet.id] = targetMonths
+
+      const currentSheetSundays = nextSundays[sheet.id] || {}
+      const updatedSheetSundays = { ...currentSheetSundays }
+      targetMonths.forEach((month) => {
+        if (!Array.isArray(updatedSheetSundays[month]) || updatedSheetSundays[month].length === 0) {
+          updatedSheetSundays[month] = getSundaysForMonth(month).map(formatDateKey)
+        }
+      })
+      nextSundays[sheet.id] = updatedSheetSundays
+    })
+
+    setAttendanceMonths(nextMonths)
+    setAttendanceSundays(nextSundays)
+
     setResultsBySheet((prev) => {
       const next = { ...prev }
       Object.entries(prev).forEach(([sheetId, result]) => {
         if (result?.status !== 'ok') return
-        const settings = settingsBySheet[sheetId]
-        const selectedDatesByMonth = new Map((settings?.months || []).map((month) => [
+        const settings = getAttendanceSettings(sheetId)
+        const sheetMonths = nextMonths[sheetId] || [fallbackMonth]
+        const sheetSundays = nextSundays[sheetId] || {}
+        const selectedDatesByMonth = new Map(sheetMonths.map((month) => [
           month,
-          new Set(Array.isArray(settings?.sundays?.[month]) ? settings.sundays[month] : defaultSundaysForMonth(month))
+          new Set(Array.isArray(sheetSundays[month]) ? sheetSundays[month] : getSundaysForMonth(month).map(formatDateKey))
         ]))
         const rows = result.payload.rows.map((row, rowIndex) => {
           if (result.excludedIndices?.includes(rowIndex)) return row
@@ -1645,11 +1810,19 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
               attendance: row.attendance,
               month,
               columnCount: settings.columnCount,
-              convention: settings.convention
+              convention: settings.convention || 'tick'
             }).forEach((entry) => {
-              if (!entry.dateKey || !selectedDates.has(entry.dateKey) || entry.interpreted.needsReview) return
+              if (!entry.dateKey || !selectedDates.has(entry.dateKey)) return
               if (entry.interpreted.status === ATTENDANCE_STATUS.PRESENT || entry.interpreted.status === ATTENDANCE_STATUS.ABSENT) {
                 reviewedAttendance[entry.dateKey] = { value: entry.interpreted.status, source: REVIEW_SOURCES.SCAN }
+              } else {
+                // If the interpreted status was needsReview or other, check raw attendance text for standard tick indicators
+                const rawMark = String(row?.attendance?.[entry.columnNumber] || '').toLowerCase()
+                if (rawMark.includes('✓') || rawMark.includes('tick') || rawMark.includes('v') || rawMark.includes('1') || rawMark.includes('p') || rawMark.includes('true')) {
+                  reviewedAttendance[entry.dateKey] = { value: ATTENDANCE_STATUS.PRESENT, source: REVIEW_SOURCES.SCAN }
+                } else if (rawMark.includes('x') || rawMark.includes('a') || rawMark.includes('absent') || rawMark.includes('0') || rawMark.includes('false')) {
+                  reviewedAttendance[entry.dateKey] = { value: ATTENDANCE_STATUS.ABSENT, source: REVIEW_SOURCES.SCAN }
+                }
               }
             })
           })
@@ -1657,18 +1830,39 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
           const automaticMatch = !row.memberAction && !row.selectedMemberId
             ? computeRowMatch(row, currentMembers).member
             : null
+
+          const newMemberProfile = {
+            full_name: String(row.full_name || '').trim(),
+            phone_number: String(row.phone_number || '').trim(),
+            gender: String(row.gender || '').trim(),
+            age: String(row.age || '').trim(),
+            current_level: String(row.current_level || '').trim(),
+            parent_name_1: String(row.parent_name_1 || '').trim(),
+            parent_phone_1: String(row.parent_phone_1 || '').trim(),
+            parent_name_2: String(row.parent_name_2 || '').trim(),
+            parent_phone_2: String(row.parent_phone_2 || '').trim()
+          }
+
           return {
             ...row,
             reviewedValues,
             reviewedAttendance,
-            ...(automaticMatch?.id ? { selectedMemberId: automaticMatch.id } : {})
+            ...(automaticMatch?.id
+              ? { selectedMemberId: automaticMatch.id }
+              : (!row.selectedMemberId && !row.memberAction
+                ? { memberAction: 'create-new', newMemberProfile, newMemberTarget: { targetMonth: sheetMonths[0] || fallbackMonth } }
+                : {}))
           }
         })
         next[sheetId] = { ...result, payload: { ...result.payload, rows } }
       })
       return next
     })
+
     setReviewStep('final')
+    setFinalViewMode('table')
+    setFinalGroupFilter('all')
+    setIsApplyingAiReview(false)
   }
 
   const loadSavedScans = async () => {
@@ -2251,6 +2445,8 @@ finalSaveInFlightRef.current = true
   }
 
   const handleDeleteScan = async (scan) => {
+    if (!scan?.id || deletingScanIdRef.current === scan.id) return
+    deletingScanIdRef.current = scan.id
     setSavedScansError('')
     try {
       await deleteSavedScan({ supabase, scan })
@@ -2266,6 +2462,8 @@ finalSaveInFlightRef.current = true
       }
     } catch (error) {
       setSavedScansError(error?.message || 'The scan could not be deleted.')
+    } finally {
+      deletingScanIdRef.current = null
     }
   }
 
@@ -2301,12 +2499,76 @@ finalSaveInFlightRef.current = true
     }
   }
 
+  const handleToggleSelectSavedSheet = (scanId, sheetId) => {
+    setSelectedSavedSheetIdsByScan((prev) => {
+      const currentList = prev[scanId] || []
+      const nextList = currentList.includes(sheetId)
+        ? currentList.filter((id) => id !== sheetId)
+        : [...currentList, sheetId]
+      return { ...prev, [scanId]: nextList }
+    })
+  }
+
+  const handleSelectAllSavedSheets = (scan) => {
+    const sheetImages = Array.isArray(scan?.sheet_images) ? scan.sheet_images : []
+    const allIds = sheetImages.map((s) => s.sheetId).filter(Boolean)
+    setSelectedSavedSheetIdsByScan((prev) => ({
+      ...prev,
+      [scan.id]: allIds
+    }))
+  }
+
+  const handleClearSelectedSavedSheets = (scanId) => {
+    setSelectedSavedSheetIdsByScan((prev) => {
+      const next = { ...prev }
+      delete next[scanId]
+      return next
+    })
+  }
+
+  const handlePromptDeleteSavedSheets = (scan, sheetIds) => {
+    const sheetImages = Array.isArray(scan?.sheet_images) ? scan.sheet_images : []
+    const targetIds = Array.isArray(sheetIds) ? sheetIds : [sheetIds]
+    const sheetSources = sheetImages
+      .filter((img) => targetIds.includes(img.sheetId))
+      .map((img, idx) => img.source || `Sheet ${idx + 1}`)
+    setConfirmDeleteSheetModal({ scan, sheetIds: targetIds, sheetSources })
+  }
+
+  const handleConfirmDeleteSavedSheets = async () => {
+    if (!confirmDeleteSheetModal || isDeletingSavedSheets) return
+    const { scan, sheetIds } = confirmDeleteSheetModal
+    setIsDeletingSavedSheets(true)
+    setSavedScansError('')
+    try {
+      const result = await removeSavedScanSheets({ supabase, scan, sheetIds })
+      if (result?.deletedScan) {
+        setSavedScans((prev) => prev.filter((s) => s.id !== scan.id))
+      } else if (result?.scan) {
+        setSavedScans((prev) => prev.map((s) => (s.id === scan.id ? result.scan : s)))
+      }
+      handleClearSelectedSavedSheets(scan.id)
+      setConfirmDeleteSheetModal(null)
+      if (result?.storageWarning) {
+        setSavedScansError(result.storageWarning)
+      }
+    } catch (err) {
+      setSavedScansError(err?.message || 'Could not delete the selected sheet(s).')
+    } finally {
+      setIsDeletingSavedSheets(false)
+    }
+  }
+
   const phase = PROCESSING_PHASES[phaseIndex] || PROCESSING_PHASES[PROCESSING_PHASES.length - 1]
 
   const reviewResult = reviewActiveId ? resultsBySheet[reviewActiveId] : null
   const reviewSheet = sheets.find((sheet) => sheet.id === reviewActiveId) || null
-  const reviewRows = reviewResult?.status === 'ok' ? reviewResult.payload.rows : []
-  const reviewWarnings = reviewResult?.status === 'ok' ? reviewResult.payload.warnings : []
+  const reviewRows = reviewResult?.status === 'ok' && Array.isArray(reviewResult.payload?.rows)
+    ? reviewResult.payload.rows
+    : EMPTY_ARRAY
+  const reviewWarnings = reviewResult?.status === 'ok' && Array.isArray(reviewResult.payload?.warnings)
+    ? reviewResult.payload.warnings
+    : EMPTY_ARRAY
 
   // Per scanned row: how it matches existing member data and how each field
   // compares to what DatSer already holds. Derived from the app's own member
@@ -2333,7 +2595,7 @@ finalSaveInFlightRef.current = true
     const activeRow = reviewRows[safeIndex]
     const searchFn = crossMonthSearchRef.current
     if (!activeRow || typeof searchFn !== 'function' || !currentTable) {
-      setCrossMonthCandidates([])
+      setCrossMonthCandidates((prev) => (prev && prev.length === 0 ? prev : EMPTY_ARRAY))
       return undefined
     }
     let cancelled = false
@@ -2342,9 +2604,16 @@ finalSaveInFlightRef.current = true
       const results = []
       for (const query of queries.slice(0, 2)) {
         if (cancelled) return
-        const rows = await searchFn(query).catch(() => [])
-        if (cancelled) return
-        if (Array.isArray(rows) && rows.length) results.push(...rows)
+        try {
+          const searchPromise = searchFn(query)
+          const rows = searchPromise && typeof searchPromise.then === 'function'
+            ? await searchPromise.catch(() => [])
+            : (Array.isArray(searchPromise) ? searchPromise : [])
+          if (cancelled) return
+          if (Array.isArray(rows) && rows.length) results.push(...rows)
+        } catch {
+          // ignore lookup errors
+        }
       }
       if (cancelled) return
       // Tag each result so the UI can label it with its source month.
@@ -2368,7 +2637,7 @@ finalSaveInFlightRef.current = true
     return () => { cancelled = true }
   }, [reviewActiveId, reviewIndex, reviewRows, currentTable])
 
-  const getAttendanceSettings = (sheetId) => {
+  const getAttendanceSettings = useCallback((sheetId) => {
     const sheetMeta = resultsBySheet[sheetId]?.payload?.sheet || {}
     const storedMonths = attendanceMonths[sheetId]
     const metaMonths = Array.isArray(sheetMeta.attendance_months)
@@ -2403,23 +2672,20 @@ finalSaveInFlightRef.current = true
       || (Array.isArray(sheetMeta.attendance_dates) ? sheetMeta.attendance_dates.length : 0)
       || 0
     return { months, month: months[0] || '', convention, columnCount, sundays }
-  }
+  }, [resultsBySheet, attendanceMonths, attendanceConventions, attendanceSundays, currentTable])
 
-  const attendanceScopeSnapshot = () => Object.fromEntries(sheets.map((sheet) => {
+  const attendanceScopeSnapshot = useCallback(() => Object.fromEntries(sheets.map((sheet) => {
     const settings = getAttendanceSettings(sheet.id)
     return [sheet.id, {
       months: settings.months,
       sundays: settings.sundays
     }]
-  }))
+  })), [sheets, getAttendanceSettings])
 
   const attendanceSettings = reviewActiveId ? getAttendanceSettings(reviewActiveId) : { months: [], month: '', convention: ATTENDANCE_CONVENTIONS.TICK_X, columnCount: 0, sundays: {} }
 
-  const renderReviewPanel = () => {
-    const excludedSet = new Set(reviewResult?.excludedIndices || [])
-    const okCount = sheets.filter((sheet) => resultsBySheet[sheet.id]?.status === 'ok').length
-    const failedCount = sheets.filter((sheet) => resultsBySheet[sheet.id]?.status === 'failed').length
-    const allRowData = sheets.flatMap((sheet) => {
+  const allRowData = useMemo(() => {
+    return sheets.flatMap((sheet) => {
       const result = resultsBySheet[sheet.id]
       if (result?.status !== 'ok') return []
       return result.payload.rows.map((row, index) => {
@@ -2427,6 +2693,220 @@ finalSaveInFlightRef.current = true
         return { sheetId: sheet.id, sheetSource: sheet.source, row, index, match, summary: summarizeRowCompare(row, match.member) }
       })
     })
+  }, [sheets, resultsBySheet, currentMembers])
+
+  const countAttendanceBlocking = useCallback((sheetId, row) => {
+    const settings = getAttendanceSettings(sheetId)
+    let count = 0
+    settings.months.forEach((month) => {
+      const selected = settings.sundays?.[month]
+      const selectedSet = new Set(Array.isArray(selected) ? selected : defaultSundaysForMonth(month))
+      const entries = resolveAttendanceEntries({ attendance: row?.attendance, month, columnCount: settings.columnCount, convention: settings.convention })
+      entries.forEach((entry) => {
+        if (!entry.dateKey || !selectedSet.has(entry.dateKey)) return
+        const decision = row?.reviewedAttendance?.[entry.dateKey]
+        const final = decision?.value || entry.interpreted.status
+        if (entry.interpreted.needsReview || final === ATTENDANCE_STATUS.NEEDS_REVIEW) count += 1
+      })
+    })
+    return count
+  }, [getAttendanceSettings])
+
+  const finalSundayDates = useMemo(() => {
+    const dates = []
+    const seen = new Set()
+    sheets.forEach((sheet) => {
+      const settings = getAttendanceSettings(sheet.id)
+      ;(settings.months || []).forEach((month) => {
+        const sundays = Array.isArray(settings.sundays?.[month])
+          ? settings.sundays[month]
+          : defaultSundaysForMonth(month)
+        ;(sundays || []).forEach((dateKey) => {
+          if (dateKey && !seen.has(dateKey)) {
+            seen.add(dateKey)
+            dates.push(dateKey)
+          }
+        })
+      })
+    })
+    dates.sort()
+    return dates
+  }, [sheets, getAttendanceSettings])
+
+  const finalPreview = useMemo(() => {
+    const settingsBySheet = {}
+    sheets.forEach((sheet) => {
+      settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
+    })
+    return previewFinalSave({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet })
+  }, [sheets, resultsBySheet, currentMembers, monthlyTables, getAttendanceSettings])
+
+  const editedRowsPreview = useMemo(() => {
+    if (finalEditedRowKeys.size === 0) return null
+    const settingsBySheet = {}
+    sheets.forEach((sheet) => {
+      settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
+    })
+    return previewFinalSave({
+      sheets,
+      resultsBySheet,
+      currentMembers,
+      monthlyTables,
+      settingsBySheet,
+      onlyRowKeys: finalEditedRowKeys,
+      onlyEditedChanges: finalEditedChanges
+    })
+  }, [sheets, resultsBySheet, currentMembers, monthlyTables, getAttendanceSettings, finalEditedRowKeys, finalEditedChanges])
+
+  const finalAttentionRows = useMemo(() => {
+    return allRowData.flatMap((entry) => {
+      if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return []
+      const reasons = []
+      const isCreateNew = entry.row.memberAction === 'create-new'
+      const hasSelectedMember = Boolean(entry.row.selectedMemberId || entry.match.member?.id)
+      const needsMember = !isCreateNew && !hasSelectedMember && (entry.match.status === MATCH_STATUSES.POSSIBLE || entry.match.status === MATCH_STATUSES.NONE)
+      const newMemberName = entry.row.newMemberProfile?.full_name || entry.row.reviewedValues?.full_name?.value || entry.row.full_name
+      
+      if (needsMember) reasons.push('Choose the correct member')
+      if (isCreateNew && !String(newMemberName || '').trim()) reasons.push('Approve a name for the new member')
+      
+      const attendanceCount = countAttendanceBlocking(entry.sheetId, entry.row)
+      if (attendanceCount > 0) reasons.push(`${attendanceCount} attendance mark${attendanceCount === 1 ? '' : 's'} need review`)
+      
+      return reasons.length ? [{ ...entry, reasons, attendanceCount }] : []
+    })
+  }, [allRowData, resultsBySheet, countAttendanceBlocking])
+
+  const finalOperationRowKey = (sheetId, rowIndex) => `${sheetId}:${rowIndex}`
+
+  const savedFinalRowKeys = useMemo(() => new Set([
+    ...Object.values(finalSaveHistory),
+    ...(finalSaveResult?.members || [])
+  ]
+    .filter(isAttendanceWriteConfirmed)
+    .map((member) => finalOperationRowKey(member.sheetId, member.rowIndex))), [finalSaveHistory, finalSaveResult])
+
+  const remainingAttentionRows = useMemo(() => finalAttentionRows.filter((entry) => !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.index))), [finalAttentionRows, savedFinalRowKeys])
+  const attentionRowCount = remainingAttentionRows.length
+  const attentionFinalRowKeys = useMemo(() => new Set(remainingAttentionRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.index))), [remainingAttentionRows])
+  const savedFinalRows = useMemo(() => finalPreview.plan.rows.filter((entry) => savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))), [finalPreview, savedFinalRowKeys])
+  const hasSelectedSundayScope = finalSundayDates.length > 0
+
+  // All non-excluded reviewed rows that are approved (not in attention) and not already saved
+  const approvedFinalRows = useMemo(() => {
+    return allRowData.flatMap((entry) => {
+      if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return []
+      const rowKey = finalOperationRowKey(entry.sheetId, entry.index)
+      if (savedFinalRowKeys.has(rowKey) || attentionFinalRowKeys.has(rowKey)) return []
+      const planRow = finalPreview.plan.rows.find((r) => r.sheetId === entry.sheetId && r.rowIndex === entry.index)
+      if (planRow) return [planRow]
+      return [{
+        sheetId: entry.sheetId,
+        rowIndex: entry.index,
+        row: entry.row,
+        memberAction: entry.row.memberAction || (entry.match.member ? 'update' : 'create-new'),
+        member: entry.match.member || null,
+        memberId: entry.match.member?.id || null,
+        createProfile: entry.row.memberAction === 'create-new' ? (entry.row.newMemberProfile || { full_name: entry.row.full_name }) : null,
+        attendance: [],
+        hasWrites: false
+      }]
+    })
+  }, [allRowData, resultsBySheet, savedFinalRowKeys, attentionFinalRowKeys, finalPreview.plan.rows])
+
+  // Rows with eligible writes for currently selected Sundays
+  const eligibleWriteRows = useMemo(() => {
+    if (!hasSelectedSundayScope) return []
+    return finalPreview.plan.rows.filter((entry) => (
+      entry.hasWrites
+      && !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
+      && !attentionFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
+    ))
+  }, [hasSelectedSundayScope, finalPreview, savedFinalRowKeys, attentionFinalRowKeys])
+
+
+  // ── CANONICAL FINAL REVIEW COLLECTION ────────────────────────────────────
+  // Every row the AI extracted, in sheet order then row order.
+  // This is the DISPLAY source of truth. Save eligibility is computed on top
+  // of this — it never gates visibility.
+  const finalReviewRows = useMemo(() => {
+    return allRowData.flatMap((entry) => {
+      // Operator-excluded rows (e.g. manually removed from the sheet scan) are
+      // the only rows that should not appear in Final Review.
+      if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return []
+      // Try to find the matching plan row so we inherit its pre-computed
+      // attendance and write fields. Fall back to building a minimal shape.
+      const planRow = finalPreview.plan.rows.find(
+        (r) => r.sheetId === entry.sheetId && r.rowIndex === entry.index
+      )
+      if (planRow) {
+        // Merge the original extracted row so display helpers can fall back to
+        // raw AI values when reviewed values are absent.
+        return [{ ...planRow, row: entry.row, _allRowEntry: entry }]
+      }
+      // Plan may not include a row if it has no writes or the match state is
+      // incomplete. Still show it — this is exactly the case that caused the
+      // original bug.
+      return [{
+        sheetId: entry.sheetId,
+        rowIndex: entry.index,
+        row: entry.row,
+        memberAction: entry.row.memberAction || (entry.match.member ? 'update' : 'create-new'),
+        member: entry.match.member || null,
+        memberId: entry.match.member?.id || null,
+        createProfile: entry.row.memberAction === 'create-new'
+          ? (entry.row.newMemberProfile || { full_name: entry.row.full_name })
+          : null,
+        attendance: [],
+        hasWrites: false,
+        _allRowEntry: entry
+      }]
+    })
+  }, [allRowData, resultsBySheet, finalPreview.plan.rows])
+
+  const readyFinalRows = eligibleWriteRows
+  const remainingFinalRowCount = (hasSelectedSundayScope ? eligibleWriteRows.length : approvedFinalRows.length) + attentionRowCount
+
+  // Derive per-filter counts from the canonical collection so numbers reconcile.
+  const allExtractedCount = finalReviewRows.length
+  const readyDisplayCount = finalReviewRows.filter(
+    (e) => !attentionFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
+      && !savedFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
+  ).length
+  const sentDisplayCount = finalReviewRows.filter(
+    (e) => savedFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
+  ).length
+
+  // visibleFinalRows is now always a filtered view of finalReviewRows.
+  //   'all'       → all extracted (default after AI Review)
+  //   'ready'     → approved / not-attention / not-sent
+  //   'attention' → needs human decision
+  //   'saved'     → already written to DatSer
+  const visibleFinalRows = (() => {
+    if (finalGroupFilter === 'saved') {
+      return finalReviewRows.filter(
+        (e) => savedFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
+      )
+    }
+    if (finalGroupFilter === 'attention') {
+      return finalReviewRows.filter(
+        (e) => attentionFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
+      )
+    }
+    if (finalGroupFilter === 'ready') {
+      return finalReviewRows.filter(
+        (e) => !attentionFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
+          && !savedFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
+      )
+    }
+    // 'all' (default) — every extracted row
+    return finalReviewRows
+  })()
+
+  const renderReviewPanel = () => {
+    const excludedSet = new Set(reviewResult?.excludedIndices || [])
+    const okCount = sheets.filter((sheet) => resultsBySheet[sheet.id]?.status === 'ok').length
+    const failedCount = sheets.filter((sheet) => resultsBySheet[sheet.id]?.status === 'failed').length
     const totalRows = allRowData.length
     const excludedRows = allRowData.filter(({ sheetId, index }) => (resultsBySheet[sheetId]?.excludedIndices || []).includes(index)).length
     const includedRows = totalRows - excludedRows
@@ -2464,45 +2944,6 @@ finalSaveInFlightRef.current = true
       return name.includes(memberListTerm) || phone.includes(memberListTerm) || num.includes(memberListTerm)
     })
 
-    // Final Review plan preview: what WOULD be written on Confirm Save, plus
-    // any likely-duplicate rows that would block creation until confirmed.
-    const settingsBySheet = {}
-    sheets.forEach((sheet) => {
-      settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
-    })
-    const finalPreview = previewFinalSave({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet })
-    const editedRowsPreview = finalEditedRowKeys.size > 0
-      ? previewFinalSave({
-          sheets,
-          resultsBySheet,
-          currentMembers,
-          monthlyTables,
-          settingsBySheet,
-          onlyRowKeys: finalEditedRowKeys,
-          onlyEditedChanges: finalEditedChanges
-        })
-      : null
-
-    // Union of every Sunday the selected months map to — the horizontal table
-    // mirrors the physical sheet, so each Sunday becomes a column.
-    const finalSundayDates = []
-    const finalSeenDates = new Set()
-    sheets.forEach((sheet) => {
-      const settings = getAttendanceSettings(sheet.id)
-      ;(settings.months || []).forEach((month) => {
-        const sundays = Array.isArray(settings.sundays?.[month])
-          ? settings.sundays[month]
-          : defaultSundaysForMonth(month)
-        ;(sundays || []).forEach((dateKey) => {
-          if (dateKey && !finalSeenDates.has(dateKey)) {
-            finalSeenDates.add(dateKey)
-            finalSundayDates.push(dateKey)
-          }
-        })
-      })
-    })
-    finalSundayDates.sort()
-
     const finalProfileValue = (entry, key) => {
       if (entry.memberAction === 'create-new') {
         return entry.createProfile?.[key] ?? entry.row?.reviewedValues?.[key]?.value ?? entry.row?.newMemberProfile?.[key] ?? entry.row?.[key] ?? ''
@@ -2519,64 +2960,6 @@ finalSaveInFlightRef.current = true
     }
     const finalRowKey = (entry) => `${entry.sheetId}-${entry.rowIndex}`
 
-    const countAttendanceBlocking = (sheetId, row) => {
-      const settings = getAttendanceSettings(sheetId)
-      let count = 0
-      settings.months.forEach((month) => {
-        const selected = settings.sundays?.[month]
-        const selectedSet = new Set(Array.isArray(selected) ? selected : defaultSundaysForMonth(month))
-        const entries = resolveAttendanceEntries({ attendance: row?.attendance, month, columnCount: settings.columnCount, convention: settings.convention })
-        entries.forEach((entry) => {
-          if (!entry.dateKey || !selectedSet.has(entry.dateKey)) return
-          const decision = row?.reviewedAttendance?.[entry.dateKey]
-          const final = decision?.value || entry.interpreted.status
-          if (entry.interpreted.needsReview || final === ATTENDANCE_STATUS.NEEDS_REVIEW) count += 1
-        })
-      })
-      return count
-    }
-    // Keep the work DatSer cannot safely apply out of the ready-to-save table.
-    // Each item represents exactly one extracted line from a saved sheet photo;
-    // it deliberately does not count each field or attendance cell separately.
-    const finalAttentionRows = allRowData.flatMap((entry) => {
-      if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return []
-      const reasons = []
-      const profileCount = entry.summary.totals.unresolved || 0
-      const attendanceCount = countAttendanceBlocking(entry.sheetId, entry.row)
-      const needsMember = entry.row.memberAction !== 'create-new' && !entry.row.selectedMemberId && (entry.match.status === MATCH_STATUSES.POSSIBLE || entry.match.status === MATCH_STATUSES.NONE)
-      const reviewedNewName = entry.row.newMemberProfile?.full_name || entry.row.reviewedValues?.full_name?.value
-      if (needsMember) reasons.push('Choose the correct member')
-      if (entry.row.memberAction === 'create-new' && !String(reviewedNewName || '').trim()) reasons.push('Approve a name for the new member')
-      if (profileCount > 0) reasons.push(`${profileCount} profile value${profileCount === 1 ? '' : 's'} need review`)
-      if (attendanceCount > 0) reasons.push(`${attendanceCount} attendance mark${attendanceCount === 1 ? '' : 's'} need review`)
-      return reasons.length ? [{ ...entry, reasons, attendanceCount }] : []
-    })
-    const finalOperationRowKey = (sheetId, rowIndex) => `${sheetId}:${rowIndex}`
-    const savedFinalRowKeys = new Set([
-      ...Object.values(finalSaveHistory),
-      ...(finalSaveResult?.members || [])
-    ]
-      .filter(isAttendanceWriteConfirmed)
-      .map((member) => finalOperationRowKey(member.sheetId, member.rowIndex)))
-    // A server-confirmed row is sent, even if its original scan had an
-    // advisory review note. The three groups are deliberately exclusive.
-    const remainingAttentionRows = finalAttentionRows.filter((entry) => !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.index)))
-    const attentionRowCount = remainingAttentionRows.length
-    const attentionFinalRowKeys = new Set(remainingAttentionRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.index)))
-    const savedFinalRows = finalPreview.plan.rows.filter((entry) => savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex)))
-    const hasSelectedSundayScope = finalSundayDates.length > 0
-    const readyFinalRows = hasSelectedSundayScope ? finalPreview.plan.rows.filter((entry) => (
-      entry.hasWrites
-      && !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
-      && !attentionFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
-    )) : []
-    const remainingFinalRowCount = readyFinalRows.length + attentionRowCount
-    const visibleFinalRows = finalGroupFilter === 'saved'
-      ? savedFinalRows
-      : finalGroupFilter === 'ready'
-        ? readyFinalRows
-        : finalPreview.plan.rows
-
     const openFinalAttentionRow = (entry) => {
       if (entry.sheetId === reviewActiveId) {
         setReviewIndex(entry.index)
@@ -2587,14 +2970,13 @@ finalSaveInFlightRef.current = true
       setReviewStep(entry.attendanceCount > 0 ? 'attendance' : 'members')
     }
 
-    // One short status line keeps the batch clear without repeating every
-    // extraction detail above the actual review work.
+    // Collapsible review toolbar consolidating status, primary actions, and details
     const reviewStatusPanel = (
-      <div className="mb-4 rounded-2xl border border-stone-200/90 bg-white/95 dark:border-stone-800/90 dark:bg-stone-900/90 p-3.5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 overflow-hidden rounded-2xl border border-stone-200/90 bg-white/95 dark:border-stone-800/90 dark:bg-stone-900/90 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-black text-stone-900 dark:text-white uppercase tracking-wider">Review status</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-stone-400 dark:text-stone-500">Review status</p>
               {attentionRowCount > 0 ? (
                 <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-black text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
                   {attentionRowCount} scanned {attentionRowCount === 1 ? 'row needs' : 'rows need'} attention
@@ -2604,49 +2986,103 @@ finalSaveInFlightRef.current = true
                   Ready
                 </span>
               )}
+              <span className="text-xs font-medium text-stone-500 dark:text-stone-400">
+                {includedRows} scanned {includedRows === 1 ? 'row' : 'rows'} · {allExtractedCount} {allExtractedCount === 1 ? 'row' : 'rows'} to review
+              </span>
             </div>
-            <p className="mt-1 text-xs font-medium text-stone-600 dark:text-stone-300">
-              {includedRows} scanned {includedRows === 1 ? 'row' : 'rows'} · {finalPreview.plan.rows.length} ready to save
-            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={handleApplyAiResultsAndOpenFinalReview}
-              data-testid="apply-ai-results-final-review"
-              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-black text-white transition-colors hover:bg-emerald-700 shadow-sm"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Review final
-            </button>
-            <button
-              type="button"
               onClick={handleSaveScan}
               disabled={saving || totalRows === 0}
-              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {saving
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                : <Save className="h-3.5 w-3.5" />}
+                : <Save className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />}
               {saving ? 'Saving…' : savedScanRecord ? 'Save scan again' : 'Save scan'}
             </button>
+            <button
+              type="button"
+              onClick={handleApplyAiResultsAndOpenFinalReview}
+              disabled={isApplyingAiReview}
+              data-testid="apply-ai-results-final-review"
+              title="Let AI organize and review the extracted data, then make your final edits."
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-black text-white transition-colors hover:bg-emerald-700 shadow-sm disabled:opacity-60"
+            >
+              {isApplyingAiReview ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {isApplyingAiReview ? 'Applying…' : 'AI Review'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setReviewHeaderExpanded((prev) => !prev)}
+              aria-expanded={reviewHeaderExpanded}
+              aria-label="Toggle scan and device details"
+              className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-stone-200 bg-white px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 transition-colors"
+            >
+              <span className="text-[11px] font-semibold">Details</span>
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${reviewHeaderExpanded ? 'rotate-180' : ''}`} />
+            </button>
           </div>
-          {finalSaving && (
-            <div className="flex w-full items-center gap-2 pt-1" role="status" aria-live="polite">
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-700 dark:text-emerald-400" />
-              <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                {finalSaveProgress === 0 ? 'Reviewing approved changes…' : 'Writing approved changes to DatSer…'}
-              </p>
-            </div>
-          )}
-          {saveMessage && (
-            <p className="mt-1 text-xs font-bold text-emerald-700 dark:text-emerald-300">{saveMessage}</p>
-          )}
-          {savedScansError && (
-            <p role="alert" className="mt-1 text-xs font-bold text-rose-700 dark:text-rose-300">{savedScansError}</p>
-          )}
         </div>
 
+        {reviewHeaderExpanded && (
+          <div className="space-y-2.5 border-t border-stone-100 bg-stone-50/60 p-3.5 dark:border-stone-800 dark:bg-stone-900/60">
+            {savedScanRecord && (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span>This scan is saved — reopening it will not charge Gemini again. Re-save to keep newer corrections.</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 rounded-xl border border-orange-200/80 bg-orange-50/80 px-3 py-2 text-xs font-medium text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/30 dark:text-orange-200">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400" />
+              <span>Capture and enhancement stay on this device. Your images are only sent anywhere when you run extraction.</span>
+            </div>
+            {reviewSheet && (
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-2.5 py-1 text-[11px] font-black text-orange-700 dark:bg-orange-950/50 dark:text-orange-300">
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  {reviewSheet.source}
+                </span>
+                <span className="rounded-full bg-green-100 px-2.5 py-1 text-[11px] font-black text-green-700 dark:bg-green-950/50 dark:text-green-300">
+                  Read successfully
+                </span>
+              </div>
+            )}
+            {reviewWarnings.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs dark:border-amber-900/40 dark:bg-amber-950/20">
+                <p className="font-bold text-amber-900 dark:text-amber-200">Sheet-level notes</p>
+                <ul className="mt-1 list-inside list-disc text-xs text-amber-800/80 dark:text-amber-200/80">
+                  {reviewWarnings.map((warning, index) => <li key={index}>{warning}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(finalSaving || saveMessage || savedScansError) && (
+          <div className="space-y-1.5 border-t border-stone-100 px-3.5 py-2.5 dark:border-stone-800">
+            {finalSaving && (
+              <div className="flex items-center gap-2" role="status" aria-live="polite">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-700 dark:text-emerald-400" />
+                <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                  {finalSaveProgress === 0 ? 'Reviewing approved changes…' : 'Writing approved changes to DatSer…'}
+                </p>
+              </div>
+            )}
+            {saveMessage && (
+              <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">{saveMessage}</p>
+            )}
+            {savedScansError && (
+              <p role="alert" className="text-xs font-bold text-rose-700 dark:text-rose-300">{savedScansError}</p>
+            )}
+          </div>
+        )}
       </div>
     )
 
@@ -2797,19 +3233,7 @@ finalSaveInFlightRef.current = true
     }
 
     return (
-      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-        <div className="mb-4 flex items-center gap-3">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-orange-100 text-orange-600 dark:bg-orange-950/60 dark:text-orange-400">
-            <Bot className="h-6 w-6" />
-          </span>
-          <div>
-            <p className="text-sm font-black text-gray-900 dark:text-white">Review extracted data</p>
-            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
-              AI finished reading this sheet. Review the people below before attendance is saved. Nothing is written until you confirm at final save.
-            </p>
-          </div>
-        </div>
-
+      <div className="space-y-4">
         {/* The compact selector beside the sheet replaces this older full batch rail. */}
         {sheets.length > 0 && (
           <div className="hidden">
@@ -2983,29 +3407,10 @@ finalSaveInFlightRef.current = true
           </div>
         ) : (
           <>
-            {reviewSheet && (
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-xs font-black text-orange-700 dark:bg-orange-950/50 dark:text-orange-300">
-                  <ImagePlus className="h-3.5 w-3.5" />
-                  {reviewSheet.source}
-                </span>
-                <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-black text-green-700 dark:bg-green-950/50 dark:text-green-300">Read successfully</span>
-              </div>
-            )}
-
-            {reviewWarnings.length > 0 && (
-              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
-                <p className="text-xs font-black text-amber-800 dark:text-amber-200">Sheet-level notes</p>
-                <ul className="mt-1 list-inside list-disc text-xs font-medium text-amber-800/80 dark:text-amber-200/80">
-                  {reviewWarnings.map((warning, index) => <li key={index}>{warning}</li>)}
-                </ul>
-              </div>
-            )}
-
             {reviewStatusPanel}
 
-            {/* Step indicator */}
-            <div className="mb-5 inline-flex p-1 rounded-2xl bg-stone-200/70 dark:bg-stone-800/70 gap-1 overflow-x-auto max-w-full" role="tablist" aria-label="Review steps">
+            {/* Step indicator - Full-width comfortable tap bar */}
+            <div className="mb-5 grid w-full grid-cols-3 gap-2.5 rounded-2xl bg-stone-200/80 p-2 dark:bg-stone-800/80 shadow-sm" role="tablist" aria-label="Review steps">
               {[
                 { id: 'members', label: 'People' },
                 { id: 'attendance', label: 'Sundays' },
@@ -3019,15 +3424,15 @@ finalSaveInFlightRef.current = true
                     role="tab"
                     aria-selected={isActive}
                     onClick={() => setReviewStep(step.id)}
-                    className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                    className={`flex min-h-[50px] items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm sm:text-base font-black transition-all ${
                       isActive
-                        ? 'bg-orange-600 text-white shadow-md shadow-orange-600/25 font-black'
-                        : 'text-stone-700 dark:text-stone-300 hover:text-stone-950 dark:hover:text-white hover:bg-white/40 dark:hover:bg-stone-700/40'
+                        ? 'bg-orange-600 text-white shadow-md shadow-orange-600/25'
+                        : 'text-stone-700 hover:bg-white/50 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-700/50 dark:hover:text-white'
                     }`}
                   >
                     <span>{step.label}</span>
                     {step.id === 'final' && attentionRowCount > 0 ? (
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'}`}>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-black ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'}`}>
                         {attentionRowCount}
                       </span>
                     ) : null}
@@ -3047,15 +3452,84 @@ finalSaveInFlightRef.current = true
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* Custom Month for all dropdown */}
+                    <div className="relative">
+                      <div className="flex items-center gap-1.5 rounded-xl border border-stone-200 bg-stone-50/80 px-2.5 py-1.5 dark:border-stone-700 dark:bg-stone-800/80">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                          Month for all:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setBulkMonthDropdownOpen((prev) => !prev)}
+                          aria-expanded={bulkMonthDropdownOpen}
+                          aria-haspopup="listbox"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs font-black text-stone-900 shadow-2xs transition-colors hover:border-orange-400 dark:border-stone-600 dark:bg-stone-900 dark:text-white"
+                        >
+                          <span>
+                            {bulkMonthKey ? monthKeyLabel(bulkMonthKey) : sheets[0] && attendanceMonths[sheets[0].id]?.[0] ? monthKeyLabel(attendanceMonths[sheets[0].id][0]) : 'Choose month'}
+                          </span>
+                          <ChevronDown className={`h-3.5 w-3.5 text-stone-400 transition-transform ${bulkMonthDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                      </div>
+                      {bulkMonthDropdownOpen && (
+                        <div
+                          role="listbox"
+                          aria-label="Select month for all sheets"
+                          className="absolute left-0 top-full z-40 mt-1.5 max-h-60 w-56 overflow-y-auto rounded-2xl border border-stone-200 bg-white p-1.5 shadow-xl dark:border-stone-700 dark:bg-stone-900"
+                        >
+                          {monthlyTables.map((table) => {
+                            const key = monthKeyFromTableName(table)
+                            if (!key) return null
+                            const isSelected = (bulkMonthKey === key) || (!bulkMonthKey && sheets[0] && attendanceMonths[sheets[0].id]?.[0] === key)
+                            return (
+                              <button
+                                key={table}
+                                type="button"
+                                role="option"
+                                aria-selected={isSelected}
+                                onClick={() => {
+                                  setBulkMonthKey(key)
+                                  handleApplyBulkMonthToAllSheets(key)
+                                  setBulkMonthDropdownOpen(false)
+                                }}
+                                className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-xs font-black transition-colors ${
+                                  isSelected
+                                    ? 'bg-orange-50 text-orange-950 font-bold dark:bg-orange-950/40 dark:text-orange-200'
+                                    : 'text-stone-700 hover:bg-stone-50 dark:text-stone-300 dark:hover:bg-stone-800'
+                                }`}
+                              >
+                                <span>{monthKeyLabel(key)}</span>
+                                {isSelected && <Check className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsCompactFinalView((prev) => !prev)}
+                      aria-pressed={isCompactFinalView}
+                      title={isCompactFinalView ? 'Switch to spacious view' : 'Switch to compact view (fits screen without horizontal scrolling)'}
+                      className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-black transition-colors ${
+                        isCompactFinalView
+                          ? 'border-orange-500 bg-orange-50 text-orange-900 dark:border-orange-500 dark:bg-orange-950/40 dark:text-orange-200'
+                          : 'border-stone-200 bg-white text-stone-700 hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200'
+                      }`}
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      <span>{isCompactFinalView ? 'Compact view' : 'Spacious view'}</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleConfirmFinalSave({
                         editedOnly: finalEditedRowKeys.size > 0,
                         onlyRowKeys: finalEditedRowKeys.size > 0
                           ? null
-                          : readyFinalRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.rowIndex))
+                          : eligibleWriteRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.rowIndex))
                       })}
-                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : !hasSelectedSundayScope || readyFinalRows.length === 0)}
+                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : !hasSelectedSundayScope || eligibleWriteRows.length === 0)}
                       data-testid="confirm-save-to-datser"
                       className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
                     >
@@ -3067,82 +3541,108 @@ finalSaveInFlightRef.current = true
                         : finalEditedRowKeys.size > 0
                           ? `Save edited rows (${editedRowsPreview?.plan.rows.length || 0})`
                           : hasSelectedSundayScope
-                            ? `Save ready (${readyFinalRows.length})`
+                            ? `Save ready (${eligibleWriteRows.length})`
                             : 'Choose Sundays first'}
                     </button>
                   </div>
                 </div>
 
-                {finalPreview.plan.rows.length === 0 ? (
+                {approvedFinalRows.length === 0 && remainingAttentionRows.length === 0 && savedFinalRows.length === 0 ? (
                   <p className="mt-4 rounded-2xl border border-dashed border-stone-200 p-8 text-center text-sm font-medium text-stone-500 dark:border-stone-800 dark:text-stone-400">
                     Nothing to save — add a month or resolve the rows first.
                   </p>
                 ) : (
                   <>
-                    <div className="mt-4 rounded-2xl border border-stone-200 bg-stone-50/80 px-4 py-3 dark:border-stone-700 dark:bg-stone-800/50">
-                      <p className="text-[10px] font-black uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">Selected Sunday progress</p>
-                      {hasSelectedSundayScope ? (
-                        <>
-                          <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                            <span className="text-xl font-black text-emerald-700 dark:text-emerald-300">{savedFinalRows.length} attendance saved</span>
-                            <span className="text-sm font-bold text-stone-400">·</span>
-                            <span className="text-xl font-black text-sky-700 dark:text-sky-300">{remainingFinalRowCount} left</span>
+                    {/* Unified Single Horizontal Row: Selected Sunday progress + 3 Action Filter Buttons */}
+                    <div className="mt-4 grid grid-cols-1 gap-2.5 lg:grid-cols-12 items-stretch">
+                      {/* Left: Selected Sunday Progress */}
+                      <div className="lg:col-span-4 flex flex-col justify-center rounded-2xl border border-stone-200 bg-stone-50/80 px-4 py-2.5 dark:border-stone-700 dark:bg-stone-800/50">
+                        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">Selected Sunday progress</p>
+                        {hasSelectedSundayScope ? (
+                          <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                            <span className="text-sm font-black text-emerald-700 dark:text-emerald-300">{savedFinalRows.length} saved</span>
+                            <span className="text-xs font-bold text-stone-400">·</span>
+                            <span className="text-sm font-black text-sky-700 dark:text-sky-300">{remainingFinalRowCount} left</span>
                           </div>
-                          <p className="mt-1 text-xs font-semibold text-stone-600 dark:text-stone-300">
-                            {readyFinalRows.length > 0
-                              ? `${readyFinalRows.length} can be saved now${attentionRowCount > 0 ? `; ${attentionRowCount} still need attention.` : '.'}`
-                              : attentionRowCount > 0
-                                ? `${attentionRowCount} need attention before they can be saved.`
-                                : 'Everything selected for these Sundays is safely saved.'}
+                        ) : (
+                          <p className="mt-1 text-xs font-bold text-amber-800 dark:text-amber-200">
+                            Choose Sundays in Sundays tab to enable saving
                           </p>
-                        </>
-                      ) : (
-                        <p className="mt-1 text-sm font-bold text-amber-800 dark:text-amber-200">
-                          {savedFinalRows.length} attendance rows were confirmed earlier. Choose the Sundays before calculating or saving what remains.
-                        </p>
-                      )}
+                        )}
+                      </div>
+
+                      {/* Right: Filter Buttons — 4 groups */}
+                      <div className="lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-2" role="group" aria-label="Final save groups">
+                        <button
+                          type="button"
+                          onClick={() => { setFinalGroupFilter('all'); setFinalViewMode('table') }}
+                          aria-pressed={finalGroupFilter === 'all'}
+                          className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                            finalGroupFilter === 'all'
+                              ? 'border-stone-500 bg-stone-100 text-stone-950 dark:bg-stone-800 dark:text-stone-100 shadow-xs'
+                              : 'border-stone-200 bg-stone-50/60 text-stone-700 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-800/40 dark:text-stone-300'
+                          }`}
+                        >
+                          <span className="block text-xs font-black">All extracted · {allExtractedCount}</span>
+                          <span className="mt-0.5 block text-[10px] font-semibold opacity-80">All AI results</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setFinalGroupFilter('saved'); setFinalViewMode('table') }}
+                          aria-pressed={finalViewMode === 'table' && finalGroupFilter === 'saved'}
+                          className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                            finalViewMode === 'table' && finalGroupFilter === 'saved'
+                              ? 'border-emerald-500 bg-emerald-100 text-emerald-950 dark:bg-emerald-950/50 dark:text-emerald-100 shadow-xs'
+                              : 'border-emerald-200 bg-emerald-50/60 text-emerald-900 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-200'
+                          }`}
+                        >
+                          <span className="block text-xs font-black">Attendance sent · {sentDisplayCount}</span>
+                          <span className="mt-0.5 block text-[10px] font-semibold opacity-80">Confirmed write</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setFinalGroupFilter('ready'); setFinalViewMode('table') }}
+                          aria-pressed={finalViewMode === 'table' && finalGroupFilter === 'ready'}
+                          className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                            finalViewMode === 'table' && finalGroupFilter === 'ready'
+                              ? 'border-sky-500 bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-100 shadow-xs'
+                              : 'border-sky-200 bg-sky-50/60 text-sky-900 hover:bg-sky-100 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-200'
+                          }`}
+                        >
+                          <span className="block text-xs font-black">Ready to save · {readyDisplayCount}</span>
+                          <span className="mt-0.5 block text-[10px] font-semibold opacity-80">{hasSelectedSundayScope ? `${eligibleWriteRows.length} ready to write` : 'Reviewed & approved'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setFinalGroupFilter('attention'); setFinalViewMode('attention') }}
+                          aria-pressed={finalViewMode === 'attention'}
+                          className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                            finalViewMode === 'attention'
+                              ? 'border-amber-500 bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100 shadow-xs'
+                              : 'border-amber-200 bg-amber-50/60 text-amber-900 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200'
+                          }`}
+                        >
+                          <span className="block text-xs font-black">Needs attention · {attentionRowCount}</span>
+                          <span className="mt-0.5 block text-[10px] font-semibold opacity-80">Needs review</span>
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-4 grid gap-2 sm:grid-cols-3" role="group" aria-label="Final save groups">
-                      <button
-                        type="button"
-                        onClick={() => { setFinalGroupFilter('saved'); setFinalViewMode('table') }}
-                        aria-pressed={finalViewMode === 'table' && finalGroupFilter === 'saved'}
-                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          finalViewMode === 'table' && finalGroupFilter === 'saved'
-                            ? 'border-emerald-500 bg-emerald-100 text-emerald-950 dark:bg-emerald-950/50 dark:text-emerald-100'
-                            : 'border-emerald-200 bg-emerald-50/60 text-emerald-900 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-200'
-                        }`}
-                      >
-                        <span className="block text-sm font-black">Attendance sent · {savedFinalRows.length}</span>
-                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Confirmed attendance write</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setFinalGroupFilter('ready'); setFinalViewMode('table') }}
-                        aria-pressed={finalViewMode === 'table' && finalGroupFilter === 'ready'}
-                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          finalViewMode === 'table' && finalGroupFilter === 'ready'
-                            ? 'border-sky-500 bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-100'
-                            : 'border-sky-200 bg-sky-50/60 text-sky-900 hover:bg-sky-100 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-200'
-                        }`}
-                      >
-                        <span className="block text-sm font-black">Ready to save · {readyFinalRows.length}</span>
-                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Only the selected Sundays</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setFinalGroupFilter('attention'); setFinalViewMode('attention') }}
-                        aria-pressed={finalViewMode === 'attention'}
-                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          finalViewMode === 'attention'
-                            ? 'border-amber-500 bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100'
-                            : 'border-amber-200 bg-amber-50/60 text-amber-900 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200'
-                        }`}
-                      >
-                        <span className="block text-sm font-black">Needs attention · {attentionRowCount}</span>
-                        <span className="mt-0.5 block text-[11px] font-semibold opacity-80">Not included in Save ready</span>
-                      </button>
-                    </div>
+
+                    {!hasSelectedSundayScope && approvedFinalRows.length > 0 && (
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3.5 py-2 text-xs font-medium text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                          <span>Showing all {approvedFinalRows.length} reviewed people. Choose your Sunday dates in the <strong>Sundays</strong> tab to save attendance to DatSer.</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setReviewStep('attendance')}
+                          className="shrink-0 rounded-lg bg-amber-200/90 px-2.5 py-1 text-xs font-black text-amber-950 hover:bg-amber-300 dark:bg-amber-900/60 dark:text-amber-100 transition-colors"
+                        >
+                          Choose Sundays →
+                        </button>
+                      </div>
+                    )}
 
                     <p className="mt-3 text-xs font-semibold text-stone-500 dark:text-stone-400">
                       {finalEditedRowKeys.size > 0
@@ -3152,15 +3652,15 @@ finalSaveInFlightRef.current = true
 
                     {finalViewMode === 'table' ? (
                       /* Spreadsheet / table view — mirrors the physical sheet */
-                      <div className="mt-4 max-h-[58dvh] overflow-auto rounded-2xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900 shadow-2xs">
-                        <table className="min-w-full text-left text-xs" data-testid="final-table-view">
+                      <div className={`mt-4 overflow-auto rounded-2xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900 shadow-2xs ${isCompactFinalView ? 'max-h-[64dvh]' : 'max-h-[58dvh]'}`}>
+                        <table className={`text-left ${isCompactFinalView ? 'w-full text-[11px]' : 'min-w-full text-xs'}`} data-testid="final-table-view">
                           <thead>
                             <tr className="border-b border-stone-200 bg-stone-50/80 dark:border-stone-800 dark:bg-stone-800/50">
-                              <th scope="col" className="whitespace-nowrap px-3.5 py-2.5 font-black uppercase tracking-wider text-stone-500 dark:text-stone-400 w-10">
+                              <th scope="col" className={`whitespace-nowrap font-black uppercase tracking-wider text-stone-500 dark:text-stone-400 ${isCompactFinalView ? 'px-2 py-1.5 w-8 text-[10px]' : 'px-3.5 py-2.5 w-10 text-xs'}`}>
                                 #
                               </th>
                               {COMPARE_FIELDS.map(({ key, label }) => (
-                                <th key={key} scope="col" className="whitespace-nowrap px-3.5 py-2.5 font-black uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                <th key={key} scope="col" className={`whitespace-nowrap font-black uppercase tracking-wider text-stone-500 dark:text-stone-400 ${isCompactFinalView ? 'px-2 py-1.5 text-[10px]' : 'px-3.5 py-2.5 text-xs'}`}>
                                   {key === 'current_level' ? 'Educational level' : label}
                                 </th>
                               ))}
@@ -3168,12 +3668,12 @@ finalSaveInFlightRef.current = true
                                 const date = new Date(`${dateKey}T00:00:00`)
                                 const label = Number.isNaN(date.getTime()) ? dateKey : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                                 return (
-                                  <th key={dateKey} scope="col" className="whitespace-nowrap px-3.5 py-2.5 text-center font-black uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                  <th key={dateKey} scope="col" className={`whitespace-nowrap text-center font-black uppercase tracking-wider ${isCompactFinalView ? 'px-1.5 py-1.5 text-[10px]' : 'px-3.5 py-2.5 text-xs'} text-stone-600 dark:text-stone-300`}>
                                     {label}
                                   </th>
                                 )
                               })}
-                              <th scope="col" className="whitespace-nowrap px-3.5 py-2.5 text-right font-black uppercase tracking-wider text-stone-500 dark:text-stone-400 w-16">
+                              <th scope="col" className={`whitespace-nowrap text-right font-black uppercase tracking-wider text-stone-500 dark:text-stone-400 ${isCompactFinalView ? 'px-2 py-1.5 w-12 text-[10px]' : 'px-3.5 py-2.5 w-16 text-xs'}`}>
                                 <span className="inline-flex items-center gap-1"><Pencil className="h-3.5 w-3.5" /> Edit</span>
                               </th>
                             </tr>
@@ -3184,7 +3684,11 @@ finalSaveInFlightRef.current = true
                                 <td colSpan={1 + COMPARE_FIELDS.length + finalSundayDates.length + 1} className="px-4 py-10 text-center text-sm font-semibold text-stone-500 dark:text-stone-400">
                                   {finalGroupFilter === 'saved'
                                     ? 'No rows have been confirmed as sent yet.'
-                                    : 'No approved rows are waiting to save.'}
+                                    : finalGroupFilter === 'attention'
+                                      ? 'No rows need attention.'
+                                      : finalGroupFilter === 'ready'
+                                        ? 'No rows are ready to save yet.'
+                                        : 'No extracted rows found.'}
                                 </td>
                               </tr>
                             ) : visibleFinalRows.map((entry, index) => {
@@ -3213,42 +3717,47 @@ finalSaveInFlightRef.current = true
                                             ? 'bg-orange-50/70 dark:bg-orange-950/20'
                                             : 'bg-sky-50/35 dark:bg-sky-950/10'
                                   }`}>
-                                    <td className="whitespace-nowrap px-3.5 py-2.5 font-mono text-[11px] text-stone-400">
+                                    <td className={`whitespace-nowrap font-mono text-stone-400 ${isCompactFinalView ? 'px-2 py-1 text-[10px]' : 'px-3.5 py-2.5 text-[11px]'}`}>
                                       <span className="block">{index + 1}</span>
-                                      <span className={`mt-1 inline-flex rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide ${
+                                      <span className={`mt-0.5 inline-flex rounded px-1 py-0.2 text-[9px] font-black uppercase tracking-wide ${
                                         isSaved
                                           ? 'bg-emerald-200/80 text-emerald-900 dark:bg-emerald-900/70 dark:text-emerald-100'
                                           : needsAttention
-                                            ? 'bg-amber-200/80 text-amber-900 dark:bg-amber-900/70 dark:text-amber-100'
+                                            ? 'bg-amber-200/80 text-amber-900 dark:bg-amber-950/60 dark:text-amber-100'
                                             : 'bg-sky-200/80 text-sky-900 dark:bg-sky-900/70 dark:text-sky-100'
                                       }`}>{isSaved ? 'Sent' : needsAttention ? 'Review' : 'Ready'}</span>
                                     </td>
-                                    {COMPARE_FIELDS.map(({ key }) => (
-                                      <td key={key} className="whitespace-nowrap px-3.5 py-2.5 font-medium text-stone-900 dark:text-white">
-                                        {finalProfileValue(entry, key) || '—'}
-                                      </td>
-                                    ))}
+                                    {COMPARE_FIELDS.map(({ key }) => {
+                                      const val = finalProfileValue(entry, key) || '—'
+                                      return (
+                                        <td key={key} title={val} className={`whitespace-nowrap font-medium text-stone-900 dark:text-white ${isCompactFinalView ? 'px-2 py-1 max-w-[130px] truncate text-[11px]' : 'px-3.5 py-2.5 text-xs'}`}>
+                                          {val}
+                                        </td>
+                                      )
+                                    })}
                                     {finalSundayDates.map((dateKey) => {
                                       const value = attendanceMap[dateKey]
                                       return (
-                                        <td key={dateKey} className="whitespace-nowrap px-3.5 py-2.5 text-center">
+                                        <td key={dateKey} className={`whitespace-nowrap text-center ${isCompactFinalView ? 'px-1.5 py-1' : 'px-3.5 py-2.5'}`}>
                                           {value === ATTENDANCE_STATUS.PRESENT ? (
-                                            <span className="inline-block px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-black text-[11px]">P</span>
+                                            <span className={`inline-block font-black bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 ${isCompactFinalView ? 'px-1.5 py-0.2 rounded text-[10px]' : 'px-2 py-0.5 rounded-md text-[11px]'}`}>P</span>
                                           ) : value === ATTENDANCE_STATUS.ABSENT ? (
-                                            <span className="inline-block px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 font-black text-[11px]">A</span>
+                                            <span className={`inline-block font-black bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 ${isCompactFinalView ? 'px-1.5 py-0.2 rounded text-[10px]' : 'px-2 py-0.5 rounded-md text-[11px]'}`}>A</span>
                                           ) : (
                                             <span className="text-stone-300 dark:text-stone-600 font-bold">—</span>
                                           )}
                                         </td>
                                       )
                                     })}
-                                    <td className="whitespace-nowrap px-3.5 py-2.5 text-right">
+                                    <td className={`whitespace-nowrap text-right ${isCompactFinalView ? 'px-2 py-1' : 'px-3.5 py-2.5'}`}>
                                       <button
                                         type="button"
                                         onClick={() => setFinalEditingRowKey(isEditingThis ? null : rowKey)}
                                         aria-label={`Edit ${name}`}
                                         title={`Edit ${name} in the spreadsheet`}
-                                        className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold transition-colors ${
+                                        className={`inline-flex items-center gap-1 rounded-lg font-bold transition-colors ${
+                                          isCompactFinalView ? 'min-h-[26px] px-2 py-0.5 text-[10px]' : 'min-h-[32px] px-2 py-1 text-xs'
+                                        } ${
                                           isEditingThis
                                             ? 'bg-orange-600 text-white'
                                             : 'border border-stone-200 bg-white text-stone-700 hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200'
@@ -3373,7 +3882,7 @@ finalSaveInFlightRef.current = true
                     ) : (
                       /* Card view — genuine responsive card grid inspired by the reference */
                       <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {finalPreview.plan.rows.map((entry) => {
+                        {finalReviewRows.map((entry) => {
                           const isNew = entry.memberAction === 'create-new'
                           const name = isNew
                             ? (entry.createProfile?.full_name || 'New member')
@@ -3631,8 +4140,7 @@ finalSaveInFlightRef.current = true
             ) : (
               <>
                 {reviewStep === 'attendance' && (
-                  <div className="mb-5 rounded-3xl border border-stone-200/90 bg-white/95 p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900/95">
-                    {/* Months — standard dashboard month selection, one or more months */}
+                  <div className="mb-5 rounded-3xl border border-stone-200/90 bg-white/95 p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900/95" data-testid="sundays-scope-screen">
                     <div>
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="min-w-0">
@@ -3641,59 +4149,137 @@ finalSaveInFlightRef.current = true
                             Choose the dates once for this sheet. Only these dates can appear in attention or be saved.
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="month"
-                            value={monthAddDraft}
-                            onChange={(event) => setMonthAddDraft(event.target.value)}
-                            aria-label="Add a month"
-                            className="h-9 rounded-xl border border-stone-200 bg-white px-2.5 text-xs font-bold text-stone-900 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 dark:border-stone-700 dark:bg-stone-800 dark:text-white"
-                          />
+                        <div className="relative">
                           <button
                             type="button"
-                            onClick={() => {
-                              if (monthAddDraft) {
-                                addAttendanceMonth(reviewActiveId, monthAddDraft)
-                                setMonthAddDraft('')
-                              }
-                            }}
-                            disabled={!monthAddDraft}
+                            onClick={() => setAddMonthPickerOpen((prev) => !prev)}
+                            aria-expanded={addMonthPickerOpen}
+                            aria-haspopup="dialog"
                             aria-label="Add month"
-                            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-orange-600 px-3.5 py-1.5 text-xs font-black text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40 shadow-sm"
+                            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-orange-700 shadow-sm"
                           >
-                            <CheckCircle2 className="h-4 w-4" />
-                            Add month
+                            <Calendar className="h-4 w-4" />
+                            <span>Add month</span>
+                            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${addMonthPickerOpen ? 'rotate-180' : ''}`} />
                           </button>
+
+                          {addMonthPickerOpen && (
+                            <div
+                              role="dialog"
+                              aria-label="Select month to add"
+                              className="absolute right-0 top-full z-40 mt-1.5 w-72 rounded-2xl border border-stone-200 bg-white p-3 shadow-xl dark:border-stone-700 dark:bg-stone-900"
+                            >
+                              {/* Year selector */}
+                              <div className="mb-3 flex items-center justify-between border-b border-stone-100 pb-2 dark:border-stone-800">
+                                <button
+                                  type="button"
+                                  onClick={() => setAddMonthPickerYear((y) => y - 1)}
+                                  aria-label="Previous year"
+                                  className="grid h-7 w-7 place-items-center rounded-lg text-stone-500 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800"
+                                >
+                                  <ChevronLeft className="h-4 w-4" />
+                                </button>
+                                <span className="font-mono text-sm font-black text-stone-900 dark:text-white">
+                                  {addMonthPickerYear}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setAddMonthPickerYear((y) => y + 1)}
+                                  aria-label="Next year"
+                                  className="grid h-7 w-7 place-items-center rounded-lg text-stone-500 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800"
+                                >
+                                  <ChevronRight className="h-4 w-4" />
+                                </button>
+                              </div>
+
+                              {/* 12-month grid */}
+                              <div className="grid grid-cols-3 gap-1.5">
+                                {[
+                                  { num: '01', name: 'Jan' },
+                                  { num: '02', name: 'Feb' },
+                                  { num: '03', name: 'Mar' },
+                                  { num: '04', name: 'Apr' },
+                                  { num: '05', name: 'May' },
+                                  { num: '06', name: 'Jun' },
+                                  { num: '07', name: 'Jul' },
+                                  { num: '08', name: 'Aug' },
+                                  { num: '09', name: 'Sep' },
+                                  { num: '10', name: 'Oct' },
+                                  { num: '11', name: 'Nov' },
+                                  { num: '12', name: 'Dec' }
+                                ].map(({ num, name }) => {
+                                  const key = `${addMonthPickerYear}-${num}`
+                                  const alreadyAdded = attendanceSettings.months.includes(key)
+                                  return (
+                                    <button
+                                      key={key}
+                                      type="button"
+                                      onClick={() => {
+                                        if (!alreadyAdded) {
+                                          addAttendanceMonth(reviewActiveId, key)
+                                        }
+                                        setAddMonthPickerOpen(false)
+                                      }}
+                                      className={`flex items-center justify-center gap-1 rounded-xl py-2 text-xs font-black transition-colors ${
+                                        alreadyAdded
+                                          ? 'border border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                          : 'border border-stone-200 bg-white text-stone-800 hover:border-orange-400 hover:bg-orange-50/50 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-orange-950/30'
+                                      }`}
+                                    >
+                                      <span>{name}</span>
+                                      {alreadyAdded && <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       {attendanceSettings.months.length === 0 ? (
                         <p className="mt-3.5 rounded-2xl border border-dashed border-stone-200 p-6 text-center text-xs font-medium text-stone-500 dark:border-stone-800 dark:text-stone-400">
-                          No month selected yet — add a month to map its Sundays to this sheet.
+                          No month selected yet — click <strong>Add month</strong> to choose which month's Sundays to save.
                         </p>
                       ) : (
-                        <div className="mt-3.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="mt-3.5 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                           {attendanceSettings.months.map((monthKey) => {
                             const selectedSundays = Array.isArray(attendanceSettings.sundays?.[monthKey])
                               ? attendanceSettings.sundays[monthKey]
                               : defaultSundaysForMonth(monthKey)
                             const allSundays = getSundaysForMonth(monthKey)
                             return (
-                              <div key={monthKey} className="rounded-2xl border border-stone-200/90 bg-white p-3.5 shadow-2xs dark:border-stone-800 dark:bg-stone-900">
-                                <div className="flex items-center justify-between gap-2">
+                              <div key={monthKey} className="rounded-2xl border border-stone-200/90 bg-white p-4 shadow-2xs dark:border-stone-800 dark:bg-stone-900">
+                                <div className="flex items-center justify-between gap-2 border-b border-stone-100 pb-2.5 dark:border-stone-800">
                                   <p className="text-xs font-black uppercase tracking-wider text-stone-900 dark:text-white">
                                     {monthKeyLabel(monthKey)}
                                   </p>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeAttendanceMonth(reviewActiveId, monthKey)}
-                                    aria-label={`Remove ${monthKeyLabel(monthKey)}`}
-                                    className="grid h-7 w-7 place-items-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-200"
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </button>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectAllSundaysForMonth(reviewActiveId, monthKey)}
+                                      className="rounded-lg bg-stone-100 px-2 py-1 text-[10px] font-black text-stone-700 transition-colors hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
+                                    >
+                                      Select all
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleClearAllSundaysForMonth(reviewActiveId, monthKey)}
+                                      className="rounded-lg bg-stone-100 px-2 py-1 text-[10px] font-black text-stone-700 transition-colors hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"
+                                    >
+                                      Clear
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeAttendanceMonth(reviewActiveId, monthKey)}
+                                      aria-label={`Remove ${monthKeyLabel(monthKey)}`}
+                                      className="grid h-7 w-7 place-items-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
                                 </div>
-                                <p className="mt-0.5 text-[11px] font-medium text-stone-500 dark:text-stone-400">
+                                <p className="mt-2 text-[11px] font-medium text-stone-500 dark:text-stone-400">
                                   Choose only the Sundays you want to save. Unselected dates are ignored completely.
                                 </p>
                                 <div className="mt-3 flex flex-wrap gap-2">
@@ -3710,15 +4296,16 @@ finalSaveInFlightRef.current = true
                                         disabled={!hasColumn}
                                         aria-pressed={checked && hasColumn}
                                         aria-label={`${checked ? 'Remove' : 'Include'} ${dateLabel} in ${monthKeyLabel(monthKey)}`}
-                                        className={`rounded-xl border px-3 py-2 text-xs font-black transition-colors ${
+                                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-black transition-colors ${
                                           checked && hasColumn
                                             ? 'border-emerald-500 bg-emerald-600 text-white shadow-sm'
                                             : hasColumn
-                                              ? 'border-stone-200 bg-white text-stone-600 hover:border-emerald-400 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300'
+                                              ? 'border-stone-200 bg-white text-stone-700 hover:border-emerald-400 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300'
                                               : 'cursor-not-allowed border-stone-100 bg-stone-50 text-stone-400 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-600'
                                         }`}
                                       >
-                                        {dateLabel}
+                                        {checked && hasColumn && <Check className="h-3.5 w-3.5" />}
+                                        <span>{dateLabel}</span>
                                       </button>
                                     )
                                   })}
@@ -3773,7 +4360,7 @@ finalSaveInFlightRef.current = true
                                     <span className="h-2 w-2 shrink-0 rounded-full bg-orange-500" />
                                   )}
                                   <span className="truncate">
-                                    Sheet {sheets.findIndex(s => s.id === reviewActiveId) + 1} of {sheets.length} · {reviewSheet?.source || 'Sheet'} · {completedSheets.has(reviewActiveId) ? 'Completed' : 'Reviewing'}
+                                    Sheet {sheets.findIndex(s => s.id === reviewActiveId) + 1} of {sheets.length} · {reviewSheet?.source || 'Sheet'} · {reviewRows.length > 0 ? `${reviewRows.length} ${reviewRows.length === 1 ? 'name' : 'names'} · ` : ''}{completedSheets.has(reviewActiveId) ? 'Completed' : 'Reviewing'}
                                   </span>
                                 </div>
                                 <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-stone-500 transition-transform dark:text-stone-400 ${sheetSelectorDropdownOpen ? 'rotate-180' : ''}`} />
@@ -3831,15 +4418,22 @@ finalSaveInFlightRef.current = true
                                           </span>
                                           <span className="truncate text-stone-900 dark:text-white">{sheet.source}</span>
                                         </div>
-                                        <span className={`text-[10px] font-black uppercase tracking-wider shrink-0 ${
-                                          sheetCompleted
-                                            ? 'text-emerald-600 dark:text-emerald-400'
-                                            : isSelected
-                                            ? 'text-orange-600 dark:text-orange-400'
-                                            : 'text-stone-400 dark:text-stone-500'
-                                        }`}>
-                                          {statusText}
-                                        </span>
+                                        <div className="flex items-center gap-2.5 shrink-0">
+                                          {sheetRows > 0 && (
+                                            <span className="text-[11px] font-bold text-stone-500 dark:text-stone-400">
+                                              {sheetRows} {sheetRows === 1 ? 'name' : 'names'}
+                                            </span>
+                                          )}
+                                          <span className={`text-[10px] font-black uppercase tracking-wider ${
+                                            sheetCompleted
+                                              ? 'text-emerald-600 dark:text-emerald-400'
+                                              : isSelected
+                                              ? 'text-orange-600 dark:text-orange-400'
+                                              : 'text-stone-400 dark:text-stone-500'
+                                          }`}>
+                                            {statusText}
+                                          </span>
+                                        </div>
                                       </button>
                                     )
                                   })}
@@ -4623,14 +5217,43 @@ finalSaveInFlightRef.current = true
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={toggleSavedScans}
-            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 transition-colors hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-          >
-            <X className="h-3.5 w-3.5" />
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Horizontal / Vertical layout toggle */}
+            <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50/80 p-1 dark:border-gray-700 dark:bg-gray-800">
+              <button
+                type="button"
+                onClick={() => handleSetSavedScanView('horizontal')}
+                aria-pressed={savedScanView === 'horizontal'}
+                className={`rounded-lg px-2.5 py-1 text-xs font-black transition-colors ${
+                  savedScanView === 'horizontal'
+                    ? 'bg-orange-600 text-white shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'
+                }`}
+              >
+                Horizontal
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetSavedScanView('vertical')}
+                aria-pressed={savedScanView === 'vertical'}
+                className={`rounded-lg px-2.5 py-1 text-xs font-black transition-colors ${
+                  savedScanView === 'vertical'
+                    ? 'bg-orange-600 text-white shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'
+                }`}
+              >
+                Vertical
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={toggleSavedScans}
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 transition-colors hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+            >
+              <X className="h-3.5 w-3.5" />
+              Close
+            </button>
+          </div>
         </div>
 
         {savedScansError && (
@@ -4684,6 +5307,9 @@ finalSaveInFlightRef.current = true
               const isExpanded = expandedScanIds.has(scan.id)
               const sheetImages = Array.isArray(scan.sheet_images) ? scan.sheet_images : []
               const allSheetsSaved = sheetImages.length > 0 && sheetImages.every((image) => Boolean(image?.path))
+              const selectedIds = selectedSavedSheetIdsByScan[scan.id] || []
+              const selectedCount = selectedIds.length
+
               return (
                 <li key={scan.id} className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
                   <div className="flex flex-wrap items-center gap-3 p-3">
@@ -4745,7 +5371,7 @@ finalSaveInFlightRef.current = true
                             {sheetCount} sheet{sheetCount === 1 ? '' : 's'} staged
                           </span>
                         )}
-                        {updatedLabel ? <span className="text-xs font-medium text-gray-500 dark:text-gray-400">saved {updatedLabel}</span> : null}
+                        {updatedLabel ? <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Saved on {updatedLabel}</span> : null}
                         {tokenCount > 0 ? <span className="text-xs font-medium text-gray-500 dark:text-gray-400">{tokenCount} tokens</span> : null}
                       </div>
                     </div>
@@ -4807,26 +5433,101 @@ finalSaveInFlightRef.current = true
 
                   {isExpanded && sheetImages.length > 0 && (
                     <div className="border-t border-gray-100 bg-gray-50/60 px-3 py-3 dark:border-gray-800 dark:bg-gray-900/40">
-                      <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">All {sheetImages.length} sheets in this batch</p>
-                      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[11px] font-black uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                          All {sheetImages.length} sheets in this batch
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectAllSavedSheets(scan)}
+                            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-black text-gray-700 transition-colors hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleClearSelectedSavedSheets(scan.id)}
+                            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-black text-gray-700 transition-colors hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                          >
+                            Clear
+                          </button>
+                          {selectedCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handlePromptDeleteSavedSheets(scan, selectedIds)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-black text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              <span>Delete selected ({selectedCount})</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <ul
+                        aria-label={`Sheets in ${batchTitle}`}
+                        className={savedScanView === 'horizontal' ? 'flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin' : 'space-y-2'}
+                      >
                         {sheetImages.map((image, index) => {
                           const thumbUrl = sheetThumbnails[`${scan.id}:${image.sheetId}`]
                           const sourceName = String(image.source || `Sheet ${index + 1}`)
+                          const isSelected = selectedIds.includes(image.sheetId)
                           return (
-                            <li key={image.sheetId || index} className="flex min-w-0 items-center gap-2 rounded-xl border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-800">
-                              <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/50">
+                            <li
+                              key={image.sheetId || index}
+                              className={`group relative flex ${savedScanView === 'horizontal' ? 'shrink-0 min-w-[240px] max-w-[280px]' : 'w-full'} items-center gap-2.5 rounded-xl border p-2.5 shadow-2xs transition-all ${
+                                isSelected
+                                  ? 'border-orange-500 bg-orange-50/70 dark:border-orange-500 dark:bg-orange-950/30'
+                                  : 'border-gray-200 bg-white hover:border-orange-300 dark:border-gray-700 dark:bg-gray-800'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleSelectSavedSheet(scan.id, image.sheetId)}
+                                aria-label={`Select ${sourceName}`}
+                                className="h-4 w-4 shrink-0 rounded border-gray-300 text-orange-600 focus:ring-orange-500 dark:border-gray-600 dark:bg-gray-700 cursor-pointer"
+                              />
+                              <div
+                                onClick={() => {
+                                  if (thumbUrl) {
+                                    setViewer({
+                                      src: thumbUrl,
+                                      enhancedSrc: thumbUrl,
+                                      sheetId: image.sheetId,
+                                      mode: 'original'
+                                    })
+                                  }
+                                }}
+                                className="relative grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/50 cursor-pointer"
+                                title={`Tap to expand ${sourceName}`}
+                              >
                                 {thumbUrl ? (
-                                  <img src={thumbUrl} alt={sourceName} className="h-full w-full object-cover" />
+                                  <img src={thumbUrl} alt={sourceName} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
                                 ) : (
                                   <ImageIcon className="h-4 w-4 text-gray-400 dark:text-gray-500" />
                                 )}
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-colors">
+                                  <ZoomIn className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <p className="truncate text-xs font-semibold text-gray-900 dark:text-white" title={sourceName}>{sourceName}</p>
-                                <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                                  {image.path ? 'Saved' : 'Pending'}
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-bold text-gray-900 dark:text-white" title={sourceName}>{sourceName}</p>
+                                <p className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                  <span>{image.path ? 'Saved' : 'Pending'}</span>
+                                  <span className="text-stone-400">· Sheet {index + 1}</span>
                                 </p>
                               </div>
+                              <button
+                                type="button"
+                                onClick={() => handlePromptDeleteSavedSheets(scan, image.sheetId)}
+                                aria-label={`Delete ${sourceName}`}
+                                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 transition-colors"
+                                title={`Delete ${sourceName}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             </li>
                           )
                         })}
@@ -4839,6 +5540,59 @@ finalSaveInFlightRef.current = true
           </ul>
         )}
 
+        {confirmDeleteSheetModal && (
+          <div
+            role="dialog"
+            aria-label="Confirm sheet deletion"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
+          >
+            <div className="w-full max-w-md rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl dark:border-stone-800 dark:bg-stone-900">
+              <div className="flex items-center gap-3 text-red-600 dark:text-red-400">
+                <div className="grid h-10 w-10 place-items-center rounded-xl bg-red-100 dark:bg-red-950/60">
+                  <Trash2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900 dark:text-white">
+                    Delete {confirmDeleteSheetModal.sheetIds.length === 1 ? 'Saved Sheet' : `${confirmDeleteSheetModal.sheetIds.length} Saved Sheets`}?
+                  </h3>
+                  <p className="text-xs text-stone-500 dark:text-stone-400">
+                    {confirmDeleteSheetModal.sheetSources.join(', ')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2 text-xs text-stone-600 dark:text-stone-300">
+                <p>
+                  This will permanently remove {confirmDeleteSheetModal.sheetIds.length === 1 ? 'this sheet image' : 'these sheet images'} from private storage and update this saved scan batch.
+                </p>
+                <p className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-2.5 font-semibold text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200">
+                  ✓ Note: Member records and attendance already written to DatSer will <strong>NOT</strong> be deleted.
+                </p>
+              </div>
+
+              <div className="mt-6 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteSheetModal(null)}
+                  disabled={isDeletingSavedSheets}
+                  className="min-h-[40px] rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteSavedSheets}
+                  disabled={isDeletingSavedSheets}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-black text-white hover:bg-red-700 disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  {isDeletingSavedSheets ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  <span>Delete</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <p className="mt-4 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-[11px] font-medium text-gray-500 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-400">
           Saved scans stay private to your account and workspace. Sheet images are stored in a private bucket and only ever opened with signed links. Deleting a scan removes its sheet images and this record — never member or attendance data.
         </p>
@@ -4846,69 +5600,127 @@ finalSaveInFlightRef.current = true
     )
   }
 
-  return (
-    <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6">
-      <div className="rounded-[2.5rem] border border-stone-200/90 bg-[#FAF8F5] p-4 sm:p-7 shadow-xl dark:border-stone-800 dark:bg-[#181614]">
-        <DocumentCameraModal
-          isOpen={showCamera}
-          onClose={() => setShowCamera(false)}
-          onCaptured={handleCaptured}
-        />
+    const containerWidthClass = pageWidth === 'full'
+      ? 'w-full max-w-full px-2 py-3 sm:px-4 sm:py-4'
+      : pageWidth === 'wide'
+        ? 'mx-auto w-full max-w-[1750px] px-3 py-4 sm:px-6 sm:py-6'
+        : 'mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6'
 
-        {viewer && (() => {
-          const sheet = sheets.find((entry) => entry.id === viewer.sheetId)
-          if (!sheet) return null
-          return (
-            <ImageViewerModal
-              isOpen
-              onClose={() => setViewer(null)}
-              originalSrc={sheet.dataUrl}
-              enhancedSrc={sheet.preview || sheet.dataUrl}
-              initialMode={viewer.mode}
-            />
-          )
-        })()}
+    return (
+      <div className={containerWidthClass}>
+        <div className="rounded-[2.5rem] border border-stone-200/90 bg-[#FAF8F5] p-4 sm:p-7 shadow-xl dark:border-stone-800 dark:bg-[#181614]">
+          <DocumentCameraModal
+            isOpen={showCamera}
+            onClose={() => setShowCamera(false)}
+            onCaptured={handleCaptured}
+          />
 
-        {/* Header */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-stone-200/80 pb-5 dark:border-stone-800">
-          <div className="flex items-center gap-3.5">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-orange-500/10 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400 shadow-2xs">
-              <ScanLine className="h-6 w-6" />
+          {viewer && (() => {
+            const sheet = sheets.find((entry) => entry.id === viewer.sheetId)
+            const originalSrc = viewer.src || sheet?.dataUrl || ''
+            const enhancedSrc = viewer.enhancedSrc || sheet?.preview || sheet?.dataUrl || viewer.src || ''
+            if (!originalSrc && !enhancedSrc) return null
+            return (
+              <ImageViewerModal
+                isOpen
+                onClose={() => setViewer(null)}
+                originalSrc={originalSrc}
+                enhancedSrc={enhancedSrc}
+                initialMode={viewer.mode || (viewer.enhancedSrc ? 'enhanced' : 'original')}
+              />
+            )
+          })()}
+
+          {/* Header */}
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-stone-200/80 pb-5 dark:border-stone-800">
+            <div className="flex items-center gap-3.5">
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-orange-500/10 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400 shadow-2xs">
+                <ScanLine className="h-6 w-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-xl font-black text-stone-900 dark:text-white tracking-tight">Paper Scan</h1>
+                  {sheets.length > 0 && (
+                    <span className="rounded-full bg-stone-200/80 dark:bg-stone-800 px-2.5 py-0.5 text-xs font-mono font-bold text-stone-700 dark:text-stone-300">
+                      {sheets.length} {sheets.length === 1 ? 'sheet' : 'sheets'}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs font-medium text-stone-500 dark:text-stone-400">Capture paper attendance sheets, enhance locally, and review before saving to DatSer</p>
+              </div>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-black text-stone-900 dark:text-white tracking-tight">Paper Scan</h1>
-                {sheets.length > 0 && (
-                  <span className="rounded-full bg-stone-200/80 dark:bg-stone-800 px-2.5 py-0.5 text-xs font-mono font-bold text-stone-700 dark:text-stone-300">
-                    {sheets.length} {sheets.length === 1 ? 'sheet' : 'sheets'}
-                  </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Width setting dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setWidthDropdownOpen((prev) => !prev)}
+                  aria-expanded={widthDropdownOpen}
+                  aria-haspopup="menu"
+                  title="Change page width (Standard, Wide, Full width)"
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-2xl border border-stone-200 bg-white px-3 py-2 text-xs font-bold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
+                >
+                  <Maximize2 className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
+                  <span className="capitalize">{pageWidth === 'full' ? 'Full width' : pageWidth === 'wide' ? 'Wide' : 'Standard'}</span>
+                  <ChevronDown className={`h-3 w-3 text-stone-400 transition-transform ${widthDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {widthDropdownOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Select layout width"
+                    className="absolute right-0 top-full z-40 mt-1.5 w-48 rounded-2xl border border-stone-200 bg-white p-1.5 shadow-xl dark:border-stone-700 dark:bg-stone-900"
+                  >
+                    {[
+                      { id: 'standard', label: 'Standard box', desc: 'Centered view (1280px)' },
+                      { id: 'wide', label: 'Wide view', desc: 'Wider workspace (1750px)' },
+                      { id: 'full', label: 'Full width', desc: 'Maximize across screen (100%)' }
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          handleSetPageWidth(opt.id)
+                          setWidthDropdownOpen(false)
+                        }}
+                        className={`flex w-full flex-col rounded-xl px-3 py-2 text-left transition-colors ${
+                          pageWidth === opt.id
+                            ? 'bg-orange-50 text-orange-950 font-bold dark:bg-orange-950/40 dark:text-orange-200'
+                            : 'text-stone-700 hover:bg-stone-50 dark:text-stone-300 dark:hover:bg-stone-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black">{opt.label}</span>
+                          {pageWidth === opt.id && <Check className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />}
+                        </div>
+                        <span className="text-[10px] text-stone-400 dark:text-stone-500">{opt.desc}</span>
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
-              <p className="text-xs font-medium text-stone-500 dark:text-stone-400">Capture paper attendance sheets, enhance locally, and review before saving to DatSer</p>
+
+              <button
+                type="button"
+                onClick={toggleSavedScans}
+                aria-pressed={showSavedScans}
+                className="inline-flex min-h-[40px] items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
+              >
+                <Save className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+                Saved scans
+              </button>
+              <button
+                type="button"
+                onClick={onBack}
+                className="inline-flex min-h-[40px] items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to Admin
+              </button>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={toggleSavedScans}
-              aria-pressed={showSavedScans}
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
-            >
-              <Save className="h-4 w-4 text-orange-600 dark:text-orange-400" />
-              Saved scans
-            </button>
-            <button
-              type="button"
-              onClick={onBack}
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to Admin
-            </button>
-          </div>
-        </div>
 
-        {savedScanRecord && (
+        {stage !== 'review' && savedScanRecord && (
           <div className="mb-5 flex items-center gap-2.5 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 dark:border-emerald-900/40 dark:bg-emerald-950/20 shadow-2xs">
             <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
             <p className="text-xs font-bold text-emerald-800 dark:text-emerald-200">
@@ -4918,12 +5730,14 @@ finalSaveInFlightRef.current = true
         )}
 
         {/* Phase notice */}
-        <div className="mb-5 flex items-center gap-2.5 rounded-2xl border border-orange-200/80 bg-orange-50/70 px-4 py-3 dark:border-orange-900/40 dark:bg-orange-950/20 shadow-2xs">
-          <ShieldCheck className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-300" />
-          <p className="text-xs font-bold text-orange-800 dark:text-orange-200">
-            Capture and enhancement stay on this device. Your images are only sent anywhere when you run extraction.
-          </p>
-        </div>
+        {stage !== 'review' && (
+          <div className="mb-5 flex items-center gap-2.5 rounded-2xl border border-orange-200/80 bg-orange-50/70 px-4 py-3 dark:border-orange-900/40 dark:bg-orange-950/20 shadow-2xs">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-300" />
+            <p className="text-xs font-bold text-orange-800 dark:text-orange-200">
+              Capture and enhancement stay on this device. Your images are only sent anywhere when you run extraction.
+            </p>
+          </div>
+        )}
 
         {showSavedScans ? (
           renderSavedScansPanel()
@@ -5181,19 +5995,20 @@ finalSaveInFlightRef.current = true
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              <div className="flex gap-3 overflow-x-auto pb-3.5 scrollbar-thin">
                 {sheets.map((sheet, index) => {
                   const isChecked = selectedBatchSheetIds.has(sheet.id)
+                  const previewSrc = sheet.preview || sheet.dataUrl
                   return (
                     <div
                       key={sheet.id}
-                      className={`relative flex flex-col rounded-2xl border-2 p-2 transition-all ${
+                      className={`relative flex shrink-0 min-w-[260px] max-w-[300px] flex-col rounded-2xl border-2 p-2.5 transition-all ${
                         sheet.id === activeSheetId
                           ? 'border-orange-500 bg-orange-50/40 dark:border-orange-500 dark:bg-orange-950/20 shadow-sm'
                           : 'border-stone-200 bg-stone-50/50 hover:border-orange-300 dark:border-stone-800 dark:bg-stone-800/60'
                       }`}
                     >
-                      <div className="flex items-start gap-2 w-full">
+                      <div className="flex items-start gap-2.5 w-full">
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -5202,45 +6017,60 @@ finalSaveInFlightRef.current = true
                             handleToggleSelectBatchSheet(sheet.id)
                           }}
                           aria-label={`Select ${sheet.source}`}
-                          className="mt-1.5 h-4 w-4 rounded accent-orange-600 cursor-pointer"
+                          className="mt-2 h-4 w-4 rounded accent-orange-600 cursor-pointer"
                         />
+                        <div
+                          className="group relative h-16 w-16 shrink-0 rounded-xl overflow-hidden border border-stone-200/80 dark:border-stone-700 bg-black cursor-pointer shadow-2xs"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setViewer({
+                              sheetId: sheet.id,
+                              src: sheet.dataUrl,
+                              enhancedSrc: sheet.preview || sheet.dataUrl,
+                              mode: 'enhanced'
+                            })
+                          }}
+                          title="Tap thumbnail to expand and view full image"
+                        >
+                          <img
+                            src={previewSrc}
+                            alt={`Sheet ${index + 1} preview`}
+                            className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition-colors">
+                            <ZoomIn className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                          </div>
+                        </div>
                         <button
                           type="button"
                           onClick={() => selectSheet(sheet.id)}
-                          className="flex items-center gap-2.5 text-left min-w-0 flex-1"
+                          className="flex flex-col text-left min-w-0 flex-1 justify-center py-0.5"
                           aria-label={`Select sheet ${index + 1}: ${sheet.source}`}
                           aria-pressed={sheet.id === activeSheetId}
                         >
-                          <img
-                            src={sheet.preview || sheet.dataUrl}
-                            alt={`Sheet ${index + 1} preview`}
-                            className="h-16 w-16 shrink-0 rounded-xl object-cover border border-stone-200/80 dark:border-stone-700 bg-black"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-black text-stone-900 dark:text-white">
-                              <span className="text-stone-400 font-mono mr-1">{index + 1}.</span>
-                              {sheet.source}
+                          <span className="block truncate text-xs font-black text-stone-900 dark:text-white">
+                            <span className="text-stone-400 font-mono mr-1">{index + 1}.</span>
+                            {sheet.source}
+                          </span>
+                          {sheet.saveState === 'saved' ? (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              <Check className="h-2.5 w-2.5" />
+                              Saved
                             </span>
-                            {sheet.saveState === 'saved' ? (
-                              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                                <Check className="h-2.5 w-2.5" />
-                                Saved
-                              </span>
-                            ) : sheet.saveState === 'saving' ? (
-                              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-black text-orange-800 dark:bg-orange-950/60 dark:text-orange-300">
-                                <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                                Saving...
-                              </span>
-                            ) : sheet.saveState === 'save_failed' ? (
-                              <span className="mt-1 inline-flex items-center rounded-full bg-red-100 px-1.5 py-0.2 text-[9px] font-black text-red-700 dark:bg-red-950/60 dark:text-red-300">
-                                Save failed
-                              </span>
-                            ) : (
-                              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-black text-stone-700 dark:bg-stone-800 dark:text-stone-300">
-                                Ready
-                              </span>
-                            )}
-                          </div>
+                          ) : sheet.saveState === 'saving' ? (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-black text-orange-800 dark:bg-orange-950/60 dark:text-orange-300">
+                              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                              Saving...
+                            </span>
+                          ) : sheet.saveState === 'save_failed' ? (
+                            <span className="mt-1 inline-flex items-center rounded-full bg-red-100 px-1.5 py-0.2 text-[9px] font-black text-red-700 dark:bg-red-950/60 dark:text-red-300">
+                              Save failed
+                            </span>
+                          ) : (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-black text-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                              Ready
+                            </span>
+                          )}
                         </button>
                       </div>
 
@@ -5253,10 +6083,10 @@ finalSaveInFlightRef.current = true
                               handleMoveSheetUp(index)
                             }}
                             disabled={index === 0}
-                            aria-label={`Move sheet ${index + 1} up`}
+                            aria-label={`Move sheet ${index + 1} left`}
                             className="grid h-7 w-7 place-items-center rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-orange-300 disabled:opacity-30 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 transition-colors"
                           >
-                            <ChevronUp className="h-3.5 w-3.5" />
+                            <ChevronLeft className="h-3.5 w-3.5" />
                           </button>
                           <button
                             type="button"
@@ -5265,10 +6095,10 @@ finalSaveInFlightRef.current = true
                               handleMoveSheetDown(index)
                             }}
                             disabled={index === sheets.length - 1}
-                            aria-label={`Move sheet ${index + 1} down`}
+                            aria-label={`Move sheet ${index + 1} right`}
                             className="grid h-7 w-7 place-items-center rounded-lg border border-stone-200 bg-white text-stone-600 hover:border-orange-300 disabled:opacity-30 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 transition-colors"
                           >
-                            <ChevronDown className="h-3.5 w-3.5" />
+                            <ChevronRight className="h-3.5 w-3.5" />
                           </button>
                         </div>
 

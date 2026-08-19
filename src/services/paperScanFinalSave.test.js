@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import { buildFinalSavePlan, detectNewMemberDuplicates, executeFinalSave, finalSaveResultFromOperation, isAttendanceWriteConfirmed, retryPersistedFinalSave, resolveMembersForDuplicateCheck, FINAL_SAVE_STATUS } from './paperScanFinalSave'
+import { buildFinalSavePlan, buildMemberInsertRow, detectNewMemberDuplicates, executeFinalSave, finalSaveResultFromOperation, isAttendanceWriteConfirmed, retryPersistedFinalSave, resolveMembersForDuplicateCheck, verifyPlannedAttendance, FINAL_SAVE_STATUS } from './paperScanFinalSave'
 
 const member = { id: 'm1', 'Full Name': 'Ama Serwaa', 'Phone Number': '0241111111', Gender: 'Female', 'Current Level': 'SHS1' }
 const sheet = [{ id: 'sheet-1' }]
@@ -131,6 +131,115 @@ describe('paperScanFinalSave durable operation client', () => {
     expect(supabase.calls.find((call) => call.args?.p_step_id === 'profile-0')).toBeTruthy()
   })
 
+  it('persists manually edited Age and Parent/Guardian fields on an existing member', () => {
+    const plan = planFor([{
+      full_name: 'Ama Serwaa',
+      phone_number: '0241111111',
+      gender: 'Female',
+      age: '14',
+      current_level: 'SHS1',
+      parent_name_1: 'Ama Opong',
+      parent_phone_1: '0249999999',
+      attendance: {},
+      warnings: [],
+      ...reviewed({ age: '14', parent_name_1: 'Ama Opong', parent_phone_1: '0249999999' })
+    }])
+    expect(plan.rows).toHaveLength(1)
+    expect(plan.rows[0].profileUpdates).toMatchObject({
+      age: '14',
+      parent_name_1: 'Ama Opong',
+      parent_phone_1: '0249999999'
+    })
+  })
+
+  it('builds a create-new payload with Age and Parent/Guardian fields', () => {
+    const profile = buildMemberInsertRow({
+      full_name: 'Kojo',
+      phone_number: '0240000000',
+      gender: 'Male',
+      age: '12',
+      current_level: 'JHS1',
+      parent_name_1: 'Ama',
+      parent_phone_1: '0241111111'
+    })
+    expect(profile['Age']).toBe('12')
+    expect(profile.parent_name_1).toBe('Ama')
+    expect(profile.parent_phone_1).toBe('0241111111')
+  })
+
+  it('freezes Age and Parent/Guardian fields into the durable create-new member payload', async () => {
+    const supabase = durableSupabase()
+    const plan = planFor([{
+      full_name: 'Kojo',
+      phone_number: '0240000000',
+      gender: 'Male',
+      age: '12',
+      current_level: 'JHS1',
+      parent_name_1: 'Ama',
+      parent_phone_1: '0241111111',
+      memberAction: 'create-new',
+      newMemberTarget: { mode: 'this-month', monthKey: '2026-06' },
+      attendance: {},
+      warnings: [],
+      ...reviewed({ full_name: 'Kojo', age: '12', parent_name_1: 'Ama', parent_phone_1: '0241111111' })
+    }])
+    await executeFinalSave({ plan, deps: deps(supabase) })
+    const begin = supabase.calls.find((call) => call.name === 'paper_scan_begin_save_operation')
+    expect(begin.args.p_plan.rows[0].member_payload).toMatchObject({
+      'Age': '12',
+      parent_name_1: 'Ama',
+      parent_phone_1: '0241111111'
+    })
+  })
+
+  it('does not treat blank optional parent fields as review conflicts or erase existing values', () => {
+    const memberWithParent = { ...member, age: '13', parent_name_1: 'Existing Parent', parent_phone_1: '0240000000' }
+    const row = {
+      full_name: 'Ama Serwaa',
+      phone_number: '0241111111',
+      gender: 'Female',
+      age: '13',
+      current_level: 'SHS1',
+      parent_name_1: '',
+      parent_phone_1: '',
+      attendance: {},
+      warnings: []
+    }
+    const plan = buildFinalSavePlan({
+      sheets: sheet,
+      resultsBySheet: { 'sheet-1': { status: 'ok', excludedIndices: [], payload: { rows: [row] } } },
+      currentMembers: [memberWithParent],
+      monthlyTables: ['June_2026'],
+      settingsBySheet: { 'sheet-1': { month: '2026-06', convention: 'tick_x', columnCount: 4 } }
+    })
+    expect(plan.rows).toHaveLength(1)
+    expect(plan.rows[0].profileUpdates).not.toHaveProperty('parent_name_1')
+    expect(plan.rows[0].profileUpdates).not.toHaveProperty('parent_phone_1')
+    expect(plan.rows[0].unresolvedProfile).toBe(0)
+  })
+
+  it('does not overwrite unrelated fields when only an optional parent field is edited', () => {
+    const memberWithParent = { ...member, parent_name_1: 'Existing Parent', parent_phone_1: '0240000000', ministry: 'Youth' }
+    const plan = planFor([{
+      full_name: 'Ama Serwaa',
+      phone_number: '0241111111',
+      gender: 'Female',
+      age: '13',
+      current_level: 'SHS1',
+      parent_name_1: 'New Parent',
+      parent_phone_1: '',
+      attendance: {},
+      warnings: [],
+      ...reviewed({ parent_name_1: 'New Parent' })
+    }])
+    expect(plan.rows[0].profileUpdates).toEqual({ parent_name_1: 'New Parent' })
+    expect(plan.rows[0].profileUpdates).not.toHaveProperty('full_name')
+    expect(plan.rows[0].profileUpdates).not.toHaveProperty('phone_number')
+    expect(plan.rows[0].profileUpdates).not.toHaveProperty('gender')
+    expect(plan.rows[0].profileUpdates).not.toHaveProperty('current_level')
+    expect(plan.rows[0].profileUpdates).not.toHaveProperty('ministry')
+  })
+
   it('freezes exact all-year target months before execution and excludes a later registry month', async () => {
     const supabase = durableSupabase()
     const plan = buildFinalSavePlan({
@@ -186,6 +295,59 @@ describe('paperScanFinalSave durable operation client', () => {
   it('does not report a profile-only checkpoint as confirmed attendance', () => {
     expect(isAttendanceWriteConfirmed({ status: FINAL_SAVE_STATUS.SAVED, profileChanges: 1, attendanceUpdated: 0 })).toBe(false)
     expect(isAttendanceWriteConfirmed({ status: FINAL_SAVE_STATUS.SAVED, attendanceUpdated: 1 })).toBe(true)
+  })
+
+  it('verifies a row saved only when every intended attendance value matches exactly', () => {
+    const planRows = [{
+      sheetId: 'sheet-1',
+      rowIndex: 0,
+      memberId: 'm1',
+      attendance: [
+        { month: '2026-08', dateKey: '2026-08-02', value: 'Present' },
+        { month: '2026-08', dateKey: '2026-08-09', value: 'Present' },
+        { month: '2026-08', dateKey: '2026-08-16', value: 'Absent' }
+      ]
+    }]
+    const freshByMonth = {
+      '2026-08': [{ id: 'm1', attendance_2026_08_02: 'Present', attendance_2026_08_09: 'Present', attendance_2026_08_16: 'Absent' }]
+    }
+    const verified = verifyPlannedAttendance({ planRows, freshByMonth })
+    expect(verified.has('sheet-1:0')).toBe(true)
+  })
+
+  it('does not verify a row when any intended attendance value is missing or wrong', () => {
+    const planRows = [{
+      sheetId: 'sheet-1',
+      rowIndex: 0,
+      memberId: 'm1',
+      attendance: [
+        { month: '2026-08', dateKey: '2026-08-02', value: 'Present' },
+        { month: '2026-08', dateKey: '2026-08-09', value: 'Present' },
+        { month: '2026-08', dateKey: '2026-08-16', value: 'Absent' }
+      ]
+    }]
+    const partial = verifyPlannedAttendance({
+      planRows,
+      freshByMonth: { '2026-08': [{ id: 'm1', attendance_2026_08_02: 'Present' }] }
+    })
+    expect(partial.has('sheet-1:0')).toBe(false)
+
+    const wrong = verifyPlannedAttendance({
+      planRows,
+      freshByMonth: { '2026-08': [{ id: 'm1', attendance_2026_08_02: 'Present', attendance_2026_08_09: 'Absent', attendance_2026_08_16: 'Absent' }] }
+    })
+    expect(wrong.has('sheet-1:0')).toBe(false)
+  })
+
+  it('never verifies create-new rows without a resolved member id', () => {
+    const planRows = [{
+      sheetId: 'sheet-1',
+      rowIndex: 0,
+      memberId: null,
+      attendance: [{ month: '2026-08', dateKey: '2026-08-02', value: 'Present' }]
+    }]
+    const freshByMonth = { '2026-08': [{ id: 'm1', attendance_2026_08_02: 'Present' }] }
+    expect(verifyPlannedAttendance({ planRows, freshByMonth }).has('sheet-1:0')).toBe(false)
   })
 
   it('collects explicit attendance across multiple months without leaking between them', () => {

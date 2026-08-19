@@ -479,6 +479,15 @@ export const AuthProvider = ({ children }) => {
         setLoading(false)
 
         if (event === 'SIGNED_IN' && session?.user) {
+          // The only route that sets this intent is the single Admin Google
+          // button.  Complete that intentional return after Supabase has
+          // verified the OAuth session rather than before the redirect.
+          try {
+            if (window.sessionStorage?.getItem('datser_admin_google_return') === 'true') {
+              window.sessionStorage.setItem('adminAuthenticated', 'true')
+              window.sessionStorage.removeItem('datser_admin_google_return')
+            }
+          } catch { /* session storage is optional */ }
           rememberOnlineSession(session)
           // Load preferences in background
           loadUserPreferencesBackground(session.user.id)

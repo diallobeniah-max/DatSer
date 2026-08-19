@@ -22,6 +22,13 @@ describe('toExtractionRequest', () => {
   it('throws when the data URL is not an image', () => {
     expect(() => toExtractionRequest({ dataUrl: 'not-a-url', workspaceId: 'wid-1', requestId: 'x' })).toThrow(/could not be encoded/)
   })
+
+  it('sends the narrowly scoped mode only for Quick Sunday List extraction', () => {
+    expect(toExtractionRequest({ dataUrl: 'data:image/png;base64,aGk=', requestId: 'quick-1', mode: 'quick-sunday-list' })).toMatchObject({
+      requestId: 'quick-1',
+      mode: 'quick-sunday-list'
+    })
+  })
 })
 
 describe('parseExtractionResponse', () => {
@@ -46,6 +53,16 @@ describe('parseExtractionResponse', () => {
       body: { ok: true, sheet: {}, rows: [], warnings: [], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2 } }
     }))
     expect(result.usageMetadata).toEqual({ promptTokenCount: 5, candidatesTokenCount: 2 })
+  })
+
+  it('preserves Quick Sunday List names without changing normal row handling', async () => {
+    const result = await parseExtractionResponse(makeResponse({
+      ok: true,
+      status: 200,
+      body: { ok: true, sheet: {}, rows: [], names: [{ full_name: 'Ama Doe', confidence: 0.9 }], warnings: [] }
+    }))
+    expect(result.rows).toEqual([])
+    expect(result.names).toEqual([{ full_name: 'Ama Doe', confidence: 0.9 }])
   })
 
   it('maps a duplicate request to a friendly message', async () => {
@@ -83,6 +100,17 @@ describe('parseExtractionResponse', () => {
       body: { ok: false, code: 'SERVER_NOT_CONFIGURED', error: 'The server is missing its Gemini API key.', retryable: false }
     })
     await expect(() => parseExtractionResponse(response)).rejects.toThrow('The server is not configured for Gemini extraction yet.')
+  })
+
+  it('keeps a rejected Gemini credential distinct from a missing server configuration', async () => {
+    const response = makeResponse({
+      ok: false,
+      status: 401,
+      body: { ok: false, code: 'INVALID_API_KEY', error: 'The Gemini API key is rejected.', retryable: false }
+    })
+    const error = await parseExtractionResponse(response).catch((reason) => reason)
+    expect(error.message).toContain('Gemini rejected the server credential')
+    expect(error.code).toBe('INVALID_API_KEY')
   })
 
   it('maps a provider timeout to a clear retryable message', async () => {

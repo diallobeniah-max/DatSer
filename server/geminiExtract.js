@@ -45,6 +45,8 @@ Rules:
 - attendance_column_count is the number of attendance mark columns on the sheet; 0 when there are none.
 - Output the JSON object and nothing else, no markdown fences.`
 
+export const QUICK_SUNDAY_LIST_PROMPT = `You are a name-list OCR assistant. Inspect the image and return STRICT JSON only: {"names":[{"full_name":"","raw_name":"","confidence":0.0}],"warnings":[]}. Preserve visible row order and extract names only. Do not infer phones, age, gender, education, attendance, member codes, or profile data. Output JSON only.`
+
 const asString = (value) => (typeof value === 'string' ? value.trim() : '')
 
 const asFiniteNumber = (value, fallback = 0) => {
@@ -119,6 +121,18 @@ export const normalizeExtraction = (raw) => {
         : {})
     },
     rows,
+    warnings: asStringArray(raw.warnings)
+  }
+}
+
+export const normalizeQuickSundayListExtraction = (raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ExtractionError('MALFORMED_RESPONSE', 'Gemini returned an unexpected response shape.')
+  return {
+    names: (Array.isArray(raw.names) ? raw.names : []).map((entry) => ({
+      full_name: asString(entry?.full_name || entry?.name),
+      raw_name: asString(entry?.raw_name || entry?.full_name || entry?.name),
+      confidence: asFiniteNumber(entry?.confidence)
+    })).filter((entry) => entry.full_name || entry.raw_name),
     warnings: asStringArray(raw.warnings)
   }
 }
@@ -231,7 +245,7 @@ export const testGeminiConnection = async ({ apiKey, model = GEMINI_MODEL }) => 
   }
 }
 
-export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCredentialResolver = null, model = GEMINI_MODEL }) => {
+export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCredentialResolver = null, model = GEMINI_MODEL, mode = 'attendance-sheet' }) => {
   if (!imageBytes || !(imageBytes instanceof Uint8Array) || imageBytes.length === 0) {
     throw new ExtractionError('MISSING_IMAGE', 'An image payload is required.', { httpStatus: 400 })
   }
@@ -251,7 +265,7 @@ export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCrede
         {
           role: 'user',
           parts: [
-            { text: EXTRACTION_PROMPT },
+            { text: mode === 'quick-sunday-list' ? QUICK_SUNDAY_LIST_PROMPT : EXTRACTION_PROMPT },
             { inlineData: { mimeType, data: Buffer.from(imageBytes).toString('base64') } }
           ]
         }
@@ -266,7 +280,7 @@ export const extractSheetWithGemini = async ({ imageBytes, mimeType, storedCrede
       throw new ExtractionError('MALFORMED_RESPONSE', 'Gemini returned malformed JSON.', { httpStatus: 502 })
     }
     return {
-      ...normalizeExtraction(parsed),
+      ...(mode === 'quick-sunday-list' ? normalizeQuickSundayListExtraction(parsed) : normalizeExtraction(parsed)),
       usageMetadata: normalizeUsageMetadata(response?.usageMetadata)
     }
   } catch (error) {

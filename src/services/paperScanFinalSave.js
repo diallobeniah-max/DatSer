@@ -21,6 +21,7 @@
 
 import {
   COMPARE_FIELDS,
+  FIELD_STATES,
   MATCH_STATUSES,
   compareRowToMember,
   fieldNeedsDecision,
@@ -35,6 +36,7 @@ import {
 } from '../utils/paperScanCompare'
 import {
   ATTENDANCE_STATUS,
+  attendanceMatchesExpected,
   monthKeyFromTableName,
   monthTablesInYear,
   parseMonthKey,
@@ -65,7 +67,7 @@ const asTrimmed = (value) => String(value ?? '').trim()
 const fieldValuesEquivalent = (field, left, right) => {
   const a = asTrimmed(left)
   const b = asTrimmed(right)
-  if (field === 'phone_number') return phonesEquivalent(a, b)
+  if (field === 'phone_number' || field === 'parent_phone_1') return phonesEquivalent(a, b)
   if (field === 'gender') return normalizeGenderForCompare(a) === normalizeGenderForCompare(b)
   if (field === 'current_level') return normalizeLevelForCompare(a) === normalizeLevelForCompare(b)
   if (field === 'age') return normalizeAgeForCompare(a) === normalizeAgeForCompare(b)
@@ -141,7 +143,11 @@ export const effectiveNewMemberProfile = (row) => {
   const built = {}
   for (const { key } of COMPARE_FIELDS) {
     const decision = row?.reviewedValues?.[key]
-    if (decision) built[key] = decision.value
+    if (decision && decision.value !== undefined) {
+      built[key] = decision.value
+    } else if (row?.newMemberProfile?.[key] !== undefined) {
+      built[key] = row.newMemberProfile[key]
+    }
   }
   return built
 }
@@ -165,10 +171,9 @@ const selectedSundaysForMonth = (settings, month) => {
   return new Set(Array.isArray(list) ? list : [])
 }
 
-// Attendance items that may be written: explicit Present/Absent decisions on a
-// dateKey that is one of the sheet's actually-mapped Sundays for one of the
-// selected months. Every month is resolved independently so columns never leak
-// into an adjacent month, and an operator-deselected Sunday is never written.
+// Attendance items that may be written: explicit Present/Absent decisions or
+// resolved scan marks on a dateKey that is one of the sheet's actually-mapped
+// Sundays for one of the selected months.
 const collectAttendanceItems = ({ row, settings }) => {
   const items = []
   let unresolved = 0
@@ -183,23 +188,35 @@ const collectAttendanceItems = ({ row, settings }) => {
       convention: settings.convention
     })
     const validDates = new Set(entries.map((entry) => entry.dateKey).filter(Boolean))
-    const reviewed = row?.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
-    Object.entries(reviewed).forEach(([dateKey, decision]) => {
-      if (!validDates.has(dateKey)) return
-      if (selected && !selected.has(dateKey)) return
-      const value = decision?.value
-      if (value === ATTENDANCE_STATUS.PRESENT || value === ATTENDANCE_STATUS.ABSENT) {
-        items.push({ dateKey, value, month })
-        return
-      }
-      unresolved += 1
-    })
-    // A mapped Sunday with a visible mark that received no explicit Present/Absent
-    // decision stays unresolved: it must never be written implicitly.
-    const withMarkNoDecision = entries.filter((entry) => (
-      entry.dateKey && !reviewed[entry.dateKey] && Boolean(entry.rawMark) && (!selected || selected.has(entry.dateKey))
-    ))
-    unresolved += withMarkNoDecision.length
+    const reviewed = row?.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : null
+    if (reviewed) {
+      Object.entries(reviewed).forEach(([dateKey, decision]) => {
+        if (!validDates.has(dateKey)) return
+        if (selected && !selected.has(dateKey)) return
+        const value = decision?.value
+        if (value === ATTENDANCE_STATUS.PRESENT || value === ATTENDANCE_STATUS.ABSENT) {
+          items.push({ dateKey, value, month })
+          return
+        }
+        unresolved += 1
+      })
+      const withMarkNoDecision = entries.filter((entry) => (
+        entry.dateKey && !reviewed[entry.dateKey] && Boolean(entry.rawMark) && (!selected || selected.has(entry.dateKey))
+      ))
+      unresolved += withMarkNoDecision.length
+    } else {
+      entries.forEach((entry) => {
+        if (!entry.dateKey) return
+        if (selected && !selected.has(entry.dateKey)) return
+        if (entry.interpreted.status === ATTENDANCE_STATUS.PRESENT || entry.interpreted.status === ATTENDANCE_STATUS.ABSENT) {
+          items.push({ dateKey: entry.dateKey, value: entry.interpreted.status, month })
+          return
+        }
+        if (entry.interpreted.needsReview || Boolean(entry.rawMark)) {
+          unresolved += 1
+        }
+      })
+    }
   })
   return { items, unresolved }
 }
@@ -258,7 +275,10 @@ export const buildFinalSavePlan = ({
         const createProfile = effectiveNewMemberProfile(row)
         const unresolvedProfile = COMPARE_FIELDS.reduce((count, { key }) => {
           const scanValue = row?.originalGeminiValue?.[key] ?? row?.[key]
-          return count + (asTrimmed(scanValue) && !row?.reviewedValues?.[key] ? 1 : 0)
+          // Parent/Guardian fields are optional; only a scanned value that has
+          // not been decided needs review, never a blank optional cell.
+          if (!asTrimmed(scanValue)) return count
+          return count + (!row?.reviewedValues?.[key] ? 1 : 0)
         }, 0)
         // Allow an operator to save the reviewed rows without turning an
         // incomplete new-member choice into a failed write. This row remains
@@ -301,9 +321,12 @@ export const buildFinalSavePlan = ({
             profileUpdates[key] = decision.value
           }
         })
-        unresolvedProfile = compares.reduce((sum, compare) => (
-          sum + (fieldNeedsDecision(compare) && !getFieldDecision(row, compare.field) ? 1 : 0)
-        ), 0)
+        unresolvedProfile = compares.reduce((sum, compare) => {
+          // Parent/Guardian fields are optional; only a scanned value that has
+          // not been decided needs review, never a blank optional cell.
+          if (compare.state === FIELD_STATES.MISSING) return sum
+          return sum + (fieldNeedsDecision(compare) && !getFieldDecision(row, compare.field) ? 1 : 0)
+        }, 0)
       }
       if (editedScope && Object.keys(profileUpdates).length === 0 && attendance.items.length === 0) return
       rows.push({
@@ -851,4 +874,28 @@ export const previewFinalSave = ({
   })
   const duplicates = detectNewMemberDuplicates({ rows: plan.rows, currentMembers })
   return { plan, counts, duplicates }
+}
+
+// Pure server-verification helper. A plan row is fully saved only when EVERY
+// intended Present/Absent attendance write matches the authoritative member row
+// exactly. Partial matches, wrong values, missing rows, and create-new rows
+// without a resolved member id never count as saved.
+export const verifyPlannedAttendance = ({ planRows = [], freshByMonth = {}, resolvedMemberIds = {} }) => {
+  const verified = new Set()
+  ;(Array.isArray(planRows) ? planRows : []).forEach((entry) => {
+    const rowKey = `${entry.sheetId}:${entry.rowIndex}`
+    const memberId = entry.memberId || resolvedMemberIds[rowKey]
+    if (!memberId) return
+    const intended = (entry.attendance || []).filter((item) => (
+      item.value === ATTENDANCE_STATUS.PRESENT || item.value === ATTENDANCE_STATUS.ABSENT
+    ))
+    if (intended.length === 0) return
+    const allMatch = intended.every((item) => {
+      const rowsForMonth = Array.isArray(freshByMonth[item.month]) ? freshByMonth[item.month] : []
+      const memberRecord = rowsForMonth.find((candidate) => String(candidate.id) === String(memberId))
+      return attendanceMatchesExpected(memberRecord, item.dateKey, item.value)
+    })
+    if (allMatch) verified.add(rowKey)
+  })
+  return verified
 }

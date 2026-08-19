@@ -13,7 +13,9 @@ export const COMPARE_FIELDS = [
   { key: 'phone_number', label: 'Phone Number' },
   { key: 'age', label: 'Age' },
   { key: 'gender', label: 'Gender' },
-  { key: 'current_level', label: 'Level of Education' }
+  { key: 'current_level', label: 'Level of Education' },
+  { key: 'parent_name_1', label: 'Parent/Guardian Name' },
+  { key: 'parent_phone_1', label: 'Parent/Guardian Phone' }
 ]
 
 export const FIELD_STATES = {
@@ -41,8 +43,18 @@ export const REVIEW_SOURCES = {
 
 const asTrimmedText = (value) => String(value ?? '').trim()
 
+const EXISTING_COLUMN_ALIASES = {
+  full_name: 'Full Name',
+  phone_number: 'Phone Number',
+  age: 'Age',
+  gender: 'Gender',
+  current_level: 'Current Level',
+  parent_name_1: 'Parent Name 1',
+  parent_phone_1: 'Parent Phone 1'
+}
+
 export const getExistingValue = (member, field) => asTrimmedText(
-  member?.[field] ?? member?.[{ full_name: 'Full Name', phone_number: 'Phone Number', age: 'Age', gender: 'Gender', current_level: 'Current Level' }[field]]
+  member?.[field] ?? member?.[EXISTING_COLUMN_ALIASES[field]]
 )
 
 export const normalizeGenderForCompare = (value) => asTrimmedText(value).toLowerCase()
@@ -71,7 +83,7 @@ export const compareFieldValue = ({ field, geminiValue, existingValue, confidenc
   if (!gemini) return { state: FIELD_STATES.MISSING, equivalent: false }
   if (!existing) return { state: FIELD_STATES.DIFFERENT, equivalent: false }
 
-  const equivalent = field === 'phone_number'
+  const equivalent = field === 'phone_number' || field === 'parent_phone_1'
     ? phonesEquivalent(gemini, existing)
     : field === 'gender'
       ? normalizeGenderForCompare(gemini) === normalizeGenderForCompare(existing)

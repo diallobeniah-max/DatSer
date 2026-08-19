@@ -24,7 +24,7 @@ beforeEach(() => {
 })
 
 describe('provider key resolution', () => {
-  it('uses deployment-managed keys over stale stored credentials while retaining the configured model', async () => {
+  it('keeps a resolved stored credential ahead of the canonical environment fallback', async () => {
     const keys = await resolveProviderKeys({
       storedResolvers: {
         gemini: async () => ({ key: 'AIzaSyStoredKeyValue', model: 'gemini-3.1-flash-lite' }),
@@ -32,7 +32,7 @@ describe('provider key resolution', () => {
       },
       envKeys: { gemini: 'env-fallback', qwen: '' }
     })
-    expect(keys.gemini.key).toBe('env-fallback')
+    expect(keys.gemini.key).toBe('AIzaSyStoredKeyValue')
     expect(keys.gemini.model).toBe('gemini-3.1-flash-lite')
     expect(keys.qwen.key).toBe('sk-qwen-stored-key')
     expect(keys.qwen.model).toBe('qwen-vl-max')

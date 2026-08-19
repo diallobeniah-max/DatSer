@@ -401,6 +401,9 @@ export const canvasToDataUrl = (canvas, type = 'image/jpeg', quality = 0.9) => {
 // body and stay far under Vercel's ceiling (base64 already inflates the image
 // ~33%, plus the JSON wrapper).
 export const MAX_SHEET_UPLOAD_BYTES = 3.5 * 1024 * 1024
+// Normal scan target. The hard ceiling remains higher so legible handwriting
+// is never discarded merely to hit an arbitrary byte count.
+export const TARGET_SHEET_IMAGE_BYTES = 1.25 * 1024 * 1024
 
 // Root local sheet processing stays at 2000px; the ladder only kicks in below
 // that when a noisy capture would otherwise blow the Vercel-safe budget.
@@ -451,19 +454,16 @@ export const prepareSheetForUpload = async ({ image, presetId = 'original', inte
   const oriented = await decodeOrientedImage(image)
   const source = oriented || image
   try {
-    const canvases = []
+    let readableFallback = null
     for (const maxDimension of UPLOAD_DIMENSION_LADDER) {
       const canvas = applyEnhancement(source, presetId, { intensity, maxDimension })
       if (!canvas) continue
       if (canvas.width * canvas.height > MAX_WORKING_PIXELS) continue
-      canvases.push(canvas)
-    }
-    for (const canvas of canvases) {
       for (const quality of UPLOAD_QUALITY_LADDER) {
         try {
           const blob = await toJpegBlob(canvas, quality)
           if (blob && blob.size > 0 && blob.size <= MAX_SHEET_UPLOAD_BYTES) {
-            return {
+            const prepared = {
               dataUrl: canvasToDataUrl(canvas, 'image/jpeg', quality) || '',
               blob,
               mimeType: 'image/jpeg',
@@ -472,12 +472,15 @@ export const prepareSheetForUpload = async ({ image, presetId = 'original', inte
               height: canvas.height,
               encodedBytes: blob.size
             }
+            if (blob.size <= TARGET_SHEET_IMAGE_BYTES) return prepared
+            readableFallback = prepared
           }
         } catch {
           // Try the next quality / dimension rung.
         }
       }
     }
+    if (readableFallback) return readableFallback
     return { error: 'That image is too large to save. Try a smaller or clearer photo.' }
   } finally {
     if (oriented && typeof oriented.close === 'function') oriented.close()

@@ -16,13 +16,14 @@ export const MAX_VERCEL_SAFE_BODY_BYTES = MAX_SHEET_UPLOAD_BYTES + 4096
 
 const bodyByteLength = (body) => JSON.stringify(body).length
 
-export const toExtractionRequest = ({ dataUrl, workspaceId, requestId }) => {
+export const toExtractionRequest = ({ dataUrl, workspaceId, requestId, mode = 'attendance-sheet' }) => {
   const match = /^data:(image\/[a-z+.-]+);base64,(.+)$/i.exec(dataUrl || '')
   if (!match) {
     throw new Error('The sheet image could not be encoded.')
   }
   return {
     requestId,
+    ...(mode === 'quick-sunday-list' ? { mode: 'quick-sunday-list' } : {}),
     image: {
       mimeType: match[1],
       data: match[2]
@@ -46,9 +47,10 @@ const ERROR_MESSAGES = {
   INVALID_IMAGE_DATA: 'That file is not a valid image.'
 }
 
-const makeError = (message, retryable) => {
+const makeError = (message, retryable, code = '') => {
   const error = new Error(message)
   if (retryable) error.retryable = true
+  if (code) error.code = code
   return error
 }
 
@@ -63,10 +65,13 @@ export const parseExtractionResponse = async (response) => {
     const message = ERROR_MESSAGES[payload?.code] || payload?.error || 'Extraction failed.'
     const code = payload?.code
     const retryable = payload?.retryable === true
-    if (code === 'RATE_LIMITED') throw makeError('Gemini is rate limited right now. Try again shortly.', retryable)
-    if (code === 'PROVIDER_TIMEOUT') throw makeError('Gemini took too long to respond. Try again.', retryable)
-    if (code === 'INVALID_API_KEY' || code === 'SERVER_NOT_CONFIGURED') {
-      throw makeError('The server is not configured for Gemini extraction yet.', retryable)
+    if (code === 'RATE_LIMITED') throw makeError('Gemini is rate limited right now. Try again shortly.', retryable, code)
+    if (code === 'PROVIDER_TIMEOUT') throw makeError('Gemini took too long to respond. Try again.', retryable, code)
+    if (code === 'INVALID_API_KEY') {
+      throw makeError('Gemini rejected the server credential. Ask an administrator to update the server-side Gemini key.', retryable, code)
+    }
+    if (code === 'SERVER_NOT_CONFIGURED') {
+      throw makeError('The server is not configured for Gemini extraction yet.', retryable, code)
     }
     if (code === 'IMAGE_TOO_LARGE') throw makeError('That image is too large to process.', retryable)
     if (code === 'MODEL_UNAVAILABLE') throw makeError('The Gemini model is temporarily unavailable.', retryable)
@@ -76,16 +81,22 @@ export const parseExtractionResponse = async (response) => {
     if (code === 'GEMINI_API_ERROR') throw makeError('Gemini could not complete the request. Try again.', retryable)
     throw makeError(message, retryable)
   }
-  return {
+  const result = {
     sheet: payload.sheet || { detected_headers: [], attendance_dates: [] },
     rows: Array.isArray(payload.rows) ? payload.rows : [],
     warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
     usageMetadata: payload?.usageMetadata || null
   }
+  // Quick Sunday List deliberately returns a narrow list of visible names
+  // instead of the full profile/attendance extraction shape. Preserve that
+  // server-produced data across the browser boundary without changing the
+  // normal attendance-sheet response contract.
+  if (Array.isArray(payload.names)) result.names = payload.names
+  return result
 }
 
-export const extractSheetWithGemini = async ({ dataUrl, signal, workspaceId, requestId, bearerToken }) => {
-  const body = toExtractionRequest({ dataUrl, workspaceId, requestId })
+export const extractSheetWithGemini = async ({ dataUrl, signal, workspaceId, requestId, bearerToken, mode = 'attendance-sheet' }) => {
+  const body = toExtractionRequest({ dataUrl, workspaceId, requestId, mode })
   if (bodyByteLength(body) > MAX_VERCEL_SAFE_BODY_BYTES) {
     throw new Error('That image is too large to upload. Try a smaller or clearer photo.')
   }

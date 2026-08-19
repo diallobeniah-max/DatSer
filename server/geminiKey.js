@@ -32,18 +32,19 @@ const readWindowsUserScope = (exec) => {
   }
 }
 
-// Optional async resolver for a server-stored provider credential. When present
-// it is tried first; if it returns a usable key, that wins over env vars. This
-// keeps the extraction handler able to manage its own Supabase resolution while
-// this module stays a thin, testable resolution point.
-export const getGeminiApiKey = async ({
+// The one canonical server-only Gemini credential resolver. Its `source` is
+// safe diagnostic metadata; `key` must never leave server code or logs.
+// A known-invalid selected key is deliberately NOT followed by opportunistic
+// fallbacks: the caller reports it once instead of silently spending retries on
+// an unintended credential.
+export const resolveServerGeminiCredential = async ({
   exec = execSync,
   storedCredentialResolver = null
 } = {}) => {
   if (typeof storedCredentialResolver === 'function') {
     try {
       const stored = await storedCredentialResolver()
-      if (looksPlausible(stored)) return stored.trim()
+      if (looksPlausible(stored)) return { key: stored.trim(), source: 'supabase-provider-store' }
     } catch {
       // fall through to env vars
     }
@@ -53,12 +54,14 @@ export const getGeminiApiKey = async ({
   // PROCESS value can never shadow the valid key again.
   if (process.platform === 'win32') {
     const userValue = readWindowsUserScope(exec)
-    if (looksPlausible(userValue)) return userValue
+    if (looksPlausible(userValue)) return { key: userValue, source: 'windows-user' }
   }
 
   const processValue = process.env.GEMINI_API_KEY || ''
-  if (looksPlausible(processValue)) return processValue.trim()
-  return ''
+  if (looksPlausible(processValue)) return { key: processValue.trim(), source: 'windows-process' }
+  return { key: '', source: 'none' }
 }
+
+export const getGeminiApiKey = async (options) => (await resolveServerGeminiCredential(options)).key
 
 export const hasGeminiApiKey = async (options) => looksPlausible(await getGeminiApiKey(options))

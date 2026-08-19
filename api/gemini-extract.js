@@ -8,6 +8,7 @@ import {
   resolveRouting,
   resolveStoredProviderKey
 } from '../server/extractionGuard.js'
+import { resolveServerGeminiCredential } from '../server/geminiKey.js'
 import { extractPaperScan, resolveProviderKeys } from '../server/providerRouting.js'
 
 export const config = {
@@ -101,6 +102,7 @@ export default async function handler(req, res) {
     return
   }
   const requestId = typeof body?.requestId === 'string' ? body.requestId.trim() : ''
+  const mode = body?.mode === 'quick-sunday-list' ? 'quick-sunday-list' : 'attendance-sheet'
   if (!requestId) {
     send(res, 400, { error: 'A request id is required.' })
     return
@@ -121,10 +123,18 @@ export default async function handler(req, res) {
     for (const provider of providers) {
       storedCredentials[provider] = await resolveStoredProviderKey({ ownerId: identity.ownerId, provider })
     }
+    // This is the sole Gemini environment-resolution point for extraction.
+    // On Windows it prefers the plausible User-scope credential over any
+    // inherited stale PROCESS value; the resolved key stays server-only.
+    const geminiCredential = providers.includes('gemini')
+      ? await resolveServerGeminiCredential({
+          storedCredentialResolver: async () => storedCredentials.gemini?.key || ''
+        })
+      : { key: '', source: 'not-requested' }
     const providerKeys = await resolveProviderKeys({
       storedResolvers: Object.fromEntries(providers.map((provider) => [provider, () => storedCredentials[provider]])),
       envKeys: {
-        gemini: process.env.GEMINI_API_KEY || '',
+        gemini: geminiCredential.key,
         qwen: process.env.QWEN_API_KEY || ''
       }
     })
@@ -151,7 +161,8 @@ export default async function handler(req, res) {
       imageBytes: image.bytes,
       mimeType: image.mimeType,
       providerKeys,
-      routing
+      routing,
+      mode
     })
 
     send(res, 200, { ok: true, ...payload, ownerId: identity.ownerId, extractionId })

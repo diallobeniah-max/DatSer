@@ -58,6 +58,8 @@ describe('paperScanCompare field values', () => {
     expect(compareFieldValue({ field: 'full_name', geminiValue: 'Ama', existingValue: 'Aba', confidence: 0.3 }).state).toBe(FIELD_STATES.LOW_CONFIDENCE)
     expect(compareFieldValue({ field: 'full_name', geminiValue: 'Ama', existingValue: 'Ama', confidence: 0.2 }).state).toBe(FIELD_STATES.SAME)
     expect(compareFieldValue({ field: 'full_name', geminiValue: '', existingValue: 'Ama' }).state).toBe(FIELD_STATES.MISSING)
+    expect(compareFieldValue({ field: 'parent_name_1', geminiValue: '', existingValue: 'Ama' }).state).toBe(FIELD_STATES.MISSING)
+    expect(compareFieldValue({ field: 'parent_phone_1', geminiValue: '0240000000', existingValue: '233240000000' }).state).toBe(FIELD_STATES.SAME)
     expect(compareFieldValue({ field: 'full_name', geminiValue: 'Ama', existingValue: '' }).state).toBe(FIELD_STATES.DIFFERENT)
   })
 
@@ -157,20 +159,22 @@ describe('paperScanCompare row summaries and decisions', () => {
   })
 
   it('provides stable field metadata for the UI', () => {
-    expect(COMPARE_FIELDS.map((field) => field.key)).toEqual(['full_name', 'phone_number', 'age', 'gender', 'current_level'])
+    expect(COMPARE_FIELDS.map((field) => field.key)).toEqual(['full_name', 'phone_number', 'age', 'gender', 'current_level', 'parent_name_1', 'parent_phone_1'])
     const level = COMPARE_FIELDS.find((field) => field.key === 'current_level')
     expect(level.label).toBe('Level of Education')
     const phone = COMPARE_FIELDS.find((field) => field.key === 'phone_number')
     expect(phone.label).toBe('Phone Number')
+    const parentName = COMPARE_FIELDS.find((field) => field.key === 'parent_name_1')
+    expect(parentName.label).toBe('Parent/Guardian Name')
   })
 })
 
 describe('paperScanCompare row comparison to member', () => {
   it('compares every compare field against the member columns', () => {
-    const member = { full_name: 'Ama Serwaa', phone_number: '0241111111', gender: 'Female', age: '13', current_level: 'SHS 1' }
-    const compares = compareRowToMember({ full_name: 'ama serwaa', phone_number: '233241111111', gender: 'female', age: '13', current_level: 'SHS1', confidence: 0.95 }, member)
+    const member = { full_name: 'Ama Serwaa', phone_number: '0241111111', gender: 'Female', age: '13', current_level: 'SHS 1', parent_name_1: 'Ama', parent_phone_1: '0240000000' }
+    const compares = compareRowToMember({ full_name: 'ama serwaa', phone_number: '233241111111', gender: 'female', age: '13', current_level: 'SHS1', parent_name_1: 'ama', parent_phone_1: '0240000000', confidence: 0.95 }, member)
     expect(compares.every((compare) => compare.state === FIELD_STATES.SAME)).toBe(true)
-    expect(compares).toHaveLength(5)
+    expect(compares).toHaveLength(7)
   })
 })
 

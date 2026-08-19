@@ -16,13 +16,19 @@ import {
   ExternalLink,
   ArrowRightCircle
 } from 'lucide-react'
-import { GoogleGenerativeAI } from '@google/generative-ai'
-
-// Initialize Gemini API
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || ''
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
-// Use a multimodal model - gemini-2.5-flash supports text, images, audio, video
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
+// Gemini credentials are server-only. This helper remains intentionally local
+// until it has a separately authorized server endpoint; it must never put a
+// provider credential or any Gemini call in the browser bundle.
+const localAssistantReply = (question) => {
+  const text = String(question || '').toLowerCase()
+  if (text.includes('attendance') || text.includes('summary')) {
+    return 'Open Analytics to review attendance for the current month.'
+  }
+  if (text.includes('member') || text.includes('add')) {
+    return 'I can help you open the member form or find a member from the Members page.'
+  }
+  return 'I can help you navigate DatSer. For member data and attendance, use the relevant page controls.'
+}
 
 // Extended FAQ Data with Actions (Fallback and Keywords)
 const getFaqKnowledge = (navigate) => [
@@ -38,7 +44,7 @@ const suggestedQuestions = [
 ]
 
 const AIChatAssistant = ({ isOpen, onClose, onNavigate }) => {
-  const { setDashboardTab, members, currentTable, monthlyTables } = useApp()
+  const { setDashboardTab } = useApp()
 
   const [messages, setMessages] = useState([
     {
@@ -108,35 +114,10 @@ const AIChatAssistant = ({ isOpen, onClose, onNavigate }) => {
     setIsTyping(true)
 
     try {
-      // 1. Prepare Context
-      // Limit members list size to avoid token limits if list is huge, though Flash handles ~1M tokens.
-      const membersContext = members?.map(m =>
-        `- ${m.full_name} (${m.gender}, ${m.current_level}, Status: ${m.is_visitor ? 'Visitor' : 'Member'})`
-      ).join('\n') || "No members found."
-
-      const context = `
-        You are the TMH Teen Ministry Assistant, an AI agent helping to manage a church youth group.
-        
-        SYSTEM CONTEXT:
-        - Current Month/Table: ${currentTable}
-        - Total Members: ${members?.length || 0}
-        - Available Tables: ${monthlyTables?.join(', ') || 'None'}
-        - List of Members:\n${membersContext}
-        
-        INSTRUCTIONS:
-        1. Answer users' questions about their data (attendance, member lists, stats).
-        2. BE BRIEF. Limit answers to 1-2 paragraphs.
-        3. NAVIGATION: If the user explicitly asks to "Go to" or "Open" a page, verify which page and add a short confirmation.
-           (The system will check your text for keywords 'dashboard', 'settings', 'admin', 'analytics' to add a button).
-        4. If asked to add a member, say "I can open the form for you."
-        
-        USER QUESTION: "${userMessage.text}"
-      `
-
-      // 2. Call Gemini
-      const result = await model.generateContent(context)
-      const response = await result.response
-      const botText = response.text()
+      // This component is deliberately local-only. A future chat endpoint
+      // must authenticate and minimize context server-side before any provider
+      // call is added; raw member data and Gemini credentials never leave here.
+      const botText = localAssistantReply(userMessage.text)
 
       // 3. Determine Action based on User Intent (Hybrid approach)
       let action = null

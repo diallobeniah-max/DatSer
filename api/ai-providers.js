@@ -16,6 +16,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { authenticateExtractionRequest, readBearerToken, readWorkspaceId, resolveRouting, resolveStoredProviderKey } from '../server/extractionGuard.js'
 import { ExtractionError } from '../server/extractionErrors.js'
+import { resolveServerGeminiCredential } from '../server/geminiKey.js'
 import { testGeminiConnection } from '../server/geminiExtract.js'
 import { extractSheetWithQwen } from '../server/qwenExtract.js'
 
@@ -186,16 +187,22 @@ export default async function handler(req, res) {
         // truth. It lets Paper Scan recover from a stale or unreadable legacy
         // encrypted record without sending any key to the browser. An explicit
         // key submitted for this one health check still wins intentionally.
-        const environmentGeminiKey = provider === 'gemini' ? (process.env.GEMINI_API_KEY || '').trim() : ''
+        // Use the exact same server-only Gemini resolver as Paper Scan. This
+        // avoids showing a healthy status for a stale PROCESS-scoped key that
+        // extraction would (correctly) avoid on Windows.
+        const environmentGeminiCredential = provider === 'gemini'
+          ? await resolveServerGeminiCredential()
+          : { key: '' }
+        const environmentGeminiKey = environmentGeminiCredential.key
         let apiKey = secret || environmentGeminiKey
         let credentialSource = secret ? 'submitted' : (environmentGeminiKey ? 'environment' : 'stored')
         if (!apiKey) {
           const resolved = await resolveStoredProviderKey({ ownerId, provider })
           if (resolved.status === 'unavailable' || resolved.status === 'unreadable') {
-            // A server-only provider key is an intentional reliability fallback
-            // for an unavailable encrypted-store resolver. It remains private to
-            // the API runtime and is never sent to the browser.
-            apiKey = provider === 'gemini' ? (process.env.GEMINI_API_KEY || '') : ''
+            // The canonical resolver above is the only environment path.
+            // Never read a raw process key here: that would bypass Windows
+            // User-scope preference and reintroduce stale-key selection.
+            apiKey = environmentGeminiKey
             credentialSource = apiKey ? 'environment' : 'stored'
             if (!apiKey) {
               send(res, 200, {

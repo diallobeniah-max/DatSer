@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
+// @vitest-environment jsdom
 import React from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import PaperScanReview from './PaperScanReview'
+import PaperScanReview, { reviewBaselineResults } from './PaperScanReview'
 import { supabase } from '../lib/supabase'
 
 const mocks = vi.hoisted(() => ({
@@ -17,11 +18,64 @@ const mocks = vi.hoisted(() => ({
   uploadSheetImage: vi.fn(),
   mergeStagedSheet: vi.fn(),
   removeStagedSheet: vi.fn(),
+  removeSavedScanSheets: vi.fn(),
+  deleteSavedScan: vi.fn(),
   getSavedScan: vi.fn(),
   listSavedScans: vi.fn(),
   createSheetImageSignedUrl: vi.fn(),
-  extractSheetWithGemini: vi.fn()
+  extractSheetWithGemini: vi.fn(),
+  searchMemberAcrossAllTables: vi.fn(),
+  appMonthlyTables: [],
+  supabaseFromData: []
 }))
+
+vi.mock('../lib/supabase', () => {
+  const createQueryBuilder = () => {
+    const builder = {
+      then: (resolve) => resolve({ data: mocks.supabaseFromData || [], error: null }),
+      catch: () => Promise.resolve({ data: mocks.supabaseFromData || [], error: null })
+    }
+    return new Proxy(builder, {
+      get(target, prop) {
+        if (prop in target) return target[prop]
+        if (prop === 'single' || prop === 'maybeSingle') {
+          return () => Promise.resolve({ data: null, error: null })
+        }
+        return vi.fn(() => target)
+      }
+    })
+  }
+
+  return {
+    supabase: {
+      from: vi.fn(() => createQueryBuilder()),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
+      }
+    },
+    isSupabaseConfigured: () => true,
+    hasStoredSession: () => true
+  }
+})
+
+vi.mock('../utils/documentScan', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    detectDocumentCorners: vi.fn(),
+    createAutoCaptureTracker: () => ({ tick: () => ({ status: 'searching', shouldCapture: false }) })
+  }
+})
+
+vi.mock('../utils/paperScanCamera', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    createDetectionLoop: () => ({ start: vi.fn(), stop: vi.fn() }),
+    drawDocumentOutline: vi.fn()
+  }
+})
 
 vi.mock('../utils/paperScanImage', async (importOriginal) => {
   const actual = await importOriginal()
@@ -41,11 +95,12 @@ vi.mock('../context/AppContext', () => ({
   useApp: () => ({
     dataOwnerId: 'owner-1',
     currentTable: 'August_2026',
-    monthlyTables: [],
+    monthlyTables: mocks.appMonthlyTables,
     updateMember: vi.fn(),
     refreshSyncedDataInBackground: vi.fn(),
     loadAllAttendanceData: vi.fn(),
     fetchMembers: vi.fn(),
+    searchMemberAcrossAllTables: mocks.searchMemberAcrossAllTables,
     isOnline: true,
     offlineMode: false,
     memberCodeMap: {}
@@ -69,6 +124,8 @@ vi.mock('../services/paperScanSavedScans', async (importOriginal) => {
     uploadSheetImage: mocks.uploadSheetImage,
     mergeStagedSheet: mocks.mergeStagedSheet,
     removeStagedSheet: mocks.removeStagedSheet,
+    removeSavedScanSheets: mocks.removeSavedScanSheets,
+    deleteSavedScan: mocks.deleteSavedScan,
     getSavedScan: mocks.getSavedScan,
     listSavedScans: mocks.listSavedScans,
     createSheetImageSignedUrl: mocks.createSheetImageSignedUrl
@@ -93,11 +150,48 @@ const uploadSheet = async (name) => {
   await waitFor(() => expect(mocks.readFileAsDataUrl).toHaveBeenCalled())
 }
 
+describe('PaperScanReview review reset boundary', () => {
+  it('preserves extracted scan data while removing review overlays', () => {
+    const results = reviewBaselineResults({
+      'sheet-1': {
+        status: 'ok',
+        sheetId: 'sheet-1',
+        excludedIndices: [0],
+        payload: {
+          extractedAt: '2026-08-16T00:00:00Z',
+          usageMetadata: { totalTokenCount: 42 },
+          sheet: { detected_headers: ['Name'], attendance_dates: ['2026-08-02'], attendance_months: ['2026-08'] },
+          rows: [{
+            full_name: 'Original Name',
+            originalGeminiValue: { full_name: 'Original Name' },
+            reviewedValues: { full_name: { value: 'Edited Name' } },
+            reviewedAttendance: { '2026-08-02': { value: 'Present' } },
+            memberAction: 'create-new',
+            selectedMemberId: 'member-1',
+            newMemberProfile: { full_name: 'Edited Name' },
+            newMemberTarget: { monthKey: '2026-08' }
+          }]
+        }
+      }
+    })
+    const result = results['sheet-1']
+    expect(result.excludedIndices).toEqual([])
+    expect(result.payload.extractedAt).toBe('2026-08-16T00:00:00Z')
+    expect(result.payload.usageMetadata).toEqual({ totalTokenCount: 42 })
+    expect(result.payload.sheet).toEqual({ detected_headers: ['Name'], attendance_dates: ['2026-08-02'] })
+    expect(result.payload.rows[0]).toEqual({
+      full_name: 'Original Name',
+      originalGeminiValue: { full_name: 'Original Name' }
+    })
+  })
+})
+
 describe('PaperScanReview', () => {
   let stagedEntries = []
 
   beforeEach(() => {
     stagedEntries = []
+    mocks.appMonthlyTables = []
     mocks.validateImageFile.mockReturnValue({ ok: true })
     mocks.readFileAsDataUrl.mockResolvedValue(FAKE_DATA_URL)
     mocks.loadImageElement.mockResolvedValue({ naturalWidth: 100, naturalHeight: 100 })
@@ -127,15 +221,20 @@ describe('PaperScanReview', () => {
       stagedEntries = stagedEntries.filter((entry) => entry.sheetId !== sheetId)
       return { id: 'scan-1', sheet_images: stagedEntries, review_state: { _staging: true } }
     })
+    mocks.removeSavedScanSheets.mockResolvedValue({ storageWarning: '', deletedScan: false, scan: null })
     mocks.getSavedScan.mockImplementation(async () => ({
       id: 'scan-1',
       name: 'Staged scan',
       sheet_images: stagedEntries,
       review_state: { _staging: true }
     }))
+    mocks.deleteSavedScan.mockResolvedValue({ storageWarning: '' })
     mocks.listSavedScans.mockResolvedValue([])
     mocks.createSheetImageSignedUrl.mockImplementation(async ({ path }) => `signed:${path}`)
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
+    mocks.searchMemberAcrossAllTables.mockResolvedValue([])
+    if (supabase?.auth) {
+      supabase.auth.getSession = vi.fn().mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
+    }
     mocks.extractSheetWithGemini.mockResolvedValue({
       sheet: { detected_headers: [], attendance_dates: [] },
       rows: [],
@@ -535,9 +634,10 @@ describe('PaperScanReview staging durability', () => {
       sheet_images: stagedEntries,
       review_state: { _staging: true }
     }))
+    mocks.deleteSavedScan.mockResolvedValue({ storageWarning: '' })
     mocks.listSavedScans.mockResolvedValue([])
     mocks.createSheetImageSignedUrl.mockImplementation(async ({ path }) => `signed:${path}`)
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
+    supabase.auth.getSession = vi.fn().mockResolvedValue({ data: { session: { access_token: 'test-token' } } })
     mocks.extractSheetWithGemini.mockResolvedValue({
       sheet: { detected_headers: [], attendance_dates: [] },
       rows: [],
@@ -605,11 +705,13 @@ describe('PaperScanReview staging durability', () => {
     await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
     await uploadSheet('b.jpg')
     await waitFor(() => expect(screen.getByText('Sheets (2)')).toBeTruthy())
-    // Sheet A's reference was lost from durable metadata; only B remains.
+    await waitFor(() => expect(screen.getAllByText('Saved').length).toBeGreaterThanOrEqual(2))
+    // The selected sheet's reference was lost from the latest durable record.
+    // Do not infer the queue's completion order from the two local uploads.
     mocks.getSavedScan.mockResolvedValue({
       id: 'scan-1',
       name: 'Staged scan',
-      sheet_images: stagedEntries.filter((_, index) => index === 1),
+      sheet_images: [],
       review_state: { _staging: true }
     })
     await act(async () => {
@@ -626,14 +728,21 @@ describe('PaperScanReview staging durability', () => {
     await waitFor(() => expect(screen.getByText('Sheets (1)')).toBeTruthy())
     await uploadSheet('b.jpg')
     await waitFor(() => expect(screen.getByText('Sheets (2)')).toBeTruthy())
+    await waitFor(() => expect(screen.getAllByText('Saved').length).toBeGreaterThanOrEqual(2))
 
     fireEvent.click(selectSheetByLabel(1))
     vi.useFakeTimers()
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /process this sheet/i }))
+      // The durability read resolves before preparation starts; allow that
+      // promise turn to queue the local-progress timers before advancing them.
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
       await vi.advanceTimersByTimeAsync(5000)
     })
     expect(screen.getByText('1 sheet in this batch')).toBeTruthy()
+    vi.useRealTimers()
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /extract with gemini/i }))
@@ -716,6 +825,122 @@ describe('PaperScanReview staging durability', () => {
     expect(screen.getByRole('button', { name: /continue/i })).toBeTruthy()
   })
 
+  it('shows multi-sheet Saved Scans horizontally by default, preserves the vertical option, and ignores repeat delete confirms', async () => {
+    vi.useRealTimers()
+    const scan = {
+      id: 'scan-delete',
+      name: 'Sunday batch',
+      user_id: 'user-1',
+      owner_id: 'owner-1',
+      updated_at: '2026-08-16T12:00:00Z',
+      sheet_images: [
+        { sheetId: 'sheet-1', source: 'Picture 1', path: 'user-1/scan-delete/sheet-1.jpg' },
+        { sheetId: 'sheet-2', source: 'Picture 2', path: 'user-1/scan-delete/sheet-2.jpg' },
+        { sheetId: 'sheet-3', source: 'Picture 3', path: 'user-1/scan-delete/sheet-3.jpg' }
+      ]
+    }
+    let finishDelete
+    mocks.listSavedScans.mockResolvedValue([scan])
+    mocks.deleteSavedScan.mockImplementation(() => new Promise((resolve) => { finishDelete = resolve }))
+    render(<PaperScanReview onBack={() => {}} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /saved scans/i }))
+    await waitFor(() => expect(screen.getByText('Sunday batch')).toBeTruthy())
+    expect(screen.getByText(/Saved on .*Aug 16, 2026/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /Expand Sunday batch/ }))
+    const sheetList = await screen.findByLabelText(/Sheets in Sunday batch/)
+    expect(sheetList.className).toContain('overflow-x-auto')
+    expect(sheetList.querySelectorAll(':scope > li')).toHaveLength(3)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Vertical' }))
+    await waitFor(() => expect(screen.getByLabelText(/Sheets in Sunday batch/).className).toContain('space-y-2'))
+    fireEvent.click(screen.getByRole('button', { name: 'Horizontal' }))
+    await waitFor(() => expect(screen.getByLabelText(/Sheets in Sunday batch/).className).toContain('overflow-x-auto'))
+
+    fireEvent.click(screen.getByRole('button', { name: /Delete Sunday batch/ }))
+    const confirm = screen.getByRole('button', { name: /Confirm/ })
+    fireEvent.click(confirm)
+    fireEvent.click(confirm)
+    expect(mocks.deleteSavedScan).toHaveBeenCalledTimes(1)
+    finishDelete({ storageWarning: '' })
+    await waitFor(() => expect(screen.getByText('No saved scans yet')).toBeTruthy())
+  })
+
+  it('confirms a selected-sheet delete and never calls the whole-scan delete path', async () => {
+    const scan = {
+      id: 'scan-sheets', name: 'Sunday batch', user_id: 'user-1', owner_id: 'owner-1',
+      sheet_images: [
+        { sheetId: 'sheet-1', source: 'Picture 1', path: 'user-1/scan-sheets/sheet-1.jpg' },
+        { sheetId: 'sheet-2', source: 'Picture 2', path: 'user-1/scan-sheets/sheet-2.jpg' }
+      ]
+    }
+    mocks.listSavedScans.mockResolvedValue([scan])
+    mocks.removeSavedScanSheets.mockResolvedValue({
+      deletedScan: false,
+      storageWarning: '',
+      scan: { ...scan, sheet_images: [scan.sheet_images[1]] }
+    })
+    render(<PaperScanReview onBack={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /saved scans/i }))
+    await waitFor(() => expect(screen.getByText('Sunday batch')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /Expand Sunday batch/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete Picture 1' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Picture 1' }))
+    expect(screen.getByRole('dialog', { name: 'Confirm sheet deletion' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(mocks.removeSavedScanSheets).toHaveBeenCalledWith(expect.objectContaining({ scan, sheetIds: ['sheet-1'] })))
+    expect(mocks.deleteSavedScan).not.toHaveBeenCalled()
+  })
+
+  it('allows selecting all, clearing, and deleting multiple saved sheets with confirmation', async () => {
+    const scan = {
+      id: 'scan-multi-delete', name: 'Multi sheet batch', user_id: 'user-1', owner_id: 'owner-1',
+      sheet_images: [
+        { sheetId: 'sheet-1', source: 'Picture 1', path: 'user-1/scan-multi-delete/sheet-1.jpg' },
+        { sheetId: 'sheet-2', source: 'Picture 2', path: 'user-1/scan-multi-delete/sheet-2.jpg' }
+      ]
+    }
+    mocks.listSavedScans.mockResolvedValue([scan])
+    mocks.removeSavedScanSheets.mockResolvedValue({
+      deletedScan: true,
+      storageWarning: '',
+      scan: null
+    })
+    render(<PaperScanReview onBack={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /saved scans/i }))
+    await waitFor(() => expect(screen.getByText('Multi sheet batch')).toBeTruthy())
+    
+    // First expand the batch
+    fireEvent.click(screen.getByRole('button', { name: /Expand Multi sheet batch/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Select all' })).toBeTruthy())
+
+    // Select all
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
+    expect(screen.getByRole('button', { name: 'Delete selected (2)' })).toBeTruthy()
+
+    // Clear
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.queryByRole('button', { name: /Delete selected/ })).toBeNull()
+
+    // Select individual checkbox
+    fireEvent.click(screen.getByLabelText('Select Picture 1'))
+    expect(screen.getByRole('button', { name: 'Delete selected (1)' })).toBeTruthy()
+
+    // Click delete selected
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected (1)' }))
+    expect(screen.getByRole('dialog', { name: 'Confirm sheet deletion' })).toBeTruthy()
+    
+    // Cancel
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Confirm sheet deletion' })).toBeNull()
+
+    // Click delete selected again and confirm
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(mocks.removeSavedScanSheets).toHaveBeenCalledWith(expect.objectContaining({ scan, sheetIds: ['sheet-1'] })))
+  })
+
   it('rejects an unsupported image format with a clear message', async () => {
     mocks.validateImageFile.mockImplementation((file) => {
       if (file.type === 'image/gif') return { ok: false, reason: 'Unsupported image format. Use JPG, PNG, or WEBP.' }
@@ -728,5 +953,120 @@ describe('PaperScanReview staging durability', () => {
     })
     await waitFor(() => expect(screen.getByText(/unsupported image format/i)).toBeTruthy())
     expect(screen.queryByText('Sheets (1)')).toBeNull()
+  })
+})
+
+describe('PaperScanReview feature regressions', () => {
+  const setupReviewWithData = async ({ rows, attendanceMonths = ['2026-08'], attendanceSundays = {} } = {}) => {
+    mocks.createSheetImageSignedUrl.mockImplementation(async ({ path }) => `signed:${path}`)
+    mocks.loadImageElement.mockResolvedValue({ naturalWidth: 100, naturalHeight: 100 })
+    mocks.validateImageFile.mockReturnValue({ ok: true })
+    mocks.supabaseFromData = [
+      { id: 'm1', 'Full Name': 'John Doe', full_name: 'John Doe', 'Phone Number': '0241000001', phone_number: '0241000001' },
+      { id: 'm2', 'Full Name': 'Jane Smith', full_name: 'Jane Smith', 'Phone Number': '0241000002', phone_number: '0241000002' }
+    ]
+    const scan = {
+      id: 'scan-feature-test',
+      name: 'Batch review test',
+      user_id: 'user-1',
+      owner_id: 'owner-1',
+      sheet_images: [
+        { sheetId: 'sheet-1', source: 'Sheet 1', path: 'user-1/scan-feature-test/sheet-1.jpg' }
+      ],
+      extraction: {
+        'sheet-1': {
+          sheet: {
+            detected_headers: ['Name', 'Phone', 'Attendance'],
+            attendance_dates: ['2026-08-02'],
+            attendance_months: attendanceMonths,
+            attendance_sundays: attendanceSundays
+          },
+          rows: rows || [
+            {
+              full_name: 'John Doe',
+              phone_number: '0241000001',
+              gender: 'Male',
+              current_level: 'Level 1',
+              attendance: { '2026-08-02': 'P' }
+            },
+            {
+              full_name: 'Jane Smith',
+              phone_number: '0241000002',
+              gender: 'Female',
+              current_level: 'Level 2',
+              attendance: { '2026-08-02': 'A' }
+            }
+          ],
+          warnings: []
+        }
+      },
+      review_state: {
+        'sheet-1': {
+          attendanceScope: {
+            months: attendanceMonths,
+            sundays: attendanceSundays
+          }
+        }
+      }
+    }
+    mocks.listSavedScans.mockImplementation(async () => [scan])
+    mocks.getSavedScan.mockImplementation(async () => scan)
+    render(<PaperScanReview onBack={() => {}} />)
+    const savedScansButtons = screen.getAllByRole('button', { name: 'Saved scans' })
+    fireEvent.click(savedScansButtons[0])
+    await waitFor(() => expect(screen.getByLabelText('Open Batch review test')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('Open Batch review test'))
+    await waitFor(() => expect(screen.getByRole('tab', { name: /People/ })).toBeTruthy())
+  }
+
+  it('keeps AI-reviewed rows visible in Step 3 Final Review even before Sundays are selected', async () => {
+    await setupReviewWithData({
+      attendanceMonths: ['2026-08'],
+      attendanceSundays: { '2026-08': [] }
+    })
+
+    // Switch to Save tab (Final Review)
+    fireEvent.click(screen.getByRole('tab', { name: /Save/ }))
+    await waitFor(() => expect(screen.getByText('John Doe')).toBeTruthy())
+    expect(screen.getByText('Jane Smith')).toBeTruthy()
+    expect(screen.getByText(/Choose Sundays in Sundays tab to enable saving/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Choose Sundays first' }).disabled).toBe(true)
+  })
+
+  it('uses custom MonthPickerPopup instead of native input type month in Step 2', async () => {
+    await setupReviewWithData({
+      attendanceMonths: ['2026-08'],
+      attendanceSundays: { '2026-08': ['2026-08-02'] }
+    })
+
+    // Switch to Sundays tab
+    fireEvent.click(screen.getByRole('tab', { name: /Sundays/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Add month/ })).toBeTruthy())
+
+    // Ensure there is no input type="month"
+    expect(document.querySelector('input[type="month"]')).toBeNull()
+
+    // Open month picker popup
+    fireEvent.click(screen.getByRole('button', { name: /Add month/ }))
+    expect(screen.getByRole('dialog', { name: /Select month to add/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Sep' })).toBeTruthy()
+  })
+
+  it('reuses cached signed URLs and does not re-request them when navigating members', async () => {
+    mocks.createSheetImageSignedUrl.mockClear()
+    await setupReviewWithData({
+      attendanceMonths: ['2026-08'],
+      attendanceSundays: { '2026-08': ['2026-08-02'] }
+    })
+
+    const callsBefore = mocks.createSheetImageSignedUrl.mock.calls.length
+    expect(callsBefore).toBeGreaterThan(0)
+
+    // Navigate to next member in People tab
+    fireEvent.click(screen.getByRole('button', { name: 'Next member' }))
+    await waitFor(() => expect(screen.getByText(/Matched to: Jane Smith/)).toBeTruthy())
+
+    // createSheetImageSignedUrl should NOT be called again
+    expect(mocks.createSheetImageSignedUrl).toHaveBeenCalledTimes(callsBefore)
   })
 })

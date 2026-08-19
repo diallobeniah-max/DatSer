@@ -365,13 +365,20 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
   const handleGoogleAdminAccess = async () => {
     setIsGoogleAuthing(true)
     try {
+      // Most operators are already signed into DatSer. Reuse that verified
+      // session immediately instead of sending them through Google again.
+      if (user?.id) {
+        sessionStorage.setItem('adminAuthenticated', 'true')
+        setIsAuthenticated(true)
+        setLastActivity(Date.now())
+        return
+      }
+      sessionStorage.setItem('datser_admin_google_return', 'true')
       await signInWithGoogle()
-      // After OAuth completes/returns, grant admin session
-      sessionStorage.setItem('adminAuthenticated', 'true')
-      setIsAuthenticated(true)
-      setLastActivity(Date.now())
-      toast.success('Admin access granted with Google')
+      // Google now owns the redirect.  Do not create an admin session until
+      // the authenticated app returns and verifies the user normally.
     } catch (err) {
+      sessionStorage.removeItem('datser_admin_google_return')
       console.error('Google admin access failed:', err)
       toast.error('Google sign-in failed for admin access')
     } finally {
@@ -972,11 +979,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                 )}
               </button>
 
-              <div className="space-y-3 rounded-2xl border border-orange-200 bg-orange-50/80 p-3 dark:border-orange-800/60 dark:bg-orange-950/20">
-                <p className="flex items-start gap-2 text-sm font-medium text-orange-800 dark:text-orange-100">
-                  <LogIn className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                  <span>Use Google SSO. We'll verify your profile after redirect.</span>
-                </p>
+              <div className="rounded-2xl border border-orange-200 bg-orange-50/80 p-3 dark:border-orange-800/60 dark:bg-orange-950/20">
                 <button
                   type="button"
                   onClick={handleGoogleAdminAccess}
@@ -991,7 +994,7 @@ const AdminPanel = ({ setCurrentView, onBack }) => {
                   ) : (
                     <>
                       <LogIn className="w-4 h-4" />
-                      Continue with Google
+                      Sign in with Google
                     </>
                   )}
                 </button>
