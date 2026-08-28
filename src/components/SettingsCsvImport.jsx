@@ -169,7 +169,30 @@ export default function SettingsCsvImport() {
   const resizeStateRef = useRef(null)
   const targetMonthMenuRef = useRef(null)
   const pendingImageAutoAssignmentRef = useRef(false)
+  // Review edits are intentionally persisted through the existing import-row
+  // JSON, never through member or attendance RPCs. Keep the latest canonical
+  // rows in a ref so an async save cannot read an older React closure.
+  const importRowsRef = useRef(importRows)
+  const reviewSaveQueueRef = useRef(Promise.resolve())
+  const reviewSaveTimerRef = useRef(null)
+  const reviewSaveRequestRef = useRef({})
+  const reviewSessionCreateRef = useRef(null)
+  const savedImportIdRef = useRef(savedImportId)
+  const flushReviewAutosavesRef = useRef(async () => true)
+  const [reviewSaveState, setReviewSaveState] = useState({})
   const ownerId = dataOwnerId || user?.id
+
+  useEffect(() => {
+    importRowsRef.current = importRows
+  }, [importRows])
+
+  useEffect(() => {
+    savedImportIdRef.current = savedImportId
+  }, [savedImportId])
+
+  useEffect(() => () => {
+    if (reviewSaveTimerRef.current) clearTimeout(reviewSaveTimerRef.current)
+  }, [])
 
   const loadSavedImports = useCallback(async () => {
     if (!user?.id || !ownerId) return
@@ -196,6 +219,12 @@ export default function SettingsCsvImport() {
   }, [loadSavedImports, ownerId, user?.id])
 
   const openSavedImports = useCallback(async () => {
+    try {
+      await flushReviewAutosavesRef.current()
+    } catch (error) {
+      toast.error(error?.message || 'Could not save review changes. Please retry before opening another import.')
+      return
+    }
     setIsSavedImportsOpen(true)
     await loadSavedImports()
   }, [loadSavedImports])
@@ -224,6 +253,12 @@ export default function SettingsCsvImport() {
     // Saved sessions open into the complete review, not the post-save Results
     // screen. Results offers a deliberate "View Saved Rows" shortcut that
     // narrows the filter; history must never inherit that shortcut's state.
+    try {
+      await flushReviewAutosavesRef.current()
+    } catch (error) {
+      toast.error(error?.message || 'Could not save review changes. Please retry before opening another import.')
+      return
+    }
     setFilter('all')
     setSheetFilter('all')
     setSearchQuery('')
@@ -392,6 +427,124 @@ export default function SettingsCsvImport() {
     saveResults, savedImportId, sheetImages, targetTable, user?.id,
   ])
 
+  const persistReviewRows = useCallback(async (rows) => {
+    let activeSessionId = savedImportIdRef.current
+    if (!activeSessionId) {
+      // Multiple fast edits can arrive before the first history row exists.
+      // Share the creation request so they all continue with the same session.
+      if (!reviewSessionCreateRef.current) {
+        reviewSessionCreateRef.current = persistCsvImportSession({
+          supabase,
+          existingSessionId: null,
+          userId: user?.id,
+          ownerId,
+          csvText,
+          parsedSheets,
+          importRows: rows,
+          targetTable,
+          enabledSundays: importMode === CSV_IMPORT_MODE.SUNDAY_NAMES
+            ? { __mode: importMode, __selected_sunday: selectedSundayDate }
+            : enabledSundays,
+          saveResults: saveResults || {},
+          sheetImages,
+          onImageStatus: ({ key, ...status }) => setImageUploadStates((current) => ({ ...current, [key]: status })),
+        }).then((session) => {
+          savedImportIdRef.current = session.id
+          setSavedImportId(session.id)
+          return session.id
+        }).finally(() => {
+          reviewSessionCreateRef.current = null
+        })
+      }
+      activeSessionId = await reviewSessionCreateRef.current
+    }
+
+    const saved = await updateCsvImportReviewRows({ supabase, sessionId: activeSessionId, importRows: rows })
+    setSavedImports((current) => current.map((item) => item.id === activeSessionId ? { ...item, import_rows: saved.import_rows, updated_at: saved.updated_at } : item))
+    setBatchEntries((current) => current.map((entry) => (
+      entry.sessionId === activeSessionId || entry.id === activeBatchEntryId
+        ? { ...entry, sessionId: activeSessionId, rows }
+        : entry
+    )))
+    return activeSessionId
+  }, [activeBatchEntryId, csvText, enabledSundays, importMode, ownerId, parsedSheets, saveResults, selectedSundayDate, sheetImages, targetTable, user?.id])
+
+  const saveReviewRowsNow = useCallback((rowId) => {
+    if (!savedImportIdRef.current && (!user?.id || !ownerId)) return Promise.reject(new Error('Sign in to save review changes.'))
+    const request = (reviewSaveRequestRef.current[rowId] || 0) + 1
+    reviewSaveRequestRef.current[rowId] = request
+    setReviewSaveState((current) => ({ ...current, [rowId]: { status: 'saving', request } }))
+    const run = async () => {
+      const rows = importRowsRef.current
+      try {
+        await persistReviewRows(rows)
+        // A newer save may already be queued. Do not let this older response
+        // replace its status or make an unsaved change look durable.
+        if (request === reviewSaveRequestRef.current[rowId]) {
+          setReviewSaveState((current) => ({ ...current, [rowId]: { status: 'saved', request } }))
+        }
+        return true
+      } catch (error) {
+        if (request === reviewSaveRequestRef.current[rowId]) {
+          setReviewSaveState((current) => ({ ...current, [rowId]: { status: 'failed', request, message: error?.message || 'Could not save changes.' } }))
+        }
+        throw error
+      }
+    }
+    reviewSaveQueueRef.current = reviewSaveQueueRef.current.catch(() => undefined).then(run)
+    return reviewSaveQueueRef.current
+  }, [ownerId, persistReviewRows, user?.id])
+
+  const scheduleReviewAutosave = useCallback((rowId, { immediate = false } = {}) => {
+    if (reviewSaveTimerRef.current) clearTimeout(reviewSaveTimerRef.current)
+    if (immediate) return saveReviewRowsNow(rowId)
+    setReviewSaveState((current) => ({ ...current, [rowId]: { status: 'saving' } }))
+    reviewSaveTimerRef.current = setTimeout(() => {
+      reviewSaveTimerRef.current = null
+      saveReviewRowsNow(rowId).catch((error) => {
+        toast.error(error?.message || 'Could not save review changes. Retry before leaving this import.')
+      })
+    }, 450)
+    return Promise.resolve(true)
+  }, [saveReviewRowsNow])
+
+  const flushReviewAutosaves = useCallback(async (rowId = expandedRowId) => {
+    if (reviewSaveTimerRef.current) {
+      clearTimeout(reviewSaveTimerRef.current)
+      reviewSaveTimerRef.current = null
+      await saveReviewRowsNow(rowId || 'review')
+    }
+    await reviewSaveQueueRef.current
+    const failed = Object.values(reviewSaveState).some((state) => state.status === 'failed')
+    if (failed) throw new Error('Review changes still need to be saved.')
+    return true
+  }, [expandedRowId, reviewSaveState, saveReviewRowsNow])
+
+  useEffect(() => {
+    flushReviewAutosavesRef.current = flushReviewAutosaves
+  }, [flushReviewAutosaves])
+
+  const updateCanonicalRows = useCallback((nextRows, rowId, { immediate = false } = {}) => {
+    importRowsRef.current = nextRows
+    setImportRows(nextRows)
+    setBatchEntries((current) => current.map((entry) => (
+      entry.sessionId === savedImportIdRef.current || entry.id === activeBatchEntryId
+        ? { ...entry, rows: nextRows }
+        : entry
+    )))
+    scheduleReviewAutosave(rowId, { immediate })
+    return nextRows
+  }, [activeBatchEntryId, scheduleReviewAutosave])
+
+  const navigateAfterReviewSave = useCallback(async (nextStep) => {
+    try {
+      await flushReviewAutosaves()
+      setStep(nextStep)
+    } catch (error) {
+      toast.error(error?.message || 'Could not save review changes. Please retry before leaving this step.')
+    }
+  }, [flushReviewAutosaves])
+
   const getReviewColumnWidth = useCallback((column) => (
     columnWidths[column.key] || (compactView ? column.compactWidth : column.width)
   ), [columnWidths, compactView])
@@ -520,6 +673,7 @@ export default function SettingsCsvImport() {
 
       setParseErrors(result.errors)
       setParsedSheets(result.sheets)
+      importRowsRef.current = result.rows
       setImportRows(result.rows)
 
       if (result.rows.length > 0) {
@@ -722,15 +876,21 @@ export default function SettingsCsvImport() {
     }
   }, [batchEntries, batchName])
 
-  const openAdjacentBatchEntry = useCallback((direction = 1, unsavedOnly = false) => {
+  const openAdjacentBatchEntry = useCallback(async (direction = 1, unsavedOnly = false) => {
     if (!activeBatchEntryId) return
     const ordered = [...batchEntries]
     const currentIndex = ordered.findIndex((entry) => entry.sessionId === activeBatchEntryId || entry.id === activeBatchEntryId)
     const candidate = direction > 0
       ? findNextCsvBatchEntry(ordered, activeBatchEntryId, { unsavedOnly })
       : [...ordered].reverse().find((entry) => (entry.csvFiles?.length || entry.originalCsvFilename) && ordered.indexOf(entry) < currentIndex)
-    if (candidate?.sessionId) openSavedImport(candidate.sessionId)
-  }, [activeBatchEntryId, batchEntries, openSavedImport])
+    if (!candidate?.sessionId) return
+    try {
+      await flushReviewAutosaves()
+      await openSavedImport(candidate.sessionId)
+    } catch (error) {
+      toast.error(error?.message || 'Could not save review changes. Please retry before changing sheets.')
+    }
+  }, [activeBatchEntryId, batchEntries, flushReviewAutosaves, openSavedImport])
 
   // ─── Match rows when members load ───────────────────────────────────────
   useEffect(() => {
@@ -755,8 +915,8 @@ export default function SettingsCsvImport() {
   }, [isMonthMenuOpen])
 
   // ─── Row editing ────────────────────────────────────────────────────────
-  const updateRowField = useCallback((rowId, field, value) => {
-    setImportRows((prev) => prev.map((row) =>
+  const updateRowField = useCallback((rowId, field, value, { immediate = false } = {}) => {
+    const nextRows = importRowsRef.current.map((row) =>
       row.importRowId === rowId
         ? {
             ...row,
@@ -768,32 +928,37 @@ export default function SettingsCsvImport() {
               : row.fieldResolution,
           }
         : row
-    ))
-  }, [])
+    )
+    updateCanonicalRows(nextRows, rowId, { immediate })
+  }, [updateCanonicalRows])
 
   const markAttentionVerified = useCallback(async (rowId) => {
-    const nextRows = markCsvImportAttentionVerified(importRows, rowId)
+    const previousRows = importRowsRef.current
+    const nextRows = markCsvImportAttentionVerified(previousRows, rowId)
+    importRowsRef.current = nextRows
     setImportRows(nextRows)
     setBatchEntries((current) => current.map((entry) => (
-      entry.sessionId === savedImportId || entry.id === activeBatchEntryId
+      entry.sessionId === savedImportIdRef.current || entry.id === activeBatchEntryId
         ? { ...entry, rows: nextRows }
         : entry
     )))
-    if (!savedImportId) return
+    if (reviewSaveTimerRef.current) {
+      clearTimeout(reviewSaveTimerRef.current)
+      reviewSaveTimerRef.current = null
+    }
     try {
-      await updateCsvImportReviewRows({ supabase, sessionId: savedImportId, importRows: nextRows })
-      setSavedImports((current) => current.map((item) => item.id === savedImportId ? { ...item, import_rows: nextRows } : item))
-      toast.success('Review note marked verified')
+      await saveReviewRowsNow(rowId)
     } catch (error) {
-      setImportRows(importRows)
+      importRowsRef.current = previousRows
+      setImportRows(previousRows)
       setBatchEntries((current) => current.map((entry) => (
-        entry.sessionId === savedImportId || entry.id === activeBatchEntryId
-          ? { ...entry, rows: importRows }
+        entry.sessionId === savedImportIdRef.current || entry.id === activeBatchEntryId
+          ? { ...entry, rows: previousRows }
           : entry
       )))
-      toast.error(error?.message || 'Could not save the verification state.')
+      toast.error(error?.message || 'Could not save verification. Please retry.')
     }
-  }, [activeBatchEntryId, importRows, savedImportId])
+  }, [activeBatchEntryId, saveReviewRowsNow])
 
   const syncReviewScroll = useCallback((source) => {
     const sourceEl = source === 'top' ? reviewTopScrollRef.current : reviewTableScrollRef.current
@@ -827,15 +992,16 @@ export default function SettingsCsvImport() {
   }, [getReviewColumnWidth])
 
   const updateRowFieldResolution = useCallback((rowId, field, source) => {
-    setImportRows((prev) => prev.map((row) =>
+    const nextRows = importRowsRef.current.map((row) =>
       row.importRowId === rowId
         ? { ...row, fieldResolution: { ...row.fieldResolution, [field]: source } }
         : row
-    ))
-  }, [])
+    )
+    updateCanonicalRows(nextRows, rowId, { immediate: true })
+  }, [updateCanonicalRows])
 
   const selectMatchForRow = useCallback((rowId, member) => {
-    setImportRows((prev) => prev.map((row) => {
+    const nextRows = importRowsRef.current.map((row) => {
       if (row.importRowId !== rowId) return row
       return {
         ...row,
@@ -857,13 +1023,14 @@ export default function SettingsCsvImport() {
           parentGuardianPhone: 'datser',
         },
       }
-    }))
+    })
+    updateCanonicalRows(nextRows, rowId, { immediate: true })
     setManualSearchRowId(null)
     setManualSearchQuery('')
-  }, [])
+  }, [updateCanonicalRows])
 
   const setRowAsNew = useCallback((rowId) => {
-    setImportRows((prev) => prev.map((row) => {
+    const nextRows = importRowsRef.current.map((row) => {
       if (row.importRowId !== rowId) return row
       return {
         ...row,
@@ -880,9 +1047,10 @@ export default function SettingsCsvImport() {
           parentGuardianName: 'csv', parentGuardianPhone: 'csv',
         },
       }
-    }))
+    })
+    updateCanonicalRows(nextRows, rowId, { immediate: true })
     setManualSearchRowId(null)
-  }, [importMode])
+  }, [importMode, updateCanonicalRows])
 
   // ─── Image attachment ───────────────────────────────────────────────────
   const handleImageUpload = useCallback((event) => {
@@ -951,22 +1119,30 @@ export default function SettingsCsvImport() {
       return
     }
 
+    try {
+      await flushReviewAutosaves()
+    } catch (error) {
+      toast.error(error?.message || 'Could not save review changes. Resolve this before saving to DatSer.')
+      return
+    }
+
+    const latestRows = importRowsRef.current
     setIsSaving(true)
     setStep(STEPS.SAVING)
     setSaveProgress({ completed: 0, total: 0 })
 
     try {
       const completedRowIds = new Set(
-        importRows.filter((r) => r.saveStatus === 'saved').map((r) => r.importRowId)
+        latestRows.filter((r) => r.saveStatus === 'saved').map((r) => r.importRowId)
       )
 
       const plan = importMode === CSV_IMPORT_MODE.SUNDAY_NAMES
         ? buildSundayNamesSavePlan({
-            importRows, targetTable, selectedSundayDate, ownerId,
+            importRows: latestRows, targetTable, selectedSundayDate, ownerId,
             workspaceName: preferences?.workspace_name || '', completedRowIds,
           })
         : buildCsvSavePlan({
-            importRows, targetTable, sundayDateMap, ownerId,
+            importRows: latestRows, targetTable, sundayDateMap, ownerId,
             workspaceName: preferences?.workspace_name || '', completedRowIds,
           })
 
@@ -987,7 +1163,7 @@ export default function SettingsCsvImport() {
       // Update row save statuses before retaining the completed import as a
       // private, reopenable workspace record.
       const resultMap = new Map(results.map((r) => [r.importRowId, r]))
-      const rowsWithSaveStatus = importRows.map((row) => {
+      const rowsWithSaveStatus = latestRows.map((row) => {
         const result = resultMap.get(row.importRowId)
         if (!result) return row
         return {
@@ -1001,6 +1177,7 @@ export default function SettingsCsvImport() {
         }
       })
       const nextSaveResults = { successCount, failCount, skipCount, unresolvedCount, results }
+      importRowsRef.current = rowsWithSaveStatus
       setImportRows(rowsWithSaveStatus)
 
       setSaveResults(nextSaveResults)
@@ -1023,10 +1200,10 @@ export default function SettingsCsvImport() {
       setIsSaving(false)
     }
   }, [
-    isOnline, targetTable, importRows, sundayDateMap, ownerId,
+    isOnline, targetTable, sundayDateMap, ownerId,
     preferences, sessionId, setMemberAttendanceFromOtherMonth,
     forceRefreshMembers, savedImportId, user?.id, csvText, parsedSheets,
-    enabledSundays, importMode, selectedSundayDate, sheetImages, persistHistorySnapshot,
+    enabledSundays, importMode, selectedSundayDate, sheetImages, persistHistorySnapshot, flushReviewAutosaves,
   ])
 
   // ─── Retry failed ──────────────────────────────────────────────────────
@@ -1299,7 +1476,7 @@ export default function SettingsCsvImport() {
           </button>
           <button
             type="button"
-            onClick={() => setStep(STEPS.MONTH)}
+            onClick={() => navigateAfterReviewSave(STEPS.MONTH)}
             className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"
           >
             Next: Month
@@ -1481,13 +1658,13 @@ export default function SettingsCsvImport() {
                     </td>
                     <td className={compactView ? 'px-1 py-1' : 'px-2 py-1.5'}><InlineTextCell value={row.edited.phoneNumber} onCommit={(value) => updateRowField(row.importRowId, 'phoneNumber', value)} compact={compactView} /></td>
                     <td className={compactView ? 'px-1 py-1' : 'px-2 py-1.5'}><InlineTextCell value={row.edited.age} onCommit={(value) => updateRowField(row.importRowId, 'age', value)} compact={compactView} inputMode="numeric" /></td>
-                    <td className={compactView ? 'px-1 py-1' : 'px-2 py-1.5'}><InlineGenderCell value={row.edited.gender} onCommit={(value) => updateRowField(row.importRowId, 'gender', value)} compact={compactView} /></td>
+                    <td className={compactView ? 'px-1 py-1' : 'px-2 py-1.5'}><InlineGenderCell value={row.edited.gender} onCommit={(value) => updateRowField(row.importRowId, 'gender', value, { immediate: true })} compact={compactView} /></td>
                     <td className={compactView ? 'px-1 py-1' : 'px-2 py-1.5'}><InlineTextCell value={row.edited.educationalLevel} onCommit={(value) => updateRowField(row.importRowId, 'educationalLevel', value)} compact={compactView} /></td>
                     <td className={compactView ? 'px-1 py-1' : 'px-2 py-1.5'}><InlineTextCell value={row.edited.parentGuardianName} onCommit={(value) => updateRowField(row.importRowId, 'parentGuardianName', value)} compact={compactView} /></td>
                     <td className={compactView ? 'px-1 py-1' : 'px-2 py-1.5'}><InlineTextCell value={row.edited.parentGuardianPhone} onCommit={(value) => updateRowField(row.importRowId, 'parentGuardianPhone', value)} compact={compactView} /></td>
                     {[1, 2, 3, 4, 5].map((n) => (
                       <td key={n} className={`text-center ${compactView ? 'px-1 py-1' : 'px-2 py-2'}`}>
-                        <InlineAttendanceCell value={row.edited[`sunday_${n}`]} onCommit={(value) => updateRowField(row.importRowId, `sunday_${n}`, value)} />
+                        <InlineAttendanceCell value={row.edited[`sunday_${n}`]} onCommit={(value) => updateRowField(row.importRowId, `sunday_${n}`, value, { immediate: true })} />
                       </td>
                     ))}
                     <td className={compactView ? 'px-2 py-1.5' : 'px-3 py-2'}>
@@ -1520,6 +1697,8 @@ export default function SettingsCsvImport() {
                           sheetImages={sheetImages}
                           onViewImage={setViewingImage}
                           onMarkAttentionVerified={markAttentionVerified}
+                          reviewSaveState={reviewSaveState[row.importRowId]}
+                          onRetryReviewSave={() => saveReviewRowsNow(row.importRowId).catch((error) => toast.error(error?.message || 'Could not save review changes.'))}
                         />
                       </td>
                     </tr>
@@ -1569,8 +1748,8 @@ export default function SettingsCsvImport() {
         </div>
         <div className="flex gap-2">
           {Object.values(sheetImages).some((images) => images.length > 0) && <button type="button" onClick={() => setIsComparingSource(true)} className="min-h-11 rounded-xl border border-emerald-300 bg-emerald-50 px-4 text-sm font-black text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/35 dark:text-emerald-300">Compare source</button>}
-          <button type="button" onClick={() => setStep(STEPS.MONTH)} className="min-h-11 rounded-xl border border-gray-300 px-4 text-sm font-bold dark:border-gray-700">Back</button>
-          <button type="button" onClick={() => setStep(STEPS.PREVIEW)} className="min-h-11 rounded-xl bg-emerald-600 px-5 text-sm font-black text-white hover:bg-emerald-700">Preview ready rows</button>
+          <button type="button" onClick={() => navigateAfterReviewSave(STEPS.MONTH)} className="min-h-11 rounded-xl border border-gray-300 px-4 text-sm font-bold dark:border-gray-700">Back</button>
+          <button type="button" onClick={() => navigateAfterReviewSave(STEPS.PREVIEW)} className="min-h-11 rounded-xl bg-emerald-600 px-5 text-sm font-black text-white hover:bg-emerald-700">Preview ready rows</button>
         </div>
       </div>
 
@@ -2280,7 +2459,15 @@ function InlineTextCell({ value, onCommit, compact = false, inputMode = 'text' }
       value={draft}
       inputMode={inputMode}
       onClick={(event) => event.stopPropagation()}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        const nextValue = event.target.value
+        setDraft(nextValue)
+        // Keep the canonical row current while the import-level coordinator
+        // performs the single 450ms persistence debounce. This also lets
+        // Mark verified flush text typed moments earlier without waiting for
+        // the input to lose focus.
+        if (nextValue !== (value || '')) onCommit(nextValue)
+      }}
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.key === 'Enter') {
@@ -2534,7 +2721,7 @@ function AttentionBadge({ name, onClick }) {
   return <button type="button" onClick={onClick} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-100/80 px-2 py-1 text-[10px] font-black leading-none text-rose-800 shadow-sm transition-colors hover:border-rose-300 hover:bg-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/60 dark:border-rose-900/70 dark:bg-rose-950/55 dark:text-rose-200 dark:hover:bg-rose-950/80" aria-label={`Review note for ${name}`}><span className="grid h-4 w-4 place-items-center rounded-md bg-rose-500 text-white shadow-sm"><MessageSquare className="h-2.5 w-2.5"/></span><span className="whitespace-nowrap">Needs attention</span></button>
 }
 
-function TranscriptionNote({ row, onMarkVerified }) {
+function TranscriptionNote({ row, onMarkVerified, reviewSaveState, onRetryReviewSave }) {
   const note = getCsvImportNote(row)
   if (!note) return null
   const unresolved = isCsvImportAttentionUnresolved(row)
@@ -2544,13 +2731,18 @@ function TranscriptionNote({ row, onMarkVerified }) {
         <p className={`flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.14em] ${unresolved ? 'text-rose-700 dark:text-rose-300' : 'text-gray-500 dark:text-gray-400'}`}><MessageSquare className="h-3.5 w-3.5"/>Transcription note</p>
         <p className="mt-1.5 text-sm font-semibold leading-relaxed text-gray-800 dark:text-gray-100">{note}</p>
       </div>
-      {unresolved ? <button type="button" onClick={() => onMarkVerified(row.importRowId)} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-xs font-black text-white shadow-sm transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"><ShieldCheck className="h-4 w-4"/>Mark verified</button> : <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-gray-200 px-2.5 py-1 text-[10px] font-black text-gray-600 dark:bg-gray-800 dark:text-gray-300"><ShieldCheck className="h-3.5 w-3.5"/>Verified</span>}
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {reviewSaveState?.status === 'saving' && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-500 dark:text-gray-400"><Loader2 className="h-3 w-3 animate-spin"/>Saving…</span>}
+        {reviewSaveState?.status === 'saved' && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300"><Check className="h-3 w-3"/>Saved</span>}
+        {reviewSaveState?.status === 'failed' && <button type="button" onClick={onRetryReviewSave} className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-2 py-1 text-[10px] font-black text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:text-rose-300"><RefreshCw className="h-3 w-3"/>Retry save</button>}
+        {unresolved ? <button type="button" onClick={() => onMarkVerified(row.importRowId)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-xs font-black text-white shadow-sm transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"><ShieldCheck className="h-4 w-4"/>Mark verified</button> : <span className="inline-flex items-center gap-1 rounded-full bg-gray-200 px-2.5 py-1 text-[10px] font-black text-gray-600 dark:bg-gray-800 dark:text-gray-300"><ShieldCheck className="h-3.5 w-3.5"/>Verified</span>}
+      </div>
     </div>
   </section>
 }
 
 // ─── Row detail (expanded) ────────────────────────────────────────────────
-function RowDetail({ row, allKnownMembers, formatMemberName = (value) => value, onUpdateField, onUpdateFieldResolution, onSelectMatch, onSetAsNew, sheetImages, onViewImage, onMarkAttentionVerified }) {
+function RowDetail({ row, allKnownMembers, formatMemberName = (value) => value, onUpdateField, onUpdateFieldResolution, onSelectMatch, onSetAsNew, sheetImages, onViewImage, onMarkAttentionVerified, reviewSaveState, onRetryReviewSave }) {
   const matchedMember = row.match?.matchedMember
   const comparisons = matchedMember ? compareFieldsToMember(row, matchedMember) : null
   const [importPaneWidth, setImportPaneWidth] = useState(66)
@@ -2602,7 +2794,7 @@ function RowDetail({ row, allKnownMembers, formatMemberName = (value) => value, 
         </div>
       </div>
 
-      <TranscriptionNote row={row} onMarkVerified={onMarkAttentionVerified} />
+      <TranscriptionNote row={row} onMarkVerified={onMarkAttentionVerified} reviewSaveState={reviewSaveState} onRetryReviewSave={onRetryReviewSave} />
 
       {/* Source image thumbnail */}
       {sheetImagesForRow.length > 0 && (
@@ -2645,7 +2837,7 @@ function RowDetail({ row, allKnownMembers, formatMemberName = (value) => value, 
                     <EducationLevelField
                       value={row.edited[field.key] || ''}
                       matchedValue={matchedMember?.['Current Level'] || ''}
-                      onChange={(value) => onUpdateField(row.importRowId, field.key, value)}
+                      onChange={(value) => onUpdateField(row.importRowId, field.key, value, { immediate: true })}
                     />
                   ) : (
                     <>
@@ -2653,7 +2845,7 @@ function RowDetail({ row, allKnownMembers, formatMemberName = (value) => value, 
                       {field.type === 'gender' ? (
                         <InlineGenderCell
                           value={row.edited[field.key] || ''}
-                          onCommit={(value) => onUpdateField(row.importRowId, field.key, value)}
+                          onCommit={(value) => onUpdateField(row.importRowId, field.key, value, { immediate: true })}
                         />
                       ) : (
                         <input

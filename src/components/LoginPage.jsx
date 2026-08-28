@@ -718,9 +718,6 @@ const LoginPage = () => {
                 {isLoading ? 'Checking admin code...' : 'Sign In as Admin'}
               </button>
 
-              <p className="text-center text-xs text-gray-500 dark:text-gray-400">
-                Verified by Supabase. If this fails, apply the admin-code migration.
-              </p>
             </form>
           ) : (
             /* User Mode Form */
