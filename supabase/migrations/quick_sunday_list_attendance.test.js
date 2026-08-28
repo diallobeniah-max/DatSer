@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 
-const sql = readFileSync(new URL('./20260818110000_add_quick_sunday_list_attendance.sql', import.meta.url), 'utf8')
+const sql = readFileSync(new URL('./20260818231209_add_quick_sunday_list_attendance.sql', import.meta.url), 'utf8')
 
 describe('Quick Sunday List narrow attendance RPC migration', () => {
   it('is authenticated, logical-month scoped, idempotent, and existing-member only', () => {

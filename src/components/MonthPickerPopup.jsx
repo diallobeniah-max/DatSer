@@ -223,12 +223,16 @@ const MonthPickerPopup = ({
             {/* Popup */}
             <div
                 ref={popupRef}
-                className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[9999] w-[300px] max-w-[90vw] max-h-[70vh] bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Select Month"
+                data-testid="month-picker-popup"
+                className="fixed left-1/2 top-1/2 z-[9999] flex w-[calc(100vw-1.5rem)] max-w-[31rem] max-h-[calc(100dvh-1.5rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800 sm:w-[30rem] sm:max-h-[calc(100dvh-3rem)]"
                 style={{ transform: 'translate(-50%, -50%)' }}
             >
                 {/* Header */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200/50 dark:border-gray-700/50 bg-gray-50/80 dark:bg-gray-900/50">
-                    <div className="flex items-center gap-2">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-gray-200/50 bg-gray-50/80 px-4 py-3 dark:border-gray-700/50 dark:bg-gray-900/50 sm:px-5">
+                    <div className="ml-auto flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-orange-500" />
                         <span className="text-sm font-semibold text-gray-900 dark:text-white">
                             Select Month
@@ -282,7 +286,7 @@ const MonthPickerPopup = ({
                 </div>
 
                 {showCalendarModeControl ? (
-                    <div className={`px-4 py-3 border-b border-gray-200/60 dark:border-gray-700/60 ${pendingCalendarMode === 'manual'
+                    <div className={`shrink-0 border-b border-gray-200/60 px-4 py-3 dark:border-gray-700/60 sm:px-5 ${pendingCalendarMode === 'manual'
                         ? 'bg-indigo-50/80 dark:bg-indigo-900/20'
                         : 'bg-emerald-50/80 dark:bg-emerald-900/20'
                         }`}>
@@ -313,7 +317,7 @@ const MonthPickerPopup = ({
                         )}
                     </div>
                 ) : showAutoToggle && (
-                    <div className={`px-4 py-3 border-b border-gray-200/60 dark:border-gray-700/60 ${autoEnabled
+                    <div className={`shrink-0 border-b border-gray-200/60 px-4 py-3 dark:border-gray-700/60 sm:px-5 ${autoEnabled
                             ? 'bg-emerald-50/80 dark:bg-emerald-900/20'
                             : 'bg-red-50/80 dark:bg-red-900/20'
                         }`}>
@@ -330,8 +334,9 @@ const MonthPickerPopup = ({
                     </div>
                 )}
 
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 {/* Month list */}
-                <div className={`max-h-[50vh] overflow-y-auto overscroll-contain ${selectionDisabled ? 'opacity-70' : ''}`}>
+                <div className={selectionDisabled ? 'opacity-70' : ''}>
                     {Object.entries(tablesByYear).sort((a, b) => b[0] - a[0]).map(([year, tables]) => (
                         <div key={year}>
                             {/* Year header */}
@@ -340,7 +345,7 @@ const MonthPickerPopup = ({
                             </div>
 
                             {/* Month buttons */}
-                            <div className="p-2 grid grid-cols-3 gap-1.5">
+                            <div className="grid grid-cols-3 gap-2 p-3 sm:grid-cols-4 sm:p-4">
                                 {tables.map((table) => {
                                     const isSelected = table === activeDisplayTable
                                     return (
@@ -348,7 +353,7 @@ const MonthPickerPopup = ({
                                             key={table}
                                             onClick={() => handleSelectMonth(table)}
                                             disabled={selectionDisabled}
-                                            className={`relative flex flex-col items-center justify-center p-3 rounded-xl text-sm font-medium btn-press transition-all duration-200 ${isSelected
+                                            className={`relative flex min-h-12 flex-col items-center justify-center rounded-xl px-3 py-2.5 text-sm font-medium btn-press transition-all duration-200 ${isSelected
                                                 ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30 scale-105'
                                                 : 'bg-gray-100 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                                                 }`}
@@ -384,7 +389,7 @@ const MonthPickerPopup = ({
                     )}
                 </div>
                 {previewSundays.length > 0 && (
-                    <div className="px-3 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40">
+                    <div className="border-t border-gray-200 bg-gray-50/70 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40 sm:px-5">
                         <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Sundays</div>
                         <div className="flex flex-wrap gap-1.5">
                             {previewSundays.map((dateStr) => {
@@ -408,17 +413,18 @@ const MonthPickerPopup = ({
                         </div>
                     </div>
                 )}
+                </div>
 
                 {/* Create New Month Button (Owner only) */}
                 {!isCollaborator && (
-                    <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-900/50 backdrop-blur-sm">
+                    <div className="shrink-0 border-t border-gray-200 bg-gray-50/90 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/70 sm:px-5">
                         <button
                             onClick={() => {
                                 selection()
                                 onClose()
                                 if (onCreateMonth) onCreateMonth()
                             }}
-                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-medium transition-colors text-sm shadow-sm btn-press"
+                            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-50 btn-press dark:focus-visible:ring-offset-gray-900"
                         >
                             <Plus className="w-4 h-4" />
                             Create New Month

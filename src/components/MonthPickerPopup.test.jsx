@@ -42,6 +42,13 @@ beforeEach(() => {
 })
 
 describe('MonthPickerPopup calendar mode', () => {
+  it('keeps the primary create action visible in the responsive dialog shell', () => {
+    render(<MonthPickerPopup isOpen onClose={vi.fn()} />)
+
+    expect(screen.getByRole('dialog', { name: 'Select Month' }).className).toMatch(/flex-col/)
+    expect(screen.getByRole('button', { name: 'Create New Month' })).toBeTruthy()
+  })
+
   it('does not save when Manual or a month is selected, then saves once after a Sunday is selected', async () => {
     const onSelectSunday = vi.fn().mockResolvedValue(true)
     const onCalendarModeChange = vi.fn().mockResolvedValue(true)

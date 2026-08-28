@@ -12,7 +12,7 @@ describe('cross-month attendance trusted RPC path', () => {
     const start = context.indexOf('const setMemberAttendanceFromOtherMonth = useCallback')
     const end = context.indexOf('const setPersonalCalendarMode', start)
     const body = context.slice(start, end)
-    expect(body).toContain("'set_member_attendance_from_logical_month'")
+    expect(body).toContain("'set_member_attendance_from_other_month'")
     expect(body).toContain('p_source_month: sourceMonthStart')
     expect(body).toContain('p_target_month: targetMonthStart')
     expect(body).not.toContain('p_source_table: sourceTable')

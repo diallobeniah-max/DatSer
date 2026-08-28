@@ -35,6 +35,7 @@ import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils
 import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
 import { classifyMemberSearch, getSearchableMemberName, normalizeSearchText } from '../utils/memberSearch'
 import { normalizeHistoricalSearchSettings, resolveHistoricalSearchTables } from '../utils/historicalSearchSettings'
+import { formatMemberName, normalizeMemberNameStyle } from '../utils/memberNameStyle'
 import { createAttendanceSnapshotVersionRegistry } from '../utils/attendanceSnapshot'
 import { createResumeSyncCoordinator } from '../utils/appResumeSync'
 import { createSyncFlushScheduler } from '../utils/syncFlushScheduler'
@@ -726,6 +727,7 @@ export const useApp = () => {
 }
 
 const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = [
+  'member_name_style',
   'workspace_member_codes_enabled',
   'member_code_format',
   'member_code_length',
@@ -970,6 +972,15 @@ export const AppProvider = ({ children }) => {
       ...ownerMemberCodePreferences
     }
   }, [isCollaborator, ownerMemberCodePreferences, personalPreferences])
+  const memberNameStyle = normalizeMemberNameStyle(
+    isCollaborator
+      ? ownerMemberCodePreferences?.member_name_style
+      : authContext?.workspacePreferences?.member_name_style
+  )
+  const formatDisplayMemberName = useCallback(
+    (value) => formatMemberName(value, memberNameStyle),
+    [memberNameStyle]
+  )
   const [workspaceMemberCodeAssignments, setWorkspaceMemberCodeAssignments] = useState({})
   const [workspaceMemberCodeStatus, setWorkspaceMemberCodeStatus] = useState('idle')
   const workspaceMemberCodeRequestRef = useRef({ ownerId: null, sequence: 0 })
@@ -3478,7 +3489,6 @@ export const AppProvider = ({ children }) => {
       }
 
       // Transform data to match monthly table structure
-      console.log('[addMember] Received memberData:', JSON.stringify(memberData))
       const workspaceName = authContext?.preferences?.workspace_name || null
       const localId = makeLocalUuid()
       const transformedData = buildMemberTableRow(memberData, {
@@ -3489,7 +3499,6 @@ export const AppProvider = ({ children }) => {
       })
       transformedDataForQueue = transformedData
 
-      console.log('[addMember] Transformed data:', JSON.stringify(transformedData))
 
       if (shouldUseOfflineData || !isBrowserOnline()) {
         const createdAt = new Date().toISOString()
@@ -3828,20 +3837,12 @@ export const AppProvider = ({ children }) => {
   const toggleMemberBadge = async (memberId, badgeType, options = {}) => {
     try {
       const { suppressToast = false } = options
-      console.log(`Toggling ${badgeType} badge for member ${memberId}`)
       console.log('Supabase configured:', isSupabaseConfigured())
       console.log('Current table:', currentTable)
 
       // Find the member and log their current badge status
       const member = members.find(m => m.id === memberId)
       const memberName = member ? (member['Full Name'] || member['full_name']) : 'Member'
-      console.log('Member found:', memberName)
-      console.log('Current badge values:', {
-        Member: member?.Member,
-        Regular: member?.Regular,
-        Newcomer: member?.Newcomer,
-        'Manual Badges': member?.['Manual Badges']
-      })
 
       if (!isSupabaseConfigured()) {
         // Demo mode - update local state
@@ -3886,7 +3887,6 @@ export const AppProvider = ({ children }) => {
       }
 
       console.log('Update data:', updateData)
-      console.log('Updating member ID:', memberId)
 
       if (shouldUseOfflineData || !isBrowserOnline()) {
         setMembers(prev => prev.map(member => {
@@ -4565,7 +4565,6 @@ export const AppProvider = ({ children }) => {
               'Member Status': 'Member'
             }, { silent: true })
             badgesAssigned++
-            console.log(`Assigned regular badge to ${member['full_name'] || member['Full Name']}`)
           }
         }
         // If they don't have 3 consecutive, keep their current badge (don't downgrade)
@@ -4972,14 +4971,12 @@ export const AppProvider = ({ children }) => {
       const incomingName = (
         typeof normalized.full_name === 'string' && normalized.full_name.trim()
       ) ? normalized.full_name : (typeof normalized['Full Name'] === 'string' ? normalized['Full Name'] : undefined)
-      console.log('[updateMember] Incoming name value:', incomingName)
       if (incomingName !== undefined) {
         normalized = { ...normalized, [nameCol]: incomingName }
         // Only delete the keys that are different from nameCol to avoid deleting the value we just set
         if (nameCol !== 'full_name') delete normalized.full_name
         if (nameCol !== 'Full Name') delete normalized['Full Name']
       }
-      console.log('[updateMember] Normalized updates to send:', normalized)
 
       // Normalize gender to capitalized values the table expects
       const incomingGender = normalized.gender ?? normalized['Gender']
@@ -5165,7 +5162,6 @@ export const AppProvider = ({ children }) => {
         }
         normalized = filteredNormalized
       }
-      console.log('[updateMember] Final normalized data to send:', normalized)
 
       // Ensure we have something to update
       if (Object.keys(normalized).length === 0) {
@@ -5244,7 +5240,6 @@ export const AppProvider = ({ children }) => {
         // If no new name provided, keep the existing name
         const finalName = updatedName !== undefined ? updatedName : existingName
         
-        console.log('Updating member in state:', id, 'with name:', finalName)
         const updatedMembers = prev.map(m => {
           if (m.id !== id) return m
           const merged = { ...m, ...optimisticPatch }
@@ -5271,11 +5266,9 @@ export const AppProvider = ({ children }) => {
             merged['Current Level'] = resolvedLevel
             merged.current_level = resolvedLevel
           }
-          console.log('Merged member after update:', merged)
           recentEditedMember = merged
           return merged
         })
-        console.log('Updated members array:', updatedMembers)
         return updatedMembers
       })
       const changedFields = Object.keys(updates || {}).filter((key) => updates[key] !== undefined)
@@ -5411,7 +5404,6 @@ export const AppProvider = ({ children }) => {
 
   // Delete member
   const deleteMember = async (memberId) => {
-    console.log(`[DELETE] Starting deletion for member ID: ${memberId}`)
 
     // Validate memberId
     if (!memberId) {
@@ -5422,7 +5414,6 @@ export const AppProvider = ({ children }) => {
 
     // Support deletion in demo mode by updating local state so mobile users on static deployments can manage entries
     if (isDeveloperBypass || !isSupabaseConfigured()) {
-      console.log(`[DELETE] Demo mode - deleting member ${memberId} from local state`)
       setMembers(prevMembers => {
         const deletedMember = prevMembers.find((member) => String(member.id) === String(memberId))
         if (deletedMember) {
@@ -5498,7 +5489,6 @@ export const AppProvider = ({ children }) => {
     setLoading(true)
     try {
       await ensureMemberPreviewSyncColumns(currentTable)
-      console.log(`[DELETE] Attempting soft delete in table: ${currentTable}, member ID: ${memberId}`)
 
       const deletedAt = new Date().toISOString()
       let softDeleted = false
@@ -5585,7 +5575,6 @@ export const AppProvider = ({ children }) => {
         throw new Error(`Delete blocked by database policy. Please allow soft delete for the "${currentTable}" table in Supabase.`)
       }
 
-      console.log(`[DELETE] VERIFIED - member ${memberId} successfully soft-deleted from ${currentTable}`)
 
       const deletedMember = members.find(member => member.id === memberId) || { id: memberId }
       setDeletedMemberSearchTombstones((prev) => [
@@ -5641,7 +5630,6 @@ export const AppProvider = ({ children }) => {
       // so a stale cache/offline snapshot cannot resurrect it after reopen.
       addMemberDeleteTombstone(memberId, deletedAt, currentTable)
       await purgeMemberFromOfflineSnapshot(memberId)
-      console.log(`[DELETE] Member ${memberId} deleted successfully and UI updated`)
       toast.success('Member deleted')
       logActivity('DELETE_MEMBER', `Deleted member ID: ${memberId}`)
       return { success: true }
@@ -6562,7 +6550,10 @@ export const AppProvider = ({ children }) => {
         return { success: false, error_message: msg }
       }
 
-      const { data, error } = await supabase.rpc('set_member_attendance_from_logical_month', {
+      // Production exposes the hardened logical-month contract under its
+      // established compatibility name. Its arguments remain logical months,
+      // so callers never control a physical table or attendance column.
+      const { data, error } = await supabase.rpc('set_member_attendance_from_other_month', {
         p_owner_id: targetOwnerId,
         p_source_month: sourceMonthStart,
         p_target_month: targetMonthStart,
@@ -7072,7 +7063,7 @@ export const AppProvider = ({ children }) => {
     console.log('[OVERRIDE] setCollaboratorOverride called:', { enabled, tableName, canAdmin, isCollaborator })
     
     if ((isCollaborator && !canAdmin) || !isSupabaseConfigured() || !user?.id) {
-      console.log('[OVERRIDE] Permission check failed', { isCollaborator, canAdmin, isSupabaseConfigured: isSupabaseConfigured(), userId: user?.id })
+      console.log('[OVERRIDE] Permission check failed', { isCollaborator, canAdmin, isSupabaseConfigured: isSupabaseConfigured() })
       return false
     }
 
@@ -7082,7 +7073,7 @@ export const AppProvider = ({ children }) => {
       return false
     }
     const targetOwnerId = canAdmin ? dataOwnerId : user.id
-    console.log('[OVERRIDE] Target:', { targetTable, targetOwnerId })
+    console.log('[OVERRIDE] Target month:', targetTable)
 
     if (!enabled) {
       const previousDate = lockedDefaultDate
@@ -7125,7 +7116,7 @@ export const AppProvider = ({ children }) => {
     const [, yearStr] = targetTable.split('_')
     const yearNum = parseInt(yearStr, 10) || normalizedDate.getFullYear()
 
-    console.log('[OVERRIDE] Enabling override:', { dateKey, yearNum, targetOwnerId })
+    console.log('[OVERRIDE] Enabling override:', { dateKey, yearNum })
 
     const previousDate = lockedDefaultDate
     setLockedDefaultDate(dateKey)
@@ -7140,7 +7131,6 @@ export const AppProvider = ({ children }) => {
         p_sunday_dates: [dateKey],
         p_locked_date: dateKey
       }
-      console.log('[OVERRIDE] Calling RPC with payload:', rpcPayload)
       
       const { data } = await executeSupabaseWrite(
         () => supabase.rpc('update_owner_admin_override', rpcPayload),
@@ -7411,14 +7401,6 @@ export const AppProvider = ({ children }) => {
     }
 
     const result = hasSupabaseBadge || hasManualBadge
-    console.log(`memberHasBadge(${member?.['Full Name'] || member?.['full_name']}, ${badgeType}):`, {
-      hasSupabaseBadge,
-      hasManualBadge,
-      result,
-      supabaseValue: member?.[badgeType === 'member' ? 'Member' : badgeType === 'regular' ? 'Regular' : 'Newcomer'],
-      manualBadges: member?.['Manual Badges']
-    })
-
     return result
   }
 
@@ -8623,6 +8605,15 @@ export const AppProvider = ({ children }) => {
       setLockedDefaultDate(nextLockedDate)
       setOwnerMemberCodePreferences(pickWorkspaceMemberCodePreferences(payload?.new || {}))
       updateAdminSyncNotice(nextStickyMonth, nextStickySundays)
+      // Owners read the workspace preference bundle from AuthContext. Refresh it
+      // after this existing realtime event so another signed-in client sees the
+      // confirmed shared name style without a manual reload. Collaborators are
+      // already updated above from the owner-scoped payload.
+      if (!isCollaborator && typeof authContext?.loadUserPreferences === 'function' && ownerId) {
+        void authContext.loadUserPreferences(ownerId).catch((error) => {
+          console.warn('Could not refresh workspace preferences after realtime update:', error)
+        })
+      }
     }
 
     const releaseRealtime = acquireRealtimeChannel({
@@ -8652,7 +8643,7 @@ export const AppProvider = ({ children }) => {
     return () => {
       releaseRealtime()
     }
-  }, [currentTable, dataOwnerId, isDeveloperBypass, isSupabaseConfigured, shouldUseOfflineData, user?.id])
+  }, [authContext?.loadUserPreferences, currentTable, dataOwnerId, isCollaborator, isDeveloperBypass, isSupabaseConfigured, shouldUseOfflineData, user?.id])
 
   // UI action signaling for cross-component coordination
   const [uiAction, setUiAction] = useState(null)
@@ -8718,6 +8709,8 @@ export const AppProvider = ({ children }) => {
     loading,
     memberHydrationState,
     preferences,
+    memberNameStyle,
+    formatMemberName: formatDisplayMemberName,
     memberCodeFormat,
     memberCodeLength,
     workspaceMemberCodeAssignments,
@@ -8841,7 +8834,7 @@ export const AppProvider = ({ children }) => {
     retryPreferenceHydration,
     getDevCounters: () => devCountersRef.current
   }), [
-    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, memberHydrationState, preferences, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, ensureMemberCodeAssignment, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
+    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, memberHydrationState, preferences, memberNameStyle, formatDisplayMemberName, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, ensureMemberCodeAssignment, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,

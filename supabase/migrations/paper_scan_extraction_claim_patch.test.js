@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260815160000_patch_paper_scan_duplicate_guard_and_anonymous_check.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260815143314_patch_paper_scan_duplicate_guard_and_anonymous_check.sql'), 'utf8')
 
 describe('paper_scan_extraction_claim patch migration', () => {
   it('is additive and never touches members, attendance, provenance, or ownership', () => {

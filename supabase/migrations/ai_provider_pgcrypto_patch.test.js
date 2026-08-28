@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260815190000_patch_ai_provider_pgcrypto_resolution.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260815172114_20260815190000_patch_ai_provider_pgcrypto_resolution.sql'), 'utf8')
 
 describe('ai_provider pgcrypto resolution patch migration', () => {
   it('qualifies pgp_sym_encrypt and pgp_sym_decrypt with the extensions schema', () => {

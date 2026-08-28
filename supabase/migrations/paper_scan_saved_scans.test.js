@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260812_paper_scan_saved_scans.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260813112643_20260812_paper_scan_saved_scans.sql'), 'utf8')
 
 describe('paper_scan_saved_scans migration', () => {
   it('creates the saved scan table with every persisted concept', () => {

@@ -695,7 +695,7 @@ const ReviewImagePane = ({
 
 
 const PaperScanReview = ({ onBack }) => {
-  const { dataOwnerId, currentTable, monthlyTables = [], updateMember, refreshSyncedDataInBackground, loadAllAttendanceData, fetchMembers, searchMemberAcrossAllTables, isOnline, offlineMode, memberCodeMap = {} } = useApp() || {}
+  const { dataOwnerId, currentTable, monthlyTables = [], updateMember, refreshSyncedDataInBackground, loadAllAttendanceData, fetchMembers, searchMemberAcrossAllTables, isOnline, offlineMode, memberCodeMap = {}, formatMemberName = (value) => value } = useApp() || {}
   const { user } = useAuth()
   const [sheets, setSheets] = useState([])
   const [activeSheetId, setActiveSheetId] = useState(null)
@@ -781,6 +781,8 @@ const PaperScanReview = ({ onBack }) => {
   const [widthDropdownOpen, setWidthDropdownOpen] = useState(false)
   const [bulkMonthDropdownOpen, setBulkMonthDropdownOpen] = useState(false)
   const [isCompactFinalView, setIsCompactFinalView] = useState(true)
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false)
+  const [showOverrideConfirmModal, setShowOverrideConfirmModal] = useState(false)
 
   const handleSetSavedScanView = (view) => {
     setSavedScanView(view)
@@ -811,7 +813,7 @@ const PaperScanReview = ({ onBack }) => {
   // whole batch when an operator is fixing one person or one Sunday.
   const [finalEditedRowKeys, setFinalEditedRowKeys] = useState(() => new Set())
   const [finalEditedChanges, setFinalEditedChanges] = useState({})
-  const [finalGroupFilter, setFinalGroupFilter] = useState('ready') // ready | saved | attention | all
+  const [finalGroupFilter, setFinalGroupFilter] = useState('all') // all | saved | attention
   // A saved scan can be applied in more than one deliberate group. Keep the
   // confirmed rows from this open session visible while the latest operation
   // remains available for safe retry/recovery.
@@ -1514,103 +1516,147 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
   const addAttendanceMonth = (sheetId, monthKey) => {
     if (!monthKey) return
-    const currentMonths = Array.isArray(attendanceMonths[sheetId]) ? attendanceMonths[sheetId] : getAttendanceSettings(sheetId).months
-    const nextMonths = [...new Set([...currentMonths, monthKey])]
-    setAttendanceMonths((prev) => ({ ...prev, [sheetId]: nextMonths }))
-    setAttendanceSundays((prev) => {
-      const byMonth = prev[sheetId] && typeof prev[sheetId] === 'object' ? prev[sheetId] : {}
-      if (byMonth[monthKey]) return prev
-      return { ...prev, [sheetId]: { ...byMonth, [monthKey]: defaultSundaysForMonth(monthKey) } }
+    const targetSheets = sheets.length > 0 ? sheets : [{ id: sheetId }]
+    setAttendanceMonths((prev) => {
+      const updated = { ...prev }
+      targetSheets.forEach((s) => {
+        const currentMonths = Array.isArray(prev[s.id]) ? prev[s.id] : getAttendanceSettings(s.id).months
+        updated[s.id] = [...new Set([...currentMonths, monthKey])]
+        updateSheetMeta(s.id, { attendance_month: monthKey, attendance_months: updated[s.id] })
+      })
+      return updated
     })
-    updateSheetMeta(sheetId, { attendance_month: monthKey, attendance_months: nextMonths })
+    setAttendanceSundays((prev) => {
+      const updated = { ...prev }
+      targetSheets.forEach((s) => {
+        const byMonth = updated[s.id] && typeof updated[s.id] === 'object' ? updated[s.id] : {}
+        if (!byMonth[monthKey]) {
+          updated[s.id] = { ...byMonth, [monthKey]: defaultSundaysForMonth(monthKey) }
+        }
+      })
+      return updated
+    })
     setEditingField(null)
   }
 
   const removeAttendanceMonth = (sheetId, monthKey) => {
-    const currentMonths = Array.isArray(attendanceMonths[sheetId]) ? attendanceMonths[sheetId] : getAttendanceSettings(sheetId).months
-    const nextMonths = currentMonths.filter((month) => month !== monthKey)
-    setAttendanceMonths((prev) => ({ ...prev, [sheetId]: nextMonths }))
-    setAttendanceSundays((prev) => {
-      const byMonth = prev[sheetId] && typeof prev[sheetId] === 'object' ? prev[sheetId] : {}
-      if (!byMonth[monthKey]) return prev
-      const next = { ...byMonth }
-      delete next[monthKey]
-      return { ...prev, [sheetId]: next }
-    })
-    // Removing a month must remove all pending attendance writes for that month.
-    setResultsBySheet((prev) => {
-      const result = prev[sheetId]
-      if (!result || result.status !== 'ok') return prev
-      const rows = result.payload.rows.map((row) => {
-        const reviewedAttendance = row.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
-        const next = Object.fromEntries(Object.entries(reviewedAttendance).filter(([dateKey]) => !dateKey.startsWith(monthKey)))
-        return { ...row, reviewedAttendance: next }
+    const targetSheets = sheets.length > 0 ? sheets : [{ id: sheetId }]
+    setAttendanceMonths((prev) => {
+      const updated = { ...prev }
+      targetSheets.forEach((s) => {
+        const currentMonths = Array.isArray(prev[s.id]) ? prev[s.id] : getAttendanceSettings(s.id).months
+        updated[s.id] = currentMonths.filter((month) => month !== monthKey)
+        updateSheetMeta(s.id, { attendance_months: updated[s.id] })
       })
-      return { ...prev, [sheetId]: { ...result, payload: { ...result.payload, rows } } }
+      return updated
     })
-    updateSheetMeta(sheetId, { attendance_months: nextMonths })
+    setAttendanceSundays((prev) => {
+      const updated = { ...prev }
+      targetSheets.forEach((s) => {
+        const byMonth = updated[s.id] && typeof updated[s.id] === 'object' ? updated[s.id] : {}
+        if (byMonth[monthKey]) {
+          const next = { ...byMonth }
+          delete next[monthKey]
+          updated[s.id] = next
+        }
+      })
+      return updated
+    })
+    // Removing a month must remove all pending attendance writes for that month across all sheets.
+    setResultsBySheet((prev) => {
+      const next = { ...prev }
+      targetSheets.forEach((s) => {
+        const result = prev[s.id]
+        if (!result || result.status !== 'ok') return
+        const rows = result.payload.rows.map((row) => {
+          const reviewedAttendance = row.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
+          const rNext = Object.fromEntries(Object.entries(reviewedAttendance).filter(([dateKey]) => !dateKey.startsWith(monthKey)))
+          return { ...row, reviewedAttendance: rNext }
+        })
+        next[s.id] = { ...result, payload: { ...result.payload, rows } }
+      })
+      return next
+    })
     setEditingField(null)
   }
 
   const toggleAttendanceSunday = (sheetId, monthKey, dateKey) => {
+    const targetSheets = sheets.length > 0 ? sheets : [{ id: sheetId }]
     const byMonth = attendanceSundays[sheetId] && typeof attendanceSundays[sheetId] === 'object' ? attendanceSundays[sheetId] : {}
     const current = Array.isArray(byMonth[monthKey]) ? byMonth[monthKey] : defaultSundaysForMonth(monthKey)
     const selected = current.includes(dateKey)
-    const nextSundays = selected ? current.filter((date) => date !== dateKey) : [...current, dateKey]
-    setAttendanceSundays((prev) => ({
-      ...prev,
-      [sheetId]: { ...(prev[sheetId] || {}), [monthKey]: nextSundays.sort() }
-    }))
-    updateSheetMeta(sheetId, { attendance_sundays: { ...(byMonth || {}), [monthKey]: nextSundays.sort() } })
-    // Deselecting a Sunday drops its pending attendance decisions.
+    const nextSundays = selected ? current.filter((date) => date !== dateKey) : [...current, dateKey].sort()
+
+    setAttendanceSundays((prev) => {
+      const updated = { ...prev }
+      targetSheets.forEach((s) => {
+        const sByMonth = updated[s.id] && typeof updated[s.id] === 'object' ? updated[s.id] : {}
+        updated[s.id] = { ...sByMonth, [monthKey]: nextSundays }
+        updateSheetMeta(s.id, { attendance_sundays: { ...(sByMonth || {}), [monthKey]: nextSundays } })
+      })
+      return updated
+    })
+    // Deselecting a Sunday drops its pending attendance decisions across all sheets.
     if (selected) {
       setResultsBySheet((prev) => {
-        const result = prev[sheetId]
-        if (!result || result.status !== 'ok') return prev
-        const rows = result.payload.rows.map((row) => {
-          const reviewedAttendance = row.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
-          if (!reviewedAttendance[dateKey]) return row
-          const next = { ...reviewedAttendance }
-          delete next[dateKey]
-          return { ...row, reviewedAttendance: next }
+        const next = { ...prev }
+        targetSheets.forEach((s) => {
+          const result = prev[s.id]
+          if (!result || result.status !== 'ok') return
+          const rows = result.payload.rows.map((row) => {
+            const reviewedAttendance = row.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
+            if (!reviewedAttendance[dateKey]) return row
+            const rNext = { ...reviewedAttendance }
+            delete rNext[dateKey]
+            return { ...row, reviewedAttendance: rNext }
+          })
+          next[s.id] = { ...result, payload: { ...result.payload, rows } }
         })
-        return { ...prev, [sheetId]: { ...result, payload: { ...result.payload, rows } } }
+        return next
       })
     }
     setEditingField(null)
   }
 
   const handleSelectAllSundaysForMonth = (sheetId, monthKey) => {
+    const targetSheets = sheets.length > 0 ? sheets : [{ id: sheetId }]
     const settings = getAttendanceSettings(sheetId)
     const allSundays = getSundaysForMonth(monthKey).slice(0, settings.columnCount || undefined).map(formatDateKey)
     setAttendanceSundays((prev) => {
-      const byMonth = prev[sheetId] && typeof prev[sheetId] === 'object' ? prev[sheetId] : {}
-      return {
-        ...prev,
-        [sheetId]: { ...byMonth, [monthKey]: allSundays }
-      }
+      const updated = { ...prev }
+      targetSheets.forEach((s) => {
+        const byMonth = updated[s.id] && typeof updated[s.id] === 'object' ? updated[s.id] : {}
+        updated[s.id] = { ...byMonth, [monthKey]: allSundays }
+        updateSheetMeta(s.id, { attendance_sundays: { ...(byMonth || {}), [monthKey]: allSundays } })
+      })
+      return updated
     })
-    updateSheetMeta(sheetId, { attendance_sundays: { ...(attendanceSundays[sheetId] || {}), [monthKey]: allSundays } })
   }
 
   const handleClearAllSundaysForMonth = (sheetId, monthKey) => {
+    const targetSheets = sheets.length > 0 ? sheets : [{ id: sheetId }]
     setAttendanceSundays((prev) => {
-      const byMonth = prev[sheetId] && typeof prev[sheetId] === 'object' ? prev[sheetId] : {}
-      return {
-        ...prev,
-        [sheetId]: { ...byMonth, [monthKey]: [] }
-      }
-    })
-    updateSheetMeta(sheetId, { attendance_sundays: { ...(attendanceSundays[sheetId] || {}), [monthKey]: [] } })
-    setResultsBySheet((prev) => {
-      const result = prev[sheetId]
-      if (!result || result.status !== 'ok') return prev
-      const rows = result.payload.rows.map((row) => {
-        const reviewedAttendance = row.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
-        const next = Object.fromEntries(Object.entries(reviewedAttendance).filter(([dateKey]) => !dateKey.startsWith(monthKey)))
-        return { ...row, reviewedAttendance: next }
+      const updated = { ...prev }
+      targetSheets.forEach((s) => {
+        const byMonth = updated[s.id] && typeof updated[s.id] === 'object' ? updated[s.id] : {}
+        updated[s.id] = { ...byMonth, [monthKey]: [] }
+        updateSheetMeta(s.id, { attendance_sundays: { ...(byMonth || {}), [monthKey]: [] } })
       })
-      return { ...prev, [sheetId]: { ...result, payload: { ...result.payload, rows } } }
+      return updated
+    })
+    setResultsBySheet((prev) => {
+      const next = { ...prev }
+      targetSheets.forEach((s) => {
+        const result = prev[s.id]
+        if (!result || result.status !== 'ok') return
+        const rows = result.payload.rows.map((row) => {
+          const reviewedAttendance = row.reviewedAttendance && typeof row.reviewedAttendance === 'object' ? row.reviewedAttendance : {}
+          const rNext = Object.fromEntries(Object.entries(reviewedAttendance).filter(([dateKey]) => !dateKey.startsWith(monthKey)))
+          return { ...row, reviewedAttendance: rNext }
+        })
+        next[s.id] = { ...result, payload: { ...result.payload, rows } }
+      })
+      return next
     })
   }
 
@@ -2132,7 +2178,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
   // Builds the current final-save plan from the live review state. Pure: it
   // only reads, and is used for both the confirmation summary and the save.
-  const buildFinalSavePlanNow = ({ onlyRowKeys = null, onlyEditedChanges = null } = {}) => {
+  const buildFinalSavePlanNow = ({ onlyRowKeys = null, onlyEditedChanges = null, overrideAll = false } = {}) => {
     const settingsBySheet = {}
     sheets.forEach((sheet) => {
       settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
@@ -2144,7 +2190,8 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       monthlyTables,
       settingsBySheet,
       onlyRowKeys,
-      onlyEditedChanges
+      onlyEditedChanges,
+      overrideAll
     })
   }
 
@@ -2251,7 +2298,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
 
   // Runs the controlled save. Double-save protection is both a state flag and a
   // ref so two rapid Confirm clicks can never start two passes.
-  const runFinalSave = async ({ confirmedKeys, plan: frozenPlan = null, editedRowKeys = null, editedChanges = null }) => {
+  const runFinalSave = async ({ confirmedKeys, plan: frozenPlan = null, editedRowKeys = null, editedChanges = null, overrideAll = false }) => {
     if (finalSaveInFlightRef.current || finalSaving) return null
     finalSaveInFlightRef.current = true
     setFinalSaving(true)
@@ -2259,7 +2306,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
     setPendingDuplicates(null)
     setSavedScansError('')
     try {
-      const plan = frozenPlan || buildFinalSavePlanNow({ onlyRowKeys: editedRowKeys, onlyEditedChanges: editedChanges })
+      const plan = frozenPlan || buildFinalSavePlanNow({ onlyRowKeys: editedRowKeys, onlyEditedChanges: editedChanges, overrideAll })
       // Every newly confirmed group becomes its own durable operation. Failed
       // operations are resumed exclusively through the retry path below, so a
       // later "save ready" action can never reuse a completed operation.
@@ -2274,6 +2321,7 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       const result = await executeFinalSave({
         plan,
         confirmedDuplicateKeys: confirmedKeys || confirmedDuplicateKeys,
+        overrideAll,
         deps: {
           supabase,
           updateMember,
@@ -2367,6 +2415,45 @@ const payload = await extractSheetWithGemini({ dataUrl: await prepareSheetUpload
       return
     }
     runFinalSave({ confirmedKeys: [], plan: preview.plan, editedRowKeys, editedChanges })
+  }
+
+  const handleExecuteOverrideFinalSave = async () => {
+    if (finalSaving) return
+    setShowOverrideConfirmModal(false)
+
+    const settingsBySheet = {}
+    sheets.forEach((sheet) => {
+      settingsBySheet[sheet.id] = getAttendanceSettings(sheet.id)
+    })
+    const hasSelectedSunday = Object.values(settingsBySheet).some((settings) => (
+      Object.values(settings.sundays || {}).some((dates) => Array.isArray(dates) && dates.length > 0)
+    ))
+    if (!hasSelectedSunday) {
+      setSavedScansError('Choose the Sundays to save first. DatSer will not count a profile-only change as attendance saved.')
+      setReviewStep('attendance')
+      return
+    }
+
+    const preview = previewFinalSave({
+      sheets,
+      resultsBySheet,
+      currentMembers,
+      monthlyTables,
+      settingsBySheet,
+      onlyRowKeys: null, // Full canonical collection of all extracted rows
+      overrideAll: true
+    })
+
+    if (preview.plan.rows.length === 0) {
+      setSavedScansError('No valid rows could be prepared for override saving.')
+      return
+    }
+
+    await runFinalSave({
+      confirmedKeys: [],
+      plan: preview.plan,
+      overrideAll: true
+    })
   }
 
   const handleConfirmDuplicateAndContinue = () => {
@@ -2640,24 +2727,31 @@ finalSaveInFlightRef.current = true
   const getAttendanceSettings = useCallback((sheetId) => {
     const sheetMeta = resultsBySheet[sheetId]?.payload?.sheet || {}
     const storedMonths = attendanceMonths[sheetId]
+    const anyConfiguredMonths = Object.values(attendanceMonths).find((m) => Array.isArray(m) && m.length > 0)
     const metaMonths = Array.isArray(sheetMeta.attendance_months)
       ? sheetMeta.attendance_months
       : (sheetMeta.attendance_month ? [sheetMeta.attendance_month] : [])
     const months = Array.isArray(storedMonths) && storedMonths.length
       ? storedMonths
-      : metaMonths.length
-        ? metaMonths
-        : [
-            (sheetMeta.attendance_dates?.[0]?.slice(0, 7))
-              || monthKeyFromTableName(currentTable)
-              || monthKeyFromDate(new Date())
-          ]
+      : bulkMonthKey
+        ? [bulkMonthKey]
+        : (anyConfiguredMonths || (metaMonths.length
+          ? metaMonths
+          : [
+              (sheetMeta.attendance_dates?.[0]?.slice(0, 7))
+                || monthKeyFromTableName(currentTable)
+                || monthKeyFromDate(new Date())
+            ]))
     const convention = attendanceConventions[sheetId]
       || sheetMeta.attendance_convention
       || ATTENDANCE_CONVENTIONS.TICK_X
-    const sundays = attendanceSundays[sheetId] && typeof attendanceSundays[sheetId] === 'object'
-      ? attendanceSundays[sheetId]
-      : (sheetMeta.attendance_sundays && typeof sheetMeta.attendance_sundays === 'object' ? sheetMeta.attendance_sundays : {})
+    const storedSundays = attendanceSundays[sheetId]
+    const anyConfiguredSundays = Object.values(attendanceSundays).find(
+      (s) => s && typeof s === 'object' && Object.values(s).some((arr) => Array.isArray(arr) && arr.length > 0)
+    )
+    const sundays = storedSundays && typeof storedSundays === 'object' && Object.keys(storedSundays).length > 0
+      ? storedSundays
+      : (anyConfiguredSundays || (sheetMeta.attendance_sundays && typeof sheetMeta.attendance_sundays === 'object' ? sheetMeta.attendance_sundays : {}))
     const firstRow = resultsBySheet[sheetId]?.payload?.rows?.[0]
     const numericColumns = firstRow?.attendance && typeof firstRow.attendance === 'object' && !Array.isArray(firstRow.attendance)
       ? Object.keys(firstRow.attendance).reduce((max, key) => {
@@ -2672,7 +2766,7 @@ finalSaveInFlightRef.current = true
       || (Array.isArray(sheetMeta.attendance_dates) ? sheetMeta.attendance_dates.length : 0)
       || 0
     return { months, month: months[0] || '', convention, columnCount, sundays }
-  }, [resultsBySheet, attendanceMonths, attendanceConventions, attendanceSundays, currentTable])
+  }, [resultsBySheet, attendanceMonths, attendanceConventions, attendanceSundays, currentTable, bulkMonthKey])
 
   const attendanceScopeSnapshot = useCallback(() => Object.fromEntries(sheets.map((sheet) => {
     const settings = getAttendanceSettings(sheet.id)
@@ -2789,15 +2883,42 @@ finalSaveInFlightRef.current = true
   const remainingAttentionRows = useMemo(() => finalAttentionRows.filter((entry) => !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.index))), [finalAttentionRows, savedFinalRowKeys])
   const attentionRowCount = remainingAttentionRows.length
   const attentionFinalRowKeys = useMemo(() => new Set(remainingAttentionRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.index))), [remainingAttentionRows])
+
+  // Genuinely unresolved identity issues that MUST block saving:
+  // - Non-create-new row with NO confirmed member selection and no exact match
+  // - Create-new row with NO approved name
+  // Generic review warnings (missing phone, age mismatch, unreviewed attendance marks) do NOT block saving.
+  const isSaveBlockedByIdentity = useCallback((entry) => {
+    const isCreateNew = entry.row?.memberAction === 'create-new'
+    if (isCreateNew) {
+      const name = entry.row.newMemberProfile?.full_name || entry.row.reviewedValues?.full_name?.value || entry.row.full_name
+      return !String(name || '').trim()
+    }
+    const hasSelectedMember = Boolean(entry.row?.selectedMemberId)
+    const hasMatchedMember = entry.match?.status === MATCH_STATUSES.MATCHED && Boolean(entry.match.member?.id)
+    return !hasSelectedMember && !hasMatchedMember
+  }, [])
+
+  const identityBlockedFinalRowKeys = useMemo(() => {
+    const blocked = new Set()
+    allRowData.forEach((entry) => {
+      if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return
+      if (isSaveBlockedByIdentity(entry)) {
+        blocked.add(finalOperationRowKey(entry.sheetId, entry.index))
+      }
+    })
+    return blocked
+  }, [allRowData, resultsBySheet, isSaveBlockedByIdentity])
+
   const savedFinalRows = useMemo(() => finalPreview.plan.rows.filter((entry) => savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))), [finalPreview, savedFinalRowKeys])
   const hasSelectedSundayScope = finalSundayDates.length > 0
 
-  // All non-excluded reviewed rows that are approved (not in attention) and not already saved
+  // All non-excluded reviewed rows with resolved identity and not already saved
   const approvedFinalRows = useMemo(() => {
     return allRowData.flatMap((entry) => {
       if ((resultsBySheet[entry.sheetId]?.excludedIndices || []).includes(entry.index)) return []
       const rowKey = finalOperationRowKey(entry.sheetId, entry.index)
-      if (savedFinalRowKeys.has(rowKey) || attentionFinalRowKeys.has(rowKey)) return []
+      if (savedFinalRowKeys.has(rowKey) || identityBlockedFinalRowKeys.has(rowKey)) return []
       const planRow = finalPreview.plan.rows.find((r) => r.sheetId === entry.sheetId && r.rowIndex === entry.index)
       if (planRow) return [planRow]
       return [{
@@ -2812,17 +2933,17 @@ finalSaveInFlightRef.current = true
         hasWrites: false
       }]
     })
-  }, [allRowData, resultsBySheet, savedFinalRowKeys, attentionFinalRowKeys, finalPreview.plan.rows])
+  }, [allRowData, resultsBySheet, savedFinalRowKeys, identityBlockedFinalRowKeys, finalPreview.plan.rows])
 
-  // Rows with eligible writes for currently selected Sundays
+  // Rows with eligible writes for currently selected Sundays (only genuinely unresolved identities are blocked)
   const eligibleWriteRows = useMemo(() => {
     if (!hasSelectedSundayScope) return []
     return finalPreview.plan.rows.filter((entry) => (
       entry.hasWrites
       && !savedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
-      && !attentionFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
+      && !identityBlockedFinalRowKeys.has(finalOperationRowKey(entry.sheetId, entry.rowIndex))
     ))
-  }, [hasSelectedSundayScope, finalPreview, savedFinalRowKeys, attentionFinalRowKeys])
+  }, [hasSelectedSundayScope, finalPreview, savedFinalRowKeys, identityBlockedFinalRowKeys])
 
 
   // ── CANONICAL FINAL REVIEW COLLECTION ────────────────────────────────────
@@ -2865,23 +2986,25 @@ finalSaveInFlightRef.current = true
   }, [allRowData, resultsBySheet, finalPreview.plan.rows])
 
   const readyFinalRows = eligibleWriteRows
-  const remainingFinalRowCount = (hasSelectedSundayScope ? eligibleWriteRows.length : approvedFinalRows.length) + attentionRowCount
 
-  // Derive per-filter counts from the canonical collection so numbers reconcile.
+  // Derive per-filter counts from the canonical Gold collection so numbers reconcile:
+  // 1. allExtractedCount = total extracted rows (excluding manually deleted)
+  // 2. sentDisplayCount = rows confirmed and written to DatSer
+  // 3. remainingCount = allExtractedCount - sentDisplayCount (ALL rows remaining to save)
+  // 4. attentionRowCount = remaining rows that currently need attention/review
+  // 5. eligibleWriteRows.length = rows currently validated and safe for database write
+  // Invariant: allExtractedCount === sentDisplayCount + remainingCount ALWAYS
   const allExtractedCount = finalReviewRows.length
-  const readyDisplayCount = finalReviewRows.filter(
-    (e) => !attentionFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
-      && !savedFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
-  ).length
   const sentDisplayCount = finalReviewRows.filter(
     (e) => savedFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
   ).length
+  const remainingCount = Math.max(0, allExtractedCount - sentDisplayCount)
+  const readyDisplayCount = remainingCount
 
-  // visibleFinalRows is now always a filtered view of finalReviewRows.
-  //   'all'       → all extracted (default after AI Review)
-  //   'ready'     → approved / not-attention / not-sent
-  //   'attention' → needs human decision
-  //   'saved'     → already written to DatSer
+  // visibleFinalRows is a filtered view of the canonical finalReviewRows:
+  //   'all'       → all extracted (default)
+  //   'saved'     → attendance sent / confirmed write to DatSer
+  //   'attention' → rows needing human decision
   const visibleFinalRows = (() => {
     if (finalGroupFilter === 'saved') {
       return finalReviewRows.filter(
@@ -2891,12 +3014,6 @@ finalSaveInFlightRef.current = true
     if (finalGroupFilter === 'attention') {
       return finalReviewRows.filter(
         (e) => attentionFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
-      )
-    }
-    if (finalGroupFilter === 'ready') {
-      return finalReviewRows.filter(
-        (e) => !attentionFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
-          && !savedFinalRowKeys.has(finalOperationRowKey(e.sheetId, e.rowIndex))
       )
     }
     // 'all' (default) — every extracted row
@@ -3101,7 +3218,7 @@ finalSaveInFlightRef.current = true
               <p className="font-black text-gray-900 dark:text-white">{entry.name}</p>
               {entry.matches.map((member) => (
                 <p key={member.id} className="mt-1 font-medium text-gray-600 dark:text-gray-300">
-                  Matches existing: {member.full_name || member['Full Name'] || 'Unnamed'}
+                  Matches existing: {formatMemberName(member.full_name || member['Full Name']) || 'Unnamed'}
                   {(member['Phone Number'] || member.phone_number) ? ` · ${member['Phone Number'] || member.phone_number}` : ''}
                 </p>
               ))}
@@ -3431,9 +3548,9 @@ finalSaveInFlightRef.current = true
                     }`}
                   >
                     <span>{step.label}</span>
-                    {step.id === 'final' && attentionRowCount > 0 ? (
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-black ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'}`}>
-                        {attentionRowCount}
+                    {step.id === 'final' && remainingCount > 0 ? (
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-black ${isActive ? 'bg-white/20 text-white' : 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300'}`}>
+                        {remainingCount}
                       </span>
                     ) : null}
                   </button>
@@ -3521,29 +3638,91 @@ finalSaveInFlightRef.current = true
                       <Layers className="h-3.5 w-3.5" />
                       <span>{isCompactFinalView ? 'Compact view' : 'Spacious view'}</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleConfirmFinalSave({
-                        editedOnly: finalEditedRowKeys.size > 0,
-                        onlyRowKeys: finalEditedRowKeys.size > 0
-                          ? null
-                          : eligibleWriteRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.rowIndex))
-                      })}
-                      disabled={finalSaving || saving || (finalEditedRowKeys.size > 0 ? editedRowsPreview?.plan.rows.length === 0 : !hasSelectedSundayScope || eligibleWriteRows.length === 0)}
-                      data-testid="confirm-save-to-datser"
-                      className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 shadow-sm"
-                    >
-                      {finalSaving
-                        ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : <ShieldCheck className="h-4 w-4" />}
-                      {finalSaving
-                        ? 'Saving to DatSer…'
-                        : finalEditedRowKeys.size > 0
-                          ? `Save edited rows (${editedRowsPreview?.plan.rows.length || 0})`
+                    <div className="relative inline-flex items-stretch rounded-xl shadow-sm">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!hasSelectedSundayScope) {
+                            // No Sundays chosen — send operator to the Sundays tab
+                            setReviewStep('attendance')
+                          } else {
+                            handleConfirmFinalSave({
+                              editedOnly: finalEditedRowKeys.size > 0,
+                              onlyRowKeys: finalEditedRowKeys.size > 0
+                                ? null
+                                : eligibleWriteRows.map((entry) => finalOperationRowKey(entry.sheetId, entry.rowIndex))
+                            })
+                          }
+                        }}
+                        disabled={finalSaving || saving}
+                        data-testid="confirm-save-to-datser"
+                        className={`inline-flex min-h-[40px] items-center gap-2 rounded-l-xl px-4 py-2 text-xs font-black text-white transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                          hasSelectedSundayScope
+                            ? 'bg-emerald-600 hover:bg-emerald-700'
+                            : 'bg-amber-500 hover:bg-amber-600'
+                        }`}
+                      >
+                        {finalSaving
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
                           : hasSelectedSundayScope
-                            ? `Save ready (${eligibleWriteRows.length})`
-                            : 'Choose Sundays first'}
-                    </button>
+                            ? <ShieldCheck className="h-4 w-4" />
+                            : <ChevronRight className="h-4 w-4" />}
+                        {finalSaving
+                          ? 'Saving to DatSer…'
+                          : finalEditedRowKeys.size > 0
+                            ? `Save edited rows (${editedRowsPreview?.plan.rows.length || 0})`
+                            : hasSelectedSundayScope
+                              ? `Save ${eligibleWriteRows.length > 0 ? eligibleWriteRows.length : ''}`
+                              : 'Choose Sundays first'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSaveMenuOpen((prev) => !prev)}
+                        disabled={finalSaving || saving || remainingCount === 0}
+                        aria-expanded={saveMenuOpen}
+                        aria-haspopup="menu"
+                        aria-label="More save options"
+                        title="More save options"
+                        className={`inline-flex min-h-[40px] items-center border-l border-emerald-500/50 rounded-r-xl px-2.5 py-2 text-xs font-black text-white transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                          hasSelectedSundayScope
+                            ? 'bg-emerald-600 hover:bg-emerald-700'
+                            : 'bg-amber-500 hover:bg-amber-600'
+                        }`}
+                      >
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${saveMenuOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {saveMenuOpen && (
+                        <div
+                          role="menu"
+                          aria-label="Save options"
+                          className="absolute right-0 top-full z-40 mt-1.5 w-64 rounded-2xl border border-stone-200 bg-white p-1.5 shadow-xl dark:border-stone-700 dark:bg-stone-900"
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setSaveMenuOpen(false)
+                              if (!hasSelectedSundayScope) {
+                                setSavedScansError('Choose the Sundays to save first.')
+                                setReviewStep('attendance')
+                                return
+                              }
+                              setShowOverrideConfirmModal(true)
+                            }}
+                            className="flex w-full flex-col gap-0.5 rounded-xl px-3 py-2 text-left text-xs transition-colors hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-900 dark:text-amber-200"
+                          >
+                            <span className="font-black flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                              <Sparkles className="h-3.5 w-3.5" />
+                              Override & Save All {allExtractedCount}
+                            </span>
+                            <span className="text-[10px] text-stone-500 dark:text-stone-400">
+                              Save all {allExtractedCount} extracted rows for selected Sundays, bypassing review blocks.
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -3553,16 +3732,16 @@ finalSaveInFlightRef.current = true
                   </p>
                 ) : (
                   <>
-                    {/* Unified Single Horizontal Row: Selected Sunday progress + 3 Action Filter Buttons */}
+                    {/* Unified Single Horizontal Row: Selected Sunday progress + 3 Status Filter Cards */}
                     <div className="mt-4 grid grid-cols-1 gap-2.5 lg:grid-cols-12 items-stretch">
                       {/* Left: Selected Sunday Progress */}
                       <div className="lg:col-span-4 flex flex-col justify-center rounded-2xl border border-stone-200 bg-stone-50/80 px-4 py-2.5 dark:border-stone-700 dark:bg-stone-800/50">
                         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">Selected Sunday progress</p>
                         {hasSelectedSundayScope ? (
                           <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                            <span className="text-sm font-black text-emerald-700 dark:text-emerald-300">{savedFinalRows.length} saved</span>
+                            <span className="text-sm font-black text-emerald-700 dark:text-emerald-300">{sentDisplayCount} saved</span>
                             <span className="text-xs font-bold text-stone-400">·</span>
-                            <span className="text-sm font-black text-sky-700 dark:text-sky-300">{remainingFinalRowCount} left</span>
+                            <span className="text-sm font-black text-sky-700 dark:text-sky-300">{remainingCount} left</span>
                           </div>
                         ) : (
                           <p className="mt-1 text-xs font-bold text-amber-800 dark:text-amber-200">
@@ -3571,8 +3750,8 @@ finalSaveInFlightRef.current = true
                         )}
                       </div>
 
-                      {/* Right: Filter Buttons — 4 groups */}
-                      <div className="lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-2" role="group" aria-label="Final save groups">
+                      {/* Right: Exactly 3 Status Filter Buttons */}
+                      <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-3 gap-2" role="group" aria-label="Final save status groups">
                         <button
                           type="button"
                           onClick={() => { setFinalGroupFilter('all'); setFinalViewMode('table') }}
@@ -3598,19 +3777,6 @@ finalSaveInFlightRef.current = true
                         >
                           <span className="block text-xs font-black">Attendance sent · {sentDisplayCount}</span>
                           <span className="mt-0.5 block text-[10px] font-semibold opacity-80">Confirmed write</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => { setFinalGroupFilter('ready'); setFinalViewMode('table') }}
-                          aria-pressed={finalViewMode === 'table' && finalGroupFilter === 'ready'}
-                          className={`rounded-xl border px-3 py-2 text-left transition-colors ${
-                            finalViewMode === 'table' && finalGroupFilter === 'ready'
-                              ? 'border-sky-500 bg-sky-100 text-sky-950 dark:bg-sky-950/50 dark:text-sky-100 shadow-xs'
-                              : 'border-sky-200 bg-sky-50/60 text-sky-900 hover:bg-sky-100 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-sky-200'
-                          }`}
-                        >
-                          <span className="block text-xs font-black">Ready to save · {readyDisplayCount}</span>
-                          <span className="mt-0.5 block text-[10px] font-semibold opacity-80">{hasSelectedSundayScope ? `${eligibleWriteRows.length} ready to write` : 'Reviewed & approved'}</span>
                         </button>
                         <button
                           type="button"
@@ -3686,9 +3852,7 @@ finalSaveInFlightRef.current = true
                                     ? 'No rows have been confirmed as sent yet.'
                                     : finalGroupFilter === 'attention'
                                       ? 'No rows need attention.'
-                                      : finalGroupFilter === 'ready'
-                                        ? 'No rows are ready to save yet.'
-                                        : 'No extracted rows found.'}
+                                      : 'No extracted rows found.'}
                                 </td>
                               </tr>
                             ) : visibleFinalRows.map((entry, index) => {
@@ -3698,11 +3862,12 @@ finalSaveInFlightRef.current = true
                               const wasEditedInThisPass = finalEditedRowKeys.has(rowKey)
                               const isSaved = savedFinalRowKeys.has(operationRowKey)
                               const needsAttention = attentionFinalRowKeys.has(operationRowKey)
+                              const isIdentityBlocked = identityBlockedFinalRowKeys.has(operationRowKey)
                               const attendanceMap = finalAttendanceMap(entry)
                               const isNew = entry.memberAction === 'create-new'
                               const name = isNew
                                 ? (entry.createProfile?.full_name || 'New member')
-                                : (entry.member?.full_name || entry.member?.['Full Name'] || entry.row?.full_name || 'Member')
+                                : (formatMemberName(entry.member?.full_name || entry.member?.['Full Name'] || entry.row?.full_name) || 'Member')
 
                               return (
                                 <React.Fragment key={rowKey}>
@@ -3711,21 +3876,25 @@ finalSaveInFlightRef.current = true
                                       ? 'bg-orange-50/70 dark:bg-orange-950/20'
                                       : isSaved
                                         ? 'bg-emerald-50/70 dark:bg-emerald-950/20'
-                                        : needsAttention
-                                          ? 'bg-amber-50/70 dark:bg-amber-950/20'
-                                          : wasEditedInThisPass
-                                            ? 'bg-orange-50/70 dark:bg-orange-950/20'
-                                            : 'bg-sky-50/35 dark:bg-sky-950/10'
+                                        : isIdentityBlocked
+                                          ? 'bg-rose-50/70 dark:bg-rose-950/20'
+                                          : needsAttention
+                                            ? 'bg-amber-50/70 dark:bg-amber-950/20'
+                                            : wasEditedInThisPass
+                                              ? 'bg-orange-50/70 dark:bg-orange-950/20'
+                                              : 'bg-sky-50/35 dark:bg-sky-950/10'
                                   }`}>
                                     <td className={`whitespace-nowrap font-mono text-stone-400 ${isCompactFinalView ? 'px-2 py-1 text-[10px]' : 'px-3.5 py-2.5 text-[11px]'}`}>
                                       <span className="block">{index + 1}</span>
                                       <span className={`mt-0.5 inline-flex rounded px-1 py-0.2 text-[9px] font-black uppercase tracking-wide ${
                                         isSaved
                                           ? 'bg-emerald-200/80 text-emerald-900 dark:bg-emerald-900/70 dark:text-emerald-100'
-                                          : needsAttention
-                                            ? 'bg-amber-200/80 text-amber-900 dark:bg-amber-950/60 dark:text-amber-100'
-                                            : 'bg-sky-200/80 text-sky-900 dark:bg-sky-900/70 dark:text-sky-100'
-                                      }`}>{isSaved ? 'Sent' : needsAttention ? 'Review' : 'Ready'}</span>
+                                          : isIdentityBlocked
+                                            ? 'bg-rose-200/80 text-rose-900 dark:bg-rose-950/60 dark:text-rose-100'
+                                            : needsAttention
+                                              ? 'bg-amber-200/80 text-amber-900 dark:bg-amber-950/60 dark:text-amber-100'
+                                              : 'bg-sky-200/80 text-sky-900 dark:bg-sky-900/70 dark:text-sky-100'
+                                      }`}>{isSaved ? 'Sent' : isIdentityBlocked ? 'Blocked' : needsAttention ? 'Review' : 'Ready'}</span>
                                     </td>
                                     {COMPARE_FIELDS.map(({ key }) => {
                                       const val = finalProfileValue(entry, key) || '—'
@@ -3886,7 +4055,7 @@ finalSaveInFlightRef.current = true
                           const isNew = entry.memberAction === 'create-new'
                           const name = isNew
                             ? (entry.createProfile?.full_name || 'New member')
-                            : (entry.member?.full_name || entry.member?.['Full Name'] || entry.row?.full_name || 'Member')
+                            : (formatMemberName(entry.member?.full_name || entry.member?.['Full Name'] || entry.row?.full_name) || 'Member')
                           const rowKey = finalRowKey(entry)
                           const isOpen = expandedFinalRows.has(rowKey)
                           const isEditingThis = finalEditingRowKey === rowKey
@@ -4615,7 +4784,7 @@ finalSaveInFlightRef.current = true
                                   {activeRowData.row.memberAction === 'create-new'
                                     ? 'This row will be added as a new member. Nothing is written until you confirm at final save.'
                                     : activeRowData.match.member
-                                      ? `Matched to ${activeRowData.match.member.full_name || activeRowData.match.member['Full Name'] || 'a current member'}`
+                                      ? `Matched to ${formatMemberName(activeRowData.match.member.full_name || activeRowData.match.member['Full Name']) || 'a current member'}`
                                       : activeRowData.match.status === 'possible'
                                         ? 'Possible match — check this row before saving.'
                                         : 'No existing DatSer member matches this row — add it as a new member.'}
@@ -4633,7 +4802,7 @@ finalSaveInFlightRef.current = true
                                         <p className="mt-0.5 text-xs font-medium text-orange-800/80 dark:text-orange-200/80">
                                           {activeRowData.row.memberAction === 'create-new'
                                             ? 'The reviewed profile below becomes the proposed new member. Creation happens only during final save.'
-                                            : `Using: ${activeRowData.match.member?.full_name || activeRowData.match.member?.['Full Name'] || 'selected member'}`}
+                                            : `Using: ${formatMemberName(activeRowData.match.member?.full_name || activeRowData.match.member?.['Full Name']) || 'selected member'}`}
                                         </p>
                                         <button
                                           type="button"
@@ -4689,7 +4858,7 @@ finalSaveInFlightRef.current = true
                                                   onClick={() => handleChooseDifferentMember(reviewActiveId, safeRowIndex, candidate.member.id)}
                                                   className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-200 bg-white p-2.5 text-left text-xs font-semibold text-stone-700 transition-colors hover:border-amber-400 dark:border-amber-800 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
                                                 >
-                                                  <span className="min-w-0 truncate">{candidate.member.full_name || candidate.member['Full Name'] || 'Unnamed'}</span>
+                                                  <span className="min-w-0 truncate">{formatMemberName(candidate.member.full_name || candidate.member['Full Name']) || 'Unnamed'}</span>
                                                   <span className="flex shrink-0 items-center gap-1.5">
                                                     {candidate.fromOtherMonth && candidate.sourceMonthLabel ? (
                                                       <span className="rounded-md bg-stone-200 px-1.5 py-0.5 text-[10px] font-bold text-stone-600 dark:bg-stone-700 dark:text-stone-300">
@@ -4713,7 +4882,7 @@ finalSaveInFlightRef.current = true
                                                   }}
                                                   className="flex w-full items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white p-2.5 text-left text-xs font-semibold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
                                                 >
-                                                  <span className="min-w-0 truncate">{member.full_name || member['Full Name'] || 'Unnamed'}</span>
+                                                  <span className="min-w-0 truncate">{formatMemberName(member.full_name || member['Full Name']) || 'Unnamed'}</span>
                                                   <span className="inline-flex min-h-[30px] shrink-0 items-center rounded-lg bg-orange-600 px-2.5 text-[11px] font-black text-white transition-colors hover:bg-orange-700 shadow-2xs">
                                                     Use this member
                                                   </span>
@@ -4732,7 +4901,7 @@ finalSaveInFlightRef.current = true
                                               Existing member found
                                             </p>
                                             <p className="mt-0.5 text-xs font-medium text-emerald-800/80 dark:text-emerald-200/80">
-                                              Matched to: {activeRowData.match.member.full_name || activeRowData.match.member['Full Name'] || 'a current member'}
+                                              Matched to: {formatMemberName(activeRowData.match.member.full_name || activeRowData.match.member['Full Name']) || 'a current member'}
                                             </p>
                                           </div>
                                           <button
@@ -4787,7 +4956,7 @@ finalSaveInFlightRef.current = true
                                                   }}
                                                   className="flex w-full items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white p-2.5 text-left text-xs font-semibold text-stone-700 transition-colors hover:border-orange-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 shadow-2xs"
                                                 >
-                                                  <span className="min-w-0 truncate">{member.full_name || member['Full Name'] || 'Unnamed'}</span>
+                                                  <span className="min-w-0 truncate">{formatMemberName(member.full_name || member['Full Name']) || 'Unnamed'}</span>
                                                   <span className="inline-flex min-h-[30px] shrink-0 items-center rounded-lg bg-orange-600 px-2.5 text-[11px] font-black text-white transition-colors hover:bg-orange-700 shadow-2xs">
                                                     Use this member
                                                   </span>
@@ -5614,6 +5783,65 @@ finalSaveInFlightRef.current = true
             onClose={() => setShowCamera(false)}
             onCaptured={handleCaptured}
           />
+
+          {showOverrideConfirmModal && (
+            <div
+              role="dialog"
+              aria-label="Override review checks"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
+            >
+              <div className="w-full max-w-lg rounded-3xl border border-amber-300 bg-white p-6 shadow-2xl dark:border-amber-700 dark:bg-stone-900">
+                <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-amber-100 dark:bg-amber-950/60">
+                    <AlertTriangle className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-stone-900 dark:text-white">
+                      Override and save all {allExtractedCount} extracted rows?
+                    </h3>
+                    <p className="text-xs text-stone-500 dark:text-stone-400">
+                      DatSer will attempt to save all {allExtractedCount} extracted {allExtractedCount === 1 ? 'person' : 'people'} for the selected Sundays.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2.5 rounded-2xl border border-amber-200/80 bg-amber-50/70 p-4 text-xs text-stone-700 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-stone-300">
+                  <p className="font-bold text-amber-950 dark:text-amber-200">
+                    When overriding review checks:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 text-xs">
+                    <li>All extracted rows will be attempted.</li>
+                    <li>Needs Attention and normal review restrictions will be overridden.</li>
+                    <li>Missing optional fields (phone, age, guardian, etc.) will not block saving.</li>
+                    <li>Existing confirmed member matches are preserved.</li>
+                    <li>Unmatched/ambiguous rows will be treated as new-member candidates rather than guessed existing members.</li>
+                    <li>Selected Sundays will be marked <strong>Present</strong> in DatSer.</li>
+                    <li>Already-completed writes remain protected by idempotency.</li>
+                  </ul>
+                </div>
+
+                <div className="mt-6 flex flex-wrap items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowOverrideConfirmModal(false)}
+                    disabled={finalSaving}
+                    className="min-h-[40px] rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExecuteOverrideFinalSave}
+                    disabled={finalSaving}
+                    className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-xs font-black text-white hover:bg-amber-700 shadow-sm transition-colors"
+                  >
+                    {finalSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {finalSaving ? 'Saving…' : `Override & Save ${allExtractedCount}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {viewer && (() => {
             const sheet = sheets.find((entry) => entry.id === viewer.sheetId)

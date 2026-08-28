@@ -5,9 +5,9 @@ import { describe, expect, it } from 'vitest'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const preparation = fs.readFileSync(path.join(root, 'supabase/migrations/20260813160000_prepare_historic_member_provenance_reconciliation.sql'), 'utf8')
-const exclusions = fs.readFileSync(path.join(root, 'supabase/migrations/20260813163000_add_historic_provenance_exclusions.sql'), 'utf8')
-const cutover = fs.readFileSync(path.join(root, 'supabase/migrations/20260813170000_harden_paper_scan_final_save.sql'), 'utf8')
+const preparation = fs.readFileSync(path.join(root, 'supabase/migrations/20260814005049_prepare_historic_member_provenance_reconciliation.sql'), 'utf8')
+const exclusions = fs.readFileSync(path.join(root, 'supabase/migrations/20260814074221_add_historic_provenance_exclusions.sql'), 'utf8')
+const cutover = fs.readFileSync(path.join(root, 'supabase/migrations/20260814122618_20260813170000_harden_paper_scan_final_save.sql'), 'utf8')
 
 describe('operator verified historic provenance overrides and exclusions', () => {
   it('1. applied preparation migration contains only overrides and matches live applied design', () => {

@@ -453,7 +453,8 @@ const Dashboard = ({ isAdmin = false }) => {
     workspaceMemberCodeAssignments,
     workspaceMemberCodeStatus,
     guidedFormSettings,
-    recentMemberEdits
+    recentMemberEdits,
+    formatMemberName
   } = useApp()
   const { isDarkMode } = useTheme()
   const { selection, success, error: errorHaptic } = useHapticFeedback()
@@ -1916,7 +1917,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
     try {
       const member = members.find(m => m.id === memberId)
-      const memberName = member ? (member['full_name'] || member['Full Name']) : 'Member'
+      const memberName = member ? (formatMemberName(member['full_name'] || member['Full Name']) || 'Member') : 'Member'
       const hasBadge = memberHasBadge(member, badgeType)
 
       // Badge colors matching the icon colors
@@ -2395,7 +2396,7 @@ const Dashboard = ({ isAdmin = false }) => {
     if (decision.action === INLINE_ATTENDANCE_ACTIONS.SKIP) {
       // Clear on a historical member not yet in the current month: do NOT
       // import the member merely to clear attendance.
-      const memberName = resultItem?.full_name || resultItem?.['Full Name'] || 'Member'
+      const memberName = formatMemberName(resultItem?.full_name || resultItem?.['Full Name']) || 'Member'
       toast.info(`${memberName} is not in ${getMonthDisplayName(currentTable)} yet. Use Present or Absent to add them first.`)
       return
     }
@@ -2517,6 +2518,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 <MemberCard
                   key={getMemberCanonicalId(member) || member.id}
                   member={member}
+                  formatMemberName={formatMemberName}
                   memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
                   isMemberCodeLoading={isMemberCodeHydrating}
                   onIndexClick={openMemberPass}
@@ -2751,7 +2753,7 @@ const Dashboard = ({ isAdmin = false }) => {
                               <div className="px-3 py-4 text-center text-xs sm:text-sm text-gray-400 dark:text-gray-500">No one present</div>
                             ) : (
                               presentMembers.map((member, index) => {
-                                const name = member['full_name'] || member['Full Name'] || 'Unknown'
+                                const name = formatMemberName(member['full_name'] || member['Full Name']) || 'Unknown'
                                 const createdAt = member.created_at || member.inserted_at ? new Date(member.created_at || member.inserted_at) : null
                                 const dateStr = createdAt
                                   ? createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -2798,7 +2800,7 @@ const Dashboard = ({ isAdmin = false }) => {
                               <div className="px-3 py-4 text-center text-xs sm:text-sm text-gray-400 dark:text-gray-500">No one absent</div>
                             ) : (
                               absentMembers.map((member, index) => {
-                                const name = member['full_name'] || member['Full Name'] || 'Unknown'
+                                const name = formatMemberName(member['full_name'] || member['Full Name']) || 'Unknown'
                                 const createdAt = member.created_at || member.inserted_at ? new Date(member.created_at || member.inserted_at) : null
                                 const dateStr = createdAt
                                   ? createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -2876,13 +2878,13 @@ const Dashboard = ({ isAdmin = false }) => {
             {duplicateGroups.map(group => {
               const keepId = groupKeepId(group.members)
               const keepMember = group.members.find(m => m.id === keepId)
-              const keepMemberName = keepMember ? (keepMember['Full Name'] || keepMember.full_name) : 'Unknown'
+              const keepMemberName = keepMember ? (formatMemberName(keepMember['Full Name'] || keepMember.full_name) || 'Unknown') : 'Unknown'
               return (
                 <div key={group.name} className={`rounded-lg border p-2.5 sm:p-3 ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 mb-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <Users className="w-4 h-4 text-primary-600 flex-shrink-0" />
-                      <span className={`font-semibold truncate ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{group.members[0]['Full Name'] || group.members[0].full_name}</span>
+                      <span className={`font-semibold truncate ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{formatMemberName(group.members[0]['Full Name'] || group.members[0].full_name)}</span>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700 truncate max-w-[120px] sm:max-w-none">Keep: {keepMemberName}</span>
@@ -2927,7 +2929,7 @@ const Dashboard = ({ isAdmin = false }) => {
                                 ? 'text-green-800 dark:text-green-300'
                                 : isDarkMode ? 'text-white' : 'text-gray-900'
                                 }`}>
-                                {m['Full Name'] || m.full_name}
+                                {formatMemberName(m['Full Name'] || m.full_name)}
                                 {isKeepMember && <span className="ml-2 text-xs bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full">Keep</span>}
                               </div>
                               <div className={`text-xs ${isKeepMember
@@ -3018,6 +3020,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   <MemberCard
                     key={getMemberCanonicalId(member) || member.id}
                     member={member}
+                    formatMemberName={formatMemberName}
                     memberIndexCode={memberCodesEnabled ? getMemberIndexCode(member, memberIndexCodeMap) : null}
                     isMemberCodeLoading={isMemberCodeHydrating}
                     onIndexClick={openMemberPass}
@@ -3292,6 +3295,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     <MemberCard
                       key={`${resultItem.source_table}_${resultItem.canonical_member_id}`}
                       member={memberObj}
+                      formatMemberName={formatMemberName}
                       memberIndexCode={resultItem.member_code || (memberCodesEnabled ? getMemberIndexCode(memberObj, memberIndexCodeMap) : null)}
                       isMemberCodeLoading={false}
                       onIndexClick={openMemberPass}
@@ -3431,7 +3435,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   Are you sure you want to delete this member?
                 </h4>
                 <p className="text-xl font-bold text-red-600 dark:text-red-400 mb-3">
-                  {memberToDelete?.['full_name'] || memberToDelete?.['Full Name']}
+                  {formatMemberName(memberToDelete?.['full_name'] || memberToDelete?.['Full Name'])}
                 </p>
                 <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 mb-4">
                   <p className="text-sm text-yellow-800 dark:text-yellow-300 flex items-center gap-2">
@@ -3496,7 +3500,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 if (!m) return null;
                 return (
                   <div key={id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 px-3 py-2 rounded-lg border border-gray-100 dark:border-gray-600 group">
-                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{m['full_name'] || m['Full Name']}</span>
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{formatMemberName(m['full_name'] || m['Full Name'])}</span>
                     <button
                       onClick={(e) => {
                         selection()
@@ -3625,7 +3629,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     return memberIds.map(id => {
                       const member = members.find(m => m.id === id)
                       if (!member) return null
-                      const name = member['full_name'] || member['Full Name'] || 'Unknown'
+                      const name = formatMemberName(member['full_name'] || member['Full Name']) || 'Unknown'
                       const isPresent = sourceMap[id] === true
                       const isSelected = selectedTransferIds.has(id)
 
@@ -3937,12 +3941,12 @@ const Dashboard = ({ isAdmin = false }) => {
                         onClick={toggleQuickPassQrExpanded}
                         className="member-code-pass-qr-card"
                         aria-expanded={isQuickPassQrExpanded}
-                        aria-label={isQuickPassQrExpanded ? `Collapse QR check-in code for ${getMemberSearchName(quickPassMember)}` : `Expand QR check-in code for ${getMemberSearchName(quickPassMember)}`}
+                        aria-label={isQuickPassQrExpanded ? `Collapse QR check-in code for ${formatMemberName(getMemberSearchName(quickPassMember))}` : `Expand QR check-in code for ${formatMemberName(getMemberSearchName(quickPassMember))}`}
                       >
                         <span className="member-code-pass-qr-scanline" aria-hidden="true" />
                         <img
                           src={quickPassQrImageUrl}
-                          alt={`Scan to mark ${getMemberSearchName(quickPassMember)} present`}
+                          alt={`Scan to mark ${formatMemberName(getMemberSearchName(quickPassMember))} present`}
                           className="member-code-pass-qr-image"
                           draggable="false"
                         />
@@ -3964,7 +3968,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   ) : memberCodeShowPhoto && (
                     <div className="relative mx-auto my-7 h-32 w-32 rounded-full border-4 border-[var(--member-pass-accent)] bg-gradient-to-br from-white/35 via-white/10 to-transparent p-1 shadow-[0_0_60px_var(--member-pass-soft)] md:my-0 md:h-44 md:w-44 md:border-[5px] lg:h-48 lg:w-48">
                       <div className="grid h-full w-full place-items-center rounded-full bg-gradient-to-br from-[var(--member-pass-accent)] to-[var(--member-pass-accent-2)] text-5xl font-black text-white md:text-7xl">
-                        {getMemberSearchName(quickPassMember).charAt(0).toUpperCase()}
+                        {formatMemberName(getMemberSearchName(quickPassMember)).charAt(0).toUpperCase()}
                       </div>
                     </div>
                   )}
@@ -3973,7 +3977,7 @@ const Dashboard = ({ isAdmin = false }) => {
                 <div className="member-code-pass-details">
                   <div>
                     <div className="member-code-pass-identity flex flex-wrap items-center justify-center gap-3 md:justify-start md:gap-4">
-                      <h3 className="max-w-full break-words text-3xl font-black leading-tight md:text-left md:text-4xl lg:text-5xl">{getMemberSearchName(quickPassMember)}</h3>
+                      <h3 className="max-w-full break-words text-3xl font-black leading-tight md:text-left md:text-4xl lg:text-5xl">{formatMemberName(getMemberSearchName(quickPassMember))}</h3>
                       <MemberCodeBadge
                         code={quickPassCode}
                         styleKey={memberCodePassBadgeStyle}

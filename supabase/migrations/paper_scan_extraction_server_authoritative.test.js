@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260812_paper_scan_extraction_server_authoritative.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260812065418_paper_scan_extraction_server_authoritative.sql'), 'utf8')
 
 const QUOTA_PER_WINDOW = 40
 const WINDOW_MS = 60 * 60 * 1000

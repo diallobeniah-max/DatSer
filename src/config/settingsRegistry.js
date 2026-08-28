@@ -41,6 +41,7 @@ export const PERSONAL_PREFERENCE_KEYS = [
 ]
 
 export const WORKSPACE_PREFERENCE_KEYS = [
+  'member_name_style',
   'member_codes_enabled',
   'member_code_quick_pass_enabled',
   'member_code_show_logo',
@@ -93,6 +94,7 @@ const PERSONAL_DEFAULTS = {
 }
 
 const WORKSPACE_DEFAULTS = {
+  member_name_style: 'title',
   member_codes_enabled: true,
   member_code_quick_pass_enabled: true,
   member_code_show_logo: true,

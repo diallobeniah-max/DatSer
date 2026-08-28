@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Sun, Moon, Monitor, Sparkles, CheckCircle, VolumeX, LayoutDashboard, Minimize2, ScanSearch } from 'lucide-react'
+import { Sun, Moon, Monitor, Sparkles, CheckCircle, VolumeX, LayoutDashboard, Minimize2, ScanSearch, Type } from 'lucide-react'
+import { toast } from 'react-toastify'
+import { normalizeMemberNameStyle } from '../utils/memberNameStyle'
 
 const AppearanceSettingsSection = ({
     themeMode,
@@ -7,6 +9,7 @@ const AppearanceSettingsSection = ({
     preferences,
     updatePreferences,
     isCollaborator,
+    canManageWorkspace = !isCollaborator,
     getSettingTargetClass
 }) => {
     const themeOptions = [
@@ -18,8 +21,10 @@ const AppearanceSettingsSection = ({
     const mobileDashboardStatusEnabled = preferences?.mobile_dashboard_status_enabled === true
     const compactUiEnabled = preferences?.compact_ui_enabled === true
     const smartCompactPromptEnabled = preferences?.smart_compact_prompt_enabled !== false
+    const memberNameStyle = normalizeMemberNameStyle(preferences?.member_name_style)
     const [optimisticCompactUiEnabled, setOptimisticCompactUiEnabled] = useState(compactUiEnabled)
     const [isSavingCompactUi, setIsSavingCompactUi] = useState(false)
+    const [isSavingMemberNameStyle, setIsSavingMemberNameStyle] = useState(false)
 
     useEffect(() => {
         setOptimisticCompactUiEnabled(compactUiEnabled)
@@ -47,6 +52,25 @@ const AppearanceSettingsSection = ({
             setIsSavingCompactUi(false)
         }
     }, [applyCompactUiClass, compactUiEnabled, optimisticCompactUiEnabled, updatePreferences])
+
+    const handleMemberNameStyleChange = useCallback(async (nextStyle) => {
+        if (!canManageWorkspace || isSavingMemberNameStyle || nextStyle === memberNameStyle) return
+        setIsSavingMemberNameStyle(true)
+        try {
+            // SettingsPage removes its optimistic value once the RPC settles.
+            // Keeping the RPC silent here guarantees this interaction emits only
+            // one clear error when the server rejects the shared preference.
+            const saved = await updatePreferences?.({ member_name_style: nextStyle }, { silent: true })
+            if (saved !== true) {
+                toast.error('Member name style could not be saved. Your previous saved style is still active.')
+            }
+        } catch (error) {
+            console.error('Failed to save member name style:', error)
+            toast.error('Member name style could not be saved. Your previous saved style is still active.')
+        } finally {
+            setIsSavingMemberNameStyle(false)
+        }
+    }, [canManageWorkspace, isSavingMemberNameStyle, memberNameStyle, updatePreferences])
 
     const ToggleRow = ({ icon: Icon, title, description, checked, onChange, settingId, disabled = false }) => (
         <div
@@ -122,6 +146,51 @@ const AppearanceSettingsSection = ({
                         )
                     })}
                 </div>
+            </div>
+
+            {/* Motion and layout */}
+            <div
+                data-setting-id="member_name_style"
+                tabIndex={-1}
+                className={`overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white dark:border-emerald-900/60 dark:from-emerald-950/30 dark:to-gray-800 ${getSettingTargetClass('member_name_style')}`}
+            >
+                <div className="flex gap-3 p-4 sm:p-5">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                        <Type className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 dark:text-white">Member name style</p>
+                        <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">Choose how member names appear throughout this workspace. Stored names and matching stay unchanged.</p>
+                    </div>
+                </div>
+                <div className="grid gap-2 px-4 pb-4 sm:grid-cols-3 sm:px-5 sm:pb-5">
+                    {[
+                        { id: 'lower', token: 'aa', sample: 'john edem adae' },
+                        { id: 'title', token: 'Ab', sample: 'John Edem Adae' },
+                        { id: 'upper', token: 'AA', sample: 'JOHN EDEM ADAE' }
+                    ].map((option) => {
+                        const selected = memberNameStyle === option.id
+                        return (
+                            <button
+                                key={option.id}
+                                type="button"
+                                disabled={!canManageWorkspace || isSavingMemberNameStyle}
+                                onClick={() => handleMemberNameStyleChange(option.id)}
+                                className={`relative flex min-h-16 items-center gap-3 rounded-xl border px-3 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 ${selected
+                                    ? 'border-emerald-500 bg-emerald-600 text-white shadow-sm shadow-emerald-500/30'
+                                    : 'border-gray-200 bg-white text-gray-800 hover:border-emerald-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:hover:border-emerald-700'}`}
+                            >
+                                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm font-black ${selected ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'}`}>{option.token}</span>
+                                <span className="min-w-0">
+                                    <span className="block text-xs font-semibold uppercase tracking-wide opacity-80">{option.id}</span>
+                                    <span className="block truncate text-sm font-semibold">{option.sample}</span>
+                                </span>
+                                {selected && <CheckCircle className="ml-auto h-4 w-4 shrink-0" aria-hidden="true" />}
+                            </button>
+                        )
+                    })}
+                </div>
+                {!canManageWorkspace && <p className="px-4 pb-4 text-xs text-gray-500 dark:text-gray-400 sm:px-5">Only the workspace owner or an admin collaborator can change this shared setting.</p>}
             </div>
 
             {/* Motion and layout */}

@@ -36,11 +36,8 @@ begin
   end;
 end;
 $$;
-
 revoke all on function public.add_attendance_column(text, text) from public, anon;
 grant execute on function public.add_attendance_column(text, text) to authenticated;
-
-
 -- 2. RPC: search_workspace_members_across_months
 create or replace function public.search_workspace_members_across_months(
   p_owner_id uuid,
@@ -304,11 +301,8 @@ begin
   limit v_limit;
 end;
 $$;
-
 revoke all on function public.search_workspace_members_across_months(uuid, text, text, integer) from public, anon;
 grant execute on function public.search_workspace_members_across_months(uuid, text, text, integer) to authenticated;
-
-
 -- 3. RPC: set_member_attendance_from_other_month
 create or replace function public.set_member_attendance_from_other_month(
   p_owner_id uuid,
@@ -595,8 +589,6 @@ begin
   return v_response;
 end;
 $$;
-
 revoke all on function public.set_member_attendance_from_other_month(uuid, text, text, uuid, date, text, text) from public, anon;
 grant execute on function public.set_member_attendance_from_other_month(uuid, text, text, uuid, date, text, text) to authenticated;
-
 notify pgrst, 'reload schema';

@@ -73,6 +73,14 @@ export const SETTINGS_SECTIONS = [
         keywords: 'search other months historical search scope export import backup members data storage csv download upload database offline sync cache'
     },
     {
+        id: 'csv_import',
+        label: 'CSV Import',
+        icon: Upload,
+        color: 'green',
+        content: 'Import members and attendance from spreadsheet data. Parse CSV files or pasted text, reconcile against historical members, resolve differences, and save.',
+        keywords: 'csv import spreadsheet upload paste members attendance reconcile historical data sunday sheets'
+    },
+    {
         id: 'storage',
         label: 'Storage & Limits',
         icon: Archive,
@@ -493,11 +501,19 @@ export const SETTINGS_SEARCH_INDEX = [
         icon: Download
     },
     {
+        id: 'csv_import',
+        section: 'csv_import',
+        label: 'CSV Import',
+        description: 'Import members and attendance from spreadsheet data',
+        keywords: 'csv import spreadsheet upload paste attendance excel members reconcile reconcile sunday',
+        icon: Upload
+    },
+    {
         id: 'import_data',
-        section: 'data',
+        section: 'csv_import',
         label: 'Import Data',
-        description: 'Import members from CSV',
-        keywords: 'import upload restore csv add bulk',
+        description: 'Import members and attendance from CSV',
+        keywords: 'import upload restore csv add bulk attendance spreadsheet',
         icon: Upload
     },
     {

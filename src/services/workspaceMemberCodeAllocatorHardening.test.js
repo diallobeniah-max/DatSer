@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const sql = fs.readFileSync(path.join(root, 'supabase/migrations/20260813170000_harden_paper_scan_final_save.sql'), 'utf8')
+const sql = fs.readFileSync(path.join(root, 'supabase/migrations/20260814122618_20260813170000_harden_paper_scan_final_save.sql'), 'utf8')
 
 const functionBody = (name) => {
   const start = sql.indexOf(`function public.${name}(`)

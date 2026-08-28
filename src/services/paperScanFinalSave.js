@@ -173,7 +173,8 @@ const selectedSundaysForMonth = (settings, month) => {
 
 // Attendance items that may be written: explicit Present/Absent decisions or
 // resolved scan marks on a dateKey that is one of the sheet's actually-mapped
-// Sundays for one of the selected months.
+// Sundays for one of the selected months. Sunday selection is a write boundary,
+// never an attendance decision by itself.
 const collectAttendanceItems = ({ row, settings }) => {
   const items = []
   let unresolved = 0
@@ -232,7 +233,8 @@ export const buildFinalSavePlan = ({
   // durable operation to only the rows the operator edited in that pass.
   // Omit this value for the normal "save all approved" workflow.
   onlyRowKeys = null,
-  onlyEditedChanges = null
+  onlyEditedChanges = null,
+  overrideAll = false
 }) => {
   const rows = []
   const sheetList = Array.isArray(sheets) ? sheets : []
@@ -242,8 +244,16 @@ export const buildFinalSavePlan = ({
   sheetList.forEach((sheet) => {
     const result = resultsBySheet?.[sheet.id]
     if (result?.status !== 'ok' || !result?.payload) return
+    const fallbackSettings = Object.values(settingsBySheet).find(
+      (s) => s && typeof s === 'object' && s.sundays && Object.values(s.sundays).some((arr) => Array.isArray(arr) && arr.length > 0)
+    )
+    const rawSettings = settingsBySheet?.[sheet.id] || fallbackSettings || EMPTY_ATTENDANCE_SETTINGS
+    const settings = {
+      ...rawSettings,
+      months: rawSettings.months?.length ? rawSettings.months : (fallbackSettings?.months || []),
+      sundays: rawSettings.sundays && Object.keys(rawSettings.sundays).length ? rawSettings.sundays : (fallbackSettings?.sundays || {})
+    }
     const excluded = new Set(Array.isArray(result.excludedIndices) ? result.excludedIndices : [])
-    const settings = settingsBySheet?.[sheet.id] || EMPTY_ATTENDANCE_SETTINGS
     result.payload.rows.forEach((row, rowIndex) => {
       if (excluded.has(rowIndex)) return
       const rowKey = `${sheet.id}:${rowIndex}`
@@ -303,46 +313,86 @@ export const buildFinalSavePlan = ({
         return
       }
       const member = match.member
-      // A possible/no match is deliberately not a write target. Saving the
-      // approved portion of a batch must never attach profile or attendance
-      // data to a weakly matched member; the row stays in Final Review until
-      // the operator explicitly selects a member or creates a new one.
-      if (match.status !== MATCH_STATUSES.MATCHED || !member) return
-      const profileUpdates = {}
-      const editedFields = new Set(editedScope?.fields || [])
-      let unresolvedProfile = 0
-      if (member) {
-        const compares = compareRowToMember(row, member)
-        COMPARE_FIELDS.forEach(({ key }) => {
-          if (editedScope && !editedFields.has(key)) return
-          const decision = getFieldDecision(row, key)
-          if (!decision) return
-          if (!fieldValuesEquivalent(key, decision.value, getExistingValue(member, key))) {
-            profileUpdates[key] = decision.value
-          }
+      // CASE A & B: confirmed or operator-selected existing member
+      if (match.status === MATCH_STATUSES.MATCHED && member) {
+        const profileUpdates = {}
+        const editedFields = new Set(editedScope?.fields || [])
+        let unresolvedProfile = 0
+        if (member) {
+          const compares = compareRowToMember(row, member)
+          COMPARE_FIELDS.forEach(({ key }) => {
+            if (editedScope && !editedFields.has(key)) return
+            const decision = getFieldDecision(row, key)
+            if (!decision) return
+            if (!fieldValuesEquivalent(key, decision.value, getExistingValue(member, key))) {
+              profileUpdates[key] = decision.value
+            }
+          })
+          unresolvedProfile = compares.reduce((sum, compare) => {
+            // Parent/Guardian fields are optional; only a scanned value that has
+            // not been decided needs review, never a blank optional cell.
+            if (compare.state === FIELD_STATES.MISSING) return sum
+            return sum + (fieldNeedsDecision(compare) && !getFieldDecision(row, compare.field) ? 1 : 0)
+          }, 0)
+        }
+        if (editedScope && Object.keys(profileUpdates).length === 0 && attendance.items.length === 0) return
+        rows.push({
+          sheetId: sheet.id,
+          rowIndex,
+          row,
+          memberAction: 'update',
+          match,
+          member,
+          memberId: member?.id || null,
+          profileUpdates,
+          attendance: attendance.items,
+          unresolvedAttendance: editedScope ? 0 : attendance.unresolved,
+          unresolvedProfile: editedScope ? 0 : unresolvedProfile,
+          hasWrites: Object.keys(profileUpdates).length > 0 || attendance.items.length > 0
         })
-        unresolvedProfile = compares.reduce((sum, compare) => {
-          // Parent/Guardian fields are optional; only a scanned value that has
-          // not been decided needs review, never a blank optional cell.
-          if (compare.state === FIELD_STATES.MISSING) return sum
-          return sum + (fieldNeedsDecision(compare) && !getFieldDecision(row, compare.field) ? 1 : 0)
-        }, 0)
+        return
       }
-      if (editedScope && Object.keys(profileUpdates).length === 0 && attendance.items.length === 0) return
-      rows.push({
-        sheetId: sheet.id,
-        rowIndex,
-        row,
-        memberAction: 'update',
-        match,
-        member,
-        memberId: member?.id || null,
-        profileUpdates,
-        attendance: attendance.items,
-        unresolvedAttendance: editedScope ? 0 : attendance.unresolved,
-        unresolvedProfile: editedScope ? 0 : unresolvedProfile,
-        hasWrites: Object.keys(profileUpdates).length > 0 || attendance.items.length > 0
-      })
+
+      // CASE D & E: In OVERRIDE MODE, unresolved/unmatched/possible match rows with no selected member
+      // are treated as explicitly confirmed new-member creation candidates using extracted full name and profile.
+      if (overrideAll) {
+        const createProfile = effectiveNewMemberProfile(row)
+        // CASE F: no usable full name -> cannot safely create
+        if (!asTrimmed(createProfile.full_name)) return
+
+        const target = row?.newMemberTarget || { mode: 'this-month', monthKey: settings.month }
+        const targetMode = target?.mode === 'all-year' || target?.mode === 'all-months' ? 'all-year' : 'this-month'
+        const selectedMonths = attendanceMonthsForSettings(settings)
+        const frozenTargetMonths = [...new Set(
+          targetMode === 'all-year' && target?.monthKey
+            ? (Array.isArray(monthlyTables) ? monthlyTables : [])
+              .map(monthKeyFromTableName)
+              .filter((key) => key?.slice(0, 4) === target.monthKey.slice(0, 4))
+            : targetMode === 'this-month' && selectedMonths.length
+              ? selectedMonths
+              : (target?.monthKey ? [target.monthKey] : [])
+        )].sort().map((key) => `${key}-01`)
+
+        rows.push({
+          sheetId: sheet.id,
+          rowIndex,
+          row,
+          memberAction: 'create-new',
+          member: null,
+          memberId: null,
+          createProfile,
+          newMemberTarget: target,
+          targetMonths: frozenTargetMonths,
+          attendance: attendance.items,
+          unresolvedAttendance: 0,
+          unresolvedProfile: 0,
+          hasWrites: Boolean(createProfile.full_name) || attendance.items.length > 0
+        })
+        return
+      }
+
+      // Normal mode: unconfirmed/unmatched row is dropped from save plan
+      return
     })
   })
   return { rows }
@@ -517,7 +567,7 @@ const executeDurableStep = async ({ operationId, stepId, supabase, action }) => 
 // Processes every planned row in the approved order (validate → resolve target
 // member → create if requested → approved profile changes → attendance →
 // verify → saved/failed). Individual rows never hide another row's failure.
-export const executeFinalSave = async ({ plan, confirmedDuplicateKeys = [], deps = {} }) => {
+export const executeFinalSave = async ({ plan, confirmedDuplicateKeys = [], overrideAll = false, deps = {} }) => {
   const {
     supabase,
     currentMembers = [],
@@ -548,11 +598,13 @@ export const executeFinalSave = async ({ plan, confirmedDuplicateKeys = [], deps
   const blockedDuplicates = detectNewMemberDuplicates({ rows: plan.rows, currentMembers: membersForDuplicateCheck })
   const confirmedSet = new Set(confirmedDuplicateKeys.map((key) => `${key.sheetId}:${key.rowIndex}`))
 
-  // Block every unconfirmed duplicate before the first mutation. A stale
-  // duplicate must never allow earlier rows to write first.
-  const unconfirmedDuplicates = blockedDuplicates.filter((duplicate) => (
-    !confirmedSet.has(`${duplicate.sheetId}:${duplicate.rowIndex}`)
-  ))
+  // Block every unconfirmed duplicate before the first mutation. In overrideAll mode,
+  // the operator has explicitly authorized creating new members in the confirmation modal.
+  const unconfirmedDuplicates = overrideAll
+    ? []
+    : blockedDuplicates.filter((duplicate) => (
+        !confirmedSet.has(`${duplicate.sheetId}:${duplicate.rowIndex}`)
+      ))
   if (unconfirmedDuplicates.length > 0) {
     return {
       summary: { saved: 0, newMembersCreated: 0, profileChanges: 0, attendanceUpdated: 0, skippedUnresolved: 0, skippedMissingTable: 0, failed: 0 },
@@ -862,9 +914,10 @@ export const previewFinalSave = ({
   monthlyTables = [],
   settingsBySheet = {},
   onlyRowKeys = null,
-  onlyEditedChanges = null
+  onlyEditedChanges = null,
+  overrideAll = false
 }) => {
-  const plan = buildFinalSavePlan({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet, onlyRowKeys, onlyEditedChanges })
+  const plan = buildFinalSavePlan({ sheets, resultsBySheet, currentMembers, monthlyTables, settingsBySheet, onlyRowKeys, onlyEditedChanges, overrideAll })
   const counts = { rows: plan.rows.length, newMembers: 0, profileChanges: 0, attendance: 0, unresolved: 0 }
   plan.rows.forEach((entry) => {
     if (entry.memberAction === 'create-new') counts.newMembers += 1
@@ -872,7 +925,7 @@ export const previewFinalSave = ({
     counts.attendance += (entry.attendance || []).length
     counts.unresolved += (entry.unresolvedAttendance || 0) + (entry.unresolvedProfile || 0)
   })
-  const duplicates = detectNewMemberDuplicates({ rows: plan.rows, currentMembers })
+  const duplicates = overrideAll ? [] : detectNewMemberDuplicates({ rows: plan.rows, currentMembers })
   return { plan, counts, duplicates }
 }
 

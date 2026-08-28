@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ATOMIC_SQL = readFileSync(join(HERE, '20260814130000_paper_scan_saved_scans_atomic_staging.sql'), 'utf8')
-const ANON_SQL = readFileSync(join(HERE, '20260814140000_harden_paper_scan_saved_scans_non_anonymous.sql'), 'utf8')
+const ATOMIC_SQL = readFileSync(join(HERE, '20260815071003_paper_scan_saved_scans_atomic_staging.sql'), 'utf8')
+const ANON_SQL = readFileSync(join(HERE, '20260815071020_harden_paper_scan_saved_scans_non_anonymous.sql'), 'utf8')
 
 describe('paper_scan_saved_scans_atomic_staging migration', () => {
   it('defines the atomic merge RPC as security definer with a locked search_path', () => {

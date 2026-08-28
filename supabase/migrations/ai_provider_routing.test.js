@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260815180000_ai_provider_routing.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260815155337_ai_provider_routing.sql'), 'utf8')
 
 describe('ai_provider_routing migration', () => {
   it('widens the provider set to gemini + qwen and adds a model column', () => {

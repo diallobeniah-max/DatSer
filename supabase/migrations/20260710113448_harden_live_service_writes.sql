@@ -7,8 +7,6 @@ ALTER TABLE public.member_bundle_audit_log ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.member_mutation_idempotency FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.member_bundle_audit_log FROM PUBLIC, anon, authenticated;
 
--- These tables are only accessed by guarded SECURITY DEFINER RPCs. The
--- frontend never needs direct table access to hashes or login attempts.
 REVOKE ALL ON TABLE public.admin_login_codes FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.admin_login_code_attempts FROM PUBLIC, anon, authenticated;
 
@@ -89,4 +87,4 @@ $$;
 REVOKE ALL ON FUNCTION public.update_member_record(TEXT, UUID, JSONB, UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.update_member_record(TEXT, UUID, JSONB, UUID) TO authenticated;
 
-NOTIFY pgrst, 'reload schema';
+NOTIFY pgrst, 'reload schema';;

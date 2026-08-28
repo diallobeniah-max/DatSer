@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260816000000_harden_paper_scan_profile_fields.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260826044700_harden_paper_scan_profile_fields.sql'), 'utf8')
 
 describe('paper_scan profile-field persistence migration', () => {
   it('is additive and never drops tables or mutates unrelated member tables', () => {

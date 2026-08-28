@@ -43,9 +43,11 @@ const MemberCard = memo(({
     onIndexClick,
     memberCodeBadgeStyle = 'soft',
     memberCodeBadgeCycleSlot = 0,
-    isMemberCodeLoading = false
+    isMemberCodeLoading = false,
+    formatMemberName = (value) => value
 }) => {
-    const name = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || 'Unnamed member'
+    const canonicalName = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || ''
+    const name = formatMemberName(canonicalName) || 'Unnamed member'
     const regDateRaw = member.inserted_at || member.created_at
     
     const getRelativeRegTime = () => {

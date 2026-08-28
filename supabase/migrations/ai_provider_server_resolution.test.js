@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const migration = readFileSync(resolve(repo, 'supabase/migrations/20260815200000_harden_ai_provider_server_resolution.sql'), 'utf8')
+const migration = readFileSync(resolve(repo, 'supabase/migrations/20260815180356_harden_ai_provider_server_resolution.sql'), 'utf8')
 
 describe('AI provider server credential resolution migration', () => {
   it('permits the private service-role resolver without exposing it to browser roles', () => {

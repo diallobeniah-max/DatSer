@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260818000000_fix_paper_scan_saved_delete_cascade.sql'), 'utf8')
-const FINAL_SAVE_SQL = readFileSync(join(HERE, '20260813170000_harden_paper_scan_final_save.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260818205247_fix_paper_scan_saved_delete_cascade.sql'), 'utf8')
+const FINAL_SAVE_SQL = readFileSync(join(HERE, '20260814122618_20260813170000_harden_paper_scan_final_save.sql'), 'utf8')
 
 describe('saved scan deletion cascade', () => {
   it('cascades only from the saved scan to its private Final Save operation ledger', () => {

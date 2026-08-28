@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260814150000_harden_paper_scan_member_create_duplicate_guard.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260815134507_harden_paper_scan_member_create_duplicate_guard.sql'), 'utf8')
 
 describe('paper_scan_member_create_duplicate_guard migration', () => {
   it('is additive and never touches members, attendance, codes, or provenance tables', () => {

@@ -1030,7 +1030,10 @@ describe('PaperScanReview feature regressions', () => {
     await waitFor(() => expect(screen.getByText('John Doe')).toBeTruthy())
     expect(screen.getByText('Jane Smith')).toBeTruthy()
     expect(screen.getByText(/Choose Sundays in Sundays tab to enable saving/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Choose Sundays first' }).disabled).toBe(true)
+    const chooseSundaysButton = screen.getByRole('button', { name: 'Choose Sundays first' })
+    expect(chooseSundaysButton.disabled).toBe(false)
+    fireEvent.click(chooseSundaysButton)
+    expect(screen.getByRole('tab', { name: /Sundays/ }).getAttribute('aria-selected')).toBe('true')
   })
 
   it('uses custom MonthPickerPopup instead of native input type month in Step 2', async () => {

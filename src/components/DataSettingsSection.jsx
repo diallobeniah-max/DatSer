@@ -22,7 +22,8 @@ const DataSettingsSection = ({
     members,
     setShowExportCenter,
     setArchiveMonth,
-    getSettingTargetClass
+    getSettingTargetClass,
+    openSettingsSection
 }) => {
     const offlineBadgeClass = offlineModeStatus === 'forced-offline'
         ? 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100'
@@ -194,6 +195,22 @@ const DataSettingsSection = ({
                         <div className="text-left">
                             <p className="font-medium text-gray-900 dark:text-white">Export Center</p>
                             <p className="text-sm text-gray-500 dark:text-gray-400">Select months, preview, and export CSV</p>
+                        </div>
+                    </div>
+                    <ChevronLeft className="w-5 h-5 text-gray-400 rotate-180" />
+                </button>
+
+                <button
+                    onClick={() => openSettingsSection?.('csv_import')}
+                    className="w-full p-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                            <Upload className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div className="text-left">
+                            <p className="font-medium text-gray-900 dark:text-white">CSV Import</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Import members and attendance from spreadsheet data</p>
                         </div>
                     </div>
                     <ChevronLeft className="w-5 h-5 text-gray-400 rotate-180" />

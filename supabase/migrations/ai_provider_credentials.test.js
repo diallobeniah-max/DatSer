@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SQL = readFileSync(join(HERE, '20260815170000_ai_provider_credentials.sql'), 'utf8')
+const SQL = readFileSync(join(HERE, '20260815151753_ai_provider_credentials.sql'), 'utf8')
 
 describe('ai_provider_credentials migration', () => {
   it('creates an encrypted credentials table and denies all client SELECT', () => {

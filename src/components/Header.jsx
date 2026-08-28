@@ -167,7 +167,8 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     memberPreviewSyncStatus,
     members,
     membersTotalCount,
-    recentMemberEdits
+    recentMemberEdits,
+    formatMemberName
   } = useApp()
   const { selection } = useHapticFeedback()
   const [showMonthPicker, setShowMonthPicker] = useState(false)
@@ -384,7 +385,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       return {
         member,
         date: localEdit?.edited_at ? new Date(localEdit.edited_at) : getMemberRecentDate(member),
-        name: localEdit?.name || getMemberDisplayName(member)
+        name: formatMemberName(localEdit?.name || getMemberDisplayName(member))
       }
     })
 
@@ -393,7 +394,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       rows.push({
         member: { id: item.id, full_name: item.name, updated_at: item.edited_at },
         date: item.edited_at ? new Date(item.edited_at) : null,
-        name: item.name || 'Unknown member',
+        name: formatMemberName(item.name) || 'Unknown member',
         dateKey: item.date_key || null,
         summary: item.summary || null,
         action: item.action || 'update'
@@ -418,7 +419,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
         return a.name.localeCompare(b.name)
       })
       .slice(0, 24)
-  }, [members, filteredMembers, recentMemberEdits])
+  }, [members, filteredMembers, recentMemberEdits, formatMemberName])
 
   const recentDateOptions = useMemo(() => {
     const keys = Array.from(new Set(

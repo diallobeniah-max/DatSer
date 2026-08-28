@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const migrationName = '20260807140000_fix_empty_legacy_member_code_allocation.sql'
+const migrationName = '20260807194507_fix_empty_legacy_member_code_allocation.sql'
 const migrationPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../supabase/migrations',

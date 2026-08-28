@@ -93,3 +93,5 @@ COMMENT ON FUNCTION public.verify_admin_code_login_edge(TEXT, TEXT)
 IS 'Server-only, rate-limited admin-code verifier used by the admin-code-login Edge Function.';
 
 NOTIFY pgrst, 'reload schema';
+
+;

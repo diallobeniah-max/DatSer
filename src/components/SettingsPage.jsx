@@ -85,6 +85,7 @@ const UpdatesSettingsSection = lazyWithRetry(() => import('./UpdatesSettingsSect
 const DangerSettingsSection = lazyWithRetry(() => import('./DangerSettingsSection'))
 const DeveloperToolsPanel = lazyWithRetry(() => import('./DeveloperToolsPanel'))
 const AiProvidersSection = lazyWithRetry(() => import('./AiProvidersSection'))
+const SettingsCsvImport = lazyWithRetry(() => import('./SettingsCsvImport'))
 
 const PreviewInput = ({ children, compact = false }) => (
     <div className={`guided-preview-input ${compact ? 'guided-preview-input-compact' : ''}`}>
@@ -281,6 +282,7 @@ const LazyPanelFallback = () => (
 )
 
 const WORKSPACE_MEMBER_CODE_PREFERENCE_KEYS = new Set([
+    'member_name_style',
     'workspace_member_codes_enabled',
     'member_code_format',
     'member_code_length',
@@ -904,7 +906,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
         controls: true,
         months: false
     })
-    const updatePreferences = useCallback(async (nextPreferences) => {
+    const updatePreferences = useCallback(async (nextPreferences, options = {}) => {
         if (!nextPreferences || typeof nextPreferences !== 'object') return
         const mergedPreferences = {
             ...effectivePreferences,
@@ -931,14 +933,22 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
             let okWorkspace = true
 
             if (Object.keys(personalPatch).length > 0) {
-                okPersonal = await savePersonalPreferences?.(personalPatch)
+                okPersonal = await savePersonalPreferences?.(personalPatch, options)
             }
             if (Object.keys(workspacePatch).length > 0) {
-                okWorkspace = await saveWorkspacePreferences?.(dataOwnerId, workspacePatch)
+                okWorkspace = await saveWorkspacePreferences?.(dataOwnerId, workspacePatch, options)
             }
 
-            if (isMemberCodeVisibilityChange) syncMemberCodeVisibility()
-            return okPersonal && okWorkspace
+            const saved = okPersonal === true && okWorkspace === true
+            if (saved && isMemberCodeVisibilityChange) syncMemberCodeVisibility()
+            // The visible setting must always resolve from the confirmed server
+            // response, never from an optimistic patch that has become stale.
+            setOptimisticPreferencePatch((prev) => {
+                const next = { ...prev }
+                Object.keys(nextPreferences).forEach((key) => delete next[key])
+                return next
+            })
+            return saved
         } catch (error) {
             setOptimisticPreferencePatch((prev) => {
                 const next = { ...prev }
@@ -1693,7 +1703,14 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             oldestMonthTable={oldestMonthTable}
                             setArchiveMonth={setArchiveMonth}
                             getSettingTargetClass={getSettingTargetClass}
+                            openSettingsSection={openSettingsSection}
                         />
+                    </React.Suspense>
+                )
+            case 'csv_import':
+                return (
+                    <React.Suspense fallback={<LazyPanelFallback />}>
+                        <SettingsCsvImport />
                     </React.Suspense>
                 )
             case 'storage':
@@ -1722,6 +1739,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                             preferences={effectivePreferences}
                             updatePreferences={updatePreferences}
                             isCollaborator={isCollaborator}
+                            canManageWorkspace={hasAdminAccess}
                             getSettingTargetClass={getSettingTargetClass}
                         />
                     </React.Suspense>
@@ -2017,9 +2035,9 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                 navigateToSetting('data', item.id)
                 setShowExportCenter(true)
                 return
+            case 'csv_import':
             case 'import_data':
-                navigateToSetting('data', item.id)
-                toast.info('Import feature coming soon!')
+                openSettingsSection('csv_import')
                 return
             case 'clean_duplicates':
                 navigateToSetting('data', item.id)
@@ -2785,6 +2803,7 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                     const Icon = section.icon
                                     const isActive = effectiveSection === section.id
                                     const isMemberCodes = section.id === 'member_codes'
+                                    const isCsvImport = section.id === 'csv_import'
                                     return (
                                         <button
                                             key={section.id}
@@ -2805,18 +2824,20 @@ const SettingsPage = ({ onBack, navigateToSection, onCreateMonth, onOpenAddMembe
                                                 isActive
                                                     ? isMemberCodes
                                                         ? 'bg-[var(--ds-color-member-codes-accent-soft)] text-[var(--ds-color-member-codes-accent-text)]'
+                                                        : isCsvImport
+                                                            ? 'bg-emerald-50 text-emerald-800 shadow-[inset_3px_0_0_0_#10b981] dark:!bg-emerald-950/35 dark:!text-emerald-100'
                                                         : 'bg-orange-50 text-orange-700 dark:!bg-[#3a2419] dark:!text-orange-100'
                                                     : 'bg-transparent text-gray-900 hover:bg-gray-50 dark:!text-white dark:hover:!bg-white/5'
                                             }`}
                                         >
-                                            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${isActive ? isMemberCodes ? 'bg-white/70 dark:bg-black/20' : 'bg-orange-100 dark:!bg-orange-500/20' : getIconBgColor(section.color)}`}>
-                                                <Icon className={`h-5 w-5 ${isActive ? isMemberCodes ? 'text-[var(--ds-color-member-codes-accent-text)]' : 'text-orange-600 dark:text-orange-300' : getIconColor(section.color)}`} />
+                                            <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${isActive ? isMemberCodes ? 'bg-white/70 dark:bg-black/20' : isCsvImport ? 'bg-emerald-100 ring-1 ring-emerald-200 dark:!bg-emerald-500/20 dark:ring-emerald-400/20' : 'bg-orange-100 dark:!bg-orange-500/20' : getIconBgColor(section.color)}`}>
+                                                <Icon className={`h-5 w-5 ${isActive ? isMemberCodes ? 'text-[var(--ds-color-member-codes-accent-text)]' : isCsvImport ? 'text-emerald-700 dark:text-emerald-300' : 'text-orange-600 dark:text-orange-300' : getIconColor(section.color)}`} />
                                             </div>
                                             <div className={`min-w-0 flex-1 ${isSidebarCollapsed ? 'hidden' : ''}`}>
                                                 <p className="font-semibold truncate">{section.label}</p>
                                                 <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">{getSectionPreview(section.id)}</p>
                                             </div>
-                                            {!isSidebarCollapsed && <ChevronRight className={`h-5 w-5 ${isActive ? isMemberCodes ? 'text-[var(--ds-color-member-codes-accent-text)]' : 'text-orange-500' : 'text-gray-400'}`} />}
+                                            {!isSidebarCollapsed && <ChevronRight className={`h-5 w-5 ${isActive ? isMemberCodes ? 'text-[var(--ds-color-member-codes-accent-text)]' : isCsvImport ? 'text-emerald-500 dark:text-emerald-300' : 'text-orange-500' : 'text-gray-400'}`} />}
                                         </button>
                                     )
                                 })}
