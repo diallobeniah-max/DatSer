@@ -100,8 +100,8 @@ describe('CSV Import Needs Attention workflow', () => {
     expect(getCsvBatchEntryAttentionCount({ rows: [row('r1', 'Review'), row('r2'), row('r3', 'Check')] })).toBe(2)
   })
 
-  it('14. a plain Full Register row keeps its existing save eligibility', () => {
-    const [step] = buildCsvSavePlan({ importRows: [row('r1')], targetTable: 'August_2026', sundayDateMap: {}, ownerId: 'owner', workspaceName: 'Synthetic' })
+  it('14. a confirmed Full Register new member is eligible to save', () => {
+    const [step] = buildCsvSavePlan({ importRows: [row('r1', '', { newMemberConfirmed: true })], targetTable: 'August_2026', sundayDateMap: {}, ownerId: 'owner', workspaceName: 'Synthetic' })
     expect(step.action).toBe('create')
   })
 

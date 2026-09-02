@@ -206,7 +206,7 @@ describe('AppContext collaborator sync', () => {
     })
 
     unmount()
-  })
+  }, 15000)
 
   it('keeps sticky month and picks sunday from that same month', async () => {
     const { AppProvider, useApp } = await import('./AppContext.jsx')

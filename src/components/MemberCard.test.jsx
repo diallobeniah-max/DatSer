@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import MemberCard from './MemberCard'
 
@@ -65,6 +65,30 @@ describe('MemberCard', () => {
     expect(screen.getByRole('button', { name: /code A17/i })).toBeTruthy()
   })
 
+  it('marks only a supplied recent CSV-import member with the green provenance badge', () => {
+    renderMemberCard({ csvImportProvenance: { sourceSheet: 'Sheet 4', sourceRow: 7 } })
+    expect(screen.getByText('New from import')).toBeTruthy()
+    expect(screen.getByText('Sheet 4 · Row 7')).toBeTruthy()
+  })
+
+  it('preserves same-name safety: existing same-name member has no badge while new member displays provenance', () => {
+    const existing = renderMemberCard({
+      member: { id: 'existing-1', full_name: 'Enoch Norkplim', 'Phone Number': '0240000001' },
+      csvImportProvenance: null,
+    })
+    expect(screen.getByText('Enoch Norkplim')).toBeTruthy()
+    expect(screen.queryByText('New from import')).toBeNull()
+    existing.unmount()
+
+    renderMemberCard({
+      member: { id: 'new-created-1', full_name: 'Enoch Norkplim', 'Phone Number': '0240000002' },
+      csvImportProvenance: { sourceSheet: 'Sheet 2', sourceRow: 14 },
+    })
+    expect(screen.getByText('Enoch Norkplim')).toBeTruthy()
+    expect(screen.getByText('New from import')).toBeTruthy()
+    expect(screen.getByText('Sheet 2 · Row 14')).toBeTruthy()
+  })
+
   it('renders its own code for each member shown', () => {
     const { rerender } = renderMemberCard({ memberIndexCode: 'A01', isMemberCodeLoading: false })
     expect(screen.getByRole('button', { name: /code A01/i })).toBeTruthy()
@@ -103,5 +127,35 @@ describe('MemberCard', () => {
     )
     expect(screen.queryByRole('button', { name: /code A01/i })).toBeNull()
     expect(screen.getByRole('button', { name: /code B04/i })).toBeTruthy()
+  })
+
+  it('sends top and per-Sunday attendance choices to their matching handlers', () => {
+    const onAttendance = vi.fn()
+    const onAttendanceForDate = vi.fn()
+    const sunday = '2026-08-16'
+
+    renderMemberCard({
+      isExpanded: true,
+      onAttendance,
+      onAttendanceForDate,
+      monthSundays: [sunday],
+      attendanceData: { [sunday]: { 'member-1': true } },
+      attendanceStatus: true,
+      attendanceLoading: true,
+      attendanceLoadingByDate: { [`member-1_${sunday}`]: true },
+    })
+
+    // The currently-saving Present control is intentionally protected, but
+    // the operator can immediately correct it to Absent or Clear.
+    expect(screen.getByTestId('member-card-attendance-member-1-present')).toHaveProperty('disabled', true)
+    const topAbsent = screen.getByTestId('member-card-attendance-member-1-absent')
+    expect(topAbsent).toHaveProperty('disabled', false)
+    fireEvent.click(topAbsent)
+    expect(onAttendance).toHaveBeenCalledWith('member-1', false)
+
+    const perSundayClear = screen.getByTestId(`member-card-attendance-member-1-${sunday}-clear`)
+    expect(perSundayClear).toHaveProperty('disabled', false)
+    fireEvent.click(perSundayClear)
+    expect(onAttendanceForDate).toHaveBeenCalledWith('member-1', null, sunday)
   })
 })

@@ -24,6 +24,7 @@ const MonthPickerPopup = ({
     const { selection } = useHapticFeedback()
     const popupRef = useRef(null)
     const [previewTable, setPreviewTable] = useState(currentTable)
+    const [draftSundayDate, setDraftSundayDate] = useState(null)
     const showAutoToggle = typeof autoEnabled === 'boolean' && typeof onToggleAuto === 'function'
     const showCalendarModeControl = (calendarMode === 'auto' || calendarMode === 'manual') && typeof onCalendarModeChange === 'function'
     const [pendingCalendarMode, setPendingCalendarMode] = useState(calendarMode === 'manual' ? 'manual' : 'auto')
@@ -61,6 +62,7 @@ const MonthPickerPopup = ({
         if (isOpen) {
             setPreviewTable(currentTable)
             setPendingCalendarMode(calendarMode === 'manual' ? 'manual' : 'auto')
+            setDraftSundayDate(null)
         }
     }, [isOpen, currentTable, calendarMode])
 
@@ -161,12 +163,32 @@ const MonthPickerPopup = ({
         ? `${selectedAttendanceDate.getFullYear()}-${String(selectedAttendanceDate.getMonth() + 1).padStart(2, '0')}-${String(selectedAttendanceDate.getDate()).padStart(2, '0')}`
         : null
 
+    // Manual selection is deliberately a draft. Keep the currently applied
+    // Sunday if it belongs to the previewed month; otherwise offer that
+    // month's first valid Sunday. Nothing here mutates the active calendar.
+    useEffect(() => {
+        if (!isOpen || !isManualPreview) return
+        setDraftSundayDate((previous) => {
+            if (previous && previewSundays.includes(previous)) return previous
+            if (selectedDateKey && previewSundays.includes(selectedDateKey)) return selectedDateKey
+            return previewSundays[0] || null
+        })
+    }, [isOpen, isManualPreview, previewSundays, selectedDateKey])
+
     const handleSelectSunday = async (dateStr) => {
         if (selectionDisabled) return
         const [y, m, d] = dateStr.split('-').map(Number)
         if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return
         selection()
         const selectedDate = new Date(y, m - 1, d)
+
+        // In the explicit Manual workflow, choosing a Sunday only edits the
+        // draft. The current attendance month/date stay applied until Apply.
+        if (isManualPreview) {
+            setDraftSundayDate(dateStr)
+            return
+        }
+
         if (onSelectSunday) {
             if (selectionSaveInFlightRef.current) return
             selectionSaveInFlightRef.current = true
@@ -189,6 +211,37 @@ const MonthPickerPopup = ({
         }
         setAndSaveAttendanceDate(selectedDate)
         onClose()
+    }
+
+    const handleApplyManualSelection = async () => {
+        if (selectionDisabled || !previewTable || !draftSundayDate || selectionSaveInFlightRef.current) return
+        const [y, m, d] = draftSundayDate.split('-').map(Number)
+        if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return
+
+        selection()
+        selectionSaveInFlightRef.current = true
+        setIsSavingSelection(true)
+        try {
+            const selectedDate = new Date(y, m - 1, d)
+            if (onSelectSunday) {
+                const saved = await onSelectSunday({
+                    table: previewTable,
+                    date: selectedDate,
+                    dateStr: draftSundayDate
+                })
+                if (saved !== false) onClose()
+                return
+            }
+
+            if (previewTable !== currentTable) {
+                setCurrentTable(previewTable, { persistPreference: true })
+            }
+            setAndSaveAttendanceDate(selectedDate, previewTable)
+            onClose()
+        } finally {
+            selectionSaveInFlightRef.current = false
+            setIsSavingSelection(false)
+        }
     }
 
     const getMonthShort = (tableName) => {
@@ -301,7 +354,7 @@ const MonthPickerPopup = ({
                                     : manualModeDisabled
                                         ? disabledReason
                                         : pendingCalendarMode === 'manual'
-                                            ? 'Selecting a month only previews it. The choice saves when you select a Sunday.'
+                                            ? 'Choose a month and Sunday, then apply. Your current attendance month stays unchanged until you apply.'
                                             : 'Choose Manual to select a historical month and Sunday.'}
                         </p>
                         {calendarSettingsError && (
@@ -395,7 +448,7 @@ const MonthPickerPopup = ({
                             {previewSundays.map((dateStr) => {
                                 const [y, m, d] = dateStr.split('-').map(Number)
                                 const label = new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                                const isSelected = selectedDateKey === dateStr
+                                const isSelected = (isManualPreview ? draftSundayDate : selectedDateKey) === dateStr
                                 return (
                                     <button
                                         key={dateStr}
@@ -415,20 +468,35 @@ const MonthPickerPopup = ({
                 )}
                 </div>
 
-                {/* Create New Month Button (Owner only) */}
-                {!isCollaborator && (
+                {/* Applying Manual is separate from choosing it. This footer
+                    stays visible on compact screens, while the picker itself
+                    can still scroll through long month lists. */}
+                {(isManualPreview || !isCollaborator) && (
                     <div className="shrink-0 border-t border-gray-200 bg-gray-50/90 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/70 sm:px-5">
-                        <button
-                            onClick={() => {
-                                selection()
-                                onClose()
-                                if (onCreateMonth) onCreateMonth()
-                            }}
-                            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-50 btn-press dark:focus-visible:ring-offset-gray-900"
-                        >
-                            <Plus className="w-4 h-4" />
-                            Create New Month
-                        </button>
+                        {isManualPreview && (
+                            <button
+                                type="button"
+                                onClick={handleApplyManualSelection}
+                                disabled={selectionDisabled || !previewTable || !draftSundayDate}
+                                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-50 disabled:cursor-not-allowed disabled:opacity-60 btn-press dark:focus-visible:ring-offset-gray-900"
+                            >
+                                <Check className="h-4 w-4" />
+                                {isSavingSelection ? 'Applying…' : 'Apply month'}
+                            </button>
+                        )}
+                        {!isCollaborator && (
+                            <button
+                                onClick={() => {
+                                    selection()
+                                    onClose()
+                                    if (onCreateMonth) onCreateMonth()
+                                }}
+                                className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-50 btn-press dark:focus-visible:ring-offset-gray-900 ${isManualPreview ? 'mt-2' : ''}`}
+                            >
+                                <Plus className="w-4 h-4" />
+                                Create New Month
+                            </button>
+                        )}
                     </div>
                 )}
             </div>

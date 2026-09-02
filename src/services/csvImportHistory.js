@@ -1,6 +1,7 @@
 import { assertSupabaseMutationAffected, executeSupabaseWrite } from '../utils/supabaseWrite'
 
 export const CSV_IMPORT_HISTORY_BUCKET = 'csv-import-sources'
+const signedSourceUrlCache = new Map()
 
 const makeSafePathSegment = (value, fallback) => {
   const safe = String(value || fallback)
@@ -204,12 +205,41 @@ export const hydrateSourceImages = async ({ supabase, sourceImages }) => {
   return result
 }
 
+export const indexCsvImportSourceImages = (sourceImages = []) => {
+  const result = {}
+  for (const image of sourceImages) {
+    const sheet = image?.sheetKey || image?.sheet
+    if (!sheet) continue
+    if (!result[sheet]) result[sheet] = []
+    result[sheet].push({ ...image, sheet, sheetKey: sheet })
+  }
+  return result
+}
+
+// Signed URLs are deliberately resolved by the active viewer, not when an
+// entire batch is reopened.  This keeps large image batches light on phones
+// and avoids one request per image on every React render.
+export const getCsvImportSourceUrl = async ({ supabase, image, expiresIn = 60 * 60 }) => {
+  if (typeof image === 'string') return image
+  if (image?.previewUrl) return image.previewUrl
+  if (!image?.path) return ''
+  const bucket = image.bucket || CSV_IMPORT_HISTORY_BUCKET
+  const cacheKey = `${bucket}:${image.path}`
+  const now = Date.now()
+  const cached = signedSourceUrlCache.get(cacheKey)
+  if (cached && cached.expiresAt > now + 30_000) return cached.url
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(image.path, expiresIn)
+  if (error || !data?.signedUrl) throw error || new Error('Could not load source image.')
+  signedSourceUrlCache.set(cacheKey, { url: data.signedUrl, expiresAt: now + (expiresIn * 1000) })
+  return data.signedUrl
+}
+
 export const restoreCsvImportSession = async ({ supabase, sessionId }) => {
   const { data: session } = await executeSupabaseWrite(
     () => supabase.from('csv_import_sessions').select('*').eq('id', sessionId).single(),
     { action: 'Open saved CSV import' }
   )
-  return { session, sheetImages: await hydrateSourceImages({ supabase, sourceImages: session.source_images }) }
+  return { session, sheetImages: indexCsvImportSourceImages(session.source_images) }
 }
 
 export const updateCsvImportBatchMetadata = async ({ supabase, sessionId, batch }) => {

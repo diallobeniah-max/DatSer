@@ -49,8 +49,8 @@ export const toTitleCase = (value) => {
 }
 
 // ─── Attendance normalization ───────────────────────────────────────────────
-const PRESENT_VALUES = new Set(['p', 'present', '1', 'yes', 'y', 'true', '✓', '✔', 'x'])
-const ABSENT_VALUES = new Set(['a', 'absent', '0', 'no', 'n', 'false', '✗', '✘'])
+const PRESENT_VALUES = new Set(['p', 'present', '1', 'yes', 'y', 'true', '✓', '✔'])
+const ABSENT_VALUES = new Set(['a', 'absent', '0', 'no', 'n', 'false', '✗', '✘', 'x'])
 
 export const normalizeAttendanceValue = (raw) => {
   if (raw === null || raw === undefined) return 'UNSPECIFIED'

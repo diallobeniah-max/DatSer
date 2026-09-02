@@ -37,6 +37,8 @@ import { classifyMemberSearch, getSearchableMemberName, normalizeSearchText } fr
 import { normalizeHistoricalSearchSettings, resolveHistoricalSearchTables } from '../utils/historicalSearchSettings'
 import { formatMemberName, normalizeMemberNameStyle } from '../utils/memberNameStyle'
 import { createAttendanceSnapshotVersionRegistry } from '../utils/attendanceSnapshot'
+import { createAttendanceWriteQueue } from '../utils/attendanceWriteQueue'
+import { writeManualAttendance } from '../utils/manualAttendanceWrite'
 import { createResumeSyncCoordinator } from '../utils/appResumeSync'
 import { createSyncFlushScheduler } from '../utils/syncFlushScheduler'
 import {
@@ -866,6 +868,7 @@ export const AppProvider = ({ children }) => {
   const searchCacheRef = useRef(new Map())
   const nameColumnCacheRef = useRef(new Map())
   const inFlightAttendancePromisesRef = useRef(new Map())
+  const attendanceWriteQueueRef = useRef(createAttendanceWriteQueue())
   const devCountersRef = useRef({
     syncStarted: 0,
     syncCoalesced: 0,
@@ -4237,7 +4240,8 @@ export const AppProvider = ({ children }) => {
     effectiveDate,
     present,
     actionType = 'attendance_mark',
-    baseValues = null
+    baseValues = null,
+    { applyOptimistic = true } = {}
   ) => {
     const ids = Array.isArray(memberIds) ? memberIds : [memberIds]
     const serviceDate = getLocalDateString(effectiveDate)
@@ -4258,7 +4262,7 @@ export const AppProvider = ({ children }) => {
     )
     const currentDateAttendance = attendanceData?.[serviceDate] || {}
 
-    applyLocalAttendanceState(ids, effectiveDate, present)
+    if (applyOptimistic) applyLocalAttendanceState(ids, effectiveDate, present)
 
     await Promise.all(ids.map((memberId) => {
       const existing = existingById.get(String(memberId))
@@ -4321,6 +4325,7 @@ export const AppProvider = ({ children }) => {
     let optimisticApplied = false
     let optimisticRollbackState = null
     let optimisticEffectiveDate = null
+    let isLatestMutation = () => true
     try {
       const effectiveDate = normalizeDateToSundayForTable(date, currentTable)
       if (!effectiveDate) {
@@ -4328,8 +4333,39 @@ export const AppProvider = ({ children }) => {
       }
       optimisticEffectiveDate = effectiveDate
 
+      const dateKey = getLocalDateString(effectiveDate)
+      const optimisticColumn = getAttendanceColumnNameForDate(effectiveDate)
+      const mutationKey = `${currentTable}:${memberId}:${dateKey}`
+      const previousDateAttendance = attendanceDataRef.current?.[dateKey] || attendanceData?.[dateKey] || {}
+      const previousMember = members.find((member) => String(member.id) === String(memberId)) || {}
+      optimisticRollbackState = {
+        byId: {
+          [memberId]: {
+            columnName: optimisticColumn,
+            hadColumn: Object.prototype.hasOwnProperty.call(previousMember, optimisticColumn),
+            columnValue: previousMember?.[optimisticColumn],
+            hadAttendanceKey: Object.prototype.hasOwnProperty.call(previousDateAttendance, String(memberId)),
+            attendanceValue: previousDateAttendance[String(memberId)]
+          }
+        }
+      }
+
       if (shouldUseOfflineData) {
-        return queueOfflineAttendanceChanges(memberId, effectiveDate, present)
+        applyLocalAttendanceState(memberId, effectiveDate, present, optimisticColumn)
+        optimisticApplied = true
+        const queued = attendanceWriteQueueRef.current.enqueue(mutationKey, () => (
+          queueOfflineAttendanceChanges(
+            memberId,
+            effectiveDate,
+            present,
+            'attendance_mark',
+            { [memberId]: optimisticRollbackState.byId[memberId].hadAttendanceKey ? optimisticRollbackState.byId[memberId].attendanceValue : null },
+            { applyOptimistic: false }
+          )
+        ))
+        isLatestMutation = queued.isLatest
+        const result = await queued.promise
+        return isLatestMutation() ? result : { success: true, superseded: true }
       }
 
       if (offlineMode === 'online' && !isOnline) {
@@ -4345,66 +4381,32 @@ export const AppProvider = ({ children }) => {
         return { success: true }
       }
 
-      const optimisticColumn = getAttendanceColumnNameForDate(effectiveDate)
-      const dateKey = getLocalDateString(effectiveDate)
-      const previousDateAttendance = attendanceData?.[dateKey] || {}
-      const previousMember = members.find((member) => String(member.id) === String(memberId)) || {}
-      optimisticRollbackState = {
-        byId: {
-          [memberId]: {
-            columnName: optimisticColumn,
-            hadColumn: Object.prototype.hasOwnProperty.call(previousMember, optimisticColumn),
-            columnValue: previousMember?.[optimisticColumn],
-            hadAttendanceKey: Object.prototype.hasOwnProperty.call(previousDateAttendance, String(memberId)),
-            attendanceValue: previousDateAttendance[String(memberId)]
-          }
-        }
-      }
       applyLocalAttendanceState(memberId, effectiveDate, present, optimisticColumn)
       optimisticApplied = true
-
-      let attendanceColumn = await findAttendanceColumnForDate(effectiveDate)
-
-      // If column doesn't exist, create it
-      if (!attendanceColumn) {
-        console.log('Attendance column not found for date, creating it...')
-        const result = await createAttendanceColumn(effectiveDate)
-
-        if (!result.success) {
-          toast.error('Failed to create attendance column for this date', {
-            toastId: `attendance-column-${currentTable}-${getLocalDateString(effectiveDate)}`
-          })
-          throw result.error || new Error('Failed to create attendance column')
-        }
-
-        attendanceColumn = result.columnName
-      }
-
-      const attendanceUpdatedAt = new Date().toISOString()
-      const canWritePreviewSyncColumns = await ensureMemberPreviewSyncColumns(currentTable)
-
-      const identityMember = members.find((member) => String(member.id) === String(memberId)) || { id: memberId }
-      const attendanceOwnerId = getMemberOwnerId(identityMember) || dataOwnerId || user?.id
-      if (!attendanceOwnerId) throw new Error('Unable to determine the workspace owner for this attendance save')
-      const attendanceWrite = await executeSupabaseWrite(
-        () => supabase.rpc('update_member_record_resilient', {
-          p_table_name: currentTable,
-          p_member_id: memberId,
-          p_updates: {
-            [attendanceColumn]: present === null ? null : (present ? 'Present' : 'Absent'),
-            ...(canWritePreviewSyncColumns ? { updated_at: attendanceUpdatedAt } : {})
-          },
-          p_owner_id: attendanceOwnerId,
-          p_identity: buildMemberIdentityHint(identityMember)
-        }),
-        { action: `Save attendance in ${currentTable}` }
-      )
-      if (!attendanceWrite?.data?.success || !attendanceWrite?.data?.row) {
-        throw new Error('Attendance save could not be verified. Please retry.')
-      }
-      const resolvedMemberId = attendanceWrite.data.member_id || memberId
+      const queued = attendanceWriteQueueRef.current.enqueue(mutationKey, async () => {
+        const attendanceColumn = getAttendanceColumnNameForDate(effectiveDate)
+        const attendanceUpdatedAt = new Date().toISOString()
+        const identityMember = members.find((member) => String(member.id) === String(memberId)) || { id: memberId }
+        const attendanceOwnerId = getMemberOwnerId(identityMember) || dataOwnerId || user?.id
+        if (!attendanceOwnerId) throw new Error('Unable to determine the workspace owner for this attendance save')
+        const attendanceWrite = await writeManualAttendance({
+          supabase,
+          executeWrite: executeSupabaseWrite,
+          tableName: currentTable,
+          ownerId: attendanceOwnerId,
+          memberId,
+          attendanceDate: effectiveDate,
+          present,
+          identity: buildMemberIdentityHint(identityMember)
+        })
+        return { attendanceColumn, attendanceUpdatedAt, attendanceWrite, identityMember }
+      })
+      isLatestMutation = queued.isLatest
+      const { attendanceColumn, attendanceUpdatedAt, attendanceWrite, identityMember } = await queued.promise
+      if (!isLatestMutation()) return { success: true, superseded: true }
+      const resolvedMemberId = attendanceWrite.memberId || memberId
       if (String(resolvedMemberId) !== String(memberId)) {
-        const recoveredMember = normalizeMemberRecord({ ...identityMember, ...attendanceWrite.data.row, id: resolvedMemberId })
+        const recoveredMember = normalizeMemberRecord({ ...identityMember, id: resolvedMemberId })
         setMembers((previous) => previous.map((member) => (
           String(member.id) === String(memberId) ? recoveredMember : member
         )))
@@ -4469,6 +4471,10 @@ export const AppProvider = ({ children }) => {
       return { success: true }
     } catch (error) {
       console.error('Error marking attendance:', error)
+      // A newer choice for this member/Sunday is already queued and remains
+      // the authoritative optimistic value. Never roll it back or show a
+      // duplicate error for the superseded write.
+      if (!isLatestMutation()) return { success: true, superseded: true }
       const effectiveDate = normalizeDateToSundayForTable(date, currentTable)
       if (effectiveDate && (isTransientSupabaseError(error) || !isBrowserOnline())) {
         console.warn('Attendance save failed transiently; queued for retry:', error)
@@ -4482,7 +4488,6 @@ export const AppProvider = ({ children }) => {
         rollbackLocalAttendanceState(memberId, optimisticEffectiveDate, optimisticRollbackState)
       }
       setOfflineStatusMessage('Attendance save failed. Please retry.')
-      toast.error(error?.message || 'Failed to mark attendance')
       return { success: false, error }
     }
   }

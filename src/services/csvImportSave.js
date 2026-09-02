@@ -79,10 +79,16 @@ export const buildSundayDateMap = (targetTable, enabledSundays = {}) => {
 
   const sundays = getSundaysForMonth(monthIndex, yearNum)
   const map = {}
+  const safeEnabled = enabledSundays && typeof enabledSundays === 'object' ? enabledSundays : {}
 
-  for (let i = 0; i < 5; i += 1) {
+  const hasExplicitFlags = ['sunday_1', 'sunday_2', 'sunday_3', 'sunday_4', 'sunday_5'].some(
+    (k) => typeof safeEnabled[k] === 'boolean'
+  )
+
+  for (let i = 0; i < sundays.length; i += 1) {
     const key = `sunday_${i + 1}`
-    if (enabledSundays[key] && i < sundays.length) {
+    const isEnabled = hasExplicitFlags ? safeEnabled[key] === true : safeEnabled[key] !== false
+    if (isEnabled) {
       map[key] = sundays[i]
     }
   }
@@ -109,11 +115,12 @@ export const getSundaysForTable = (targetTable) => {
 const buildAttendancePayload = (importRow, sundayDateMap) => {
   const payload = {}
   Object.entries(sundayDateMap).forEach(([sundayKey, sundayDate]) => {
-    const value = importRow.edited[sundayKey]
+    const value = importRow?.edited?.[sundayKey] ?? importRow?.raw?.[sundayKey]
+    const normalized = typeof value === 'string' ? value.trim().toUpperCase() : value
     const attendanceDate = getLocalDateString(sundayDate)
-    if (value === 'PRESENT') {
+    if (normalized === 'PRESENT' || normalized === 'P' || normalized === 'TRUE' || normalized === '1' || normalized === 'YES' || normalized === '✓' || normalized === '✔' || value === true) {
       payload[attendanceDate] = true
-    } else if (value === 'ABSENT') {
+    } else if (normalized === 'ABSENT' || normalized === 'A' || normalized === 'FALSE' || normalized === '0' || normalized === 'NO' || normalized === '✗' || normalized === '✘' || normalized === 'X' || value === false) {
       payload[attendanceDate] = false
     }
     // UNSPECIFIED → do not include in payload
@@ -122,7 +129,7 @@ const buildAttendancePayload = (importRow, sundayDateMap) => {
 }
 
 // ─── Build member profile payload ───────────────────────────────────────────
-const buildMemberPayload = (importRow, member, ownerId, workspaceName) => {
+export const buildCsvMemberPayload = (importRow, member, ownerId, workspaceName) => {
   const fullName = resolveFieldValue(importRow, 'fullName', member)
   const phoneNumber = resolveFieldValue(importRow, 'phoneNumber', member)
   const age = resolveFieldValue(importRow, 'age', member)
@@ -167,6 +174,8 @@ export const buildCsvSavePlan = ({
   ownerId,
   workspaceName,
   completedRowIds = new Set(),
+  allowSafeNew = false,
+  processRemaining = false,
 }) => {
   const plan = []
 
@@ -182,7 +191,7 @@ export const buildCsvSavePlan = ({
       return
     }
 
-    if (isCsvImportAttentionUnresolved(row)) {
+    if (!processRemaining && isCsvImportAttentionUnresolved(row)) {
       plan.push({
         importRowId: row.importRowId,
         action: 'unresolved',
@@ -194,24 +203,14 @@ export const buildCsvSavePlan = ({
 
     const { match, edited } = row
     const matchStatus = match?.status
+    const usableName = String(edited?.fullName || row.raw?.fullName || row.fullName || match?.matchedMember?.['Full Name'] || (matchStatus === 'exact' ? 'Member' : '')).trim()
 
-    // Skip invalid rows
-    if (matchStatus === CSV_MATCH_STATUS.INVALID) {
+    // Skip invalid rows (missing name)
+    if (!usableName || matchStatus === CSV_MATCH_STATUS.INVALID || row.duplicateOfRowId || row.identityConflict) {
       plan.push({
         importRowId: row.importRowId,
         action: 'skip',
-        reason: 'Invalid row (missing name)',
-        row,
-      })
-      return
-    }
-
-    // Skip unresolved possible matches
-    if (matchStatus === CSV_MATCH_STATUS.POSSIBLE && !match.selectedMemberId) {
-      plan.push({
-        importRowId: row.importRowId,
-        action: 'skip',
-        reason: 'Unresolved possible match — operator decision needed',
+        reason: !usableName ? 'Invalid row (missing name)' : 'Duplicate or invalid row',
         row,
       })
       return
@@ -219,20 +218,13 @@ export const buildCsvSavePlan = ({
 
     const attendancePayload = buildAttendancePayload(row, sundayDateMap)
     const matchedMember = match?.matchedMember || null
+    const existingCreatedMemberId = row.bulkCreate?.memberId || row.createdMemberId || row.memberId || null
+    const existingMatchedMemberId = match?.selectedMemberId || matchedMember?.id || null
+    const effectiveMemberId = existingCreatedMemberId || existingMatchedMemberId
 
-    if (matchStatus === CSV_MATCH_STATUS.NEW) {
-      // Create new member
-      const memberPayload = buildMemberPayload(row, null, ownerId, workspaceName)
-      plan.push({
-        importRowId: row.importRowId,
-        action: 'create',
-        memberPayload,
-        attendancePayload,
-        row,
-      })
-    } else if (matchStatus === CSV_MATCH_STATUS.EXACT || (matchStatus === CSV_MATCH_STATUS.POSSIBLE && match.selectedMemberId)) {
-      // Existing member — check if profile updates are needed
-      const memberId = match.selectedMemberId
+    if (effectiveMemberId || matchStatus === CSV_MATCH_STATUS.EXACT || (matchStatus === CSV_MATCH_STATUS.POSSIBLE && match.selectedMemberId)) {
+      // Existing member (either matched from database or created in a previous run) — apply profile updates & attendance
+      const memberId = effectiveMemberId
       if (!memberId) {
         plan.push({
           importRowId: row.importRowId,
@@ -242,7 +234,7 @@ export const buildCsvSavePlan = ({
         })
         return
       }
-      const memberPayload = buildMemberPayload(row, matchedMember, ownerId, workspaceName)
+      const memberPayload = buildCsvMemberPayload(row, matchedMember, ownerId, workspaceName)
 
       // Check if member needs cross-month registration
       const memberSourceTable = matchedMember?.__source_table || matchedMember?.source_table || ''
@@ -269,6 +261,21 @@ export const buildCsvSavePlan = ({
               profileUpdates[memberKey] = csvVal
             }
           }
+        })
+      } else if (existingCreatedMemberId) {
+        // Apply extracted profile fields directly to previously created member
+        const FIELD_MEMBER_MAP = {
+          fullName: 'Full Name',
+          phoneNumber: 'Phone Number',
+          age: 'Age',
+          gender: 'Gender',
+          educationalLevel: 'Current Level',
+          parentGuardianName: 'parent_name_1',
+          parentGuardianPhone: 'parent_phone_1',
+        }
+        Object.entries(FIELD_MEMBER_MAP).forEach(([csvField, memberKey]) => {
+          const val = String(edited[csvField] || '').trim()
+          if (val) profileUpdates[memberKey] = val
         })
       }
 
@@ -302,13 +309,37 @@ export const buildCsvSavePlan = ({
         sourceTable: memberSourceTable,
         row,
       })
-    } else {
-      // Every canonical row must produce a result. A row still awaiting
-      // reconciliation is not silently omitted from the plan or its history.
+    } else if (processRemaining || allowSafeNew || (matchStatus === CSV_MATCH_STATUS.NEW && (row.newMemberConfirmed || row.allowNamesOnlyCreate))) {
+      if (matchStatus === CSV_MATCH_STATUS.POSSIBLE && !match.selectedMemberId && !processRemaining) {
+        plan.push({
+          importRowId: row.importRowId,
+          action: 'skip',
+          reason: 'Unresolved possible match — operator decision needed',
+          row,
+        })
+        return
+      }
+      // Create new member as entered (unmatched, new, or unselected Possible matches in processRemaining mode)
+      const memberPayload = buildCsvMemberPayload(row, null, ownerId, workspaceName)
+      plan.push({
+        importRowId: row.importRowId,
+        action: 'create',
+        memberPayload,
+        attendancePayload,
+        row,
+      })
+    } else if (matchStatus === CSV_MATCH_STATUS.POSSIBLE && !match.selectedMemberId) {
       plan.push({
         importRowId: row.importRowId,
         action: 'skip',
-        reason: 'Row has not finished matching and needs review',
+        reason: 'Unresolved possible match — operator decision needed',
+        row,
+      })
+    } else {
+      plan.push({
+        importRowId: row.importRowId,
+        action: 'unresolved',
+        reason: 'New member needs explicit operator confirmation',
         row,
       })
     }
@@ -334,6 +365,8 @@ export const buildSundayNamesSavePlan = ({
   workspaceName,
   completedRowIds = new Set(),
   attendanceByMember = {},
+  allowSafeNew = false,
+  processRemaining = false,
 }) => {
   const validSundayDates = getSundaysForTable(targetTable).map(getLocalDateString)
   if (!targetTable || !selectedSundayDate || !validSundayDates.includes(selectedSundayDate)) {
@@ -344,42 +377,49 @@ export const buildSundayNamesSavePlan = ({
   return importRows.map((row) => {
     const base = { importRowId: row.importRowId, row }
     if (completedRowIds.has(row.importRowId)) return { ...base, action: 'skip', reason: 'Already completed' }
-    if (isCsvImportAttentionUnresolved(row)) return { ...base, action: 'unresolved', reason: 'Transcription note needs explicit verification' }
+    if (!processRemaining && isCsvImportAttentionUnresolved(row)) return { ...base, action: 'unresolved', reason: 'Transcription note needs explicit verification' }
     if (row.duplicateOfRowId) return { ...base, action: 'skip', reason: 'Duplicate name in source list' }
+
+    const usableName = String(row.edited?.fullName || row.raw?.fullName || row.fullName || row.match?.matchedMember?.['Full Name'] || (row.match?.status === 'exact' ? 'Member' : '')).trim()
+    if (!usableName || row.match?.status === 'invalid') return { ...base, action: 'skip', reason: 'Invalid row (missing name)' }
 
     const match = row.match || {}
     const resolved = match.status === CSV_MATCH_STATUS.EXACT || (match.status === CSV_MATCH_STATUS.POSSIBLE && match.selectedMemberId)
-    if (!resolved && !(match.status === CSV_MATCH_STATUS.NEW && row.allowNamesOnlyCreate)) {
-      return { ...base, action: 'unresolved', reason: match.status === CSV_MATCH_STATUS.POSSIBLE ? 'Choose the correct DatSer member' : 'Member not found in DatSer' }
+
+    if (resolved) {
+      const member = match.matchedMember || match.candidates?.find((candidate) => String(candidate.id) === String(match.selectedMemberId))
+      const memberId = String(match.selectedMemberId || member?.id || '')
+      if (!memberId) return { ...base, action: 'unresolved', reason: 'Choose the correct DatSer member' }
+      const memberDateKey = `${memberId}::${selectedSundayDate}`
+      if (claimedMemberDates.has(memberDateKey)) return { ...base, action: 'skip', reason: 'Duplicate member for this Sunday' }
+      claimedMemberDates.add(memberDateKey)
+      if (isMemberPresentOnDate(member, selectedSundayDate, attendanceByMember)) return { ...base, action: 'skip', reason: 'Already Present' }
+
+      const sourceTable = member?.__source_table || member?.source_table || ''
+      return {
+        ...base,
+        action: sourceTable && sourceTable !== targetTable ? 'cross_month' : 'update',
+        memberId,
+        memberPayload: {},
+        profileUpdates: {},
+        attendancePayload: { [selectedSundayDate]: true },
+        sourceTable,
+      }
     }
 
-    if (match.status === CSV_MATCH_STATUS.NEW && row.allowNamesOnlyCreate) {
+    if (processRemaining || allowSafeNew || (match.status === CSV_MATCH_STATUS.NEW && (row.allowNamesOnlyCreate || row.newMemberConfirmed))) {
+      if (match.status === CSV_MATCH_STATUS.POSSIBLE && !match.selectedMemberId && !processRemaining) {
+        return { ...base, action: 'unresolved', reason: 'Choose the correct DatSer member' }
+      }
       return {
         ...base,
         action: 'create',
-        memberPayload: buildMemberPayload(row, null, ownerId, workspaceName),
+        memberPayload: buildCsvMemberPayload(row, null, ownerId, workspaceName),
         attendancePayload: { [selectedSundayDate]: true },
       }
     }
 
-    const member = match.matchedMember || match.candidates?.find((candidate) => String(candidate.id) === String(match.selectedMemberId))
-    const memberId = String(match.selectedMemberId || member?.id || '')
-    if (!memberId) return { ...base, action: 'unresolved', reason: 'Choose the correct DatSer member' }
-    const memberDateKey = `${memberId}::${selectedSundayDate}`
-    if (claimedMemberDates.has(memberDateKey)) return { ...base, action: 'skip', reason: 'Duplicate member for this Sunday' }
-    claimedMemberDates.add(memberDateKey)
-    if (isMemberPresentOnDate(member, selectedSundayDate, attendanceByMember)) return { ...base, action: 'skip', reason: 'Already Present' }
-
-    const sourceTable = member?.__source_table || member?.source_table || ''
-    return {
-      ...base,
-      action: sourceTable && sourceTable !== targetTable ? 'cross_month' : 'update',
-      memberId,
-      memberPayload: {},
-      profileUpdates: {},
-      attendancePayload: { [selectedSundayDate]: true },
-      sourceTable,
-    }
+    return { ...base, action: 'unresolved', reason: match.status === CSV_MATCH_STATUS.POSSIBLE ? 'Choose the correct DatSer member' : 'Member not found in DatSer' }
   })
 }
 
@@ -442,7 +482,9 @@ export const executeCsvSavePlan = async ({
       if (step.action === 'create') {
         // The normal member form uses the authenticated workspace-resolving
         // wrapper. The raw bundle RPC is intentionally not browser-callable.
-        const requestId = `csv_import_${sessionId}_${step.importRowId}_${Date.now()}`
+        const requestId = step.row?.needsReprocess
+          ? `csv_create_repair_${sessionId}_${step.importRowId}_v${step.row?.reprocessAttempt || 2}`
+          : `csv_import_${sessionId}_${step.importRowId}_${Date.now()}`
 
         const { data: bundleResult } = await executeSupabaseWrite(
           () => supabase.rpc('save_member_bundle_resilient', {
@@ -476,6 +518,7 @@ export const executeCsvSavePlan = async ({
           status: CSV_SAVE_STATUS.SAVED,
           memberId: savedMemberId,
           action: 'created',
+          createdAt: new Date().toISOString(),
         })
         successCount += 1
 
@@ -508,12 +551,16 @@ export const executeCsvSavePlan = async ({
         // Once registration succeeds, apply only explicitly approved profile
         // fields through the production resilient bundle contract.
         if (Object.keys(step.profileUpdates || {}).length > 0) {
+          const profileRequestId = step.row?.needsReprocess
+            ? `csv_profile_repair_${sessionId}_${step.importRowId}_v${step.row?.reprocessAttempt || 2}`
+            : `csv_import_${sessionId}_${step.importRowId}_profile_${Date.now()}`
+
           const { data: bundleResult } = await executeSupabaseWrite(
             () => supabase.rpc('update_member_bundle_resilient', {
               p_table_name: targetTable,
               p_owner_id: ownerId,
               p_member_id: step.memberId,
-              p_request_id: `csv_import_${sessionId}_${step.importRowId}_profile_${Date.now()}`,
+              p_request_id: profileRequestId,
               p_updates: step.profileUpdates,
               p_badges: null,
               p_tag_ids: null,
@@ -537,12 +584,16 @@ export const executeCsvSavePlan = async ({
         // This is the same contract as the production edit form: approved
         // profile fields and attendance are deliberately separate payloads.
         if (Object.keys(step.profileUpdates || {}).length > 0 || Object.keys(step.attendancePayload || {}).length > 0) {
+          const requestId = step.row?.needsReprocess
+            ? `csv_update_repair_${sessionId}_${step.importRowId}_v${step.row?.reprocessAttempt || 2}`
+            : `csv_import_${sessionId}_${step.importRowId}_${Date.now()}`
+
           const { data: bundleResult } = await executeSupabaseWrite(
             () => supabase.rpc('update_member_bundle_resilient', {
               p_table_name: targetTable,
               p_owner_id: ownerId,
               p_member_id: step.memberId,
-              p_request_id: `csv_import_${sessionId}_${step.importRowId}_${Date.now()}`,
+              p_request_id: requestId,
               p_updates: step.profileUpdates || {},
               p_badges: null,
               p_tag_ids: null,

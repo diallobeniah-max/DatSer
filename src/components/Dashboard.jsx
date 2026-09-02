@@ -28,6 +28,7 @@ import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import SearchScopeModal from './SearchScopeModal'
 import { formatHistoricalScopeSummary } from '../utils/historicalSearchSettings'
+import { getRecentCsvImportMemberProvenance, fetchRecentCsvImportMemberProvenance } from '../utils/csvImportMemberProvenance'
 import {
   resolveInlineAttendanceAction,
   buildHistoricalTransferSnapshot,
@@ -457,6 +458,30 @@ const Dashboard = ({ isAdmin = false }) => {
     formatMemberName
   } = useApp()
   const { isDarkMode } = useTheme()
+  const workspaceOwnerId = dataOwnerId || user?.id
+  const [recentCsvImportMembers, setRecentCsvImportMembers] = useState(() => getRecentCsvImportMemberProvenance({ ownerId: workspaceOwnerId }))
+
+  useEffect(() => {
+    let isCancelled = false
+    const refreshRecentImportMembers = () => setRecentCsvImportMembers(getRecentCsvImportMemberProvenance({ ownerId: workspaceOwnerId }))
+    refreshRecentImportMembers()
+    window.addEventListener('datser:csv-import-provenance', refreshRecentImportMembers)
+    window.addEventListener('storage', refreshRecentImportMembers)
+
+    if (supabase && workspaceOwnerId) {
+      fetchRecentCsvImportMemberProvenance({ supabase, ownerId: workspaceOwnerId }).then((remoteMembers) => {
+        if (!isCancelled && remoteMembers && Object.keys(remoteMembers).length > 0) {
+          setRecentCsvImportMembers((prev) => ({ ...remoteMembers, ...prev }))
+        }
+      }).catch(() => undefined)
+    }
+
+    return () => {
+      isCancelled = true
+      window.removeEventListener('datser:csv-import-provenance', refreshRecentImportMembers)
+      window.removeEventListener('storage', refreshRecentImportMembers)
+    }
+  }, [workspaceOwnerId])
   const { selection, success, error: errorHaptic } = useHapticFeedback()
   const [editingMember, setEditingMember] = useState(null)
   const [attendanceLoading, setAttendanceLoading] = useState({})
@@ -610,6 +635,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const recentMissingDataCloseRef = useRef({ memberId: null, present: null, at: 0, suppressAll: false })
   const missingDataPromptLockRef = useRef(null)
   const attendanceActionLocksRef = useRef(new Set())
+  const attendancePendingCountsRef = useRef(new Map())
 
   const closeMissingDataModal = ({ suppressAll = false, clearPromptLocks = false } = {}) => {
     if (clearPromptLocks) {
@@ -1421,15 +1447,24 @@ const Dashboard = ({ isAdmin = false }) => {
     }
   }
 
+  const beginAttendanceSaving = (loadingKey) => {
+    const nextCount = (attendancePendingCountsRef.current.get(loadingKey) || 0) + 1
+    attendancePendingCountsRef.current.set(loadingKey, nextCount)
+    setAttendanceLoading((previous) => ({ ...previous, [loadingKey]: true }))
+  }
+
+  const endAttendanceSaving = (loadingKey) => {
+    const nextCount = Math.max(0, (attendancePendingCountsRef.current.get(loadingKey) || 1) - 1)
+    if (nextCount === 0) attendancePendingCountsRef.current.delete(loadingKey)
+    else attendancePendingCountsRef.current.set(loadingKey, nextCount)
+    setAttendanceLoading((previous) => ({ ...previous, [loadingKey]: nextCount > 0 }))
+  }
+
   const handleAttendance = async (memberId, present) => {
     const targetDate = getDateString(selectedAttendanceDate)
     const actionKey = `${memberId}:${targetDate || 'no-date'}:${present ? 'present' : 'absent'}`
 
     if (attendanceActionLocksRef.current.has(actionKey)) {
-      return
-    }
-
-    if (attendanceLoading[memberId]) {
       return
     }
 
@@ -1448,12 +1483,11 @@ const Dashboard = ({ isAdmin = false }) => {
         return
       }
 
-      setAttendanceLoading(prev => ({ ...prev, [memberId]: true }))
+      beginAttendanceSaving(memberId)
       const currentStatus = attendanceData[targetDate]?.[memberId]
       const nextStatus = currentStatus === present ? null : present
       const actionLabel = nextStatus === null ? 'Cleared' : nextStatus ? 'Present' : 'Absent'
       const toastKind = nextStatus === null ? 'info' : nextStatus ? 'success' : 'warning'
-      const toastActionKey = nextStatus === null ? 'clear' : nextStatus ? 'present' : 'absent'
       const timeLabel = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
       actionTimestampsRef.current[`${memberId}_${targetDate}`] = Date.now()
@@ -1466,12 +1500,13 @@ const Dashboard = ({ isAdmin = false }) => {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${timeLabel}`,
           details: `Saving attendance for ${targetDate}...`,
-          toastId: `attendance:${memberId}:${targetDate}:${toastActionKey}`,
+          toastId: `attendance:${memberId}:${targetDate}`,
           autoClose: 2400
         })
       }
 
       const result = await markAttendance(memberId, new Date(targetDate), nextStatus)
+      if (result?.superseded) return
       if (member) {
         notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
           title: getMemberSearchName(member),
@@ -1481,7 +1516,7 @@ const Dashboard = ({ isAdmin = false }) => {
             : result?.offline
               ? 'Saved on this device and queued for automatic sync.'
               : `Attendance saved for ${targetDate}`,
-          toastId: `attendance:${memberId}:${targetDate}:${toastActionKey}`,
+          toastId: `attendance:${memberId}:${targetDate}`,
           autoClose: result?.success === false ? 5200 : 2400
         })
       }
@@ -1491,7 +1526,7 @@ const Dashboard = ({ isAdmin = false }) => {
       errorHaptic()
       toast.error('Failed to update attendance. Please try again.')
     } finally {
-      setAttendanceLoading(prev => ({ ...prev, [memberId]: false }))
+      endAttendanceSaving(memberId)
       attendanceActionLocksRef.current.delete(actionKey)
     }
   }
@@ -1500,20 +1535,19 @@ const Dashboard = ({ isAdmin = false }) => {
     const loadingKey = `${memberId}_${specificDate}`
     const actionKey = `${memberId}:${specificDate || 'no-date'}:${present ? 'present' : 'absent'}`
 
-    if (attendanceActionLocksRef.current.has(actionKey) || attendanceLoading[loadingKey]) {
+    if (attendanceActionLocksRef.current.has(actionKey)) {
       return
     }
 
     attendanceActionLocksRef.current.add(actionKey)
     try {
-      setAttendanceLoading(prev => ({ ...prev, [loadingKey]: true }))
+      beginAttendanceSaving(loadingKey)
       // Read from date-keyed attendance map
       const currentStatus = attendanceData[specificDate]?.[memberId]
       const member = members.find(m => m.id === memberId)
       const nextStatus = currentStatus === present ? null : present
       const actionLabel = nextStatus === null ? 'Cleared' : nextStatus ? 'Present' : 'Absent'
       const toastKind = nextStatus === null ? 'info' : nextStatus ? 'success' : 'warning'
-      const toastActionKey = nextStatus === null ? 'clear' : nextStatus ? 'present' : 'absent'
       const timeLabel = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
       actionTimestampsRef.current[`${memberId}_${specificDate}`] = Date.now()
@@ -1526,12 +1560,13 @@ const Dashboard = ({ isAdmin = false }) => {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${timeLabel}`,
           details: `Saving attendance for ${specificDate}...`,
-          toastId: `attendance:${memberId}:${specificDate}:${toastActionKey}`,
+          toastId: `attendance:${memberId}:${specificDate}`,
           autoClose: 2400
         })
       }
 
       const result = await markAttendance(memberId, new Date(specificDate), nextStatus)
+      if (result?.superseded) return
       if (member) {
         notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
           title: getMemberSearchName(member),
@@ -1541,7 +1576,7 @@ const Dashboard = ({ isAdmin = false }) => {
             : result?.offline
               ? 'Saved on this device and queued for automatic sync.'
               : `Attendance saved for ${specificDate}`,
-          toastId: `attendance:${memberId}:${specificDate}:${toastActionKey}`,
+          toastId: `attendance:${memberId}:${specificDate}`,
           autoClose: result?.success === false ? 5200 : 2400
         })
       }
@@ -1551,7 +1586,7 @@ const Dashboard = ({ isAdmin = false }) => {
       errorHaptic()
       toast.error('Failed to update attendance. Please try again.')
     } finally {
-      setAttendanceLoading(prev => ({ ...prev, [loadingKey]: false }))
+      endAttendanceSaving(loadingKey)
       attendanceActionLocksRef.current.delete(actionKey)
     }
   }
@@ -2540,6 +2575,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   onDelete={openDeleteConfirm}
                   attendanceStatus={targetDate ? getCanonicalAttendanceValue(member, targetDate) : undefined}
                   attendanceLoading={attendanceLoading[member.id]}
+                  attendanceLoadingByDate={attendanceLoading}
                   monthSundays={sundayDates}
                   attendanceData={attendanceData}
                   memberTags={memberTags[member.id]}
@@ -2547,6 +2583,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   currentTable={currentTable}
                   getMonthDisplayName={getMonthDisplayName}
                   showDeleteActions={showSearchTrayDelete}
+                  csvImportProvenance={recentCsvImportMembers[String(getMemberCanonicalId(member) || member.id)] || null}
                 />
               )
             })
@@ -3046,12 +3083,14 @@ const Dashboard = ({ isAdmin = false }) => {
                       return getCanonicalAttendanceValue(member, targetDate)
                     })()}
                     attendanceLoading={attendanceLoading[member.id]}
+                    attendanceLoadingByDate={attendanceLoading}
                     monthSundays={sundayDates}
                     attendanceData={attendanceData}
                     memberTags={memberTags[member.id]}
                     showTags={showOptionalTags}
                     currentTable={currentTable}
                     getMonthDisplayName={getMonthDisplayName}
+                    csvImportProvenance={recentCsvImportMembers[String(getMemberCanonicalId(member) || member.id)] || null}
                   />
                 )
               })}
@@ -3335,6 +3374,7 @@ const Dashboard = ({ isAdmin = false }) => {
                       onDelete={openDeleteConfirm}
                       attendanceStatus={attendanceStatusValue}
                       attendanceLoading={attendanceLoading[resultItem.canonical_member_id]}
+                      attendanceLoadingByDate={attendanceLoading}
                       monthSundays={sundayDates}
                       attendanceData={attendanceData}
                       memberTags={memberTags[resultItem.canonical_member_id] || []}
@@ -3342,6 +3382,7 @@ const Dashboard = ({ isAdmin = false }) => {
                       currentTable={currentTable}
                       getMonthDisplayName={getMonthDisplayName}
                       showDeleteActions={showSearchTrayDelete}
+                      csvImportProvenance={recentCsvImportMembers[String(resultItem.canonical_member_id || memberObj.id)] || null}
                     />
                   )
                 })}

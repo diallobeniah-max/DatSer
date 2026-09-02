@@ -33,6 +33,7 @@ const MemberCard = memo(({
     onDelete,
     attendanceStatus, // Status for the currently selected attendance date
     attendanceLoading,
+    attendanceLoadingByDate = {},
     monthSundays,
     attendanceData, // Full attendance data for the month
     memberTags = [],
@@ -44,7 +45,8 @@ const MemberCard = memo(({
     memberCodeBadgeStyle = 'soft',
     memberCodeBadgeCycleSlot = 0,
     isMemberCodeLoading = false,
-    formatMemberName = (value) => value
+    formatMemberName = (value) => value,
+    csvImportProvenance = null,
 }) => {
     const canonicalName = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || ''
     const name = formatMemberName(canonicalName) || 'Unnamed member'
@@ -75,7 +77,7 @@ const MemberCard = memo(({
                 </div>
             )}
             <div
-                className={`member-card relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-primary-300 dark:hover:border-primary-600 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden w-[96%] sm:w-full mx-auto ${isSelected ? 'selection-highlight' : ''}`}
+                className={`member-card relative bg-white dark:bg-gray-800 border rounded-xl hover:border-primary-300 dark:hover:border-primary-600 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden w-[96%] sm:w-full mx-auto ${csvImportProvenance ? 'border-emerald-300 border-l-4 bg-emerald-50/65 dark:border-emerald-700 dark:bg-emerald-950/20' : 'border-gray-200 dark:border-gray-700'} ${isSelected ? 'selection-highlight' : ''}`}
                 style={{ touchAction: 'pan-y', userSelect: 'none' }}
                 onTouchStart={(e) => !selectionMode && onLongPressStart(member.id, e)}
                 onTouchMove={onLongPressMove}
@@ -119,9 +121,13 @@ const MemberCard = memo(({
                                 {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                             </div>
                             <div className="flex-1 min-w-0">
-                                <h3 className="member-card-name min-w-0 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
-                                    {name}
-                                </h3>
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                    <h3 className="member-card-name min-w-0 flex-1 font-semibold text-gray-900 dark:text-white text-base sm:text-lg truncate">
+                                        {name}
+                                    </h3>
+                                    {csvImportProvenance && <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-white" title={`Created from CSV import${csvImportProvenance.sourceSheet ? ` · ${csvImportProvenance.sourceSheet}` : ''}`}>New from import</span>}
+                                </div>
+                                {csvImportProvenance?.sourceSheet && <p className="member-card-meta text-[10px] font-bold text-emerald-700 dark:text-emerald-300 mt-0.5">{csvImportProvenance.sourceSheet}{csvImportProvenance.sourceRow ? ` · Row ${csvImportProvenance.sourceRow}` : ''}</p>}
                                 {member.source_month_label ? (
                                     <p className="member-card-meta text-[10px] font-bold text-orange-600 dark:text-orange-400 mt-0.5">
                                         {member.already_in_current_table ? `Already in ${getMonthDisplayName ? getMonthDisplayName(currentTable) : 'current month'}` : `Last found in ${member.source_month_label}`}
@@ -168,8 +174,8 @@ const MemberCard = memo(({
                         <AttendanceChoice
                             value={attendanceStatus}
                             onChange={(nextValue) => onAttendance(member.id, nextValue)}
-                            disabled={attendanceLoading}
                             pending={attendanceLoading}
+                            allowPendingChange
                             showClear={false}
                             variant="member-card"
                             stopPropagation
@@ -266,6 +272,8 @@ const MemberCard = memo(({
                                                     compact
                                                     value={status}
                                                     onChange={value => onAttendanceForDate(member.id, value, date)}
+                                                    pending={Boolean(attendanceLoadingByDate[`${member.id}_${date}`])}
+                                                    allowPendingChange
                                                     stopPropagation
                                                     testIdPrefix={`member-card-attendance-${member.id}-${date}`}
                                                     ariaLabel={`Attendance for ${name} on ${date}`}

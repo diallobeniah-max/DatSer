@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { countPersistedCsvImportImages, deleteCsvImportSession, hydrateSourceImages, updateCsvImportReviewRows, uploadSourceImages } from './csvImportHistory'
+import { countPersistedCsvImportImages, deleteCsvImportSession, getCsvImportSourceUrl, hydrateSourceImages, indexCsvImportSourceImages, updateCsvImportReviewRows, uploadSourceImages } from './csvImportHistory'
 
 const file = (name = 'Sunday Sheet.png', type = 'image/png') => new File(['pixels'], name, { type })
 
@@ -73,6 +73,20 @@ describe('CSV import source image persistence', () => {
     expect(hydrated.Legacy[0].sheetKey).toBe('Legacy')
   })
 
+  it('indexes restored image descriptors without eagerly signing every image', () => {
+    expect(indexCsvImportSourceImages([{ sheetKey: 'Sheet 1', path: 'a' }, { sheet: 'Sheet 2', path: 'b' }])).toMatchObject({
+      'Sheet 1': [{ path: 'a' }], 'Sheet 2': [{ path: 'b' }],
+    })
+  })
+
+  it('caches a signed source URL for repeated active-viewer reads', async () => {
+    const { supabase, createSignedUrl } = storageClient({ signedUrl: 'cached-url' })
+    const image = { sheetKey: 'Sheet 1', path: 'owner/session/one.png', bucket: 'csv-import-sources' }
+    await expect(getCsvImportSourceUrl({ supabase, image })).resolves.toBe('cached-url')
+    await expect(getCsvImportSourceUrl({ supabase, image })).resolves.toBe('cached-url')
+    expect(createSignedUrl).toHaveBeenCalledTimes(1)
+  })
+
   it('persists attention verification inside the existing import_rows JSON', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 'session-1', import_rows: [{ importRowId: 'r1', attentionVerified: true }] }, error: null })
     const select = vi.fn(() => ({ single }))
@@ -85,6 +99,21 @@ describe('CSV import source image persistence', () => {
 
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ import_rows: importRows }))
     expect(eq).toHaveBeenCalledWith('id', 'session-1')
+  })
+
+  it('persists bulk-created member UUID and source provenance in the same import_rows JSON', async () => {
+    const single = vi.fn().mockResolvedValue({ data: { id: 'session-1', import_rows: [] }, error: null })
+    const select = vi.fn(() => ({ single }))
+    const eq = vi.fn(() => ({ select }))
+    const update = vi.fn(() => ({ eq }))
+    const supabase = { from: vi.fn(() => ({ update })) }
+    const importRows = [{ importRowId: 'r7', bulkCreate: { memberId: 'member-7', sourceImportId: 'session-1', sourceSheet: 'Sheet 4', sourceRow: 7 } }]
+
+    await updateCsvImportReviewRows({ supabase, sessionId: 'session-1', importRows })
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      import_rows: expect.arrayContaining([expect.objectContaining({ bulkCreate: expect.objectContaining({ memberId: 'member-7', sourceSheet: 'Sheet 4', sourceRow: 7 }) })]),
+    }))
   })
 
   it('deletes only the selected history row before cleaning up its private source images', async () => {

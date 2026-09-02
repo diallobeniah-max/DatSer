@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
-import { AlertTriangle, ChevronRight, FileSpreadsheet, Image as ImageIcon, Loader2, RotateCcw, Trash2 } from 'lucide-react'
-import { CSV_BATCH_STATUS, getCsvBatchCounts, getCsvBatchEntryAttentionCount } from '../utils/csvImportBatch'
+import { AlertTriangle, CheckCircle, ChevronRight, FileSpreadsheet, Image as ImageIcon, ListChecks, Loader2, RotateCcw, Trash2 } from 'lucide-react'
+import { CSV_BATCH_STATUS, getCsvBatchCounts, getCsvBatchEntryAttentionCount, getCsvBatchReviewSummary, isCsvBatchEntryCompleted } from '../utils/csvImportBatch'
 
 const BADGES = {
   [CSV_BATCH_STATUS.READY]: ['Paired · Ready', 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/55 dark:text-emerald-300'],
@@ -15,8 +15,9 @@ const BADGES = {
   [CSV_BATCH_STATUS.FAILED]: ['Failed · Retry', 'bg-red-100 text-red-700 dark:bg-red-950/45 dark:text-red-300'],
 }
 
-export default function CsvImportBatchWorkspace({ batchName, onBatchNameChange, onBatchNameCommit, entries, progress, onReview, onRetry, onRemove, onAssignImage }) {
+export default function CsvImportBatchWorkspace({ batchName, onBatchNameChange, onBatchNameCommit, entries, progress, onReview, onRetry, onRemove, onAssignImage, onReviewIssues, onPreviewBatch, onOpenRepairModal, batchSaveSummary, batchSaveProgress, isSavingAllReady = false }) {
   const counts = useMemo(() => getCsvBatchCounts(entries), [entries])
+  const review = useMemo(() => getCsvBatchReviewSummary(entries), [entries])
   if (!entries.length) return null
   return <section className="overflow-hidden rounded-[1.5rem] border border-emerald-200 bg-white shadow-lg shadow-emerald-950/5 dark:border-emerald-900/70 dark:bg-[#111a16]" aria-label="CSV batch workspace">
     <header className="border-b border-emerald-100 p-4 dark:border-emerald-900/60">
@@ -27,16 +28,39 @@ export default function CsvImportBatchWorkspace({ batchName, onBatchNameChange, 
       <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-5 lg:grid-cols-10">{[
         ['CSVs',counts.csvs],['Images',counts.images],['Paired',counts.paired],['Missing image',counts.missingImage],['Missing CSV',counts.missingCsv],['Invalid',counts.invalid],['Ready',counts.ready],['Reviewed',counts.reviewed],['Saved',counts.saved],['Attention',counts.needsAttention],
       ].map(([label,value])=><div key={label} className="rounded-xl bg-gray-50 px-2 py-2 text-center dark:bg-black/20"><span className="block text-base font-black text-gray-900 dark:text-white">{value}</span><span className="block text-[9px] font-bold text-gray-500 dark:text-gray-400">{label}</span></div>)}</div>
+      <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-900/70 dark:bg-emerald-950/20 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-black text-emerald-900 dark:text-emerald-100">{review.completedSheets} completed sheet{review.completedSheets === 1 ? '' : 's'} · {review.remainingSheets} remaining sheet{review.remainingSheets === 1 ? '' : 's'}</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-emerald-800/70 dark:text-emerald-200/70">{review.totalRows} total rows ({review.completedRows} completed · {review.remainingRows} remaining)</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {review.completedSheets > 0 && typeof onOpenRepairModal === 'function' && (
+            <button type="button" onClick={onOpenRepairModal} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-300 bg-white px-3 text-xs font-black text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:bg-[#111a16] dark:text-amber-200">
+              <RotateCcw className="h-4 w-4"/>Repair / Reprocess Sheets
+            </button>
+          )}
+          {review.issues > 0 && (
+            <button type="button" onClick={onReviewIssues} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-emerald-300 bg-white px-3 text-xs font-black text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-45 dark:border-emerald-800 dark:bg-[#111a16] dark:text-emerald-200">
+              <ListChecks className="h-4 w-4"/>Review Warnings ({review.issues})
+            </button>
+          )}
+          <button type="button" onClick={onPreviewBatch} disabled={review.remainingSheets === 0 || review.processableRemainingRows === 0 || isSavingAllReady} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45">
+            <CheckCircle className="h-4 w-4"/>Process Remaining {review.remainingSheets} Sheets
+          </button>
+        </div>
+      </div>
+      {batchSaveSummary && <p className="mt-2 text-xs font-bold text-emerald-700 dark:text-emerald-300">{batchSaveSummary.saved} saved · {batchSaveSummary.skipped} skipped · {batchSaveSummary.failed} failed across {batchSaveSummary.processedSheets} sheet{batchSaveSummary.processedSheets === 1 ? '' : 's'}</p>}
+      {batchSaveProgress && <p className="mt-2 text-xs font-bold text-emerald-700 dark:text-emerald-300">Processing remaining sheets {batchSaveProgress.completed} / {batchSaveProgress.total}</p>}
     </header>
     <div className="max-h-[28rem] divide-y divide-gray-100 overflow-y-auto dark:divide-gray-800">
-      {entries.map((entry,index)=>{ const badge=BADGES[entry.status]||['Draft','bg-gray-100 text-gray-600']; const attentionCount=getCsvBatchEntryAttentionCount(entry); const canReview=!!(entry.sessionId && (entry.csvFiles?.length || entry.originalCsvFilename) && entry.status!==CSV_BATCH_STATUS.DUPLICATE_CSV && entry.status!==CSV_BATCH_STATUS.INVALID); return <article key={entry.id} className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center [content-visibility:auto]">
+      {entries.map((entry,index)=>{ const completed=isCsvBatchEntryCompleted(entry); const badge=completed?['Saved / Completed','bg-emerald-600 text-white']:BADGES[entry.status]||['Draft','bg-gray-100 text-gray-600']; const attentionCount=getCsvBatchEntryAttentionCount(entry); const canReview=!!(entry.sessionId && (entry.csvFiles?.length || entry.originalCsvFilename) && entry.status!==CSV_BATCH_STATUS.DUPLICATE_CSV && entry.status!==CSV_BATCH_STATUS.INVALID); return <article key={entry.id} className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center [content-visibility:auto]">
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-xs font-black text-emerald-700 dark:bg-emerald-950/45 dark:text-emerald-300">{index+1}</span><h4 className="truncate text-sm font-black text-gray-900 dark:text-white">{entry.displayBasename}</h4><span className={`rounded-full px-2 py-1 text-[9px] font-black ${badge[1]}`}>{entry.isPersisting?<><Loader2 className="mr-1 inline h-3 w-3 animate-spin"/>Saving draft</>:badge[0]}</span></div>
           <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold text-gray-500 dark:text-gray-400"><span className="inline-flex items-center gap-1"><FileSpreadsheet className="h-3 w-3"/>{entry.csvFiles?.length||0} CSV</span><span className="inline-flex items-center gap-1"><ImageIcon className="h-3 w-3"/>{entry.imageFiles?.length||entry.persistedImageCount||0} image</span>{entry.rows?.length>0&&<span>{entry.rows.length} rows</span>}{attentionCount>0&&<span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-red-700 dark:bg-red-950/55 dark:text-red-300"><AlertTriangle className="h-3 w-3"/>{attentionCount} need attention</span>}{entry.mode&&<span>{entry.mode==='sunday_names'?'Sunday Names List':'Full Register'}</span>}{entry.error&&<span className="text-red-600">{entry.error}</span>}</div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           {entry.status===CSV_BATCH_STATUS.IMAGE_ONLY && entries.some((candidate)=>candidate.sessionId&&candidate.originalCsvFilename) && <select defaultValue="" onChange={(event)=>{if(event.target.value)onAssignImage(entry.id,event.target.value)}} className="rounded-lg border border-emerald-200 bg-white px-2 py-2 text-[10px] font-black text-emerald-700 dark:border-emerald-800 dark:bg-gray-900 dark:text-emerald-300" aria-label={`Assign ${entry.displayBasename} image to`}><option value="">Assign image to…</option>{entries.filter((candidate)=>candidate.originalCsvFilename).map((candidate)=><option key={candidate.id} value={candidate.id}>{candidate.displayBasename}</option>)}</select>}
           {entry.status===CSV_BATCH_STATUS.FAILED&&<button type="button" onClick={()=>onRetry(entry.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" aria-label={`Retry ${entry.displayBasename}`}><RotateCcw className="h-4 w-4"/></button>}
-          {entry.status!==CSV_BATCH_STATUS.SAVED&&<button type="button" onClick={()=>onRemove(entry.id)} className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/35" aria-label={`Remove ${entry.displayBasename}`}><Trash2 className="h-4 w-4"/></button>}
+          {!completed&&<button type="button" onClick={()=>onRemove(entry.id)} className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/35" aria-label={`Remove ${entry.displayBasename}`}><Trash2 className="h-4 w-4"/></button>}
           <button type="button" onClick={()=>onReview(entry.id)} disabled={!canReview} className="inline-flex min-h-9 items-center gap-1 rounded-xl bg-emerald-600 px-3 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-gray-800">Review<ChevronRight className="h-3.5 w-3.5"/></button>
         </div>
       </article>})}

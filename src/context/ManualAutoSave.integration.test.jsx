@@ -78,9 +78,10 @@ vi.mock('./AuthContext', () => ({
 // onSelectSunday / onCalendarModeChange routed through AppContext's
 // setPersonalCalendarMode.
 const CalendarHost = () => {
-  const { setPersonalCalendarMode, isPersonalManualMode } = useHostApp()
+  const { currentTable, setPersonalCalendarMode, isPersonalManualMode } = useHostApp()
   const [open, setOpen] = useState(true)
-  return (
+  return <>
+    <output data-testid="applied-month">{currentTable}</output>
     <MonthPickerPopup
       isOpen={open}
       onClose={() => setOpen(false)}
@@ -88,7 +89,7 @@ const CalendarHost = () => {
       onCalendarModeChange={(mode) => setPersonalCalendarMode({ mode })}
       onSelectSunday={({ table, date }) => setPersonalCalendarMode({ mode: 'manual', tableName: table, date })}
     />
-  )
+  </>
 }
 
 import { AppProvider, useApp as useHostApp } from './AppContext'
@@ -170,13 +171,33 @@ describe('Manual calendar button must not auto-save (production wiring)', () => 
     expect(savePersonalPreferencesMock).not.toHaveBeenCalled()
   })
 
-  it('clicking a Sunday performs exactly one save', async () => {
+  it('keeps the applied month in place until Apply, then switches the month and Sunday together', async () => {
+    renderHost()
+    await waitFor(() => expect(screen.getByTestId('applied-month').textContent).toBe('August_2026'), { timeout: 4000 })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(false), { timeout: 4000 })
+
+    fireEvent.click(screen.getByRole('button', { name: 'manual' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+
+    expect(screen.getByTestId('applied-month').textContent).toBe('August_2026')
+    expect(savePersonalPreferencesMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
+    await waitFor(() => expect(screen.getByTestId('applied-month').textContent).toBe('January_2026'))
+    expect(savePersonalPreferencesMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('applies the drafted Manual month and Sunday exactly once', async () => {
     renderHost()
     await waitFor(() => expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(false), { timeout: 4000 })
 
     fireEvent.click(screen.getByRole('button', { name: 'manual' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+
+    expect(savePersonalPreferencesMock).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
 
     await vi.waitFor(() => expect(savePersonalPreferencesMock).toHaveBeenCalledTimes(1))
     expect(savePersonalPreferencesMock).toHaveBeenCalledWith(

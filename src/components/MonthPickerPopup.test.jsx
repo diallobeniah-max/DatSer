@@ -45,11 +45,27 @@ describe('MonthPickerPopup calendar mode', () => {
   it('keeps the primary create action visible in the responsive dialog shell', () => {
     render(<MonthPickerPopup isOpen onClose={vi.fn()} />)
 
-    expect(screen.getByRole('dialog', { name: 'Select Month' }).className).toMatch(/flex-col/)
+    const dialog = screen.getByRole('dialog', { name: 'Select Month' })
+    expect(dialog.className).toMatch(/flex-col/)
+    expect(dialog.className).toMatch(/w-\[calc\(100vw-1\.5rem\)\]/)
     expect(screen.getByRole('button', { name: 'Create New Month' })).toBeTruthy()
   })
 
-  it('does not save when Manual or a month is selected, then saves once after a Sunday is selected', async () => {
+  it('keeps the Manual Apply action full-width and tap-sized in the fixed footer', () => {
+    render(
+      <MonthPickerPopup
+        isOpen
+        onClose={vi.fn()}
+        calendarMode="manual"
+        onCalendarModeChange={vi.fn()}
+        onSelectSunday={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Apply month' }).className).toMatch(/min-h-11.*w-full/)
+  })
+
+  it('keeps Manual choices as a draft, then saves once after Apply', async () => {
     const onSelectSunday = vi.fn().mockResolvedValue(true)
     const onCalendarModeChange = vi.fn().mockResolvedValue(true)
     const onClose = vi.fn()
@@ -71,6 +87,9 @@ describe('MonthPickerPopup calendar mode', () => {
     expect(onSelectSunday).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+    expect(onSelectSunday).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
     await vi.waitFor(() => expect(onSelectSunday).toHaveBeenCalledTimes(1))
     expect(onSelectSunday).toHaveBeenCalledWith(expect.objectContaining({
       table: 'January_2026',
@@ -95,6 +114,7 @@ describe('MonthPickerPopup calendar mode', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
 
     await vi.waitFor(() => expect(onSelectSunday).toHaveBeenCalledTimes(1))
     expect(onClose).not.toHaveBeenCalled()
@@ -147,7 +167,7 @@ describe('MonthPickerPopup calendar mode', () => {
     expect(onSelectSunday).not.toHaveBeenCalled()
   })
 
-  it('shows the previewed month Sundays and saves that previewed month, not the confirmed one', async () => {
+  it('shows the previewed month Sundays and applies that previewed month, not the confirmed one', async () => {
     const onSelectSunday = vi.fn().mockResolvedValue(true)
     const onCalendarModeChange = vi.fn()
 
@@ -166,6 +186,7 @@ describe('MonthPickerPopup calendar mode', () => {
 
     expect(screen.getByRole('button', { name: 'Jan 11' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
 
     await vi.waitFor(() => expect(onSelectSunday).toHaveBeenCalledTimes(1))
     expect(onSelectSunday).toHaveBeenCalledWith(expect.objectContaining({
@@ -214,6 +235,7 @@ describe('MonthPickerPopup calendar mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'manual' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
 
     await vi.waitFor(() => expect(onSelectSunday).toHaveBeenCalledTimes(1))
     expect(onClose).not.toHaveBeenCalled()
@@ -301,12 +323,13 @@ describe('MonthPickerPopup calendar mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'manual' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
 
     await vi.waitFor(() => expect(onSelectSunday).toHaveBeenCalledTimes(1))
     expect(onSelectSunday).toHaveBeenCalledWith(expect.objectContaining({ table: 'January_2026' }))
   })
 
-  it('rapid repeated Sunday clicks produce exactly one onSelectSunday save', async () => {
+  it('rapid repeated Apply clicks produce exactly one onSelectSunday save', async () => {
     const onSelectSunday = vi.fn().mockResolvedValue(true)
     const onCalendarModeChange = vi.fn()
 
@@ -323,10 +346,11 @@ describe('MonthPickerPopup calendar mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'manual' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
 
-    const sunday = screen.getByRole('button', { name: 'Jan 11' })
-    fireEvent.click(sunday)
-    fireEvent.click(sunday)
-    fireEvent.click(sunday)
+    fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+    const apply = screen.getByRole('button', { name: 'Apply month' })
+    fireEvent.click(apply)
+    fireEvent.click(apply)
+    fireEvent.click(apply)
 
     await vi.waitFor(() => expect(onSelectSunday).toHaveBeenCalledTimes(1))
     expect(onSelectSunday).toHaveBeenCalledWith(expect.objectContaining({ table: 'January_2026', dateStr: '2026-01-11' }))

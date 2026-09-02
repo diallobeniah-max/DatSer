@@ -12,6 +12,7 @@ const AttendanceChoice = memo(({
   onChange,
   disabled = false,
   pending = false,
+  allowPendingChange = false,
   queued = false,
   error = false,
   compact = false,
@@ -24,7 +25,8 @@ const AttendanceChoice = memo(({
 }) => {
   const handleSelect = (event, nextValue) => {
     if (stopPropagation) event.stopPropagation()
-    if (disabled || pending) return
+    const isCurrentValue = nextValue === null ? value === null : nextValue === value
+    if (disabled || (pending && (!allowPendingChange || isCurrentValue))) return
     dismissKeyboardForNonTextControl()
     onChange?.(nextValue)
   }
@@ -40,6 +42,11 @@ const AttendanceChoice = memo(({
     >
       {OPTIONS.filter(option => showClear || option.value !== null).map(option => {
         const selected = option.value === null ? value === null : value === option.value
+        // A second, different choice is allowed while the first one is still
+        // saving. The attendance write queue keeps the final intent durable;
+        // repeating the selected control remains disabled to avoid accidental
+        // duplicate taps.
+        const blockedWhilePending = pending && (selected || !allowPendingChange)
         return (
           <button
             key={option.tone}
@@ -49,7 +56,7 @@ const AttendanceChoice = memo(({
             data-selected={selected ? 'true' : 'false'}
             aria-pressed={selected}
             aria-busy={pending && selected ? 'true' : undefined}
-            disabled={disabled || pending}
+            disabled={disabled || blockedWhilePending}
             onPointerDown={stopPropagation ? event => event.stopPropagation() : undefined}
             onClick={event => handleSelect(event, option.value)}
             className="attendance-choice__button"

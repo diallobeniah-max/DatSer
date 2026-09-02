@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterCsvImportReviewRows, getCsvImportReviewStatusCounts } from './csvImportReview'
+import { filterCsvImportReviewRows, getCsvImportReviewStatusCounts, getCsvImportRowIssue, isCsvImportRowReady } from './csvImportReview'
 
 const rows = [
   { importRowId: 'r1', match: { status: 'exact' }, saveStatus: 'saved' },
@@ -47,5 +47,13 @@ describe('CSV Import review projections', () => {
     expect(getCsvImportReviewStatusCounts(namesRows)).toMatchObject({ all: 4, ready: 1, unmatched: 1, unresolved: 2 })
     expect(filterCsvImportReviewRows(namesRows, 'ready').map((row) => row.importRowId)).toEqual(['n1'])
     expect(filterCsvImportReviewRows(namesRows, 'unresolved').map((row) => row.importRowId)).toEqual(['n2', 'n3'])
+  })
+
+  it('keeps clean exact rows out of the issue queue while retaining safety gates', () => {
+    expect(getCsvImportRowIssue({ match: { status: 'exact', selectedMemberId: 'm1' }, saveStatus: 'pending' })).toBeNull()
+    expect(isCsvImportRowReady({ match: { status: 'exact', selectedMemberId: 'm1' }, saveStatus: 'pending' })).toBe(true)
+    expect(getCsvImportRowIssue({ match: { status: 'possible' }, saveStatus: 'pending' })).toMatchObject({ kind: 'possible' })
+    expect(getCsvImportRowIssue({ match: { status: 'new' }, saveStatus: 'pending' })).toMatchObject({ kind: 'unmatched' })
+    expect(getCsvImportRowIssue({ match: { status: 'exact' }, saveStatus: 'saved' })).toBeNull()
   })
 })

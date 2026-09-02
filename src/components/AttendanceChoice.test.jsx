@@ -26,4 +26,14 @@ describe('AttendanceChoice', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Present' }))
     expect(onChange).toHaveBeenCalledWith(true)
   })
+
+  it('allows a different attendance choice while the selected value is saving', () => {
+    const onChange = vi.fn()
+    render(<AttendanceChoice value={true} pending allowPendingChange onChange={onChange} />)
+
+    expect(screen.getByRole('button', { name: 'Present' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Absent' }).disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Absent' }))
+    expect(onChange).toHaveBeenCalledWith(false)
+  })
 })

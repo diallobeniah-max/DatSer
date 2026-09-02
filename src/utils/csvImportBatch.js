@@ -1,5 +1,5 @@
 import { CSV_IMPORT_MODE } from './csvImportParser'
-import { getCsvImportUnresolvedAttentionCount } from './csvImportReview'
+import { getCsvImportRowIssue, getCsvImportUnresolvedAttentionCount, isCsvImportAttentionUnresolved, isCsvImportRowCompleted, isCsvImportRowReady, isCsvImportRowSafeForBatch } from './csvImportReview'
 
 export const CSV_BATCH_STATUS = Object.freeze({
   IMAGE_ONLY: 'image_only', CSV_ONLY: 'csv_only', READY: 'ready_for_review',
@@ -32,7 +32,7 @@ export const compareCsvBatchEntries = (left, right) => {
 }
 
 export const deriveCsvBatchStatus = (entry) => {
-  if (entry.status === CSV_BATCH_STATUS.SAVED || entry.status === CSV_BATCH_STATUS.REVIEWED || entry.status === CSV_BATCH_STATUS.ASSIGNED) return entry.status
+  if ([CSV_BATCH_STATUS.SAVED, CSV_BATCH_STATUS.REVIEWED, CSV_BATCH_STATUS.ASSIGNED, CSV_BATCH_STATUS.FAILED, CSV_BATCH_STATUS.READY, 'partial'].includes(entry.status)) return entry.status
   if (entry.error || entry.invalid) return CSV_BATCH_STATUS.INVALID
   if ((entry.csvFiles || []).length > 1) return CSV_BATCH_STATUS.DUPLICATE_CSV
   if (entry.sheetMismatch) return CSV_BATCH_STATUS.MISMATCH
@@ -82,13 +82,148 @@ export const getCsvBatchCounts = (entries) => {
 
 export const getCsvBatchEntryAttentionCount = (entry) => getCsvImportUnresolvedAttentionCount(entry?.rows)
 
+export const isCsvBatchEntryCompleted = (entry) => {
+  if (!entry) return false
+  if (entry.status === CSV_BATCH_STATUS.SAVED) return true
+  const rows = Array.isArray(entry.rows) ? entry.rows : []
+  return rows.length > 0 && rows.every(isCsvImportRowCompleted)
+}
+
+export const getCsvBatchIssueQueue = (entries = []) => {
+  const queue = []
+  ;[...entries].sort(compareCsvBatchEntries).forEach((entry) => {
+    if (isCsvBatchEntryCompleted(entry)) return
+    const entryStatus = deriveCsvBatchStatus(entry)
+    if ([CSV_BATCH_STATUS.DUPLICATE_CSV, CSV_BATCH_STATUS.DUPLICATE_IMAGE, CSV_BATCH_STATUS.INVALID, CSV_BATCH_STATUS.MISMATCH, CSV_BATCH_STATUS.FAILED].includes(entryStatus)) {
+      queue.push({ entryId: entry.sessionId || entry.id, rowId: null, sheet: entry.displayBasename, kind: entryStatus === CSV_BATCH_STATUS.FAILED ? 'failed' : 'duplicate', label: entry.error || 'Sheet needs attention', entry })
+    }
+    ;(entry.rows || []).forEach((row) => {
+      const issue = getCsvImportRowIssue(row)
+      if (issue) queue.push({ entryId: entry.sessionId || entry.id, rowId: row.importRowId, sheet: row.sheet || entry.displayBasename, row, entry, ...issue })
+    })
+  })
+  return queue
+}
+
+export const getCsvBatchReviewSummary = (entries = []) => {
+  const summary = {
+    sheets: entries.length,
+    totalSheets: entries.length,
+    completedSheets: 0,
+    remainingSheets: 0,
+    rows: 0,
+    totalRows: 0,
+    completedRows: 0,
+    remainingRows: 0,
+    processableRemainingRows: 0,
+    ready: 0,
+    exact: 0,
+    willCreateNew: 0,
+    safeNew: 0,
+    alreadyCurrent: 0,
+    attention: 0,
+    possible: 0,
+    unmatched: 0,
+    invalid: 0,
+    duplicate: 0,
+    failed: 0,
+    issues: 0,
+    presentCount: 0,
+    absentCount: 0,
+    blankCount: 0,
+  }
+
+  entries.forEach((entry) => {
+    const completed = isCsvBatchEntryCompleted(entry)
+    const entryRows = entry.rows || []
+    summary.rows += entryRows.length
+    summary.totalRows += entryRows.length
+
+    if (completed) {
+      summary.completedSheets += 1
+    } else {
+      summary.remainingSheets += 1
+    }
+
+    const isSundayNames = entry.mode === CSV_IMPORT_MODE.SUNDAY_NAMES
+
+    entryRows.forEach((row) => {
+      const isCompletedRow = isCsvImportRowCompleted(row)
+      if (isCompletedRow) {
+        summary.completedRows += 1
+        summary.alreadyCurrent += 1
+      } else {
+        summary.remainingRows += 1
+      }
+
+      if (completed) return
+
+      const usableName = String(row.edited?.fullName || row.raw?.fullName || row.fullName || row.match?.matchedMember?.['Full Name'] || (row.match?.status === 'exact' ? 'Member' : '')).trim()
+      const hasDuplicate = Boolean(row.duplicateOfRowId || row.identityConflict)
+      const isInvalid = !usableName || row.match?.status === 'invalid' || hasDuplicate
+
+      if (isInvalid) {
+        summary.invalid += 1
+        if (hasDuplicate) summary.duplicate += 1
+        return
+      }
+
+      // Usable row in an unfinished sheet
+      summary.processableRemainingRows += 1
+      if (isCsvImportRowSafeForBatch(row)) {
+        summary.ready += 1
+      }
+
+      const matchStatus = row.match?.status
+      const hasResolved = Boolean(row.match?.selectedMemberId || row.match?.matchedMember)
+      const hasAttention = isCsvImportAttentionUnresolved(row)
+
+      if (hasAttention) summary.attention += 1
+
+      if (matchStatus === 'exact' || (matchStatus === 'possible' && hasResolved)) {
+        summary.exact += 1
+      } else {
+        summary.willCreateNew += 1
+        if (matchStatus === 'new') summary.safeNew += 1
+        if (matchStatus === 'possible' && !hasResolved) summary.possible += 1
+        if (matchStatus === 'unmatched') summary.unmatched += 1
+      }
+
+      if (isSundayNames) {
+        const val = row.edited?.attendance ?? row.raw?.attendance
+        const normalized = typeof val === 'string' ? val.trim().toUpperCase() : val
+        if (normalized === 'ABSENT' || normalized === 'A' || normalized === 'FALSE' || normalized === '0' || normalized === 'NO' || val === false) summary.absentCount += 1
+        else summary.presentCount += 1
+      } else {
+        const sundays = ['sunday_1', 'sunday_2', 'sunday_3', 'sunday_4', 'sunday_5']
+        sundays.forEach((k) => {
+          if (entry.enabledSundays && entry.enabledSundays[k] === false) return
+          const val = row.edited?.[k] ?? row.raw?.[k]
+          const normalized = typeof val === 'string' ? val.trim().toUpperCase() : val
+          if (normalized === 'PRESENT' || normalized === 'P' || normalized === 'TRUE' || normalized === '1' || normalized === 'YES' || normalized === '✓' || normalized === '✔' || val === true) {
+            summary.presentCount += 1
+          } else if (normalized === 'ABSENT' || normalized === 'A' || normalized === 'FALSE' || normalized === '0' || normalized === 'NO' || normalized === '✗' || normalized === '✘' || normalized === 'X' || val === false) {
+            summary.absentCount += 1
+          } else {
+            summary.blankCount += 1
+          }
+        })
+      }
+    })
+  })
+
+  const issues = getCsvBatchIssueQueue(entries)
+  summary.issues = issues.length
+  return summary
+}
+
 export const findNextCsvBatchEntry = (entries, currentId, { unsavedOnly = false } = {}) => {
   const ordered = [...(entries || [])].sort(compareCsvBatchEntries)
   const currentIndex = ordered.findIndex((entry) => entry.id === currentId || entry.sessionId === currentId)
   const candidates = [...ordered.slice(currentIndex + 1), ...ordered.slice(0, Math.max(0, currentIndex))]
   return candidates.find((entry) => (
     (entry.csvFiles?.length || entry.originalCsvFilename)
-    && (!unsavedOnly || entry.status !== CSV_BATCH_STATUS.SAVED)
+    && (!unsavedOnly || !isCsvBatchEntryCompleted(entry))
   ))
 }
 

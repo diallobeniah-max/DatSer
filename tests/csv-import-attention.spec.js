@@ -30,7 +30,7 @@ test('CSV Needs Attention review, preview gate, verification, and responsive UI'
   const attentionCard = page.getByRole('button', { name: /1\s*Needs Attention/i })
   await expect(attentionCard).toBeVisible()
   await attentionCard.click()
-  await page.getByPlaceholder(/Search name, phone, code, sheet/i).fill('Synthetic Attention')
+  await page.getByPlaceholder(/Search name, phone, code/i).fill('Synthetic Attention')
   const attentionRow = page.getByRole('row', { name: /Synthetic Attention/ })
   await expect(attentionRow.getByRole('textbox').first()).toHaveValue('Synthetic Attention')
   await page.getByRole('button', { name: /Review note for Synthetic Attention/i }).click()

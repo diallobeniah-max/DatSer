@@ -16,7 +16,26 @@ describe('CSV Import parser', () => {
       sheet: 'Sheet 1',
       edited: { fullName: 'Ama Serwaa', phoneNumber: '0241112233', gender: 'Female', sunday_1: 'PRESENT', sunday_2: 'ABSENT' },
     })
-    expect(parsed.rows[1].sheet).toBe('Second')
+    expect(parsed.rows[1]).toMatchObject({
+      sheet: 'Second',
+      edited: { fullName: 'Kojo Mensah', phoneNumber: '0551234567', gender: 'Male', sunday_1: 'ABSENT', sunday_2: 'UNSPECIFIED' },
+    })
+  })
+
+  it('strictly maps P and check to PRESENT, and A and X to ABSENT', () => {
+    expect(normalizeAttendanceValue('P')).toBe('PRESENT')
+    expect(normalizeAttendanceValue('present')).toBe('PRESENT')
+    expect(normalizeAttendanceValue('✓')).toBe('PRESENT')
+    expect(normalizeAttendanceValue('✔')).toBe('PRESENT')
+    expect(normalizeAttendanceValue('A')).toBe('ABSENT')
+    expect(normalizeAttendanceValue('absent')).toBe('ABSENT')
+    expect(normalizeAttendanceValue('X')).toBe('ABSENT')
+    expect(normalizeAttendanceValue('x')).toBe('ABSENT')
+    expect(normalizeAttendanceValue('✗')).toBe('ABSENT')
+    expect(normalizeAttendanceValue('✘')).toBe('ABSENT')
+    expect(normalizeAttendanceValue('')).toBe('UNSPECIFIED')
+    expect(normalizeAttendanceValue(null)).toBe('UNSPECIFIED')
+    expect(normalizeAttendanceValue(undefined)).toBe('UNSPECIFIED')
   })
 
   it('keeps unknown attendance explicit instead of silently treating it as absent', () => {
