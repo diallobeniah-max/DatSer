@@ -9,3 +9,21 @@ dist
 **/*.spec.*
 tests
 test-results
+
+# Never ship local credentials, real import exports, or local agent/review
+# artifacts with a production deployment.
+.env
+.env.*
+*.csv
+*.log
+*.err.log
+.commandcode
+.codex
+.codex-remote-attachments
+.opencode
+.agents
+.playwright-mcp
+graphify-out
+android
+output
+datser-overview.txt
