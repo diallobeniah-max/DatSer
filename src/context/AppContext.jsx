@@ -86,6 +86,7 @@ import {
   isMemberStaleDeleted,
   readMemberDeleteTombstones
 } from '../utils/memberDeleteTombstones'
+import { syncQueuedMemberDelete } from '../utils/offlineDeleteRetry'
 
 const AppContext = createContext()
 
@@ -8063,49 +8064,41 @@ export const AppProvider = ({ children }) => {
                 identity: change.identity
               })
             } else if (change.action_type === 'member_delete') {
-              // A delete of a row that is already gone (missing or deleted_at)
-              // is idempotent success: retire the queued delete instead of
-              // failing forever. The tombstone keeps local caches in sync.
-              const { data: deleteExistingRows, error: deleteCheckError } = await supabase
-                .from(changeTable)
-                .select('id, deleted_at')
-                .eq('id', change.member_id)
-                .limit(1)
-              if (deleteCheckError) throw deleteCheckError
-              const deleteResolution = resolveServerDeletedMemberChange(change, deleteExistingRows?.[0])
-              if (deleteResolution.action === 'remove') {
-                addMemberDeleteTombstone(change.member_id, deleteExistingRows?.[0]?.deleted_at || new Date().toISOString(), changeTable)
-                await removeOfflineChange(change.local_change_id)
-                synced += 1
-                continue
-              }
               const deletedAt = new Date().toISOString()
               const targetOwnerId = dataOwnerId || user?.id
               if (!targetOwnerId) throw new Error('Missing workspace owner for member delete sync.')
 
-              const { data: rpcSuccess, error: rpcErr } = await supabase.rpc('soft_delete_member', {
-                p_table_name: changeTable,
-                p_member_id: change.member_id,
-                p_owner_id: targetOwnerId
+              const deleteResolution = await syncQueuedMemberDelete({
+                performDelete: () => supabase.rpc('soft_delete_member', {
+                  p_table_name: changeTable,
+                  p_member_id: change.member_id,
+                  p_owner_id: targetOwnerId
+                }),
+                // This is deliberately a read-only, exact workspace/member
+                // verification. It runs only after the trusted RPC reported
+                // its specific zero-active-row result, which can mean the
+                // prior attempt committed before its response was lost.
+                readMember: () => supabase
+                  .from(changeTable)
+                  .select('id, deleted_at')
+                  .eq('id', change.member_id)
+                  .eq('workspace_owner_id', targetOwnerId)
+                  .limit(1)
               })
-              if (rpcErr) throw rpcErr
-              if (!rpcSuccess) {
-                throw new Error('Soft delete could not be verified by server')
+              if (deleteResolution.action === 'fail') {
+                await updateOfflineChangeStatus(change.local_change_id, {
+                  sync_status: 'failed',
+                  error: deleteResolution.error
+                })
+                failed += 1
+                continue
               }
-              addMemberDeleteTombstone(change.member_id, deletedAt, changeTable)
+              addMemberDeleteTombstone(change.member_id, deleteResolution.deletedAt || deletedAt, changeTable)
             }
 
             await removeOfflineChange(change.local_change_id)
             synced += 1
           } catch (error) {
-            // The row vanished between our pre-check and the write; a delete
-            // that affects no rows is already achieved server-side.
-            if (change.action_type === 'member_delete' && error?.code === 'DATSER_NO_ROWS') {
-              addMemberDeleteTombstone(change.member_id, new Date().toISOString(), changeTable)
-              await removeOfflineChange(change.local_change_id)
-              synced += 1
-              continue
-            }
             // Update/add/attendance against a member proven deleted on the
             // server cannot apply and must not resurrect it. Reconcile to a
             // terminal, recoverable state (tombstone + failed, no auto-retry).

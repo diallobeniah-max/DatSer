@@ -1,4 +1,6 @@
 ﻿import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { LOCAL_ONLY_PREFERENCE_KEYS, PERSONAL_PREFERENCE_KEYS, getPersonalSettingsDefaults, pickPersonalPreferencePatch } from '../config/settingsRegistry'
 import { setDurableOfflineSetupMeta, getDurableOfflineSetupMeta, clearDurableOfflineSetupMeta, isOfflineSetupDismissedSession, markOfflineSetupDismissedSession } from '../utils/offlineStore'
 import { addMemberDeleteTombstone, isMemberStaleDeleted, filterDeletedMembers, clearMemberDeleteTombstones } from '../utils/memberDeleteTombstones'
@@ -33,14 +35,32 @@ describe('AppContext & Auth offline safety and hardening regression suite', () =
   // 3. Saving dashboard_member_columns still succeeds when local attendance_control_mode exists
   it('3. saving dashboard_member_columns can cleanly filter out local-only keys', () => {
     const mixedPatch = {
-      dashboard_member_columns: 4,
+      dashboard_member_columns: 2,
       attendance_control_mode: 'pac'
     }
     const serverPatch = Object.fromEntries(
       Object.entries(mixedPatch).filter(([k]) => !LOCAL_ONLY_PREFERENCE_KEYS.has(k))
     )
-    expect(serverPatch).toEqual({ dashboard_member_columns: 4 })
+    expect(serverPatch).toEqual({ dashboard_member_columns: 2 })
     expect(serverPatch.attendance_control_mode).toBeUndefined()
+  })
+
+  it('3b. offline attendance and member delete sync have no direct monthly-table mutations', () => {
+    const appContextSource = readFileSync(resolve(process.cwd(), 'src/context/AppContext.jsx'), 'utf8')
+    const deleteRetrySource = readFileSync(resolve(process.cwd(), 'src/utils/offlineDeleteRetry.js'), 'utf8')
+    const deleteSyncStart = appContextSource.indexOf("} else if (change.action_type === 'member_delete')")
+    const deleteSyncEnd = appContextSource.indexOf('await removeOfflineChange(change.local_change_id)', deleteSyncStart)
+    const deleteSyncSource = appContextSource.slice(deleteSyncStart, deleteSyncEnd)
+    const attendanceSyncStart = appContextSource.indexOf('if (queuedPresent !== null && (queuedPresent === true || queuedPresent === false))')
+    const attendanceSyncEnd = appContextSource.indexOf('await removeOfflineChange(change.local_change_id)', attendanceSyncStart)
+    const attendanceSyncSource = appContextSource.slice(attendanceSyncStart, attendanceSyncEnd)
+
+    expect(appContextSource).not.toMatch(/\.from\(changeTable\)\s*\.\s*(?:update|delete)\s*\(/)
+    expect(deleteSyncSource).not.toMatch(/\.from\([^)]*\)\s*\.\s*(?:update|delete)\s*\(/)
+    expect(attendanceSyncSource).not.toMatch(/\.from\([^)]*\)\s*\.\s*(?:update|delete)\s*\(/)
+    expect(deleteRetrySource).not.toMatch(/\.from\([^)]*\)\s*\.\s*(?:update|delete)\s*\(/)
+    expect(appContextSource).toContain("supabase.rpc('soft_delete_member'")
+    expect(appContextSource).toContain("supabase.rpc('set_workspace_month_member_attendance'")
   })
 
   // 4. offline setup metadata is User A / Workspace A scoped

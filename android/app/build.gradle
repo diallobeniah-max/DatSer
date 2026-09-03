@@ -66,6 +66,18 @@ android {
     }
 }
 
+// Keep production's version (6 / 1.0.5) untouched. The installable offline
+// test variant must be newer than the prior tablet build while remaining a
+// separate package with its own debug signing identity.
+androidComponents {
+    onVariants(selector().withBuildType('debug')) { variant ->
+        variant.outputs.each { output ->
+            output.versionCode.set(7)
+            output.versionName.set('1.0.6-offline-test')
+        }
+    }
+}
+
 gradle.taskGraph.whenReady { taskGraph ->
     if (taskGraph.hasTask(':app:assembleRelease') && !hasReleaseSigning) {
         throw new GradleException('Release signing is not configured. Create android/keystore.properties or set DATSER_ANDROID_KEYSTORE_* environment variables. See ANDROID_APK.md.')

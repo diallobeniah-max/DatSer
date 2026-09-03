@@ -186,10 +186,10 @@ describe('server-deleted member reconciliation', () => {
     expect(resolveServerDeletedMemberChange(update, { id: 'member-1', deleted_at: null }).action).toBe('proceed')
   })
 
-  it('retires a member_delete against an already-deleted or missing row', () => {
+  it('retires a member_delete only against an explicitly soft-deleted row', () => {
     const del = { action_type: 'member_delete', member_id: 'member-1' }
     expect(resolveServerDeletedMemberChange(del, { id: 'member-1', deleted_at: iso(T0) }).action).toBe('remove')
-    expect(resolveServerDeletedMemberChange(del, null).action).toBe('remove')
+    expect(resolveServerDeletedMemberChange(del, null).action).toBe('fail')
     expect(resolveServerDeletedMemberChange(del, { id: 'member-1', deleted_at: null }).action).toBe('proceed')
   })
 })

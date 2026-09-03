@@ -674,8 +674,8 @@ export const getNextFailureSyncStatus = (change, { transient = false, limit = SY
 
 // Decides how a pending member operation should be handled against the row
 // currently on the server:
-// - 'remove'   member_delete on an already-deleted/missing row is idempotent
-//              success: retire the queued delete (never resurrect, never loop).
+// - 'remove'   member_delete on an explicitly already-deleted row is idempotent
+//              success. A missing row is not enough evidence to retire a delete.
 // - 'fail'     update/add/attendance against a deleted row cannot apply and
 //              must not resurrect the member; keep the change, stop auto-retry.
 // - 'proceed'  no deletion on the server, safe to run the operation.
@@ -694,9 +694,18 @@ export const resolveServerDeletedMemberChange = (change, serverRow) => {
     }
     return { action: 'proceed' }
   }
+  if (change?.action_type === 'member_delete') {
+    if (serverRow?.deleted_at) return { action: 'remove' }
+    if (!serverRow) {
+      return {
+        action: 'fail',
+        error: 'Member could not be verified on the server. This delete is kept locally for recovery.'
+      }
+    }
+    return { action: 'proceed' }
+  }
   const isDeleted = !serverRow || Boolean(serverRow.deleted_at)
   if (!isDeleted) return { action: 'proceed' }
-  if (change?.action_type === 'member_delete') return { action: 'remove' }
   return {
     action: 'fail',
     error: 'Member was deleted on the server. This change is kept locally and will not auto-retry.'
