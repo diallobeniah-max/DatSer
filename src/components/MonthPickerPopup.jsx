@@ -20,7 +20,7 @@ const MonthPickerPopup = ({
     disabledReason = '',
     manualStatus = ''
 }) => {
-    const { monthlyTables, currentTable, setCurrentTable, isCollaborator, selectedAttendanceDate, setAndSaveAttendanceDate, getSundaysInMonth, ownerStickySundays, preferencesHydrated, preferencesLoading, preferencesError, retryPreferenceHydration } = useApp()
+    const { monthlyTables, currentTable, setCurrentTable, isCollaborator, selectedAttendanceDate, setAndSaveAttendanceDate, getSundaysInMonth, ownerStickySundays, preferencesHydrated, preferencesLoading, preferencesError, retryPreferenceHydration, isOnline, shouldUseOfflineData } = useApp()
     const { selection } = useHapticFeedback()
     const popupRef = useRef(null)
     const [previewTable, setPreviewTable] = useState(currentTable)
@@ -39,9 +39,10 @@ const MonthPickerPopup = ({
     // preference bundle. While pending (or failed) the Manual/Auto controls
     // and Sunday confirmation stay disabled and we show a status message
     // instead of letting a save be rejected later with an error toast.
-    const calendarSettingsReady = preferencesHydrated === true
-    const calendarSettingsLoading = !preferencesHydrated && !preferencesError
-    const calendarSettingsError = !preferencesHydrated && !!preferencesError
+    const isOfflineActive = !isOnline || shouldUseOfflineData
+    const calendarSettingsReady = preferencesHydrated === true || isOfflineActive
+    const calendarSettingsLoading = !preferencesHydrated && !preferencesError && !isOfflineActive
+    const calendarSettingsError = !preferencesHydrated && !!preferencesError && !isOfflineActive
     const selectionDisabled = manualModeDisabled || isSavingSelection || (showCalendarModeControl
         ? (pendingCalendarMode !== 'manual' || !calendarSettingsReady || calendarSettingsError)
         : (showAutoToggle ? autoEnabled : false))

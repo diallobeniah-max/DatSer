@@ -178,6 +178,99 @@ export const clearOfflineSnapshot = async ({ userId = null, ownerId = null } = {
   runStore(SNAPSHOT_STORE, 'readwrite', (store) => store.delete(snapshotScopeKey(userId, ownerId || userId)))
 )
 
+const DURABLE_SETUP_KEY_PREFIX = 'datser_offline_ready_meta'
+const SESSION_SETUP_DISMISSED_KEY = 'datser_offline_setup_dismissed'
+const memoryStorage = new Map()
+
+export const getDurableOfflineSetupMeta = (userId = null, ownerId = null) => {
+  const specificKey = userId ? `${DURABLE_SETUP_KEY_PREFIX}_${userId}_${ownerId || userId}` : null
+  if (typeof window !== 'undefined') {
+    try {
+      if (specificKey) {
+        const item = window.localStorage?.getItem?.(specificKey)
+        if (item) return JSON.parse(item)
+      }
+      const genericItem = window.localStorage?.getItem?.(DURABLE_SETUP_KEY_PREFIX)
+      if (genericItem) return JSON.parse(genericItem)
+    } catch {
+      // localStorage unavailable
+    }
+  }
+  if (specificKey && memoryStorage.has(specificKey)) return memoryStorage.get(specificKey)
+  if (memoryStorage.has(DURABLE_SETUP_KEY_PREFIX)) return memoryStorage.get(DURABLE_SETUP_KEY_PREFIX)
+  return null
+}
+
+export const setDurableOfflineSetupMeta = (meta = {}) => {
+  const payloadObj = {
+    offlineReady: true,
+    snapshotComplete: true,
+    snapshotVersion: OFFLINE_SNAPSHOT_SCHEMA_VERSION,
+    completedAt: new Date().toISOString(),
+    ...meta
+  }
+  memoryStorage.set(DURABLE_SETUP_KEY_PREFIX, payloadObj)
+  if (meta.userId) {
+    memoryStorage.set(`${DURABLE_SETUP_KEY_PREFIX}_${meta.userId}_${meta.ownerId || meta.userId}`, payloadObj)
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const payload = JSON.stringify(payloadObj)
+      window.localStorage?.setItem?.(DURABLE_SETUP_KEY_PREFIX, payload)
+      if (meta.userId) {
+        window.localStorage?.setItem?.(
+          `${DURABLE_SETUP_KEY_PREFIX}_${meta.userId}_${meta.ownerId || meta.userId}`,
+          payload
+        )
+      }
+    } catch {
+      // localStorage unavailable
+    }
+  }
+}
+
+export const clearDurableOfflineSetupMeta = (userId = null, ownerId = null) => {
+  memoryStorage.delete(DURABLE_SETUP_KEY_PREFIX)
+  if (userId) {
+    memoryStorage.delete(`${DURABLE_SETUP_KEY_PREFIX}_${userId}_${ownerId || userId}`)
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage?.removeItem?.(DURABLE_SETUP_KEY_PREFIX)
+      if (userId) {
+        window.localStorage?.removeItem?.(`${DURABLE_SETUP_KEY_PREFIX}_${userId}_${ownerId || userId}`)
+      }
+    } catch {
+      // localStorage unavailable
+    }
+  }
+}
+
+let sessionDismissedFallback = false
+
+export const markOfflineSetupDismissedSession = () => {
+  sessionDismissedFallback = true
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage?.setItem(SESSION_SETUP_DISMISSED_KEY, 'true')
+  } catch {
+    // sessionStorage unavailable
+  }
+}
+
+export const isOfflineSetupDismissedSession = () => {
+  if (typeof window !== 'undefined') {
+    try {
+      const val = window.sessionStorage?.getItem(SESSION_SETUP_DISMISSED_KEY)
+      if (val !== null && val !== undefined) return val === 'true'
+    } catch {
+      // sessionStorage unavailable
+    }
+  }
+  return sessionDismissedFallback
+}
+
+
 export const saveOfflineAuthProfile = async ({ user, session } = {}) => {
   if (!user?.id) return null
 
@@ -607,5 +700,6 @@ export const clearAllOfflineData = async ({ userId = null, ownerId = null, scope
   }
   await clearOfflineSnapshot({ userId, ownerId })
   await clearOfflinePreferences(userId, ownerId)
+  clearDurableOfflineSetupMeta(userId, ownerId)
   if (scope) await clearMemberPreviewScope(scope)
 }

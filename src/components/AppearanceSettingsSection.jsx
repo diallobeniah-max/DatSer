@@ -230,6 +230,44 @@ const AppearanceSettingsSection = ({
                 />
             </div>
 
+            {/* Attendance Controls Mode */}
+            <div data-setting-id="attendance_control_mode" tabIndex={-1} className={`space-y-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-800/50 ${getSettingTargetClass('attendance_control_mode')}`}>
+                <div className="flex items-start justify-between gap-3">
+                    <div>
+                        <h3 className="font-semibold text-gray-900 dark:text-white">Attendance controls</h3>
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                            Choose which action buttons appear on member cards.
+                        </p>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="group" aria-label="Attendance controls">
+                    <button
+                        type="button"
+                        onClick={() => updatePreferences?.({ attendance_control_mode: 'pa' })}
+                        className={`flex items-center justify-between p-3.5 rounded-xl border text-sm font-semibold transition-all ${
+                            (preferences?.attendance_control_mode || 'pa') === 'pa'
+                                ? 'border-orange-500 bg-orange-50 text-orange-700 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200 shadow-sm'
+                                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800'
+                        }`}
+                    >
+                        <span>Present & Absent</span>
+                        {(preferences?.attendance_control_mode || 'pa') === 'pa' && <CheckCircle className="w-4 h-4 text-orange-600 dark:text-orange-400" />}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => updatePreferences?.({ attendance_control_mode: 'pac' })}
+                        className={`flex items-center justify-between p-3.5 rounded-xl border text-sm font-semibold transition-all ${
+                            preferences?.attendance_control_mode === 'pac'
+                                ? 'border-orange-500 bg-orange-50 text-orange-700 dark:border-orange-400 dark:bg-orange-500/15 dark:text-orange-200 shadow-sm'
+                                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800'
+                        }`}
+                    >
+                        <span>Present, Absent & Clear</span>
+                        {preferences?.attendance_control_mode === 'pac' && <CheckCircle className="w-4 h-4 text-orange-600 dark:text-orange-400" />}
+                    </button>
+                </div>
+            </div>
+
             {/* Premium Aesthetics Notice */}
             <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl p-5 text-white shadow-lg shadow-orange-500/20">
                 <div className="flex items-start gap-4">

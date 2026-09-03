@@ -27,6 +27,7 @@ import {
   saveWorkspacePreferencePatch
 } from '../services/preferenceService'
 import { isBackendHealthy } from '../utils/backendHealthCoordinator'
+import { getCachedNetworkConnected, initNetworkMonitoring } from '../utils/networkService'
 import {
   getPersonalSettingsDefaults,
   getWorkspaceSettingsDefaults,
@@ -155,10 +156,10 @@ const getDeveloperBypassPreferences = async () => {
   }
 }
 
-const isBrowserOffline = () => (
-  typeof navigator !== 'undefined' &&
-  navigator.onLine === false
-)
+const isBrowserOffline = () => {
+  if (!getCachedNetworkConnected()) return true
+  return typeof navigator !== 'undefined' && navigator.onLine === false
+}
 
 const isPreferenceSchemaError = (error) => {
   if (!error) return false
@@ -263,8 +264,12 @@ export const AuthProvider = ({ children }) => {
         if (cachedPreferences.preferences && !cachedPreferences.personal) {
           setPersonalPreferences(cachedPreferences.preferences)
         }
-        setPreferencesHydrated(true)
       }
+      const localOverrides = readLocalPreferenceOverride(cachedAuth.user.id)
+      if (localOverrides?.preferences) {
+        setPersonalPreferences((prev) => ({ ...prev, ...localOverrides.preferences }))
+      }
+      setPreferencesHydrated(true)
       setLoading(false)
       welcomeToastShownRef.current = true
 
@@ -676,9 +681,26 @@ export const AuthProvider = ({ children }) => {
       return false
     }
 
-    if (!isBackendHealthy()) {
-      if (!options?.silent) toast.error('Database connection unavailable. Using cached local settings.')
-      return false
+    const nextPersonal = { ...personalPreferences, ...patch }
+
+    if (!isBackendHealthy() || isBrowserOffline()) {
+      if (options?.requireServerConfirmation) {
+        if (!options?.silent) toast.error('Database connection unavailable. Using cached local settings.')
+        return false
+      }
+      setPersonalPreferences(nextPersonal)
+      if (user?.id) writeLocalPreferenceOverride(user.id, nextPersonal)
+      const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
+      saveOfflinePreferences(user?.id, {
+        actorId: user?.id,
+        ownerId: targetOwnerId,
+        personal: nextPersonal,
+        workspace: workspacePreferences,
+        personalRevision,
+        workspaceRevision
+      }).catch(() => {})
+      queuePreferenceSync(user?.id, nextPersonal).catch(() => {})
+      return true
     }
 
     // Value diff check: ignore patch if values are unchanged unless the caller
@@ -696,6 +718,7 @@ export const AuthProvider = ({ children }) => {
 
     if (res.success && res.data) {
       setPersonalPreferences(res.data)
+      if (user?.id) writeLocalPreferenceOverride(user.id, res.data)
       if (res.revision !== undefined) setPersonalRevision(BigInt(res.revision))
       const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
       saveOfflinePreferences(user?.id, {
@@ -709,16 +732,32 @@ export const AuthProvider = ({ children }) => {
       return true
     } else if (res.code === 'REVISION_CONFLICT') {
       if (res.data) setPersonalPreferences(res.data)
+      if (user?.id) writeLocalPreferenceOverride(user.id, res.data)
       if (res.revision !== undefined) setPersonalRevision(BigInt(res.revision))
       toast.error(res.message)
       return false
     } else {
+      if (!options?.requireServerConfirmation && (res.code === 'SERVICE_UNAVAILABLE' || isTransientSupabaseError(res.error))) {
+        setPersonalPreferences(nextPersonal)
+        if (user?.id) writeLocalPreferenceOverride(user.id, nextPersonal)
+        const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
+        saveOfflinePreferences(user?.id, {
+          actorId: user?.id,
+          ownerId: targetOwnerId,
+          personal: nextPersonal,
+          workspace: workspacePreferences,
+          personalRevision,
+          workspaceRevision
+        }).catch(() => {})
+        queuePreferenceSync(user?.id, nextPersonal).catch(() => {})
+        return true
+      }
       if (!options?.silent && res.code !== 'SERVICE_UNAVAILABLE') {
         toast.error(res.message || 'This setting could not be saved.')
       }
       return false
     }
-  }, [loadUserPreferencesBundle, personalPreferences, personalRevision, preferencesHydrated, resolveCanonicalOwnerId, user?.id, workspacePreferences, workspaceRevision])
+  }, [loadUserPreferencesBundle, personalPreferences, personalRevision, preferencesHydrated, queuePreferenceSync, resolveCanonicalOwnerId, user?.id, workspacePreferences, workspaceRevision])
 
   // Save workspace preferences using save_workspace_preferences RPC
   const saveWorkspacePreferences = useCallback(async (ownerId, patch = {}, options = {}) => {

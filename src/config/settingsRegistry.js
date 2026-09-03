@@ -37,7 +37,8 @@ export const PERSONAL_PREFERENCE_KEYS = [
   'mobile_dashboard_status_enabled',
   'motion_and_sounds_enabled',
   'smart_compact_prompt_enabled',
-  'dashboard_member_columns'
+  'dashboard_member_columns',
+  'attendance_control_mode'
 ]
 
 export const WORKSPACE_PREFERENCE_KEYS = [
@@ -90,7 +91,8 @@ const PERSONAL_DEFAULTS = {
   mobile_dashboard_status_enabled: false,
   motion_and_sounds_enabled: true,
   smart_compact_prompt_enabled: true,
-  dashboard_member_columns: 3
+  dashboard_member_columns: 3,
+  attendance_control_mode: 'pa'
 }
 
 const WORKSPACE_DEFAULTS = {

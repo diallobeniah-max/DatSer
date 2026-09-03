@@ -47,6 +47,7 @@ const MemberCard = memo(({
     isMemberCodeLoading = false,
     formatMemberName = (value) => value,
     csvImportProvenance = null,
+    attendanceControlMode = 'pa',
 }) => {
     const canonicalName = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || ''
     const name = formatMemberName(canonicalName) || 'Unnamed member'
@@ -176,7 +177,7 @@ const MemberCard = memo(({
                             onChange={(nextValue) => onAttendance(member.id, nextValue)}
                             pending={attendanceLoading}
                             allowPendingChange
-                            showClear={false}
+                            showClear={attendanceControlMode === 'pac'}
                             variant="member-card"
                             stopPropagation
                             className="member-card-attendance-choice w-full"
@@ -274,6 +275,7 @@ const MemberCard = memo(({
                                                     onChange={value => onAttendanceForDate(member.id, value, date)}
                                                     pending={Boolean(attendanceLoadingByDate[`${member.id}_${date}`])}
                                                     allowPendingChange
+                                                    showClear={attendanceControlMode === 'pac'}
                                                     stopPropagation
                                                     testIdPrefix={`member-card-attendance-${member.id}-${date}`}
                                                     ariaLabel={`Attendance for ${name} on ${date}`}

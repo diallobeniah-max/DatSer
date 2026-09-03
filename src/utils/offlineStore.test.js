@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coalesceOfflineChange, filterPreviewMembersForWrite, isCompleteOfflineSnapshot } from './offlineStore'
+import { coalesceOfflineChange, filterPreviewMembersForWrite, isCompleteOfflineSnapshot, setDurableOfflineSetupMeta, getDurableOfflineSetupMeta, clearDurableOfflineSetupMeta, markOfflineSetupDismissedSession, isOfflineSetupDismissedSession } from './offlineStore'
 
 describe('offline mutation coalescing', () => {
   it('keeps only the newest attendance intent for a member and Sunday', () => {
@@ -108,5 +108,34 @@ describe('offline workspace isolation', () => {
 
   it('rejects partial downloads after an interrupted refresh', () => {
     expect(isCompleteOfflineSnapshot({ ...readySnapshot, completeness: 'partial' }, { userId: 'user-a', ownerId: 'workspace-a' })).toBe(false)
+  })
+})
+
+describe('durable offline setup metadata', () => {
+  it('persists and retrieves durable offline setup metadata', () => {
+    clearDurableOfflineSetupMeta('user-1', 'owner-1')
+    expect(getDurableOfflineSetupMeta('user-1', 'owner-1')).toBeNull()
+
+    setDurableOfflineSetupMeta({
+      userId: 'user-1',
+      ownerId: 'owner-1',
+      memberCount: 42,
+      downloadedMonths: ['August_2026']
+    })
+
+    const retrieved = getDurableOfflineSetupMeta('user-1', 'owner-1')
+    expect(retrieved).not.toBeNull()
+    expect(retrieved.offlineReady).toBe(true)
+    expect(retrieved.snapshotComplete).toBe(true)
+    expect(retrieved.memberCount).toBe(42)
+
+    clearDurableOfflineSetupMeta('user-1', 'owner-1')
+    expect(getDurableOfflineSetupMeta('user-1', 'owner-1')).toBeNull()
+  })
+
+  it('tracks session-only setup dismissal', () => {
+    expect(isOfflineSetupDismissedSession()).toBe(false)
+    markOfflineSetupDismissedSession()
+    expect(isOfflineSetupDismissedSession()).toBe(true)
   })
 })

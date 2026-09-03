@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, CheckCircle2, CloudOff, Database, Download, RefreshCw, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { getDurableOfflineSetupMeta, isOfflineSetupDismissedSession, markOfflineSetupDismissedSession } from '../utils/offlineStore'
 
 const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
   const {
@@ -16,23 +17,27 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     isSyncingOffline,
     prepareOfflineData,
     syncOfflineChanges,
-    hasAccess
+    hasAccess,
+    monthlyTables,
+    members
   } = useApp()
-  // This intentionally lives only for the mounted application session. A
-  // dismissal means "not now", not "offline setup is complete". Persisting
-  // it in localStorage made the prompt's state compete with cache refreshes.
-  const [isPrepDismissed, setIsPrepDismissed] = useState(false)
+  // Session dismissal persists for the active browser session so closing the
+  // prompt keeps it closed until the app is reopened, without recording a
+  // false completion.
+  const [isPrepDismissed, setIsPrepDismissed] = useState(() => isOfflineSetupDismissedSession())
   const [dismissedStatusKey, setDismissedStatusKey] = useState(null)
 
   const dismissPrep = (event) => {
     event?.stopPropagation?.()
+    markOfflineSetupDismissedSession()
     setIsPrepDismissed(true)
   }
 
-  const hasCache = offlineCacheMeta?.completeness === 'complete'
+  const durableMeta = getDurableOfflineSetupMeta()
+  const hasCache = offlineCacheMeta?.completeness === 'complete' || Boolean(durableMeta?.snapshotComplete)
   const isActuallyOffline = !isOnline || offlineModeStatus === 'offline' || offlineModeStatus === 'forced-offline' || offlineModeStatus === 'online-unavailable'
   const canShowSaveNotice = isActuallyOffline && pendingSyncCount >= (offlineSaveNoticeThreshold || 10)
-  const showPrepPrompt = hasAccess && isOnline && !hasCache && !isPrepDismissed
+  const showPrepPrompt = hasAccess && isOnline && !hasCache && !isPrepDismissed && !isOfflineSetupDismissedSession()
   const isError = offlineStatusMessage?.toLowerCase().includes('failed') || offlineModeStatus === 'online-unavailable'
 
   useEffect(() => {
@@ -71,26 +76,29 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
   if (!showPrepPrompt && !showStatus) return null
 
   if (showPrepPrompt) {
+    const totalMonths = monthlyTables?.length || offlinePreparationProgress?.total || 0
+    const totalMembers = members?.length || 0
+
     return (
       <div
-        className="datser-offline-notice fixed z-[65] w-[min(420px,calc(100vw-24px))]"
+        className="datser-offline-notice fixed z-[65] w-[min(440px,calc(100vw-24px))]"
         role="dialog"
         aria-modal="false"
         aria-labelledby="offline-setup-title"
       >
         <div className="rounded-2xl border border-orange-200 bg-white text-gray-900 shadow-2xl shadow-orange-900/10 dark:border-orange-900/60 dark:bg-gray-900 dark:text-white">
-          <div className="h-1 rounded-t-2xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-600" />
-          <div className="p-4">
-            <div className="flex items-start gap-3">
-              <div className="rounded-xl bg-orange-100 p-2.5 text-orange-700 dark:bg-orange-900/35 dark:text-orange-300">
-                <Database className="h-5 w-5" />
+          <div className="h-1.5 rounded-t-2xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-600" />
+          <div className="p-4 sm:p-5">
+            <div className="flex items-start gap-3.5">
+              <div className="rounded-2xl bg-orange-100 p-3 text-orange-700 dark:bg-orange-900/35 dark:text-orange-300">
+                <Database className="h-6 w-6" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p id="offline-setup-title" className="text-sm font-bold">Set up offline access</p>
+                    <p id="offline-setup-title" className="text-base font-bold">Set up offline access</p>
                     <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-300">
-                      Download your DatSer workspace so you can search members, mark attendance and make updates even when you are offline.
+                      Download your workspace once so members, attendance and edits remain available without internet.
                     </p>
                   </div>
                   <button
@@ -102,7 +110,29 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+
+                {!isPreparingOffline && (totalMonths > 0 || totalMembers > 0) && (
+                  <div className="mt-3 flex items-center gap-3 rounded-xl bg-orange-50/70 px-3 py-2 text-xs font-medium text-orange-900 dark:bg-orange-950/30 dark:text-orange-200">
+                    {totalMonths > 0 && <span><strong>{totalMonths}</strong> month{totalMonths === 1 ? '' : 's'}</span>}
+                    {totalMonths > 0 && totalMembers > 0 && <span>•</span>}
+                    {totalMembers > 0 && <span>~<strong>{totalMembers}</strong> members</span>}
+                  </div>
+                )}
+
+                {isPreparingOffline && (
+                  <div className="mt-3 rounded-xl bg-orange-50/80 p-3 dark:bg-orange-950/30">
+                    <p className="text-xs font-semibold text-orange-900 dark:text-orange-200">
+                      {offlinePreparationProgress?.stage || 'Downloading workspace…'}
+                    </p>
+                    {offlinePreparationProgress?.total > 0 && (
+                      <p className="mt-1 text-[11px] text-orange-700 dark:text-orange-300">
+                        Month {offlinePreparationProgress?.completed || 0} of {offlinePreparationProgress?.total} complete
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                   <button
                     type="button"
                     onClick={async () => {
@@ -110,24 +140,20 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
                       if (result?.success) dismissPrep()
                     }}
                     disabled={isPreparingOffline || !isOnline}
-                    className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-300"
+                    className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-300"
                   >
                     {isPreparingOffline ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                    {isPreparingOffline ? (offlinePreparationProgress?.stage || 'Preparing…') : 'Download data'}
+                    {isPreparingOffline ? (offlinePreparationProgress?.stage || 'Preparing…') : 'Download for offline use'}
                   </button>
                   <button
                     type="button"
                     onClick={dismissPrep}
-                    className="inline-flex min-h-[42px] items-center justify-center rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-800 transition-colors hover:bg-orange-100 dark:border-orange-800 dark:bg-orange-950/30 dark:text-orange-200 dark:hover:bg-orange-900/40"
+                    disabled={isPreparingOffline}
+                    className="inline-flex min-h-[44px] items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                   >
                     Not now
                   </button>
                 </div>
-                {isPreparingOffline && (
-                  <p className="mt-2 text-xs font-medium text-orange-700 dark:text-orange-300">
-                    {offlinePreparationProgress?.completed || 0} of {offlinePreparationProgress?.total || 0} months complete
-                  </p>
-                )}
               </div>
             </div>
           </div>

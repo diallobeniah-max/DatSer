@@ -31,11 +31,15 @@ const renderBanner = (props = {}) => render(<OfflineStatusBanner onOpenOfflineSe
 
 describe('OfflineStatusBanner setup dismissal', () => {
   beforeEach(() => {
+    if (typeof window.sessionStorage?.clear === 'function') window.sessionStorage.clear()
+    if (typeof window.localStorage?.clear === 'function') window.localStorage.clear()
     appState = makeAppState()
   })
 
   afterEach(() => {
     cleanup()
+    if (typeof window.sessionStorage?.clear === 'function') window.sessionStorage.clear()
+    if (typeof window.localStorage?.clear === 'function') window.localStorage.clear()
     vi.clearAllMocks()
   })
 
@@ -78,6 +82,7 @@ describe('OfflineStatusBanner setup dismissal', () => {
     const firstSession = renderBanner()
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss offline preparation prompt' }))
     firstSession.unmount()
+    if (typeof window.sessionStorage?.clear === 'function') window.sessionStorage.clear()
 
     appState = makeAppState()
     renderBanner()

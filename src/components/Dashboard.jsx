@@ -2123,6 +2123,7 @@ const Dashboard = ({ isAdmin = false }) => {
   const memberCodeShowPhoto = preferences?.member_code_show_photo !== false
   const memberCodeShowEmail = preferences?.member_code_show_email !== false
   const memberCodePassBadgeStyle = memberCodeCardStyleConfig.badgeStyleKey
+  const attendanceControlMode = preferences?.attendance_control_mode || 'pa'
   const quickPassCode = quickPassMember ? getMemberIndexCode(quickPassMember, memberIndexCodeMap) : ''
   const quickPassCheckInUrl = quickPassMember
     ? buildMemberCheckInUrl({
@@ -2584,6 +2585,7 @@ const Dashboard = ({ isAdmin = false }) => {
                   getMonthDisplayName={getMonthDisplayName}
                   showDeleteActions={showSearchTrayDelete}
                   csvImportProvenance={recentCsvImportMembers[String(getMemberCanonicalId(member) || member.id)] || null}
+                  attendanceControlMode={attendanceControlMode}
                 />
               )
             })
@@ -3091,6 +3093,7 @@ const Dashboard = ({ isAdmin = false }) => {
                     currentTable={currentTable}
                     getMonthDisplayName={getMonthDisplayName}
                     csvImportProvenance={recentCsvImportMembers[String(getMemberCanonicalId(member) || member.id)] || null}
+                    attendanceControlMode={attendanceControlMode}
                   />
                 )
               })}
@@ -3383,6 +3386,7 @@ const Dashboard = ({ isAdmin = false }) => {
                       getMonthDisplayName={getMonthDisplayName}
                       showDeleteActions={showSearchTrayDelete}
                       csvImportProvenance={recentCsvImportMembers[String(resultItem.canonical_member_id || memberObj.id)] || null}
+                      attendanceControlMode={attendanceControlMode}
                     />
                   )
                 })}

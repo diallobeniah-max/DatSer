@@ -14,6 +14,7 @@ import {
   subscribeBackendHealth
 } from '../utils/backendHealthCoordinator'
 import { notify } from '../utils/notify'
+import { getCachedNetworkConnected, initNetworkMonitoring } from '../utils/networkService'
 import { buildMemberIndexCodeMap, DEFAULT_MEMBER_CODE_LENGTH, getMemberIndexCode, getMemberIndexCodeAliases, normalizeMemberCodeFormat, normalizeMemberCodeLength } from '../utils/memberIndexCodes'
 import {
   mergeWorkspaceMemberCodeAssignments,
@@ -73,6 +74,7 @@ import {
   resolveServerDeletedMemberChange,
   saveMemberPreviewMembers,
   saveOfflineSnapshot as saveOfflineSnapshotRecord,
+  setDurableOfflineSetupMeta,
   SYNC_RETRY_LIMIT,
   updateOfflineChangeStatus
 } from '../utils/offlineStore'
@@ -347,7 +349,7 @@ const mergeMemberSnapshotSources = (...sources) => {
   return Array.from(byId.values())
 }
 
-const applyPendingChangesToMemberSnapshot = (snapshotMembers = [], pendingChanges = [], tableName = null) => {
+export const applyPendingChangesToMemberSnapshot = (snapshotMembers = [], pendingChanges = [], tableName = null) => {
   const byId = new Map()
   snapshotMembers.forEach((member) => {
     if (member?.id) byId.set(String(member.id), normalizeMemberRecord(member))
@@ -401,7 +403,7 @@ const mergeAttendanceSnapshots = (...sources) => {
   return merged
 }
 
-const applyPendingAttendanceChanges = (source = {}, pendingChanges = [], tableName = '') => {
+export const applyPendingAttendanceChanges = (source = {}, pendingChanges = [], tableName = '') => {
   const next = mergeAttendanceSnapshots(source)
 
   pendingChanges
@@ -520,6 +522,7 @@ const makeLocalUuid = () => {
 }
 
 const isBrowserOnline = () => {
+  if (!getCachedNetworkConnected()) return false
   if (typeof navigator === 'undefined') return true
   return navigator.onLine !== false
 }
@@ -1178,6 +1181,13 @@ export const AppProvider = ({ children }) => {
   }, [selectedAttendanceDate])
   const [availableSundayDates, setAvailableSundayDates] = useState([])
   const [isOnline, setIsOnline] = useState(isBrowserOnline)
+
+  useEffect(() => {
+    const unsubscribe = initNetworkMonitoring((status) => {
+      setIsOnline(status.connected)
+    })
+    return () => unsubscribe?.()
+  }, [])
   const [offlineCacheMeta, setOfflineCacheMeta] = useState(null)
   const [pendingSyncCount, setPendingSyncCount] = useState(0)
   const [offlinePendingChanges, setOfflinePendingChanges] = useState([])
@@ -1466,16 +1476,32 @@ export const AppProvider = ({ children }) => {
       return false
     }
 
-    const scopedMembers = snapshot.membersByTable?.[currentTable] || snapshot.members
+    const targetTable = snapshot.currentTable || currentTable
+    const scopedMembers = snapshot.membersByTable?.[targetTable] || snapshot.members
     if (Array.isArray(scopedMembers)) {
       // A soft-deleted member must never be restored as active from a stale
       // offline snapshot. Filter both deleted_at rows and id-scoped tombstones.
-      setMembers(getActiveSnapshotMembers({ ...snapshot, members: scopedMembers }))
-      setAttendanceData((previous) => mergeAttendanceFromMemberRows(
-        snapshot.attendanceData || previous,
+      const baseActiveMembers = getActiveSnapshotMembers({ ...snapshot, members: scopedMembers })
+      const baseAttendance = mergeAttendanceFromMemberRows(
+        snapshot.attendanceData || {},
         scopedMembers,
-        currentTable
-      ))
+        targetTable
+      )
+      setMembers(baseActiveMembers)
+      setAttendanceData(baseAttendance)
+
+      getPendingOfflineChanges({
+        userId: user?.id || snapshot.authenticated_user_id,
+        ownerId: dataOwnerId || snapshot.data_owner_id
+      }).then((pendingChanges) => {
+        if (!pendingChanges || pendingChanges.length === 0) return
+        const effectiveMembers = applyPendingChangesToMemberSnapshot(baseActiveMembers, pendingChanges, targetTable)
+        const effectiveAttendance = applyPendingAttendanceChanges(baseAttendance, pendingChanges, targetTable)
+        setMembers(effectiveMembers)
+        setAttendanceData(effectiveAttendance)
+      }).catch((err) => {
+        console.warn('Could not apply pending changes overlay:', err)
+      })
     }
     if (Array.isArray(snapshot.monthlyTables) && snapshot.monthlyTables.length > 0) {
       setMonthlyTables(snapshot.monthlyTables)
@@ -4404,7 +4430,7 @@ export const AppProvider = ({ children }) => {
         }
       }
 
-      if (shouldUseOfflineData) {
+      if (shouldUseOfflineData || !isBrowserOnline()) {
         applyLocalAttendanceState(memberId, effectiveDate, present, optimisticColumn)
         optimisticApplied = true
         const queued = attendanceWriteQueueRef.current.enqueue(mutationKey, () => (
@@ -5462,6 +5488,51 @@ export const AppProvider = ({ children }) => {
   }, [])
 
   // Delete member
+  const performOfflineMemberDelete = useCallback(async (targetMemberId) => {
+    const existingMember = members.find(member => member.id === targetMemberId) || null
+    const createdAt = new Date().toISOString()
+    if (existingMember) {
+      setDeletedMemberSearchTombstones((prev) => [
+        ...prev.filter((member) => String(member.id) !== String(targetMemberId)),
+        { ...existingMember, deleted_at: createdAt }
+      ].slice(-100))
+    }
+    setMembers(prevMembers => prevMembers.filter(member => member.id !== targetMemberId))
+    setAttendanceData(prev => {
+      const next = {}
+      Object.entries(prev).forEach(([dateKey, map]) => {
+        const { [targetMemberId]: _removed, ...rest } = map || {}
+        next[dateKey] = rest
+      })
+      return next
+    })
+    refreshSearch()
+    invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
+    await deleteMemberPreviewMember(workspaceCacheScope, currentTable, targetMemberId)
+    addMemberDeleteTombstone(targetMemberId, createdAt, currentTable)
+    await purgeMemberFromOfflineSnapshot(targetMemberId)
+    await queueOfflineChange({
+      local_change_id: `member_delete_${currentTable}_${targetMemberId}`,
+      action_type: 'member_delete',
+      table_name: currentTable,
+      member_id: targetMemberId,
+      base_updated_at: existingMember?.updated_at || existingMember?.UpdatedAt || existingMember?.inserted_at || null,
+      member_snapshot: existingMember,
+      created_at: createdAt,
+      sync_status: 'pending'
+    })
+    await refreshOfflineStatus()
+    if (shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
+      notify.sync('Member deletion saved offline and will sync automatically.', {
+        title: 'Saved to pending sync',
+        toastId: 'offline-save-threshold'
+      })
+    } else {
+      toast.success('Member deleted locally (offline)')
+    }
+    return { success: true, offline: true }
+  }, [currentTable, members, pendingSyncCount, refreshOfflineStatus, refreshSearch, workspaceCacheScope])
+
   const deleteMember = async (memberId) => {
 
     // Validate memberId
@@ -5503,46 +5574,7 @@ export const AppProvider = ({ children }) => {
     }
 
     if (shouldUseOfflineData || !isBrowserOnline()) {
-      const existingMember = members.find(member => member.id === memberId) || null
-      const createdAt = new Date().toISOString()
-      if (existingMember) {
-        setDeletedMemberSearchTombstones((prev) => [
-          ...prev.filter((member) => String(member.id) !== String(memberId)),
-          { ...existingMember, deleted_at: createdAt }
-        ].slice(-100))
-      }
-      setMembers(prevMembers => prevMembers.filter(member => member.id !== memberId))
-      setAttendanceData(prev => {
-        const next = {}
-        Object.entries(prev).forEach(([dateKey, map]) => {
-          const { [memberId]: _removed, ...rest } = map || {}
-          next[dateKey] = rest
-        })
-        return next
-      })
-      refreshSearch()
-      invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
-      await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
-      addMemberDeleteTombstone(memberId, createdAt, currentTable)
-      await purgeMemberFromOfflineSnapshot(memberId)
-      await queueOfflineChange({
-        local_change_id: `member_delete_${currentTable}_${memberId}`,
-        action_type: 'member_delete',
-        table_name: currentTable,
-        member_id: memberId,
-        base_updated_at: existingMember?.updated_at || existingMember?.UpdatedAt || existingMember?.inserted_at || null,
-        member_snapshot: existingMember,
-        created_at: createdAt,
-        sync_status: 'pending'
-      })
-      await refreshOfflineStatus()
-      if (shouldShowOfflineSaveNotice(pendingSyncCount + 1)) {
-        notify.sync('Member deletion saved offline and will sync automatically.', {
-          title: 'Saved to pending sync',
-          toastId: 'offline-save-threshold'
-        })
-      }
-      return { success: true, offline: true }
+      return await performOfflineMemberDelete(memberId)
     }
 
     setLoading(true)
@@ -5694,6 +5726,10 @@ export const AppProvider = ({ children }) => {
       return { success: true }
     } catch (error) {
       console.error(`[DELETE] Error deleting member ${memberId}:`, error)
+      if (isTransientSupabaseError(error) || !isBrowserOnline() || /failed to fetch|network/i.test(error?.message || '')) {
+        console.info('[DELETE] Network unavailable, falling back to durable offline deletion')
+        return await performOfflineMemberDelete(memberId)
+      }
       toast.error(error.message || 'Error deleting member')
       return { success: false, error }
     } finally {
@@ -6893,7 +6929,7 @@ export const AppProvider = ({ children }) => {
     // Never attempt (or toast about) an explicit calendar save while the
     // personal preference bundle is still hydrating. The UI disables the
     // controls, but this guards any path that calls in before that resolves.
-    if (!preferencesHydrated) {
+    if (!preferencesHydrated && isOnline && !shouldUseOfflineData) {
       console.warn('[AppContext] setPersonalCalendarMode skipped until preference hydration completes.')
       return false
     }
@@ -6950,8 +6986,9 @@ export const AppProvider = ({ children }) => {
           if (!authContext?.savePersonalPreferences) {
             throw new Error('Calendar preferences are not ready to save yet')
           }
+          const isOffline = !isOnline || shouldUseOfflineData
           const saved = await authContext.savePersonalPreferences(nextPreferences, {
-            requireServerConfirmation: true
+            requireServerConfirmation: !isOffline
           })
           if (!saved) {
             if (!silent) toast.error('Manual month and Sunday were not saved. Please try again.')
@@ -6972,8 +7009,9 @@ export const AppProvider = ({ children }) => {
         if (!authContext?.savePersonalPreferences) {
           throw new Error('Calendar preferences are not ready to save yet')
         }
+        const isOffline = !isOnline || shouldUseOfflineData
         const saved = await authContext.savePersonalPreferences(buildAutoCalendarPreferences(), {
-          requireServerConfirmation: true
+          requireServerConfirmation: !isOffline
         })
         if (!saved) {
           if (!silent) toast.error('Auto mode was not saved. Please try again.')
@@ -7349,41 +7387,52 @@ export const AppProvider = ({ children }) => {
   // Restore saved month or fall back to a valid table on load
   useEffect(() => {
     if (monthlyTables.length > 0) {
-      // If the user is not authenticated locally, prefer a known-safe default table
-      if (!authContext?.user) {
-        if (monthlyTables.includes(DEFAULT_TABLE)) {
-          setCurrentTable(DEFAULT_TABLE)
-          localStorage.setItem('selectedMonthTable', DEFAULT_TABLE)
-          return
-        }
+      // If auth is still checking or loading preferences, do not prematurely force DEFAULT_TABLE
+      if (authContext?.loading) {
+        return
       }
+
+      // Check personal manual mode preference first
+      const isManual = authContext?.preferences?.calendar_mode === 'manual'
+      const manualMonth = authContext?.preferences?.manual_month_table
+      if (isManual && manualMonth && monthlyTables.includes(manualMonth)) {
+        if (currentTable !== manualMonth) setCurrentTable(manualMonth)
+        return
+      }
+
       // If the current table is valid, keep it
       if (currentTable && monthlyTables.includes(currentTable)) {
         return
       }
-      // Current table is invalid - try localStorage for active workspace, then owner sticky month, then DEFAULT_TABLE, then latest
+
+      // Current table is invalid - try localStorage for active workspace, then owner sticky month, then latest
       const storageKey = isCollaborator && dataOwnerId ? `selectedMonthTable_${dataOwnerId}` : 'selectedMonthTable'
       const saved = (typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null) ||
         (typeof window !== 'undefined' ? localStorage.getItem('selectedMonthTable') : null) ||
         ownerStickyMonth ||
+        authContext?.preferences?.selected_month_table ||
         authContext?.preferences?.current_month_table
-      // Only override if we have real data from Supabase (not just fallback)
+
       // If saved month exists and we're still on fallback, wait for real data to load
       if (saved && !monthlyTables.includes(saved) && monthlyTables.length === 1 && monthlyTables[0] === DEFAULT_TABLE) {
-        return // Don't override yet, real tables are still loading
+        return
       }
       if (saved && monthlyTables.includes(saved)) {
         setCurrentTable(saved)
-      } else if (monthlyTables.includes(DEFAULT_TABLE)) {
-        setCurrentTable(DEFAULT_TABLE)
-        localStorage.setItem(storageKey, DEFAULT_TABLE)
       } else {
-        const latest = monthlyTables[monthlyTables.length - 1]
-        setCurrentTable(latest)
-        localStorage.setItem(storageKey, latest)
+        // Fall back to calendar month or newest downloaded month instead of defaulting to January
+        const calendarMonth = getCurrentMonthTable()
+        if (monthlyTables.includes(calendarMonth)) {
+          setCurrentTable(calendarMonth)
+          localStorage.setItem(storageKey, calendarMonth)
+        } else {
+          const latest = monthlyTables[monthlyTables.length - 1]
+          setCurrentTable(latest)
+          localStorage.setItem(storageKey, latest)
+        }
       }
     }
-  }, [authContext?.preferences?.current_month_table, authContext?.user, currentTable, dataOwnerId, isCollaborator, monthlyTables, ownerStickyMonth])
+  }, [authContext?.loading, authContext?.preferences?.calendar_mode, authContext?.preferences?.current_month_table, authContext?.preferences?.manual_month_table, authContext?.preferences?.selected_month_table, authContext?.user, currentTable, dataOwnerId, isCollaborator, monthlyTables, ownerStickyMonth])
 
   // Fetch members on component mount and when current table changes
   // Wait for auth AND month resolution before fetching to avoid the
@@ -7827,6 +7876,13 @@ export const AppProvider = ({ children }) => {
         saved_at: new Date().toISOString()
       })
 
+      setDurableOfflineSetupMeta({
+        userId: user?.id || null,
+        ownerId: dataOwnerId || user?.id || null,
+        memberCount: snapshotMembers.length,
+        tableCount: tablesToPrepare.length,
+        downloadedMonths: tablesToPrepare
+      })
       await refreshOfflineStatus()
       setOfflineStatusMessage('Offline data is ready.')
       notify.success('You can now use the app without internet.', {
@@ -8069,15 +8125,35 @@ export const AppProvider = ({ children }) => {
                 continue
               }
               const deletedAt = new Date().toISOString()
-              const deleteResult = await executeSupabaseWrite(
-                () => supabase
-                  .from(changeTable)
-                  .update({ deleted_at: deletedAt, updated_at: deletedAt })
-                  .eq('id', change.member_id)
-                  .select('id'),
-                { action: `Sync offline member delete in ${changeTable}` }
-              )
-              assertSupabaseMutationAffected(deleteResult, 'Offline member delete')
+              let deleteSuccess = false
+              try {
+                const targetOwnerId = dataOwnerId || user?.id
+                if (targetOwnerId) {
+                  const { data: rpcSuccess, error: rpcErr } = await supabase.rpc('soft_delete_member', {
+                    p_table_name: changeTable,
+                    p_member_id: change.member_id,
+                    p_owner_id: targetOwnerId
+                  })
+                  if (!rpcErr && rpcSuccess) {
+                    deleteSuccess = true
+                  }
+                }
+              } catch (rpcErr) {
+                console.warn('soft_delete_member RPC failed, falling back to direct update:', rpcErr)
+              }
+
+              if (!deleteSuccess) {
+                const deleteResult = await executeSupabaseWrite(
+                  () => supabase
+                    .from(changeTable)
+                    .update({ deleted_at: deletedAt, updated_at: deletedAt })
+                    .eq('id', change.member_id)
+                    .select('id'),
+                  { action: `Sync offline member delete in ${changeTable}` }
+                )
+                assertSupabaseMutationAffected(deleteResult, 'Offline member delete')
+              }
+              addMemberDeleteTombstone(change.member_id, deletedAt, changeTable)
             }
 
             await removeOfflineChange(change.local_change_id)
@@ -8200,18 +8276,44 @@ export const AppProvider = ({ children }) => {
           }
 
           const attendanceUpdatedAt = new Date().toISOString()
-          const attendanceResult = await executeSupabaseWrite(
-            () => supabase
-              .from(changeTable)
-              .update({
-                [attendanceColumn]: queuedPresent === null ? null : queuedPresent ? 'Present' : 'Absent',
-                updated_at: attendanceUpdatedAt
-              })
-              .eq('id', change.member_id)
-              .select('id'),
-            { action: `Sync offline attendance in ${changeTable}` }
-          )
-          assertSupabaseMutationAffected(attendanceResult, 'Offline attendance sync')
+          let attendanceSaved = false
+
+          if (queuedPresent !== null && (queuedPresent === true || queuedPresent === false)) {
+            try {
+              const targetOwnerId = dataOwnerId || user?.id
+              const monthStartStr = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, '0')}-01`
+              if (targetOwnerId) {
+                const { data: rpcData, error: rpcErr } = await supabase.rpc('set_workspace_month_member_attendance', {
+                  p_owner_id: targetOwnerId,
+                  p_month_start: monthStartStr,
+                  p_member_id: change.member_id,
+                  p_attendance_date: getLocalDateString(effectiveDate),
+                  p_attendance_status: queuedPresent ? 'Present' : 'Absent',
+                  p_request_id: change.local_change_id
+                })
+                if (!rpcErr && rpcData?.success) {
+                  attendanceSaved = true
+                }
+              }
+            } catch (rpcErr) {
+              console.warn('RPC set_workspace_month_member_attendance failed, falling back to direct write:', rpcErr)
+            }
+          }
+
+          if (!attendanceSaved) {
+            const attendanceResult = await executeSupabaseWrite(
+              () => supabase
+                .from(changeTable)
+                .update({
+                  [attendanceColumn]: queuedPresent === null ? null : queuedPresent ? 'Present' : 'Absent',
+                  updated_at: attendanceUpdatedAt
+                })
+                .eq('id', change.member_id)
+                .select('id'),
+              { action: `Sync offline attendance in ${changeTable}` }
+            )
+            assertSupabaseMutationAffected(attendanceResult, 'Offline attendance sync')
+          }
           syncNormalizedAttendanceRecord(change.member_id, effectiveDate, queuedPresent).catch((error) => {
             console.warn('Background normalized attendance sync failed:', error)
           })
