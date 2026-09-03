@@ -2,13 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, CheckCircle2, CloudOff, Database, Download, RefreshCw, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
-const PREP_DISMISSED_KEY = 'datser_offline_prepare_prompt_dismissed'
-
-const getDismissed = () => {
-  if (typeof window === 'undefined') return false
-  return localStorage.getItem(PREP_DISMISSED_KEY) === 'true'
-}
-
 const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
   const {
     isOnline,
@@ -25,23 +18,15 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     syncOfflineChanges,
     hasAccess
   } = useApp()
-  const [isPrepDismissed, setIsPrepDismissed] = useState(getDismissed)
+  // This intentionally lives only for the mounted application session. A
+  // dismissal means "not now", not "offline setup is complete". Persisting
+  // it in localStorage made the prompt's state compete with cache refreshes.
+  const [isPrepDismissed, setIsPrepDismissed] = useState(false)
   const [dismissedStatusKey, setDismissedStatusKey] = useState(null)
 
-  useEffect(() => {
-    if (offlineCacheMeta && isPrepDismissed) {
-      setIsPrepDismissed(false)
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem(PREP_DISMISSED_KEY)
-      }
-    }
-  }, [offlineCacheMeta, isPrepDismissed])
-
-  const dismissPrep = () => {
+  const dismissPrep = (event) => {
+    event?.stopPropagation?.()
     setIsPrepDismissed(true)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(PREP_DISMISSED_KEY, 'true')
-    }
   }
 
   const hasCache = offlineCacheMeta?.completeness === 'complete'
@@ -49,6 +34,19 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
   const canShowSaveNotice = isActuallyOffline && pendingSyncCount >= (offlineSaveNoticeThreshold || 10)
   const showPrepPrompt = hasAccess && isOnline && !hasCache && !isPrepDismissed
   const isError = offlineStatusMessage?.toLowerCase().includes('failed') || offlineModeStatus === 'online-unavailable'
+
+  useEffect(() => {
+    if (!showPrepPrompt || typeof window === 'undefined') return undefined
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setIsPrepDismissed(true)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showPrepPrompt])
+
   const statusKey = useMemo(() => {
     if (!hasAccess) return null
     if (isError && canShowSaveNotice) return `error:${offlineStatusMessage || offlineModeStatus}`
@@ -74,7 +72,12 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
 
   if (showPrepPrompt) {
     return (
-      <div className="datser-offline-notice fixed z-[65] w-[min(420px,calc(100vw-24px))]">
+      <div
+        className="datser-offline-notice fixed z-[65] w-[min(420px,calc(100vw-24px))]"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="offline-setup-title"
+      >
         <div className="rounded-2xl border border-orange-200 bg-white text-gray-900 shadow-2xl shadow-orange-900/10 dark:border-orange-900/60 dark:bg-gray-900 dark:text-white">
           <div className="h-1 rounded-t-2xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-600" />
           <div className="p-4">
@@ -85,7 +88,7 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-bold">Set up offline access</p>
+                    <p id="offline-setup-title" className="text-sm font-bold">Set up offline access</p>
                     <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-300">
                       Download your DatSer workspace so you can search members, mark attendance and make updates even when you are offline.
                     </p>

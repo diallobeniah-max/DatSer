@@ -45,6 +45,17 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // A local Android test must install beside the production app.
+            // Keep the release package name, signing identity, and upgrade
+            // path unchanged while avoiding a production/debug signer clash.
+            applicationIdSuffix ".offlinefirst"
+            versionNameSuffix "-offline-test"
+            resValue "string", "app_name", "DatSer Offline Test"
+            resValue "string", "title_activity_main", "DatSer Offline Test"
+            resValue "string", "package_name", "com.datser.app.offlinefirst"
+            resValue "string", "custom_url_scheme", "com.datser.app.offlinefirst"
+        }
         release {
             minifyEnabled false
             if (hasReleaseSigning) {
