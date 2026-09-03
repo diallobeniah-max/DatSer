@@ -39,7 +39,7 @@ const MonthPickerPopup = ({
     // preference bundle. While pending (or failed) the Manual/Auto controls
     // and Sunday confirmation stay disabled and we show a status message
     // instead of letting a save be rejected later with an error toast.
-    const isOfflineActive = !isOnline || shouldUseOfflineData
+    const isOfflineActive = isOnline === false || shouldUseOfflineData === true
     const calendarSettingsReady = preferencesHydrated === true || isOfflineActive
     const calendarSettingsLoading = !preferencesHydrated && !preferencesError && !isOfflineActive
     const calendarSettingsError = !preferencesHydrated && !!preferencesError && !isOfflineActive

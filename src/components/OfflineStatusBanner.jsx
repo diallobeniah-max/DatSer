@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, CheckCircle2, CloudOff, Database, Download, RefreshCw, X } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 import { getDurableOfflineSetupMeta, isOfflineSetupDismissedSession, markOfflineSetupDismissedSession } from '../utils/offlineStore'
 
 const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
@@ -19,25 +20,41 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     syncOfflineChanges,
     hasAccess,
     monthlyTables,
-    members
+    members,
+    dataOwnerId
   } = useApp()
-  // Session dismissal persists for the active browser session so closing the
-  // prompt keeps it closed until the app is reopened, without recording a
-  // false completion.
-  const [isPrepDismissed, setIsPrepDismissed] = useState(() => isOfflineSetupDismissedSession())
+  let user = null
+  try {
+    const auth = useAuth()
+    user = auth?.user || null
+  } catch {
+    // Rendered outside AuthProvider in isolated tests
+  }
+  const effectiveUserId = user?.id || null
+  const effectiveOwnerId = dataOwnerId || effectiveUserId
+
+  const isSessionDismissed = isOfflineSetupDismissedSession(effectiveUserId, effectiveOwnerId)
+  const [isPrepDismissed, setIsPrepDismissed] = useState(isSessionDismissed)
   const [dismissedStatusKey, setDismissedStatusKey] = useState(null)
 
   const dismissPrep = (event) => {
     event?.stopPropagation?.()
-    markOfflineSetupDismissedSession()
+    markOfflineSetupDismissedSession(effectiveUserId, effectiveOwnerId)
     setIsPrepDismissed(true)
   }
 
-  const durableMeta = getDurableOfflineSetupMeta()
-  const hasCache = offlineCacheMeta?.completeness === 'complete' || Boolean(durableMeta?.snapshotComplete)
+  const durableMeta = getDurableOfflineSetupMeta(effectiveUserId, effectiveOwnerId)
+  const hasCache = Boolean(
+    (offlineCacheMeta?.completeness === 'complete' &&
+      (!effectiveUserId || !offlineCacheMeta?.authenticated_user_id || offlineCacheMeta?.authenticated_user_id === effectiveUserId) &&
+      (!effectiveOwnerId || !offlineCacheMeta?.data_owner_id || offlineCacheMeta?.data_owner_id === effectiveOwnerId)) ||
+    (durableMeta?.snapshotComplete &&
+      (!effectiveUserId || durableMeta?.userId === effectiveUserId) &&
+      (!effectiveOwnerId || durableMeta?.ownerId === effectiveOwnerId))
+  )
   const isActuallyOffline = !isOnline || offlineModeStatus === 'offline' || offlineModeStatus === 'forced-offline' || offlineModeStatus === 'online-unavailable'
   const canShowSaveNotice = isActuallyOffline && pendingSyncCount >= (offlineSaveNoticeThreshold || 10)
-  const showPrepPrompt = hasAccess && isOnline && !hasCache && !isPrepDismissed && !isOfflineSetupDismissedSession()
+  const showPrepPrompt = hasAccess && isOnline && !hasCache && !isPrepDismissed && !isSessionDismissed
   const isError = offlineStatusMessage?.toLowerCase().includes('failed') || offlineModeStatus === 'online-unavailable'
 
   useEffect(() => {

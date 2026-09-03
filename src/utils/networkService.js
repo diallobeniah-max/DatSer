@@ -1,5 +1,6 @@
 ﻿import { Capacitor } from '@capacitor/core'
 import { Network } from '@capacitor/network'
+import { App } from '@capacitor/app'
 
 let cachedStatus = {
   connected: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
@@ -7,6 +8,8 @@ let cachedStatus = {
 }
 
 let isInitialized = false
+let nativeListenerHandle = null
+let appListenerHandle = null
 const listeners = new Set()
 
 export const isNativePlatform = () => {
@@ -48,31 +51,62 @@ export const getNetworkStatus = async () => {
 
 export const getCachedNetworkConnected = () => cachedStatus.connected
 
+const notifyAll = (status) => {
+  cachedStatus = status
+  listeners.forEach((listener) => {
+    try {
+      listener(status)
+    } catch (err) {
+      console.error('[networkService] Listener threw:', err)
+    }
+  })
+}
+
+// Web fallback handlers
+const handleOnline = () => {
+  if (isNativePlatform()) {
+    getNetworkStatus().then(notifyAll).catch(() => {})
+  } else {
+    notifyAll({ connected: true, connectionType: 'unknown' })
+  }
+}
+
+const handleOffline = () => {
+  if (isNativePlatform()) {
+    getNetworkStatus().then(notifyAll).catch(() => {})
+  } else {
+    notifyAll({ connected: false, connectionType: 'none' })
+  }
+}
+
+const handleVisibilityChange = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    getNetworkStatus().then(notifyAll).catch(() => {})
+  }
+}
+
 export const initNetworkMonitoring = (onStatusChange) => {
   if (typeof onStatusChange === 'function') {
     listeners.add(onStatusChange)
+    // Deliver current status immediately so new subscriber doesn't have to wait for next change
+    try {
+      onStatusChange(cachedStatus)
+    } catch (err) {
+      console.error('[networkService] Listener threw on initial status:', err)
+    }
   }
 
   if (isInitialized) {
     return () => {
-      listeners.delete(onStatusChange)
+      if (typeof onStatusChange === 'function') {
+        listeners.delete(onStatusChange)
+      }
     }
   }
 
   isInitialized = true
 
-  const notifyAll = (status) => {
-    cachedStatus = status
-    listeners.forEach((listener) => {
-      try {
-        listener(status)
-      } catch (err) {
-        console.error('[networkService] Listener threw:', err)
-      }
-    })
-  }
-
-  // Initial fetch
+  // Initial status fetch
   getNetworkStatus().then(notifyAll).catch(() => {})
 
   if (isNativePlatform()) {
@@ -81,25 +115,22 @@ export const initNetworkMonitoring = (onStatusChange) => {
         connected: Boolean(status.connected),
         connectionType: status.connectionType || 'unknown'
       })
+    }).then((handle) => {
+      nativeListenerHandle = handle
     }).catch((err) => {
       console.warn('[networkService] Failed to add native networkStatusChange listener:', err)
     })
-  }
 
-  // Web fallback events
-  const handleOnline = () => {
-    if (isNativePlatform()) {
-      getNetworkStatus().then(notifyAll).catch(() => {})
-    } else {
-      notifyAll({ connected: true, connectionType: 'unknown' })
-    }
-  }
-
-  const handleOffline = () => {
-    if (isNativePlatform()) {
-      getNetworkStatus().then(notifyAll).catch(() => {})
-    } else {
-      notifyAll({ connected: false, connectionType: 'none' })
+    try {
+      App.addListener('appStateChange', (state) => {
+        if (state.isActive) {
+          getNetworkStatus().then(notifyAll).catch(() => {})
+        }
+      }).then((handle) => {
+        appListenerHandle = handle
+      }).catch(() => {})
+    } catch {
+      // App plugin not available
     }
   }
 
@@ -107,10 +138,33 @@ export const initNetworkMonitoring = (onStatusChange) => {
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
   }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+  }
 
   return () => {
     if (typeof onStatusChange === 'function') {
       listeners.delete(onStatusChange)
     }
+  }
+}
+
+export const resetNetworkMonitoringForTests = async () => {
+  listeners.clear()
+  isInitialized = false
+  if (nativeListenerHandle?.remove) {
+    await nativeListenerHandle.remove()
+    nativeListenerHandle = null
+  }
+  if (appListenerHandle?.remove) {
+    await appListenerHandle.remove()
+    appListenerHandle = null
+  }
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('online', handleOnline)
+    window.removeEventListener('offline', handleOffline)
+  }
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 }

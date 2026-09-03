@@ -37,9 +37,12 @@ export const PERSONAL_PREFERENCE_KEYS = [
   'mobile_dashboard_status_enabled',
   'motion_and_sounds_enabled',
   'smart_compact_prompt_enabled',
-  'dashboard_member_columns',
-  'attendance_control_mode'
+  'dashboard_member_columns'
 ]
+
+export const LOCAL_ONLY_PREFERENCE_KEYS = new Set([
+  'attendance_control_mode'
+])
 
 export const WORKSPACE_PREFERENCE_KEYS = [
   'member_name_style',
@@ -241,6 +244,13 @@ export const SETTINGS_REGISTRY = {
     scope: SETTINGS_SCOPES.DEVICE_ONLY,
     defaultValue: 4200,
     section: 'accessibility',
+    saveStrategy: 'local_storage'
+  },
+  attendance_control_mode: {
+    key: 'attendance_control_mode',
+    scope: SETTINGS_SCOPES.PERSONAL,
+    defaultValue: 'pa',
+    section: 'appearance',
     saveStrategy: 'local_storage'
   },
   offline_mode: {

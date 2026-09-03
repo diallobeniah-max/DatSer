@@ -34,6 +34,7 @@ import {
   getSettingConfig,
   pickPersonalPreferencePatch,
   pickWorkspacePreferencePatch,
+  LOCAL_ONLY_PREFERENCE_KEYS,
   SETTINGS_SCOPES
 } from '../config/settingsRegistry'
 
@@ -296,13 +297,16 @@ export const AuthProvider = ({ children }) => {
   const queuePreferenceSync = useCallback(async (userId, nextPreferences) => {
     if (!userId || !nextPreferences) return
     try {
+      const cleanedPreferences = Object.fromEntries(
+        Object.entries(nextPreferences).filter(([k]) => !LOCAL_ONLY_PREFERENCE_KEYS.has(k))
+      )
       await queueOfflineChange({
         local_change_id: makePreferenceChangeId(userId),
         action_type: 'preferences_update',
         user_id: userId,
         preferences: {
-          ...omitWorkspaceMemberCodeConfiguration(nextPreferences, userId),
-          user_id: nextPreferences.user_id || userId
+          ...omitWorkspaceMemberCodeConfiguration(cleanedPreferences, userId),
+          user_id: cleanedPreferences.user_id || userId
         },
         created_at: new Date().toISOString(),
         sync_status: 'pending'
@@ -683,6 +687,11 @@ export const AuthProvider = ({ children }) => {
 
     const nextPersonal = { ...personalPreferences, ...patch }
 
+    // Strip local-only keys before sending to server RPC
+    const serverPatch = Object.fromEntries(
+      Object.entries(patch).filter(([k]) => !LOCAL_ONLY_PREFERENCE_KEYS.has(k))
+    )
+
     if (!isBackendHealthy() || isBrowserOffline()) {
       if (options?.requireServerConfirmation) {
         if (!options?.silent) toast.error('Database connection unavailable. Using cached local settings.')
@@ -699,40 +708,67 @@ export const AuthProvider = ({ children }) => {
         personalRevision,
         workspaceRevision
       }).catch(() => {})
-      queuePreferenceSync(user?.id, nextPersonal).catch(() => {})
+      if (Object.keys(serverPatch).length > 0) {
+        queuePreferenceSync(user?.id, serverPatch).catch(() => {})
+      }
       return true
     }
 
-    // Value diff check: ignore patch if values are unchanged unless the caller
-    // explicitly needs a server confirmation. Calendar mode uses this when a
-    // user chooses Auto/Manual so UI success always means the RPC confirmed it.
-    const hasChange = Object.keys(patch).some((k) => personalPreferences[k] !== patch[k])
+    // If only local-only keys were changed, save locally and succeed immediately without calling server RPC
+    if (Object.keys(serverPatch).length === 0) {
+      setPersonalPreferences(nextPersonal)
+      if (user?.id) writeLocalPreferenceOverride(user.id, nextPersonal)
+      const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
+      saveOfflinePreferences(user?.id, {
+        actorId: user?.id,
+        ownerId: targetOwnerId,
+        personal: nextPersonal,
+        workspace: workspacePreferences,
+        personalRevision,
+        workspaceRevision
+      }).catch(() => {})
+      return true
+    }
+
+    // Value diff check: ignore patch if server values are unchanged unless caller needs server confirmation
+    const hasChange = Object.keys(serverPatch).some((k) => personalPreferences[k] !== serverPatch[k])
     if (!hasChange && !options?.requireServerConfirmation) {
+      setPersonalPreferences(nextPersonal)
+      if (user?.id) writeLocalPreferenceOverride(user.id, nextPersonal)
       return true
     }
 
-    const res = await savePersonalPreferencePatch(patch, {
+    const res = await savePersonalPreferencePatch(serverPatch, {
       expectedRevision: personalRevision,
       requestId: options?.requestId
     })
 
     if (res.success && res.data) {
-      setPersonalPreferences(res.data)
-      if (user?.id) writeLocalPreferenceOverride(user.id, res.data)
+      // Re-merge local-only preferences so server response does not overwrite them
+      const localOnlyPreserved = Object.fromEntries(
+        Array.from(LOCAL_ONLY_PREFERENCE_KEYS).map((k) => [k, nextPersonal[k]]).filter(([, v]) => v !== undefined)
+      )
+      const fullConfirmed = { ...res.data, ...localOnlyPreserved }
+      setPersonalPreferences(fullConfirmed)
+      if (user?.id) writeLocalPreferenceOverride(user.id, fullConfirmed)
       if (res.revision !== undefined) setPersonalRevision(BigInt(res.revision))
       const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
       saveOfflinePreferences(user?.id, {
         actorId: user?.id,
         ownerId: targetOwnerId,
-        personal: res.data,
+        personal: fullConfirmed,
         workspace: workspacePreferences,
         personalRevision: res.revision,
         workspaceRevision
       }).catch(() => {})
       return true
     } else if (res.code === 'REVISION_CONFLICT') {
-      if (res.data) setPersonalPreferences(res.data)
-      if (user?.id) writeLocalPreferenceOverride(user.id, res.data)
+      const localOnlyPreserved = Object.fromEntries(
+        Array.from(LOCAL_ONLY_PREFERENCE_KEYS).map((k) => [k, nextPersonal[k]]).filter(([, v]) => v !== undefined)
+      )
+      const fullConflictData = res.data ? { ...res.data, ...localOnlyPreserved } : nextPersonal
+      setPersonalPreferences(fullConflictData)
+      if (user?.id) writeLocalPreferenceOverride(user.id, fullConflictData)
       if (res.revision !== undefined) setPersonalRevision(BigInt(res.revision))
       toast.error(res.message)
       return false
@@ -749,7 +785,7 @@ export const AuthProvider = ({ children }) => {
           personalRevision,
           workspaceRevision
         }).catch(() => {})
-        queuePreferenceSync(user?.id, nextPersonal).catch(() => {})
+        queuePreferenceSync(user?.id, serverPatch).catch(() => {})
         return true
       }
       if (!options?.silent && res.code !== 'SERVICE_UNAVAILABLE') {

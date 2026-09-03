@@ -138,4 +138,33 @@ describe('durable offline setup metadata', () => {
     markOfflineSetupDismissedSession()
     expect(isOfflineSetupDismissedSession()).toBe(true)
   })
+
+  it('strictly scopes durable offline setup metadata to user AND workspace', () => {
+    setDurableOfflineSetupMeta({
+      userId: 'user-a',
+      ownerId: 'workspace-a',
+      memberCount: 20
+    })
+
+    // Matches User A and Workspace A
+    expect(getDurableOfflineSetupMeta('user-a', 'workspace-a')).not.toBeNull()
+
+    // Does NOT match User B on Workspace A
+    expect(getDurableOfflineSetupMeta('user-b', 'workspace-a')).toBeNull()
+
+    // Does NOT match User A on Workspace B
+    expect(getDurableOfflineSetupMeta('user-a', 'workspace-b')).toBeNull()
+
+    clearDurableOfflineSetupMeta('user-a', 'workspace-a')
+  })
+
+  it('scopes session dismissal per workspace and user', () => {
+    expect(isOfflineSetupDismissedSession('user-a', 'workspace-a')).toBe(false)
+    markOfflineSetupDismissedSession('user-a', 'workspace-a')
+
+    expect(isOfflineSetupDismissedSession('user-a', 'workspace-a')).toBe(true)
+    // Other workspace is NOT dismissed
+    expect(isOfflineSetupDismissedSession('user-a', 'workspace-b')).toBe(false)
+    expect(isOfflineSetupDismissedSession('user-b', 'workspace-a')).toBe(false)
+  })
 })

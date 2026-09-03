@@ -49,15 +49,15 @@ export const writeMemberDeleteTombstones = (tombstones) => {
 export const addMemberDeleteTombstone = (id, deletedAt = null, table = null) => {
   if (!id) return
   const key = String(id)
-  const next = readMemberDeleteTombstones().filter((entry) => entry.id !== key)
+  const next = readMemberDeleteTombstones().filter((entry) => !(entry.id === key && (!table || !entry.table || entry.table === table)))
   next.push({ id: key, deleted_at: deletedAt || null, table: table || null })
   writeMemberDeleteTombstones(next)
 }
 
-export const removeMemberDeleteTombstone = (id) => {
+export const removeMemberDeleteTombstone = (id, table = null) => {
   if (!id) return
   const key = String(id)
-  writeMemberDeleteTombstones(readMemberDeleteTombstones().filter((entry) => entry.id !== key))
+  writeMemberDeleteTombstones(readMemberDeleteTombstones().filter((entry) => !(entry.id === key && (!table || !entry.table || entry.table === table))))
 }
 
 export const clearMemberDeleteTombstones = () => {
@@ -72,10 +72,14 @@ export const clearMemberDeleteTombstones = () => {
   memoryTombstones = []
 }
 
-export const getMemberDeleteTombstone = (id, tombstoneList = readMemberDeleteTombstones()) => {
+export const getMemberDeleteTombstone = (id, tombstoneList = readMemberDeleteTombstones(), targetTable = null) => {
   if (!id) return null
   const key = String(id)
-  return tombstoneList.find((entry) => entry.id === key) || null
+  return tombstoneList.find((entry) => {
+    if (entry.id !== key) return false
+    if (targetTable && entry.table && entry.table !== targetTable) return false
+    return true
+  }) || null
 }
 
 const toTimestamp = (value) => {
@@ -86,10 +90,11 @@ const toTimestamp = (value) => {
 // A member row is considered stale-deleted when a tombstone exists for its id
 // and the row's own updated_at is not newer than the deletion. A restored
 // member (newer updated_at) is intentionally kept.
-export const isMemberStaleDeleted = (member, tombstoneList = readMemberDeleteTombstones()) => {
+export const isMemberStaleDeleted = (member, tombstoneList = readMemberDeleteTombstones(), targetTable = null) => {
   if (!member) return false
   if (member.deleted_at) return true
-  const tombstone = getMemberDeleteTombstone(member?.id, tombstoneList)
+  const effectiveTable = targetTable || member.table_name || member.tableName || null
+  const tombstone = getMemberDeleteTombstone(member?.id, tombstoneList, effectiveTable)
   if (!tombstone) return false
   const deletedTime = toTimestamp(tombstone.deleted_at)
   if (!Number.isFinite(deletedTime) || deletedTime <= 0) return true
@@ -101,9 +106,11 @@ export const isMemberStaleDeleted = (member, tombstoneList = readMemberDeleteTom
 // Pure filter used by offline snapshot restore, preview cache/index writers and
 // startup hydration. Rows already marked deleted_at (or tombstoned as stale) are
 // never treated as active.
-export const filterDeletedMembers = (members = [], tombstoneList = readMemberDeleteTombstones()) =>
-  (Array.isArray(members) ? members : []).filter((member) => !isMemberStaleDeleted(member, tombstoneList))
+export const filterDeletedMembers = (members = [], tombstoneList = readMemberDeleteTombstones(), targetTable = null) =>
+  (Array.isArray(members) ? members : []).filter((member) => !isMemberStaleDeleted(member, tombstoneList, targetTable))
 
 // Active members for an offline snapshot (same rule as filterDeletedMembers).
-export const getActiveSnapshotMembers = (snapshot = {}, tombstoneList = readMemberDeleteTombstones()) =>
-  filterDeletedMembers(Array.isArray(snapshot?.members) ? snapshot.members : [], tombstoneList)
+export const getActiveSnapshotMembers = (snapshot = {}, tombstoneList = readMemberDeleteTombstones(), targetTable = null) => {
+  const effectiveTable = targetTable || snapshot?.currentTable || null
+  return filterDeletedMembers(Array.isArray(snapshot?.members) ? snapshot.members : [], tombstoneList, effectiveTable)
+}

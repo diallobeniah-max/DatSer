@@ -181,48 +181,50 @@ export const clearOfflineSnapshot = async ({ userId = null, ownerId = null } = {
 const DURABLE_SETUP_KEY_PREFIX = 'datser_offline_ready_meta'
 const SESSION_SETUP_DISMISSED_KEY = 'datser_offline_setup_dismissed'
 const memoryStorage = new Map()
+const memorySessionDismissed = new Set()
+
+export const durableSetupScopeKey = (userId, ownerId) => {
+  return `${userId || 'guest'}:${ownerId || userId || 'guest'}`
+}
 
 export const getDurableOfflineSetupMeta = (userId = null, ownerId = null) => {
-  const specificKey = userId ? `${DURABLE_SETUP_KEY_PREFIX}_${userId}_${ownerId || userId}` : null
+  const scope = durableSetupScopeKey(userId, ownerId)
+  const storageKey = `${DURABLE_SETUP_KEY_PREFIX}_${scope}`
   if (typeof window !== 'undefined') {
     try {
-      if (specificKey) {
-        const item = window.localStorage?.getItem?.(specificKey)
-        if (item) return JSON.parse(item)
+      const item = window.localStorage?.getItem?.(storageKey)
+      if (item) {
+        return JSON.parse(item)
       }
-      const genericItem = window.localStorage?.getItem?.(DURABLE_SETUP_KEY_PREFIX)
-      if (genericItem) return JSON.parse(genericItem)
     } catch {
       // localStorage unavailable
     }
   }
-  if (specificKey && memoryStorage.has(specificKey)) return memoryStorage.get(specificKey)
-  if (memoryStorage.has(DURABLE_SETUP_KEY_PREFIX)) return memoryStorage.get(DURABLE_SETUP_KEY_PREFIX)
+  if (memoryStorage.has(storageKey)) {
+    return memoryStorage.get(storageKey)
+  }
   return null
 }
 
 export const setDurableOfflineSetupMeta = (meta = {}) => {
+  const userId = meta.userId || null
+  const ownerId = meta.ownerId || userId
+  const scope = durableSetupScopeKey(userId, ownerId)
+
+  const storageKey = `${DURABLE_SETUP_KEY_PREFIX}_${scope}`
   const payloadObj = {
     offlineReady: true,
     snapshotComplete: true,
     snapshotVersion: OFFLINE_SNAPSHOT_SCHEMA_VERSION,
     completedAt: new Date().toISOString(),
-    ...meta
+    ...meta,
+    userId,
+    ownerId
   }
-  memoryStorage.set(DURABLE_SETUP_KEY_PREFIX, payloadObj)
-  if (meta.userId) {
-    memoryStorage.set(`${DURABLE_SETUP_KEY_PREFIX}_${meta.userId}_${meta.ownerId || meta.userId}`, payloadObj)
-  }
+  memoryStorage.set(storageKey, payloadObj)
   if (typeof window !== 'undefined') {
     try {
-      const payload = JSON.stringify(payloadObj)
-      window.localStorage?.setItem?.(DURABLE_SETUP_KEY_PREFIX, payload)
-      if (meta.userId) {
-        window.localStorage?.setItem?.(
-          `${DURABLE_SETUP_KEY_PREFIX}_${meta.userId}_${meta.ownerId || meta.userId}`,
-          payload
-        )
-      }
+      window.localStorage?.setItem?.(storageKey, JSON.stringify(payloadObj))
     } catch {
       // localStorage unavailable
     }
@@ -230,44 +232,60 @@ export const setDurableOfflineSetupMeta = (meta = {}) => {
 }
 
 export const clearDurableOfflineSetupMeta = (userId = null, ownerId = null) => {
-  memoryStorage.delete(DURABLE_SETUP_KEY_PREFIX)
-  if (userId) {
-    memoryStorage.delete(`${DURABLE_SETUP_KEY_PREFIX}_${userId}_${ownerId || userId}`)
+  if (!userId && !ownerId) {
+    memoryStorage.clear()
+    memorySessionDismissed.clear()
+    if (typeof window !== 'undefined') {
+      try {
+        const keysToRemove = []
+        for (let i = 0; i < (window.localStorage?.length || 0); i++) {
+          const k = window.localStorage.key(i)
+          if (k?.startsWith(DURABLE_SETUP_KEY_PREFIX)) keysToRemove.push(k)
+        }
+        keysToRemove.forEach((k) => window.localStorage.removeItem(k))
+      } catch {}
+    }
+    return
   }
+  const scope = durableSetupScopeKey(userId, ownerId)
+  const storageKey = `${DURABLE_SETUP_KEY_PREFIX}_${scope}`
+  memoryStorage.delete(storageKey)
   if (typeof window !== 'undefined') {
     try {
-      window.localStorage?.removeItem?.(DURABLE_SETUP_KEY_PREFIX)
-      if (userId) {
-        window.localStorage?.removeItem?.(`${DURABLE_SETUP_KEY_PREFIX}_${userId}_${ownerId || userId}`)
-      }
+      window.localStorage?.removeItem?.(storageKey)
     } catch {
       // localStorage unavailable
     }
   }
 }
 
-let sessionDismissedFallback = false
-
-export const markOfflineSetupDismissedSession = () => {
-  sessionDismissedFallback = true
+export const markOfflineSetupDismissedSession = (userId = null, ownerId = null) => {
+  const scope = durableSetupScopeKey(userId, ownerId)
+  memorySessionDismissed.add(scope)
   if (typeof window === 'undefined') return
   try {
-    window.sessionStorage?.setItem(SESSION_SETUP_DISMISSED_KEY, 'true')
+    window.sessionStorage?.setItem(`${SESSION_SETUP_DISMISSED_KEY}_${scope}`, 'true')
   } catch {
     // sessionStorage unavailable
   }
 }
 
-export const isOfflineSetupDismissedSession = () => {
-  if (typeof window !== 'undefined') {
+export const isOfflineSetupDismissedSession = (userId = null, ownerId = null) => {
+  const scope = durableSetupScopeKey(userId, ownerId)
+  if (typeof window !== 'undefined' && window.sessionStorage) {
     try {
-      const val = window.sessionStorage?.getItem(SESSION_SETUP_DISMISSED_KEY)
+      const val = window.sessionStorage.getItem(`${SESSION_SETUP_DISMISSED_KEY}_${scope}`)
       if (val !== null && val !== undefined) return val === 'true'
+      return false
     } catch {
       // sessionStorage unavailable
     }
   }
-  return sessionDismissedFallback
+  return memorySessionDismissed.has(scope)
+}
+
+export const clearSessionDismissalsForTests = () => {
+  memorySessionDismissed.clear()
 }
 
 

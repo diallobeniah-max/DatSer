@@ -32,6 +32,7 @@ import {
   getMemberSourceTable
 } from '../utils/memberIdentity'
 import { DEFAULT_GUIDED_FORM_SETTINGS, normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
+import { LOCAL_ONLY_PREFERENCE_KEYS } from '../config/settingsRegistry'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
 import { classifyMemberSearch, getSearchableMemberName, normalizeSearchText } from '../utils/memberSearch'
@@ -1481,7 +1482,7 @@ export const AppProvider = ({ children }) => {
     if (Array.isArray(scopedMembers)) {
       // A soft-deleted member must never be restored as active from a stale
       // offline snapshot. Filter both deleted_at rows and id-scoped tombstones.
-      const baseActiveMembers = getActiveSnapshotMembers({ ...snapshot, members: scopedMembers })
+      const baseActiveMembers = getActiveSnapshotMembers({ ...snapshot, members: scopedMembers }, undefined, targetTable)
       const baseAttendance = mergeAttendanceFromMemberRows(
         snapshot.attendanceData || {},
         scopedMembers,
@@ -5472,23 +5473,48 @@ export const AppProvider = ({ children }) => {
   }
 
   // Remove a member from the persisted offline snapshot so a stale snapshot can
-  // never resurrect it after a confirmed delete.
-  const purgeMemberFromOfflineSnapshot = useCallback(async (memberId) => {
+  // never resurrect it after a confirmed delete. Scoped strictly to the target month table
+  // so historical months are never accidentally purged.
+  const purgeMemberFromOfflineSnapshot = useCallback(async (memberId, tableName = currentTable) => {
     if (!memberId) return
     try {
       const record = await getOfflineSnapshot().catch(() => null)
       const snapshot = record?.snapshot
-      if (!snapshot || !Array.isArray(snapshot.members)) return
-      const nextMembers = snapshot.members.filter((member) => String(member?.id) !== String(memberId))
-      if (nextMembers.length === snapshot.members.length) return
-      await saveOfflineSnapshot({ ...snapshot, members: nextMembers })
+      if (!snapshot) return
+      let changed = false
+      const nextSnapshot = { ...snapshot }
+
+      if (tableName && nextSnapshot.membersByTable?.[tableName]) {
+        const filtered = nextSnapshot.membersByTable[tableName].filter((member) => String(member?.id) !== String(memberId))
+        if (filtered.length !== nextSnapshot.membersByTable[tableName].length) {
+          nextSnapshot.membersByTable = {
+            ...nextSnapshot.membersByTable,
+            [tableName]: filtered
+          }
+          changed = true
+        }
+      }
+
+      if (!tableName || snapshot.currentTable === tableName || !snapshot.membersByTable) {
+        if (Array.isArray(snapshot.members)) {
+          const filtered = snapshot.members.filter((member) => String(member?.id) !== String(memberId))
+          if (filtered.length !== snapshot.members.length) {
+            nextSnapshot.members = filtered
+            changed = true
+          }
+        }
+      }
+
+      if (changed) {
+        await saveOfflineSnapshot(nextSnapshot)
+      }
     } catch (err) {
       console.warn('Could not purge member from offline snapshot:', err)
     }
-  }, [])
+  }, [currentTable])
 
   // Delete member
-  const performOfflineMemberDelete = useCallback(async (targetMemberId) => {
+  const performOfflineMemberDelete = async (targetMemberId) => {
     const existingMember = members.find(member => member.id === targetMemberId) || null
     const createdAt = new Date().toISOString()
     if (existingMember) {
@@ -5510,7 +5536,7 @@ export const AppProvider = ({ children }) => {
     invalidateMembersCacheRefs(membersCacheRef, searchCacheRef, currentTable)
     await deleteMemberPreviewMember(workspaceCacheScope, currentTable, targetMemberId)
     addMemberDeleteTombstone(targetMemberId, createdAt, currentTable)
-    await purgeMemberFromOfflineSnapshot(targetMemberId)
+    await purgeMemberFromOfflineSnapshot(targetMemberId, currentTable)
     await queueOfflineChange({
       local_change_id: `member_delete_${currentTable}_${targetMemberId}`,
       action_type: 'member_delete',
@@ -5531,7 +5557,7 @@ export const AppProvider = ({ children }) => {
       toast.success('Member deleted locally (offline)')
     }
     return { success: true, offline: true }
-  }, [currentTable, members, pendingSyncCount, refreshOfflineStatus, refreshSearch, workspaceCacheScope])
+  }
 
   const deleteMember = async (memberId) => {
 
@@ -5568,7 +5594,7 @@ export const AppProvider = ({ children }) => {
       refreshSearch()
       await deleteMemberPreviewMember(workspaceCacheScope, currentTable, memberId)
       addMemberDeleteTombstone(memberId, new Date().toISOString(), currentTable)
-      await purgeMemberFromOfflineSnapshot(memberId)
+      await purgeMemberFromOfflineSnapshot(memberId, currentTable)
       toast.success('Member deleted (Demo Mode)')
       return { success: true }
     }
@@ -5579,92 +5605,18 @@ export const AppProvider = ({ children }) => {
 
     setLoading(true)
     try {
-      await ensureMemberPreviewSyncColumns(currentTable)
-
       const deletedAt = new Date().toISOString()
-      let softDeleted = false
+      const targetOwnerId = dataOwnerId || user?.id
+      if (!targetOwnerId) throw new Error('Missing workspace owner for member delete')
 
-      try {
-        const { data, error } = await supabase
-          .from(currentTable)
-          .update({
-            deleted_at: deletedAt,
-            updated_at: deletedAt
-          })
-          .eq('id', memberId)
-          .select('id, deleted_at, updated_at')
+      const { data: rpcResult, error: rpcError } = await supabase.rpc('soft_delete_member', {
+        p_table_name: currentTable,
+        p_member_id: memberId,
+        p_owner_id: targetOwnerId
+      })
 
-        console.log(`[DELETE] Soft delete response - Error: ${error ? error.message : 'none'}, Rows updated:`, data?.length || 0, data)
-
-        if (!error && data && data.length > 0) {
-          softDeleted = true
-        } else if (error) {
-          const normalized = error.message?.toLowerCase() || ''
-          const isRlsError =
-            error.code === '42501' ||
-            normalized.includes('row-level security') ||
-            normalized.includes('permission denied')
-          const missingSyncColumn =
-            error.code === '42703' ||
-            normalized.includes('deleted_at') ||
-            normalized.includes('updated_at') ||
-            normalized.includes('column')
-          if (!isRlsError && !missingSyncColumn) {
-            throw error
-          }
-        }
-      } catch (updateError) {
-        const normalized = updateError?.message?.toLowerCase() || ''
-        const isRlsError =
-          updateError?.code === '42501' ||
-          normalized.includes('row-level security') ||
-          normalized.includes('permission denied')
-        const missingSyncColumn =
-          updateError?.code === '42703' ||
-          normalized.includes('deleted_at') ||
-          normalized.includes('updated_at') ||
-          normalized.includes('column')
-        if (!isRlsError && !missingSyncColumn) throw updateError
-      }
-
-      if (!softDeleted) {
-        console.log('[DELETE] Soft delete via table update did not confirm. Trying RPC fallback...')
-        try {
-          const { data: rpcResult, error: rpcError } = await supabase.rpc('soft_delete_member', {
-            target_table: currentTable,
-            member_id: memberId
-          })
-
-          console.log(`[DELETE] Soft delete RPC response - Error: ${rpcError ? rpcError.message : 'none'}, Result:`, rpcResult)
-          if (!rpcError) {
-            softDeleted = Boolean(rpcResult || true)
-          }
-        } catch (rpcError) {
-          console.warn('[DELETE] soft_delete_member RPC failed, trying hard delete fallback:', rpcError)
-        }
-      }
-
-      if (!softDeleted) {
-        console.log('[DELETE] Soft delete fallback failed; attempting legacy hard delete...')
-        const { data, error } = await supabase
-          .from(currentTable)
-          .delete()
-          .eq('id', memberId)
-          .select('id')
-        if (error) throw error
-        softDeleted = Boolean(data?.length)
-      }
-
-      const { data: verifyData } = await supabase
-        .from(currentTable)
-        .select('id, deleted_at')
-        .eq('id', memberId)
-        .maybeSingle()
-
-      if (verifyData && !verifyData.deleted_at) {
-        console.error(`[DELETE] VERIFICATION FAILED - member ${memberId} is still active in ${currentTable}`)
-        throw new Error(`Delete blocked by database policy. Please allow soft delete for the "${currentTable}" table in Supabase.`)
-      }
+      if (rpcError) throw rpcError
+      if (!rpcResult) throw new Error('Soft delete could not be confirmed by server')
 
 
       const deletedMember = members.find(member => member.id === memberId) || { id: memberId }
@@ -8037,11 +7989,14 @@ export const AppProvider = ({ children }) => {
             // the locked configuration RPC. An older offline preference queue
             // must never revert a confirmed workspace conversion.
             const { member_code_format: _queuedFormat, member_code_length: _queuedLength, ...safeQueuedPreferences } = change.preferences || {}
+            const cleanedPreferences = Object.fromEntries(
+              Object.entries(safeQueuedPreferences).filter(([k]) => !LOCAL_ONLY_PREFERENCE_KEYS.has(k))
+            )
             await executeSupabaseWrite(
               () => supabase
                 .from('user_preferences')
                 .upsert({
-                  ...safeQueuedPreferences,
+                  ...cleanedPreferences,
                   user_id: preferenceUserId,
                   updated_at: new Date().toISOString()
                 }, {
@@ -8125,33 +8080,17 @@ export const AppProvider = ({ children }) => {
                 continue
               }
               const deletedAt = new Date().toISOString()
-              let deleteSuccess = false
-              try {
-                const targetOwnerId = dataOwnerId || user?.id
-                if (targetOwnerId) {
-                  const { data: rpcSuccess, error: rpcErr } = await supabase.rpc('soft_delete_member', {
-                    p_table_name: changeTable,
-                    p_member_id: change.member_id,
-                    p_owner_id: targetOwnerId
-                  })
-                  if (!rpcErr && rpcSuccess) {
-                    deleteSuccess = true
-                  }
-                }
-              } catch (rpcErr) {
-                console.warn('soft_delete_member RPC failed, falling back to direct update:', rpcErr)
-              }
+              const targetOwnerId = dataOwnerId || user?.id
+              if (!targetOwnerId) throw new Error('Missing workspace owner for member delete sync.')
 
-              if (!deleteSuccess) {
-                const deleteResult = await executeSupabaseWrite(
-                  () => supabase
-                    .from(changeTable)
-                    .update({ deleted_at: deletedAt, updated_at: deletedAt })
-                    .eq('id', change.member_id)
-                    .select('id'),
-                  { action: `Sync offline member delete in ${changeTable}` }
-                )
-                assertSupabaseMutationAffected(deleteResult, 'Offline member delete')
+              const { data: rpcSuccess, error: rpcErr } = await supabase.rpc('soft_delete_member', {
+                p_table_name: changeTable,
+                p_member_id: change.member_id,
+                p_owner_id: targetOwnerId
+              })
+              if (rpcErr) throw rpcErr
+              if (!rpcSuccess) {
+                throw new Error('Soft delete could not be verified by server')
               }
               addMemberDeleteTombstone(change.member_id, deletedAt, changeTable)
             }
@@ -8275,44 +8214,45 @@ export const AppProvider = ({ children }) => {
             continue
           }
 
-          const attendanceUpdatedAt = new Date().toISOString()
-          let attendanceSaved = false
+          const targetOwnerId = dataOwnerId || user?.id
+          if (!targetOwnerId) throw new Error('Missing workspace owner for attendance sync.')
+          const dateStr = getLocalDateString(effectiveDate)
+          const monthStartStr = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, '0')}-01`
 
           if (queuedPresent !== null && (queuedPresent === true || queuedPresent === false)) {
-            try {
-              const targetOwnerId = dataOwnerId || user?.id
-              const monthStartStr = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, '0')}-01`
-              if (targetOwnerId) {
-                const { data: rpcData, error: rpcErr } = await supabase.rpc('set_workspace_month_member_attendance', {
-                  p_owner_id: targetOwnerId,
-                  p_month_start: monthStartStr,
-                  p_member_id: change.member_id,
-                  p_attendance_date: getLocalDateString(effectiveDate),
-                  p_attendance_status: queuedPresent ? 'Present' : 'Absent',
-                  p_request_id: change.local_change_id
-                })
-                if (!rpcErr && rpcData?.success) {
-                  attendanceSaved = true
-                }
-              }
-            } catch (rpcErr) {
-              console.warn('RPC set_workspace_month_member_attendance failed, falling back to direct write:', rpcErr)
+            // Present or Absent: set_workspace_month_member_attendance
+            const status = queuedPresent ? 'Present' : 'Absent'
+            const { data: rpcData, error: rpcErr } = await supabase.rpc('set_workspace_month_member_attendance', {
+              p_owner_id: targetOwnerId,
+              p_month_start: monthStartStr,
+              p_member_id: change.member_id,
+              p_attendance_date: dateStr,
+              p_attendance_status: status,
+              p_request_id: change.local_change_id
+            })
+            if (rpcErr) throw rpcErr
+            if (rpcData?.success !== true) {
+              throw new Error(rpcData?.error_message || 'Attendance save could not be verified by server')
             }
-          }
-
-          if (!attendanceSaved) {
-            const attendanceResult = await executeSupabaseWrite(
-              () => supabase
-                .from(changeTable)
-                .update({
-                  [attendanceColumn]: queuedPresent === null ? null : queuedPresent ? 'Present' : 'Absent',
-                  updated_at: attendanceUpdatedAt
-                })
-                .eq('id', change.member_id)
-                .select('id'),
-              { action: `Sync offline attendance in ${changeTable}` }
-            )
-            assertSupabaseMutationAffected(attendanceResult, 'Offline attendance sync')
+          } else {
+            // Clear: update_member_bundle_resilient
+            const identityMember = members.find((m) => String(m.id) === String(change.member_id)) || { id: change.member_id }
+            const identity = buildMemberIdentityHint(identityMember)
+            const { data: rpcData, error: rpcErr } = await supabase.rpc('update_member_bundle_resilient', {
+              p_table_name: changeTable,
+              p_owner_id: targetOwnerId,
+              p_member_id: change.member_id,
+              p_request_id: change.local_change_id,
+              p_updates: {},
+              p_badges: null,
+              p_tag_ids: null,
+              p_attendance: { [dateStr]: null },
+              p_identity: identity || {}
+            })
+            if (rpcErr) throw rpcErr
+            if (rpcData?.success !== true) {
+              throw new Error(rpcData?.error_message || 'Attendance clear could not be verified by server')
+            }
           }
           syncNormalizedAttendanceRecord(change.member_id, effectiveDate, queuedPresent).catch((error) => {
             console.warn('Background normalized attendance sync failed:', error)

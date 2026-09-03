@@ -86,4 +86,18 @@ describe('member delete tombstones', () => {
     expect(filterDeletedMembers([activeMember('a')]).map((m) => m.id)).toEqual(['a'])
     expect(writeMemberDeleteTombstones([{ id: 'a', deleted_at: DELETED_AT }])).toBeUndefined()
   })
+
+  it('H: month-scoped tombstone filters only targeted month, preserving historical months', () => {
+    addMemberDeleteTombstone('uuid-month-scoped', DELETED_AT, 'August_2026')
+    const augustRow = activeMember('uuid-month-scoped', BEFORE)
+    const julyRow = activeMember('uuid-month-scoped', BEFORE)
+
+    // Filtered in August_2026
+    expect(filterDeletedMembers([augustRow], undefined, 'August_2026')).toEqual([])
+    expect(isMemberStaleDeleted(augustRow, undefined, 'August_2026')).toBe(true)
+
+    // Kept in July_2026
+    expect(filterDeletedMembers([julyRow], undefined, 'July_2026')).toEqual([julyRow])
+    expect(isMemberStaleDeleted(julyRow, undefined, 'July_2026')).toBe(false)
+  })
 })

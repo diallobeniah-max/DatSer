@@ -136,6 +136,7 @@ describe('MemberCard', () => {
 
     renderMemberCard({
       isExpanded: true,
+      attendanceControlMode: 'pac',
       onAttendance,
       onAttendanceForDate,
       monthSundays: [sunday],
@@ -157,5 +158,22 @@ describe('MemberCard', () => {
     expect(perSundayClear).toHaveProperty('disabled', false)
     fireEvent.click(perSundayClear)
     expect(onAttendanceForDate).toHaveBeenCalledWith('member-1', null, sunday)
+  })
+
+  it('respects attendanceControlMode pa (no clear button) vs pac (clear button shown)', () => {
+    const sunday = '2026-08-16'
+    const { rerender } = renderMemberCard({
+      isExpanded: true,
+      attendanceControlMode: 'pa',
+      monthSundays: [sunday]
+    })
+    expect(screen.queryByTestId(`member-card-attendance-member-1-${sunday}-clear`)).toBeNull()
+
+    renderMemberCard({
+      isExpanded: true,
+      attendanceControlMode: 'pac',
+      monthSundays: [sunday]
+    })
+    expect(screen.getByTestId(`member-card-attendance-member-1-${sunday}-clear`)).toBeTruthy()
   })
 })
