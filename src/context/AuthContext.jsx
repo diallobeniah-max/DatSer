@@ -7,6 +7,7 @@ import {
   clearOfflineAuthProfile,
   clearOfflinePreferences,
   getOfflineAuthProfile,
+  getPendingOfflineChanges,
   getOfflinePreferences,
   getReadyOfflineSnapshotForUser,
   queueOfflineChange,
@@ -40,6 +41,17 @@ import {
 
 const AuthContext = createContext(null)
 const LOCAL_PREFERENCE_OVERRIDES_PREFIX = 'datser_preference_overrides'
+// Calendar settings drive the active month and Sunday. They are deliberately
+// protected from an older remote hydration result while this device has a
+// durable preference mutation waiting to synchronize.
+export const PERSONAL_CALENDAR_PREFERENCE_KEYS = [
+  'calendar_mode',
+  'current_month_table',
+  'selected_month_table',
+  'manual_month_table',
+  'manual_sunday_date',
+  'manual_override_until'
+]
 const DEV_BYPASS_USER_ID = 'dev-bypass-user'
 const DEV_BYPASS_PREFERENCES = {
   workspace_name: 'Developer Workspace',
@@ -147,6 +159,33 @@ const writeLocalPreferenceOverride = (userId, preferences) => {
   }
 }
 
+export const pickCalendarPreferencePatch = (preferences = {}) => (
+  PERSONAL_CALENDAR_PREFERENCE_KEYS.reduce((patch, key) => {
+    if (Object.prototype.hasOwnProperty.call(preferences, key)) {
+      patch[key] = preferences[key]
+    }
+    return patch
+  }, {})
+)
+
+export const getPendingCalendarPreferenceOverlay = (changes = [], userId) => {
+  const pendingPreferenceChanges = changes
+    .filter((change) => (
+      change?.action_type === 'preferences_update' &&
+      (!userId || !change.user_id || change.user_id === userId) &&
+      !['synced', 'unsupported', 'superseded'].includes(change.sync_status)
+    ))
+    .sort((left, right) => String(left?.created_at || '').localeCompare(String(right?.created_at || '')))
+
+  const latest = pendingPreferenceChanges[pendingPreferenceChanges.length - 1]
+  return pickCalendarPreferencePatch(latest?.preferences || {})
+}
+
+export const mergeRemotePersonalPreferences = (remotePreferences = {}, pendingCalendarPreferences = {}) => ({
+  ...(remotePreferences || {}),
+  ...(pendingCalendarPreferences || {})
+})
+
 const getDeveloperBypassPreferences = async () => {
   const cached = await getOfflinePreferences(DEV_BYPASS_USER_ID).catch(() => null)
   return {
@@ -220,6 +259,10 @@ export const AuthProvider = ({ children }) => {
   const [preferencesHydrated, setPreferencesHydrated] = useState(false)
   const [preferencesError, setPreferencesError] = useState(null)
   const [preferencesLoading, setPreferencesLoading] = useState(false)
+  // This only advances for a device-local preference commit. A remote request
+  // captures it before awaiting Supabase, so a late response cannot replace a
+  // newer user action in the active session.
+  const personalPreferenceGenerationRef = useRef(0)
   const preferences = useMemo(() => ({
     ...personalPreferences,
     ...workspacePreferences
@@ -614,6 +657,20 @@ export const AuthProvider = ({ children }) => {
       setPreferencesLoading(true)
       setPreferencesError(null)
       try {
+        // The device cache is the first preference source on launch. This is
+        // fast IndexedDB data, not an authentication bypass; the remote bundle
+        // still revalidates in the background below.
+        const cached = await getOfflinePreferences(targetActorId, targetOwnerId).catch(() => null)
+        if (isCurrentRequest() && cached && (cached.personal || cached.workspace)) {
+          if (cached.personal) setPersonalPreferences(cached.personal)
+          if (cached.workspace) setWorkspacePreferences(cached.workspace)
+          if (cached.personalRevision !== undefined) setPersonalRevision(BigInt(cached.personalRevision || 0))
+          if (cached.workspaceRevision !== undefined) setWorkspaceRevision(BigInt(cached.workspaceRevision || 0))
+          setWorkspacePreferencesOwnerId(targetOwnerId)
+          setPreferencesHydrated(true)
+        }
+
+        const preferenceGenerationAtRequestStart = personalPreferenceGenerationRef.current
         const bundle = await loadPreferenceBundle(targetOwnerId)
 
         if (!isCurrentRequest()) {
@@ -621,7 +678,23 @@ export const AuthProvider = ({ children }) => {
         }
 
         if (bundle && bundle.personalPreferences && bundle.workspacePreferences) {
-          setPersonalPreferences(bundle.personalPreferences)
+          // A queued device mutation has higher priority than a server result
+          // that was fetched before it. This prevents the old month from
+          // briefly taking ownership of the UI while the queue is syncing.
+          const pendingChanges = await getPendingOfflineChanges({ userId: targetActorId }).catch(() => [])
+          const pendingCalendarPreferences = getPendingCalendarPreferenceOverlay(pendingChanges, targetActorId)
+          const hasNewerLocalInteraction = personalPreferenceGenerationRef.current !== preferenceGenerationAtRequestStart
+          const localCalendarOverlay = Object.keys(pendingCalendarPreferences).length > 0
+            ? pendingCalendarPreferences
+            : (hasNewerLocalInteraction
+                ? pickCalendarPreferencePatch(readLocalPreferenceOverride(targetActorId)?.preferences || {})
+                : {})
+          const resolvedPersonalPreferences = mergeRemotePersonalPreferences(
+            bundle.personalPreferences,
+            localCalendarOverlay
+          )
+
+          setPersonalPreferences(resolvedPersonalPreferences)
           setWorkspacePreferences(bundle.workspacePreferences)
           setWorkspacePreferencesOwnerId(targetOwnerId)
           setPersonalRevision(bundle.personalRevision || 0n)
@@ -631,7 +704,7 @@ export const AuthProvider = ({ children }) => {
           saveOfflinePreferences(targetActorId, {
             actorId: targetActorId,
             ownerId: targetOwnerId,
-            personal: bundle.personalPreferences,
+            personal: resolvedPersonalPreferences,
             workspace: bundle.workspacePreferences,
             personalRevision: bundle.personalRevision,
             workspaceRevision: bundle.workspaceRevision
@@ -679,7 +752,7 @@ export const AuthProvider = ({ children }) => {
 
   // Save personal preferences using save_personal_preferences RPC
   const savePersonalPreferences = useCallback(async (patch = {}, options = {}) => {
-    if (!preferencesHydrated && !options?.forceHydrated) {
+    if (!preferencesHydrated && !options?.forceHydrated && !options?.localFirst) {
       console.warn('[AuthContext] savePersonalPreferences ignored before hydration completed.')
       return false
     }
@@ -698,6 +771,7 @@ export const AuthProvider = ({ children }) => {
     if (options?.localFirst) {
       const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
       try {
+        personalPreferenceGenerationRef.current += 1
         setPersonalPreferences(nextPersonal)
         if (user?.id) writeLocalPreferenceOverride(user.id, nextPersonal)
         await saveOfflinePreferences(user?.id, {

@@ -48,6 +48,41 @@ describe('OfflineStatusBanner setup dismissal', () => {
     expect(screen.getByRole('dialog', { name: 'Set up offline access' })).toBeTruthy()
   })
 
+  it('uses a centered mobile progress card while downloading', () => {
+    appState = makeAppState({
+      isPreparingOffline: true,
+      offlinePreparationProgress: {
+        phase: 'months',
+        stage: 'Downloading members',
+        detail: 'August 2026 · 8 of 12 months',
+        percent: 64,
+        completed: 8,
+        total: 12
+      }
+    })
+    renderBanner()
+
+    const card = screen.getByTestId('offline-setup-progress-card')
+    expect(card.className).toMatch(/inset-0.*items-center.*justify-center/)
+    expect(screen.getByText('Preparing DatSer for offline use')).toBeTruthy()
+    expect(screen.getByText('August 2026 · 8 of 12 months')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Continue in background' })).toBeTruthy()
+  })
+
+  it('collapses an active download into a compact in-app status', () => {
+    appState = makeAppState({
+      isPreparingOffline: true,
+      offlinePreparationProgress: { stage: 'Downloading members', completed: 8, total: 12 }
+    })
+    renderBanner()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue in background' }))
+
+    expect(screen.queryByTestId('offline-setup-progress-card')).toBeNull()
+    expect(screen.getByText('Preparing offline access')).toBeTruthy()
+    expect(screen.getByText('Downloading members · 8/12')).toBeTruthy()
+  })
+
   it('closes immediately from X without starting a download or sync', () => {
     renderBanner()
 

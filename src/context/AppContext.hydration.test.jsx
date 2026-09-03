@@ -211,14 +211,13 @@ describe('AppContext member hydration', () => {
     expect(getLatest()?.members?.map((member) => member.id)).toContain('m1')
   })
 
-  it('does not fetch members until the saved month is resolved', async () => {
-    // Pre-populate a provisional localStorage month (the race the fix eliminates).
+  it('uses a saved device month before remote preference hydration', async () => {
+    // A persisted selection is an explicit local choice, not a provisional value.
     localStorage.setItem('selectedMonthTable', 'January_2026')
     const { getLatest } = await renderProbe()
 
     await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
-    // Month must be the authoritative preference, not the provisional localStorage value.
-    expect(getLatest()?.currentTable).toBe('August_2026')
+    expect(getLatest()?.currentTable).toBe('January_2026')
   })
 
   it('shows cached members (HYDRATED) from a fresh persisted cache on startup', async () => {

@@ -171,16 +171,16 @@ describe('Manual calendar button must not auto-save (production wiring)', () => 
     expect(savePersonalPreferencesMock).not.toHaveBeenCalled()
   })
 
-  it('keeps the applied month in place until Apply, then switches the month and Sunday together', async () => {
+  it('keeps the locally selected month on first open until Apply, then switches the month and Sunday together', async () => {
     renderHost()
-    await waitFor(() => expect(screen.getByTestId('applied-month').textContent).toBe('August_2026'), { timeout: 4000 })
+    await waitFor(() => expect(screen.getByTestId('applied-month').textContent).toBe('January_2026'), { timeout: 4000 })
     await waitFor(() => expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(false), { timeout: 4000 })
 
     fireEvent.click(screen.getByRole('button', { name: 'manual' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
 
-    expect(screen.getByTestId('applied-month').textContent).toBe('August_2026')
+    expect(screen.getByTestId('applied-month').textContent).toBe('January_2026')
     expect(savePersonalPreferencesMock).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
@@ -204,5 +204,29 @@ describe('Manual calendar button must not auto-save (production wiring)', () => 
       expect.objectContaining({ calendar_mode: 'manual', manual_month_table: 'January_2026', manual_sunday_date: '2026-01-11' }),
       expect.objectContaining({ localFirst: true })
     )
+  })
+
+  it('does not flicker back when a stale Auto hydration arrives after a Manual Apply', async () => {
+    const view = renderHost()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(false), { timeout: 4000 })
+
+    fireEvent.click(screen.getByRole('button', { name: 'manual' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Feb' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Feb 8' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
+    await waitFor(() => expect(screen.getByTestId('applied-month').textContent).toBe('February_2026'))
+
+    // Simulate an older remote request resolving after the local Manual
+    // commit. The AppContext overlay must retain the just-applied selection.
+    Object.assign(authState.personalPreferences, {
+      calendar_mode: 'auto',
+      current_month_table: 'August_2026',
+      manual_month_table: null,
+      manual_sunday_date: null,
+      manual_override_until: null
+    })
+    view.rerender(<AppProvider><CalendarHost /></AppProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('applied-month').textContent).toBe('February_2026'))
   })
 })

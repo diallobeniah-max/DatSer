@@ -1148,19 +1148,23 @@ export const AppProvider = ({ children }) => {
           return
         }
 
-        // Try to load from Supabase preferences first (persisted across devices)
-        if (effectivePersonalCalendarPreferences?.current_month_table) {
-          const savedMonth = effectivePersonalCalendarPreferences.current_month_table
-          appContextLog('[MONTH] Loaded saved month from Supabase preferences:', savedMonth)
-          setCurrentTable(savedMonth)
-          localStorage.setItem(storageKey, savedMonth)
+        // A table stored by this device is a local operator interaction. It
+        // outranks a remote value during launch; remote preference hydration
+        // is a background revalidation and must not make the picker flicker
+        // back to an earlier month.
+        if (localSaved) {
+          appContextLog('[MONTH] Loaded local month:', localSaved)
+          setCurrentTable(localSaved)
           return
         }
 
-        // Fallback to localStorage if preferences not yet synced
-        if (localSaved) {
-          appContextLog('[MONTH] Loaded month from localStorage:', localSaved)
-          setCurrentTable(localSaved)
+        // No local selection exists, so a confirmed remote preference is the
+        // best deterministic starting point.
+        if (effectivePersonalCalendarPreferences?.current_month_table) {
+          const savedMonth = effectivePersonalCalendarPreferences.current_month_table
+          appContextLog('[MONTH] Loaded saved month from remote preferences:', savedMonth)
+          setCurrentTable(savedMonth)
+          localStorage.setItem(storageKey, savedMonth)
           return
         }
 
@@ -1497,7 +1501,12 @@ export const AppProvider = ({ children }) => {
       return false
     }
 
-    const targetTable = snapshot.currentTable || currentTable
+    const storageKey = isCollaborator && dataOwnerId ? `selectedMonthTable_${dataOwnerId}` : 'selectedMonthTable'
+    const localTable = typeof window !== 'undefined' ? window.localStorage.getItem(storageKey) : null
+    const snapshotManualTable = effectivePersonalCalendarPreferences?.calendar_mode === 'manual'
+      ? effectivePersonalCalendarPreferences?.manual_month_table
+      : null
+    const targetTable = snapshotManualTable || localTable || snapshot.currentTable || currentTable
     const scopedMembers = snapshot.membersByTable?.[targetTable] || snapshot.members
     if (Array.isArray(scopedMembers)) {
       // A soft-deleted member must never be restored as active from a stale
@@ -1527,8 +1536,8 @@ export const AppProvider = ({ children }) => {
     if (Array.isArray(snapshot.monthlyTables) && snapshot.monthlyTables.length > 0) {
       setMonthlyTables(snapshot.monthlyTables)
     }
-    if (snapshot.currentTable) {
-      setCurrentTable(snapshot.currentTable)
+    if (targetTable) {
+      setCurrentTable(targetTable)
     }
     if (snapshot.attendanceData && typeof snapshot.attendanceData === 'object' && !Array.isArray(scopedMembers)) {
       setAttendanceData(snapshot.attendanceData)
@@ -1541,7 +1550,7 @@ export const AppProvider = ({ children }) => {
     }
 
     return true
-  }, [currentTable, dataOwnerId, user?.id])
+  }, [currentTable, dataOwnerId, effectivePersonalCalendarPreferences?.calendar_mode, effectivePersonalCalendarPreferences?.manual_month_table, isCollaborator, user?.id])
 
   useEffect(() => {
     applyOfflineSnapshotRef.current = applyOfflineSnapshot
@@ -7375,11 +7384,10 @@ export const AppProvider = ({ children }) => {
         return
       }
 
-      // Check personal manual mode preference first
-      const isManual = authContext?.preferences?.calendar_mode === 'manual'
-      const manualMonth = authContext?.preferences?.manual_month_table
-      if (isManual && manualMonth && monthlyTables.includes(manualMonth)) {
-        if (currentTable !== manualMonth) setCurrentTable(manualMonth)
+      // The effective local calendar overlay wins over the raw AuthContext
+      // record while a device-local selection is pending remote sync.
+      if (isPersonalManualMode && manualMonthTable && monthlyTables.includes(manualMonthTable)) {
+        if (currentTable !== manualMonthTable) setCurrentTable(manualMonthTable)
         return
       }
 
@@ -7415,7 +7423,7 @@ export const AppProvider = ({ children }) => {
         }
       }
     }
-  }, [authContext?.loading, authContext?.preferences?.calendar_mode, authContext?.preferences?.current_month_table, authContext?.preferences?.manual_month_table, authContext?.preferences?.selected_month_table, authContext?.user, currentTable, dataOwnerId, isCollaborator, monthlyTables, ownerStickyMonth])
+  }, [authContext?.loading, authContext?.preferences?.current_month_table, authContext?.preferences?.selected_month_table, authContext?.user, currentTable, dataOwnerId, isCollaborator, isPersonalManualMode, manualMonthTable, monthlyTables, ownerStickyMonth])
 
   // Fetch members on component mount and when current table changes
   // Wait for auth AND month resolution before fetching to avoid the

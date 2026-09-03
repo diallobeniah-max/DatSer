@@ -72,8 +72,8 @@ android {
 androidComponents {
     onVariants(selector().withBuildType('debug')) { variant ->
         variant.outputs.each { output ->
-            output.versionCode.set(8)
-            output.versionName.set('1.0.7-offline-test')
+            output.versionCode.set(9)
+            output.versionName.set('1.0.8-offline-test')
         }
     }
 }

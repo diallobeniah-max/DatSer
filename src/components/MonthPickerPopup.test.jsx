@@ -268,6 +268,32 @@ describe('MonthPickerPopup calendar mode', () => {
     expect(onSelectSunday).not.toHaveBeenCalled()
   })
 
+  it('applies a Manual month on the first open while preference hydration is still running', async () => {
+    appState.preferencesHydrated = false
+    appState.preferencesLoading = true
+    const onSelectSunday = vi.fn().mockResolvedValue(true)
+
+    render(
+      <MonthPickerPopup
+        isOpen
+        onClose={vi.fn()}
+        calendarMode="auto"
+        onCalendarModeChange={vi.fn()}
+        onSelectSunday={onSelectSunday}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'manual' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Jan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Jan 11' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply month' }))
+
+    await vi.waitFor(() => expect(onSelectSunday).toHaveBeenCalledWith(expect.objectContaining({
+      table: 'January_2026',
+      dateStr: '2026-01-11'
+    })))
+  })
+
   it('keeps controls usable when hydration fails, with a Retry action', async () => {
     appState.preferencesHydrated = false
     appState.preferencesError = 'Failed to load preferences'
