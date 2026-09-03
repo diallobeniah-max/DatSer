@@ -1,5 +1,5 @@
 const DB_NAME = 'datser-offline'
-const DB_VERSION = 3
+const DB_VERSION = 4
 const SNAPSHOT_STORE = 'snapshots'
 const PENDING_STORE = 'pendingChanges'
 const AUTH_STORE = 'auth'
@@ -8,6 +8,23 @@ const MEMBER_PREVIEW_STORE = 'memberPreviews'
 const SNAPSHOT_KEY = 'latest'
 const AUTH_PROFILE_KEY = 'latest'
 const PREFERENCES_KEY = 'preferences'
+export const OFFLINE_SNAPSHOT_SCHEMA_VERSION = 1
+
+const snapshotScopeKey = (userId, ownerId) => (
+  userId && ownerId ? `workspace:${userId}:${ownerId}` : SNAPSHOT_KEY
+)
+
+const matchesScope = (record, { userId, ownerId } = {}) => (
+  Boolean(record) &&
+  (!userId || record.authenticated_user_id === userId) &&
+  (!ownerId || record.data_owner_id === ownerId)
+)
+
+export const isCompleteOfflineSnapshot = (record, scope = {}) => (
+  matchesScope(record, scope) &&
+  record?.completeness === 'complete' &&
+  record?.snapshot?.completeness === 'complete'
+)
 
 const canUseIndexedDb = () => (
   typeof window !== 'undefined' &&
@@ -114,21 +131,51 @@ export const isOfflineStoreAvailable = canUseIndexedDb
 
 export const saveOfflineSnapshot = async (snapshot) => {
   const cachedAt = new Date().toISOString()
-  await runStore(SNAPSHOT_STORE, 'readwrite', (store) => store.put({
-    key: SNAPSHOT_KEY,
+  const authenticatedUserId = snapshot?.authenticated_user_id || null
+  const dataOwnerId = snapshot?.data_owner_id || authenticatedUserId
+  const key = snapshotScopeKey(authenticatedUserId, dataOwnerId)
+  const existing = await runStore(SNAPSHOT_STORE, 'readonly', (store) => store.get(key))
+  // An automatic, active-month cache must never downgrade a successfully
+  // prepared workspace snapshot to partial data after a restart or refresh.
+  if (existing?.completeness === 'complete' && snapshot?.completeness !== 'complete') {
+    return existing.cached_at
+  }
+  const record = {
+    key,
     cached_at: cachedAt,
-    snapshot
-  }))
+    authenticated_user_id: authenticatedUserId,
+    data_owner_id: dataOwnerId,
+    schema_version: OFFLINE_SNAPSHOT_SCHEMA_VERSION,
+    completeness: snapshot?.completeness || 'partial',
+    snapshot: {
+      ...snapshot,
+      authenticated_user_id: authenticatedUserId,
+      data_owner_id: dataOwnerId,
+      schema_version: OFFLINE_SNAPSHOT_SCHEMA_VERSION,
+      completeness: snapshot?.completeness || 'partial'
+    }
+  }
+  await runStore(SNAPSHOT_STORE, 'readwrite', (store) => store.put(record))
   return cachedAt
 }
 
-export const getOfflineSnapshot = async () => {
-  const record = await runStore(SNAPSHOT_STORE, 'readonly', (store) => store.get(SNAPSHOT_KEY))
-  return record || null
+export const getOfflineSnapshot = async ({ userId = null, ownerId = null } = {}) => {
+  const key = snapshotScopeKey(userId, ownerId || userId)
+  const record = await runStore(SNAPSHOT_STORE, 'readonly', (store) => store.get(key))
+  return matchesScope(record, { userId, ownerId }) ? record : null
 }
 
-export const clearOfflineSnapshot = async () => (
-  runStore(SNAPSHOT_STORE, 'readwrite', (store) => store.delete(SNAPSHOT_KEY))
+export const getReadyOfflineSnapshotForUser = async (userId) => {
+  if (!userId) return null
+  const records = await runStore(SNAPSHOT_STORE, 'readonly', (store) => store.getAll())
+  return (records || []).find((record) => (
+    record?.authenticated_user_id === userId &&
+    isCompleteOfflineSnapshot(record, { userId })
+  )) || null
+}
+
+export const clearOfflineSnapshot = async ({ userId = null, ownerId = null } = {}) => (
+  runStore(SNAPSHOT_STORE, 'readwrite', (store) => store.delete(snapshotScopeKey(userId, ownerId || userId)))
 )
 
 export const saveOfflineAuthProfile = async ({ user, session } = {}) => {
@@ -321,6 +368,27 @@ export const clearMemberPreviewCache = async () => (
   runStore(MEMBER_PREVIEW_STORE, 'readwrite', (store) => store.clear())
 )
 
+export const clearMemberPreviewScope = async (scope) => {
+  if (!scope) return 0
+  const db = await openOfflineDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MEMBER_PREVIEW_STORE, 'readwrite')
+    const store = tx.objectStore(MEMBER_PREVIEW_STORE)
+    const request = store.getAll()
+    let removed = 0
+    request.onsuccess = () => {
+      ;(request.result || []).forEach((record) => {
+        if (record?.scope === scope) {
+          store.delete(record.key)
+          removed += 1
+        }
+      })
+    }
+    tx.oncomplete = () => { db.close(); resolve(removed) }
+    tx.onerror = () => { db.close(); reject(tx.error || new Error('Member preview cache clear failed.')) }
+  })
+}
+
 export const coalesceOfflineChange = (existingChanges = [], change = {}, now = new Date().toISOString()) => {
   const sameMember = (candidate) => (
     candidate?.member_id === change.member_id &&
@@ -379,7 +447,10 @@ export const coalesceOfflineChange = (existingChanges = [], change = {}, now = n
 }
 
 export const queueOfflineChange = async (change) => {
-  const pendingChanges = await getPendingOfflineChanges()
+  const pendingChanges = await getPendingOfflineChanges({
+    userId: change?.user_id || null,
+    ownerId: change?.owner_id || null
+  })
   const result = coalesceOfflineChange(pendingChanges, change)
   for (const localChangeId of result.removeIds) {
     await removeOfflineChange(localChangeId)
@@ -391,10 +462,14 @@ export const queueOfflineChange = async (change) => {
   return result.queuedChange
 }
 
-export const getPendingOfflineChanges = async () => {
+export const getPendingOfflineChanges = async ({ userId = null, ownerId = null } = {}) => {
   const changes = await runStore(PENDING_STORE, 'readonly', (store) => store.getAll())
   return changes
-    .filter((change) => change.sync_status !== 'synced')
+    .filter((change) => (
+      change.sync_status !== 'synced' &&
+      (!userId || change.user_id === userId) &&
+      (!ownerId || change.owner_id === ownerId)
+    ))
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
 }
 
@@ -525,9 +600,12 @@ export const clearPendingOfflineChanges = async () => (
   runStore(PENDING_STORE, 'readwrite', (store) => store.clear())
 )
 
-export const clearAllOfflineData = async () => {
-  await clearOfflineSnapshot()
-  await clearPendingOfflineChanges()
-  await clearOfflinePreferences()
-  await clearMemberPreviewCache()
+export const clearAllOfflineData = async ({ userId = null, ownerId = null, scope = null } = {}) => {
+  const pending = await getPendingOfflineChanges({ userId, ownerId })
+  if (pending.length > 0) {
+    throw new Error('Sync or resolve pending changes before removing downloaded data.')
+  }
+  await clearOfflineSnapshot({ userId, ownerId })
+  await clearOfflinePreferences(userId, ownerId)
+  if (scope) await clearMemberPreviewScope(scope)
 }

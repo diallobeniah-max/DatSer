@@ -19,6 +19,7 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     offlineSaveNoticeThreshold,
     offlineStatusMessage,
     isPreparingOffline,
+    offlinePreparationProgress,
     isSyncingOffline,
     prepareOfflineData,
     syncOfflineChanges,
@@ -43,10 +44,10 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
     }
   }
 
-  const hasCache = Boolean(offlineCacheMeta)
+  const hasCache = offlineCacheMeta?.completeness === 'complete'
   const isActuallyOffline = !isOnline || offlineModeStatus === 'offline' || offlineModeStatus === 'forced-offline' || offlineModeStatus === 'online-unavailable'
   const canShowSaveNotice = isActuallyOffline && pendingSyncCount >= (offlineSaveNoticeThreshold || 10)
-  const showPrepPrompt = hasAccess && isActuallyOffline && !hasCache && !isPrepDismissed
+  const showPrepPrompt = hasAccess && isOnline && !hasCache && !isPrepDismissed
   const isError = offlineStatusMessage?.toLowerCase().includes('failed') || offlineModeStatus === 'online-unavailable'
   const statusKey = useMemo(() => {
     if (!hasAccess) return null
@@ -84,9 +85,9 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-bold">Prepare Offline Mode</p>
+                    <p className="text-sm font-bold">Set up offline access</p>
                     <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-300">
-                      Download your members and attendance data so you can continue working when the APK is offline.
+                      Download your DatSer workspace so you can search members, mark attendance and make updates even when you are offline.
                     </p>
                   </div>
                   <button
@@ -109,19 +110,19 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
                     className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-300"
                   >
                     {isPreparingOffline ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                    {isPreparingOffline ? 'Refreshing...' : 'Refresh data'}
+                    {isPreparingOffline ? (offlinePreparationProgress?.stage || 'Preparing…') : 'Download data'}
                   </button>
                   <button
                     type="button"
-                    onClick={onOpenOfflineSettings}
+                    onClick={dismissPrep}
                     className="inline-flex min-h-[42px] items-center justify-center rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-800 transition-colors hover:bg-orange-100 dark:border-orange-800 dark:bg-orange-950/30 dark:text-orange-200 dark:hover:bg-orange-900/40"
                   >
-                    Offline Settings
+                    Not now
                   </button>
                 </div>
-                {!isOnline && (
-                  <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-200">
-                    Go online once to prepare this device.
+                {isPreparingOffline && (
+                  <p className="mt-2 text-xs font-medium text-orange-700 dark:text-orange-300">
+                    {offlinePreparationProgress?.completed || 0} of {offlinePreparationProgress?.total || 0} months complete
                   </p>
                 )}
               </div>

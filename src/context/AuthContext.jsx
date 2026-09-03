@@ -8,6 +8,7 @@ import {
   clearOfflinePreferences,
   getOfflineAuthProfile,
   getOfflinePreferences,
+  getReadyOfflineSnapshotForUser,
   queueOfflineChange,
   saveOfflineAuthProfile,
   saveOfflinePreferences
@@ -246,8 +247,15 @@ export const AuthProvider = ({ children }) => {
     try {
       const cachedAuth = await getOfflineAuthProfile().catch(() => null)
       if (!cachedAuth?.user?.id) return false
+      // A remembered identity alone is never sufficient for offline access.
+      // The device must also hold a complete, user-scoped workspace snapshot.
+      const readySnapshot = await getReadyOfflineSnapshotForUser(cachedAuth.user.id).catch(() => null)
+      if (!readySnapshot) return false
 
-      const cachedPreferences = await getOfflinePreferences(cachedAuth.user.id).catch(() => null)
+      const cachedPreferences = await getOfflinePreferences(
+        cachedAuth.user.id,
+        readySnapshot.data_owner_id || cachedAuth.user.id
+      ).catch(() => null)
       setUser(cachedAuth.user)
       if (cachedPreferences) {
         if (cachedPreferences.personal) setPersonalPreferences(cachedPreferences.personal)
@@ -473,6 +481,16 @@ export const AuthProvider = ({ children }) => {
 
         if (!mounted) return
         if (isDeveloperBypassStorageEnabled()) return
+
+        // Token refresh can emit SIGNED_OUT while the device has no network.
+        // Do not turn that transient event into a login screen when this
+        // device already has a complete, authenticated workspace snapshot.
+        if (event === 'SIGNED_OUT' && isBrowserOffline()) {
+          applyOfflineAuthProfile().then((restored) => {
+            if (!restored && mounted) setLoading(false)
+          })
+          return
+        }
 
         // Update user state immediately
         setUser(session?.user ? markUserAsAdminCodeSession(session.user) : null)
@@ -1103,7 +1121,10 @@ export const AuthProvider = ({ children }) => {
 
       await Promise.all([
         clearOfflineAuthProfile().catch(() => {}),
-        clearAllOfflineData().catch(() => {})
+        // Explicit logout removes this user's downloaded workspace only when
+        // there is no unsynchronized work. Pending mutations remain durable
+        // instead of being silently discarded.
+        clearAllOfflineData({ userId: currentActorId, ownerId: currentOwnerId }).catch(() => {})
       ])
 
       if (supabase) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coalesceOfflineChange, filterPreviewMembersForWrite } from './offlineStore'
+import { coalesceOfflineChange, filterPreviewMembersForWrite, isCompleteOfflineSnapshot } from './offlineStore'
 
 describe('offline mutation coalescing', () => {
   it('keeps only the newest attendance intent for a member and Sunday', () => {
@@ -86,5 +86,27 @@ describe('member preview persistence filtering', () => {
     expect(filterPreviewMembersForWrite([active, deleted]).map((m) => m.id)).toEqual(['a'])
     expect(filterPreviewMembersForWrite([deleted])).toEqual([])
     expect(filterPreviewMembersForWrite([])).toEqual([])
+  })
+})
+
+describe('offline workspace isolation', () => {
+  const readySnapshot = {
+    authenticated_user_id: 'user-a',
+    data_owner_id: 'workspace-a',
+    completeness: 'complete',
+    snapshot: { completeness: 'complete' }
+  }
+
+  it('accepts only a complete snapshot for its authenticated workspace', () => {
+    expect(isCompleteOfflineSnapshot(readySnapshot, { userId: 'user-a', ownerId: 'workspace-a' })).toBe(true)
+  })
+
+  it('never treats another user or workspace snapshot as offline-ready', () => {
+    expect(isCompleteOfflineSnapshot(readySnapshot, { userId: 'user-b', ownerId: 'workspace-a' })).toBe(false)
+    expect(isCompleteOfflineSnapshot(readySnapshot, { userId: 'user-a', ownerId: 'workspace-b' })).toBe(false)
+  })
+
+  it('rejects partial downloads after an interrupted refresh', () => {
+    expect(isCompleteOfflineSnapshot({ ...readySnapshot, completeness: 'partial' }, { userId: 'user-a', ownerId: 'workspace-a' })).toBe(false)
   })
 })

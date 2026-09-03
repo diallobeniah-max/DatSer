@@ -10,6 +10,7 @@ const DataSettingsSection = ({
     pendingSyncCount,
     offlineCacheMeta,
     isPreparingOffline,
+    offlinePreparationProgress,
     isSyncingOffline,
     prepareOfflineData,
     syncOfflineChanges,
@@ -87,10 +88,10 @@ const DataSettingsSection = ({
                                         )}
                                     </div>
                                     <p className="text-sm text-gray-600 dark:text-gray-300 mt-1.5 max-w-2xl">
-                                        Cache members and attendance on this device, then keep attendance changes safe when the APK is offline.
+                                        Download this workspace once, then keep searching, attendance, and supported edits available when this device is offline.
                                     </p>
                                     <p className="mt-2 text-xs font-medium text-orange-700 dark:text-orange-300">
-                                        Auto mode now prepares a fresh local copy after login and refreshes it when the device cache falls behind.
+                                        Your data stays on this device and is always separated by your signed-in workspace.
                                     </p>
                                     <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
                                         <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">Mode:</span>
@@ -128,7 +129,7 @@ const DataSettingsSection = ({
                                 <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
                                     <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Cached data</p>
                                     <p className="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-                                        {offlineCacheMeta ? `${offlineCacheMeta.member_count} members` : 'No local cache'}
+                                        {offlineCacheMeta?.completeness === 'complete' ? `${offlineCacheMeta.member_count} members · ${offlineCacheMeta.downloaded_months?.length || offlineCacheMeta.table_count} months` : 'Not downloaded yet'}
                                     </p>
                                 </div>
                                 <div className="rounded-xl bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3">
@@ -149,7 +150,7 @@ const DataSettingsSection = ({
                                     className="min-h-[44px] px-3 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 disabled:bg-orange-300 disabled:text-white/80 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm"
                                 >
                                     {isPreparingOffline ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                                    {isPreparingOffline ? 'Refreshing...' : 'Refresh data'}
+                                    {isPreparingOffline ? (offlinePreparationProgress?.stage || 'Preparing…') : (offlineCacheMeta?.completeness === 'complete' ? 'Refresh offline data' : 'Download data')}
                                 </button>
                                 <button
                                     type="button"
@@ -162,12 +163,17 @@ const DataSettingsSection = ({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={clearOfflineCacheData}
-                                    disabled={isPreparingOffline || isSyncingOffline}
+                                    onClick={() => {
+                                        if (pendingSyncCount > 0) return
+                                        if (window.confirm('Remove downloaded offline data from this device? You can download it again after signing in.')) {
+                                            clearOfflineCacheData()
+                                        }
+                                    }}
+                                    disabled={isPreparingOffline || isSyncingOffline || pendingSyncCount > 0}
                                     className="min-h-[44px] px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:bg-gray-100 disabled:text-gray-400 dark:disabled:bg-gray-800 dark:disabled:text-gray-500 disabled:cursor-not-allowed text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                                 >
                                     <Trash2 className="w-4 h-4" />
-                                    Clear Cache
+                                    Remove downloaded data
                                 </button>
                             </div>
                         </div>

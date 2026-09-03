@@ -57,22 +57,22 @@ import {
   normalizeQueuedAttendanceValue
 } from '../utils/attendanceRecords'
 import {
-  clearAllOfflineData,
+  clearAllOfflineData as clearAllOfflineDataRecord,
   deleteMemberPreviewMember,
   filterPreviewMembersForWrite,
   getNextFailureSyncStatus,
-  getOfflineSnapshot,
+  getOfflineSnapshot as getOfflineSnapshotRecord,
   getMemberPreviewMembers,
   getSyncableChangesNextAttemptDelayMs,
   isChangeRetryEligible,
   isChangeSyncable,
   isOfflineStoreAvailable,
-  getPendingOfflineChanges,
-  queueOfflineChange,
+  getPendingOfflineChanges as getPendingOfflineChangesRecord,
+  queueOfflineChange as queueOfflineChangeRecord,
   removeOfflineChange,
   resolveServerDeletedMemberChange,
   saveMemberPreviewMembers,
-  saveOfflineSnapshot,
+  saveOfflineSnapshot as saveOfflineSnapshotRecord,
   SYNC_RETRY_LIMIT,
   updateOfflineChangeStatus
 } from '../utils/offlineStore'
@@ -486,6 +486,28 @@ const resolveAttendanceDateKeyFromColumn = (columnName, tableName = '') => {
   return null
 }
 
+const mergeAttendanceFromMemberRows = (baseAttendance = {}, rows = [], tableName = '') => {
+  if (!Array.isArray(rows) || rows.length === 0) return baseAttendance
+
+  const next = { ...(baseAttendance || {}) }
+  rows.forEach((row) => {
+    if (!row?.id) return
+    Object.entries(row).forEach(([key, value]) => {
+      const dateKey = resolveAttendanceDateKeyFromColumn(key, tableName)
+      if (!dateKey) return
+      if (value === 'Present' || value === true) {
+        next[dateKey] = { ...(next[dateKey] || {}), [row.id]: true }
+      } else if (value === 'Absent' || value === false) {
+        next[dateKey] = { ...(next[dateKey] || {}), [row.id]: false }
+      } else if (next[dateKey]) {
+        const { [row.id]: _removed, ...rest } = next[dateKey]
+        next[dateKey] = rest
+      }
+    })
+  })
+  return next
+}
+
 const makeLocalUuid = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -891,6 +913,30 @@ export const AppProvider = ({ children }) => {
     dataOwnerId,
     isCollaborator
   }), [dataOwnerId, isCollaborator, user?.id])
+  // All durable reads and writes are scoped to the authenticated actor and
+  // authorized workspace owner. This is deliberately centralized so every
+  // existing queue/snapshot call remains isolated when collaborators switch
+  // workspaces or a different person signs in on the same Android device.
+  const offlineScope = useMemo(() => ({
+    userId: user?.id || null,
+    ownerId: dataOwnerId || user?.id || null
+  }), [dataOwnerId, user?.id])
+  const getOfflineSnapshot = useCallback(() => getOfflineSnapshotRecord(offlineScope), [offlineScope])
+  const getPendingOfflineChanges = useCallback(() => getPendingOfflineChangesRecord(offlineScope), [offlineScope])
+  const saveOfflineSnapshot = useCallback((snapshot) => saveOfflineSnapshotRecord({
+    ...snapshot,
+    authenticated_user_id: snapshot?.authenticated_user_id || offlineScope.userId,
+    data_owner_id: snapshot?.data_owner_id || offlineScope.ownerId
+  }), [offlineScope])
+  const queueOfflineChange = useCallback((change) => queueOfflineChangeRecord({
+    ...change,
+    user_id: change?.user_id || offlineScope.userId,
+    owner_id: change?.owner_id || offlineScope.ownerId
+  }), [offlineScope])
+  const clearAllOfflineData = useCallback(() => clearAllOfflineDataRecord({
+    ...offlineScope,
+    scope: workspaceCacheScope
+  }), [offlineScope, workspaceCacheScope])
   const runtimeRequestScopeRef = useRef(null)
   const [attendanceData, setAttendanceData] = useState({})
   const attendanceDataRef = useRef({})
@@ -1138,6 +1184,7 @@ export const AppProvider = ({ children }) => {
   const offlinePendingChangesRef = useRef([])
   const [offlineStatusMessage, setOfflineStatusMessage] = useState('')
   const [isPreparingOffline, setIsPreparingOffline] = useState(false)
+  const [offlinePreparationProgress, setOfflinePreparationProgress] = useState(null)
   const [isSyncingOffline, setIsSyncingOffline] = useState(false)
   const [offlineMode, setOfflineModeState] = useState(getStoredOfflineMode)
   const [offlineSaveNoticeThreshold, setOfflineSaveNoticeThresholdState] = useState(getStoredOfflineSaveNoticeThreshold)
@@ -1243,7 +1290,9 @@ export const AppProvider = ({ children }) => {
           attendance_date_count: snapshot?.attendanceData ? Object.keys(snapshot.attendanceData).length : 0,
           authenticated_user_id: snapshot?.authenticated_user_id || null,
           data_owner_id: snapshot?.data_owner_id || null,
-          workspace: snapshot?.workspace || null
+          workspace: snapshot?.workspace || null,
+          completeness: snapshot?.completeness || snapshotRecord?.completeness || 'partial',
+          downloaded_months: snapshot?.downloaded_months || []
         } : null)
         setOfflinePendingChanges(pendingChanges)
         setPendingSyncCount(pendingChanges.length)
@@ -1352,7 +1401,7 @@ export const AppProvider = ({ children }) => {
   }, [authLoading, resolveSearchSuggestionPrompt, setSearchSuggestionView, user])
 
   const shouldUseOfflineData = offlineMode === 'offline' || (offlineMode === 'auto' && !isOnline)
-  const isOfflineModeActive = shouldUseOfflineData && Boolean(offlineCacheMeta)
+  const isOfflineModeActive = shouldUseOfflineData && offlineCacheMeta?.completeness === 'complete'
   const offlineModeStatus = offlineMode === 'offline'
     ? 'forced-offline'
     : isOfflineModeActive
@@ -1393,7 +1442,9 @@ export const AppProvider = ({ children }) => {
         attendance_date_count: snapshot?.attendanceData ? Object.keys(snapshot.attendanceData).length : 0,
         authenticated_user_id: snapshot?.authenticated_user_id || null,
         data_owner_id: snapshot?.data_owner_id || null,
-        workspace: snapshot?.workspace || null
+        workspace: snapshot?.workspace || null,
+        completeness: snapshot?.completeness || snapshotRecord?.completeness || 'partial',
+        downloaded_months: snapshot?.downloaded_months || []
       } : null)
       setOfflinePendingChanges(pendingChanges)
       setPendingSyncCount(pendingChanges.length)
@@ -1409,11 +1460,22 @@ export const AppProvider = ({ children }) => {
       console.warn('Ignoring offline snapshot for a different authenticated user.')
       return false
     }
+    if (snapshot.completeness !== 'complete') return false
+    if (dataOwnerId && snapshot.data_owner_id !== dataOwnerId) {
+      console.warn('Ignoring offline snapshot for a different workspace.')
+      return false
+    }
 
-    if (Array.isArray(snapshot.members)) {
+    const scopedMembers = snapshot.membersByTable?.[currentTable] || snapshot.members
+    if (Array.isArray(scopedMembers)) {
       // A soft-deleted member must never be restored as active from a stale
       // offline snapshot. Filter both deleted_at rows and id-scoped tombstones.
-      setMembers(getActiveSnapshotMembers(snapshot))
+      setMembers(getActiveSnapshotMembers({ ...snapshot, members: scopedMembers }))
+      setAttendanceData((previous) => mergeAttendanceFromMemberRows(
+        snapshot.attendanceData || previous,
+        scopedMembers,
+        currentTable
+      ))
     }
     if (Array.isArray(snapshot.monthlyTables) && snapshot.monthlyTables.length > 0) {
       setMonthlyTables(snapshot.monthlyTables)
@@ -1421,7 +1483,7 @@ export const AppProvider = ({ children }) => {
     if (snapshot.currentTable) {
       setCurrentTable(snapshot.currentTable)
     }
-    if (snapshot.attendanceData && typeof snapshot.attendanceData === 'object') {
+    if (snapshot.attendanceData && typeof snapshot.attendanceData === 'object' && !Array.isArray(scopedMembers)) {
       setAttendanceData(snapshot.attendanceData)
     }
     if (snapshot.selectedAttendanceDate) {
@@ -1432,7 +1494,7 @@ export const AppProvider = ({ children }) => {
     }
 
     return true
-  }, [user?.id])
+  }, [currentTable, dataOwnerId, user?.id])
 
   useEffect(() => {
     applyOfflineSnapshotRef.current = applyOfflineSnapshot
@@ -2810,13 +2872,23 @@ export const AppProvider = ({ children }) => {
     if (!tableName) return []
     if (!isOfflineStoreAvailable()) return []
     try {
+      // A complete snapshot is the offline source of truth. Preview-index
+      // writes can be in progress during a refresh, so never surface those
+      // partial rows while the device is offline.
+      if (shouldUseOfflineData) {
+        const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        const snapshotRows = snapshotRecord?.snapshot?.membersByTable?.[tableName]
+        if (Array.isArray(snapshotRows)) {
+          return filterDeletedMembers(snapshotRows).map(normalizeMemberRecord)
+        }
+      }
       const cachedMembers = await getMemberPreviewMembers(workspaceCacheScope, tableName)
       return filterDeletedMembers(cachedMembers || []).map(normalizeMemberRecord)
     } catch (error) {
       console.warn('Could not read member preview index:', error)
       return []
     }
-  }, [currentTable, workspaceCacheScope])
+  }, [currentTable, getOfflineSnapshot, shouldUseOfflineData, workspaceCacheScope])
 
   const searchMemberPreviewIndex = useCallback(async (term, tableName = currentTable) => {
     if (!normalizeSearchText(term) || !tableName) return []
@@ -4192,25 +4264,7 @@ export const AppProvider = ({ children }) => {
 
   const applyAttendanceColumnsFromMemberRows = useCallback((rows = [], tableName = currentTable) => {
     if (!Array.isArray(rows) || rows.length === 0) return
-    setAttendanceData((prev) => {
-      const next = { ...prev }
-      rows.forEach((row) => {
-        if (!row?.id) return
-        Object.entries(row).forEach(([key, value]) => {
-          const dateKey = resolveAttendanceDateKeyFromColumn(key, tableName)
-          if (!dateKey) return
-          if (value === 'Present' || value === true) {
-            next[dateKey] = { ...(next[dateKey] || {}), [row.id]: true }
-          } else if (value === 'Absent' || value === false) {
-            next[dateKey] = { ...(next[dateKey] || {}), [row.id]: false }
-          } else if (next[dateKey]) {
-            const { [row.id]: _removed, ...rest } = next[dateKey]
-            next[dateKey] = rest
-          }
-        })
-      })
-      return next
-    })
+    setAttendanceData((previous) => mergeAttendanceFromMemberRows(previous, rows, tableName))
   }, [currentTable])
 
   const removeMemberFromAttendanceData = useCallback((memberId) => {
@@ -7643,6 +7697,7 @@ export const AppProvider = ({ children }) => {
     }
 
     setIsPreparingOffline(true)
+    setOfflinePreparationProgress({ stage: 'Preparing workspace…', completed: 0, total: monthlyTables.length || 0 })
     try {
       const localMembersBeforeRefresh = (members || []).map(normalizeMemberRecord)
       const indexedMembersBeforeRefresh = currentTable
@@ -7667,13 +7722,14 @@ export const AppProvider = ({ children }) => {
             return null
           })
         ])
-        if (Array.isArray(freshMembers)) {
-          snapshotMembers = mergeMemberSnapshotSources(
-            freshMembers,
-            indexedMembersBeforeRefresh,
-            localMembersBeforeRefresh
-          )
+        if (!Array.isArray(freshMembers)) {
+          throw new Error(`Could not download ${currentTable.replace('_', ' ')}. Your previous offline data is still safe.`)
         }
+        snapshotMembers = mergeMemberSnapshotSources(
+          freshMembers,
+          indexedMembersBeforeRefresh,
+          localMembersBeforeRefresh
+        )
         snapshotMembers = applyPendingChangesToMemberSnapshot(
           snapshotMembers,
           pendingChangesBeforeRefresh,
@@ -7718,6 +7774,39 @@ export const AppProvider = ({ children }) => {
         })
       }
 
+      // Prepare every authorized month while online. The existing preview
+      // index remains the local search engine; this snapshot metadata proves
+      // that all month indexes completed as one safe generation.
+      const membersByTable = {}
+      const tablesToPrepare = [...new Set(monthlyTables || [])]
+      for (let index = 0; index < tablesToPrepare.length; index += 1) {
+        const tableName = tablesToPrepare[index]
+        setOfflinePreparationProgress({
+          stage: `Downloading ${tableName.replace('_', ' ')}…`,
+          completed: index,
+          total: tablesToPrepare.length
+        })
+        const rows = tableName === currentTable
+          ? snapshotMembers
+          : await fetchMembers(tableName, {
+            forceRefresh: true,
+            background: true,
+            forceOnline: true,
+            fullSnapshot: true
+          })
+        if (!Array.isArray(rows)) {
+          throw new Error(`Could not download ${tableName.replace('_', ' ')}. Your previous offline data is still safe.`)
+        }
+        const mergedRows = applyPendingChangesToMemberSnapshot(rows, pendingChangesBeforeRefresh, tableName)
+        membersByTable[tableName] = filterDeletedMembers(mergedRows)
+        await persistMemberPreviewIndex(tableName, membersByTable[tableName], {
+          cachedCount: membersByTable[tableName].length,
+          totalCount: membersByTable[tableName].length,
+          source: 'offline-full-download'
+        })
+      }
+      setOfflinePreparationProgress({ stage: 'Building offline search…', completed: tablesToPrepare.length, total: tablesToPrepare.length })
+
       const cachedAt = await saveOfflineSnapshot({
         members: snapshotMembers,
         monthlyTables,
@@ -7732,6 +7821,9 @@ export const AppProvider = ({ children }) => {
         is_collaborator: isCollaborator,
         is_admin_collaborator: isAdminCollaborator,
         owner_email: ownerEmail || null,
+        membersByTable,
+        downloaded_months: tablesToPrepare,
+        completeness: 'complete',
         saved_at: new Date().toISOString()
       })
 
@@ -7747,6 +7839,7 @@ export const AppProvider = ({ children }) => {
       return { success: false, error }
     } finally {
       setIsPreparingOffline(false)
+      setOfflinePreparationProgress(null)
     }
   }
 
@@ -7764,11 +7857,13 @@ export const AppProvider = ({ children }) => {
       Array.isArray(members) ? members.length : 0
     )
     const cacheAgeMs = cachedAt > 0 ? Date.now() - cachedAt : Number.POSITIVE_INFINITY
-    const missingCache = !offlineCacheMeta || cachedMemberCount <= 0
+    const missingCache = !offlineCacheMeta || offlineCacheMeta.completeness !== 'complete' || cachedMemberCount <= 0
     const memberCacheBehind = expectedMemberCount > 0 && cachedMemberCount + 3 < expectedMemberCount
     const cacheVeryOld = cacheAgeMs > 1000 * 60 * 60 * 12
 
-    if (!missingCache && !memberCacheBehind && !cacheVeryOld) return undefined
+    // First-download consent belongs to the setup prompt. Background refresh
+    // is reserved for a snapshot the user already chose to prepare.
+    if (missingCache || (!memberCacheBehind && !cacheVeryOld)) return undefined
 
     const signature = [
       user.id,
@@ -7811,6 +7906,7 @@ export const AppProvider = ({ children }) => {
     pendingSyncCount,
     currentTable,
     isPreparingOffline,
+    offlinePreparationProgress,
     isSyncingOffline,
     offlineCacheMeta,
     membersTotalCount,
@@ -8804,6 +8900,7 @@ export const AppProvider = ({ children }) => {
     offlinePendingChanges,
     offlineStatusMessage,
     isPreparingOffline,
+    offlinePreparationProgress,
     isSyncingOffline,
     prepareOfflineData,
     clearOfflineCacheData,
@@ -8855,7 +8952,7 @@ export const AppProvider = ({ children }) => {
     focusDateSelector, validateMemberData, getPastSundays, getMissingAttendance,
     autoAllDatesEnabled, setAutoAllDatesEnabled, missingInfoPromptEnabled, setMissingInfoPromptEnabled, guidedFormSettings, setGuidedFormSetting, isDeveloperBypass,
     isOnline, offlineMode, setOfflineMode, offlineSaveNoticeThreshold, setOfflineSaveNoticeThreshold, notificationDurationMs, setNotificationDurationMs, searchSuggestionView, setSearchSuggestionView, shouldUseOfflineData, isOfflineModeActive, offlineModeStatus,
-    offlineCacheMeta, pendingSyncCount, offlinePendingChanges, offlineStatusMessage, isPreparingOffline, isSyncingOffline,
+    offlineCacheMeta, pendingSyncCount, offlinePendingChanges, offlineStatusMessage, isPreparingOffline, offlinePreparationProgress, isSyncingOffline,
     prepareOfflineData, clearOfflineCacheData, syncOfflineChanges, refreshOfflineStatus,
     hasAccess, isCollaborator, isAdminCollaborator, dataOwnerId, personalCalendarMode, isPersonalManualMode, manualMonthTable, manualSundayDate, manualOverrideUntil,
     setPersonalCalendarMode, ownerStickyMonth, ownerStickySundays, adminSyncNotice, acknowledgeAdminSync,
