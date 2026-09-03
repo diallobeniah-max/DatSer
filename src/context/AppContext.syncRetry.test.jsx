@@ -14,8 +14,8 @@ let resilientResponder = null
 let resilientRpcCallCount = 0
 let capturedResilientArgs = null
 let authState = null
-let resilientUpsertCount = 0
-let forceServerDeletedMemberRow = null
+let resilientMemberCreateCallCount = 0
+let memberCreateResponder = null
 
 const createMemoryStorage = () => {
   let store = {}
@@ -49,21 +49,13 @@ vi.mock('../lib/supabase', () => {
       },
       in: () => base,
       gt: () => base,
-      limit: () => {
-        if (forceServerDeletedMemberRow !== null && String(base._id) === String(forceServerDeletedMemberRow.id)) {
-          return Promise.resolve({ data: [forceServerDeletedMemberRow], error: null })
-        }
-        return base
-      },
+      limit: () => base,
       order: () => base,
       range: () => Promise.resolve({ data: [], error: null }),
       single: () => {
         return Promise.resolve({ data: null, error: null })
       },
-      upsert: () => {
-        resilientUpsertCount += 1
-        return Promise.resolve({ error: null })
-      },
+      upsert: () => Promise.resolve({ error: null }),
       update: () => ({ eq: () => Promise.resolve({ error: null }) }),
       insert: () => Promise.resolve({ data: [], error: null }),
       delete: () => base,
@@ -108,6 +100,16 @@ vi.mock('../lib/supabase', () => {
           return Promise.resolve({
             data: null,
             error: { message: 'Service Unavailable', status: 503 }
+          })
+        }
+        if (name === 'save_member_bundle_resilient') {
+          resilientMemberCreateCallCount += 1
+          if (memberCreateResponder) {
+            return Promise.resolve({ data: memberCreateResponder, error: null })
+          }
+          return Promise.resolve({
+            data: { success: true, member_id: 'server-member-9' },
+            error: null
           })
         }
         return Promise.resolve({ data: null, error: null })
@@ -161,6 +163,7 @@ vi.mock('../utils/offlineStore', async (importOriginal) => {
     getMemberPreviewMembers: vi.fn(() => Promise.resolve([])),
     saveMemberPreviewMembers: vi.fn(() => Promise.resolve(true)),
     deleteMemberPreviewMember: vi.fn(() => Promise.resolve(true)),
+    reconcileOfflineMemberId: vi.fn(() => Promise.resolve(true)),
     filterPreviewMembersForWrite: (members) => members
   }
 })
@@ -234,8 +237,8 @@ describe('AppContext offline sync flush retry safety', () => {
     resilientResponder = null
     resilientRpcCallCount = 0
     capturedResilientArgs = null
-    resilientUpsertCount = 0
-    forceServerDeletedMemberRow = null
+    resilientMemberCreateCallCount = 0
+    memberCreateResponder = null
     authState = {
       user: { id: 'collab-1', email: 'collab@example.com' },
       loading: false,
@@ -485,39 +488,42 @@ describe('AppContext offline sync flush retry safety', () => {
     secondMount.unmount()
   })
 
-  it('offline-created member with absent server row is upserted, not tombstoned', async () => {
+  it('syncs an offline-created member through the trusted bundle RPC, not a direct table upsert', async () => {
     pendingStore = [seededMemberAddChange()]
     const { getLatest } = await mountApp()
 
     await advance(5000)
 
-    // The pre-check sees no server row (this is a brand-new offline member), so
-    // the add must proceed to the existing idempotent upsert rather than being
-    // misread as a deletion.
-    expect(resilientUpsertCount).toBeGreaterThan(0)
+    // A temporary device ID is not a server identity. The server creates the
+    // member through its workspace-aware RPC and returns its canonical ID.
+    expect(resilientMemberCreateCallCount).toBeGreaterThan(0)
     expect(pendingStore).toHaveLength(0)
     expect(localStorage.getItem('datser_member_delete_tombstones_v1')).toBeNull()
     expect(getLatest().isSyncingOffline).toBe(false)
   })
 
-  it('a queued member_add against a server-deleted member is reconciled, not resurrected', async () => {
-    forceServerDeletedMemberRow = { id: 'member-9', deleted_at: '2026-01-10T00:00:00.000Z' }
+  it('keeps an offline create recoverable when the trusted server RPC refuses it', async () => {
+    memberCreateResponder = {
+      success: false,
+      error_message: 'Workspace access was removed on the server.'
+    }
     pendingStore = [seededMemberAddChange()]
     const { getLatest } = await mountApp()
 
     await advance(5000)
 
-    // The pre-check finds the explicit soft-deleted server row, so the add is
-    // failed and tombstoned instead of upserted (no resurrect, no auto-retry).
+    // The app never infers authorization from a temporary local ID or writes a
+    // monthly table directly. A permanent server refusal stays recoverable for
+    // the operator instead of resurrecting a record locally on the server.
     expect(pendingStore).toHaveLength(1)
     expect(pendingStore[0].sync_status).toBe('failed')
-    expect(pendingStore[0].error).toMatch(/deleted on the server/i)
-    expect(resilientUpsertCount).toBe(0)
+    expect(pendingStore[0].error).toMatch(/workspace access was removed/i)
+    expect(resilientMemberCreateCallCount).toBe(1)
     expect(getLatest().isSyncingOffline).toBe(false)
 
-    const rpcBefore = resilientUpsertCount
+    const rpcBefore = resilientMemberCreateCallCount
     await advance(905000)
-    expect(resilientUpsertCount).toBe(rpcBefore)
+    expect(resilientMemberCreateCallCount).toBe(rpcBefore)
     expect(pendingStore[0].sync_status).toBe('failed')
   })
 

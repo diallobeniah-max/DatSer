@@ -462,6 +462,114 @@ export const deleteMemberPreviewMember = async (scope, tableName, memberId) => {
   )
 }
 
+export const remapMemberIdInSnapshot = (snapshot = {}, temporaryMemberId, serverMemberId) => {
+  const replaceMember = (member) => (
+    String(member?.id) === String(temporaryMemberId)
+      ? { ...member, id: serverMemberId, offline_pending_create: false, __offline_status: null }
+      : member
+  )
+  const replaceAttendance = (attendance = {}) => Object.fromEntries(
+    Object.entries(attendance || {}).map(([dateKey, values]) => {
+      if (!values || typeof values !== 'object') return [dateKey, values]
+      const next = { ...values }
+      if (Object.prototype.hasOwnProperty.call(next, temporaryMemberId)) {
+        next[serverMemberId] = next[temporaryMemberId]
+        delete next[temporaryMemberId]
+      }
+      return [dateKey, next]
+    })
+  )
+  return {
+    ...snapshot,
+    members: Array.isArray(snapshot.members) ? snapshot.members.map(replaceMember) : snapshot.members,
+    membersByTable: Object.fromEntries(Object.entries(snapshot.membersByTable || {}).map(([tableName, rows]) => (
+      [tableName, Array.isArray(rows) ? rows.map(replaceMember) : rows]
+    ))),
+    attendanceData: replaceAttendance(snapshot.attendanceData)
+  }
+}
+
+export const remapPendingChangeMemberId = (change = {}, temporaryMemberId, serverMemberId) => (
+  String(change?.member_id) !== String(temporaryMemberId)
+    ? change
+    : {
+      ...change,
+      member_id: serverMemberId,
+      member_data: change.member_data
+        ? { ...change.member_data, id: serverMemberId, offline_pending_create: false, __offline_status: null }
+        : change.member_data,
+      temporary_member_id: change.temporary_member_id || temporaryMemberId
+    }
+)
+
+// A server-created member receives a new UUID. Reconcile the temporary local
+// UUID in all durable stores in one IndexedDB transaction before any dependent
+// update/attendance/delete operation is replayed.
+export const reconcileOfflineMemberId = async ({
+  userId,
+  ownerId,
+  scope,
+  tableName,
+  temporaryMemberId,
+  serverMemberId
+} = {}) => {
+  if (!temporaryMemberId || !serverMemberId || String(temporaryMemberId) === String(serverMemberId)) return false
+  const db = await openOfflineDb()
+  const snapshotKey = snapshotScopeKey(userId, ownerId || userId)
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([SNAPSHOT_STORE, PENDING_STORE, MEMBER_PREVIEW_STORE], 'readwrite')
+    const snapshots = tx.objectStore(SNAPSHOT_STORE)
+    const pending = tx.objectStore(PENDING_STORE)
+    const previews = tx.objectStore(MEMBER_PREVIEW_STORE)
+
+    const snapshotRequest = snapshots.get(snapshotKey)
+    snapshotRequest.onsuccess = () => {
+      const record = snapshotRequest.result
+      if (record?.snapshot) {
+        snapshots.put({
+          ...record,
+          cached_at: new Date().toISOString(),
+          snapshot: remapMemberIdInSnapshot(record.snapshot, temporaryMemberId, serverMemberId)
+        })
+      }
+    }
+
+    const pendingRequest = pending.getAll()
+    pendingRequest.onsuccess = () => {
+      ;(pendingRequest.result || []).forEach((change) => {
+        const belongsToScope = (!userId || !change.user_id || change.user_id === userId) &&
+          (!ownerId || !change.owner_id || change.owner_id === ownerId)
+        if (!belongsToScope || String(change.member_id) !== String(temporaryMemberId)) return
+        pending.put({
+          ...remapPendingChangeMemberId(change, temporaryMemberId, serverMemberId),
+          updated_at: new Date().toISOString()
+        })
+      })
+    }
+
+    const previewRequest = previews.getAll()
+    previewRequest.onsuccess = () => {
+      ;(previewRequest.result || []).forEach((record) => {
+        if (record?.scope !== (scope || 'guest') || record?.table_name !== tableName || String(record?.member_id) !== String(temporaryMemberId)) return
+        previews.delete(record.key)
+        const member = { ...(record.member || {}), id: serverMemberId, offline_pending_create: false, __offline_status: null }
+        previews.put({
+          ...record,
+          key: memberPreviewKey(scope, tableName, serverMemberId),
+          member_id: String(serverMemberId),
+          member,
+          updated_at: new Date().toISOString(),
+          saved_at: new Date().toISOString()
+        })
+      })
+    }
+
+    tx.oncomplete = () => { db.close(); resolve(true) }
+    tx.onerror = () => { db.close(); reject(tx.error || new Error('Could not reconcile the offline member identity.')) }
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Offline member identity reconciliation was aborted.')) }
+  })
+}
+
 export const clearMemberPreviewTable = async (scope, tableName) => {
   const members = await getMemberPreviewMembers(scope, tableName)
   if (members.length === 0) return 0

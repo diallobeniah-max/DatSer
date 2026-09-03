@@ -529,10 +529,15 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       date: date || selectedAttendanceDate || new Date()
     })
     if (saved) {
-      toast.success('Manual month and Sunday updated.')
+      toast.success(
+        isOnline && offlineModeStatus !== 'forced-offline'
+          ? 'Manual month and Sunday saved.'
+          : 'Saved on this device. Will sync when online.',
+        { toastId: 'manual-calendar-save' }
+      )
     }
     return saved
-  }, [currentTable, personalModeDisabled, selectedAttendanceDate, setPersonalCalendarMode])
+  }, [currentTable, isOnline, offlineModeStatus, personalModeDisabled, selectedAttendanceDate, setPersonalCalendarMode])
 
   const recentButton = (extraClass = '', compact = false) => (
     <div ref={recentMenuRef} className={`relative ${extraClass}`}>

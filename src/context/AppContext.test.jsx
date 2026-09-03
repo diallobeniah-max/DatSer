@@ -319,7 +319,7 @@ describe('AppContext collaborator sync', () => {
         manual_sunday_date: '2026-02-08',
         manual_override_until: expect.any(String)
       }),
-      { requireServerConfirmation: true }
+      expect.objectContaining({ localFirst: true })
     )
     await waitFor(() => expect(latest.currentTable).toBe('February_2026'))
     unmount()

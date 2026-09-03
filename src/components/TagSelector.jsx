@@ -13,7 +13,8 @@ const TagSelector = ({
   isDarkMode,
   selectedTagIds = null,
   onSelectionChange = null,
-  deferSave = false
+  deferSave = false,
+  offline = false
 }) => {
   const [availableTags, setAvailableTags] = useState([])
   const [internalSelectedTagIds, setInternalSelectedTagIds] = useState(new Set())
@@ -23,10 +24,12 @@ const TagSelector = ({
 
   // Load available tags
   useEffect(() => {
-    if (ownerId) {
+    if (ownerId && !offline) {
       fetchTags()
+    } else if (offline) {
+      setLoading(false)
     }
-  }, [ownerId])
+  }, [ownerId, offline])
 
   // Initialize selected tags: prefer `currentTags` prop if provided,
   // otherwise fetch assigned tags for the member from the DB
@@ -34,7 +37,7 @@ const TagSelector = ({
     let cancelled = false
 
     const fetchMemberAssigned = async () => {
-      if (!memberId || !tableName) return
+      if (offline || !memberId || !tableName) return
       try {
         const { data, error } = await supabase.rpc('get_member_tags', {
           p_member_id: memberId,
@@ -58,7 +61,7 @@ const TagSelector = ({
     }
 
     return () => { cancelled = true }
-  }, [memberId, tableName, currentTags, selectedTagIds])
+  }, [memberId, tableName, currentTags, selectedTagIds, offline])
 
   const fetchTags = async () => {
     try {

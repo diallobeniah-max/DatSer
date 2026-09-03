@@ -202,7 +202,7 @@ describe('Manual calendar button must not auto-save (production wiring)', () => 
     await vi.waitFor(() => expect(savePersonalPreferencesMock).toHaveBeenCalledTimes(1))
     expect(savePersonalPreferencesMock).toHaveBeenCalledWith(
       expect.objectContaining({ calendar_mode: 'manual', manual_month_table: 'January_2026', manual_sunday_date: '2026-01-11' }),
-      { requireServerConfirmation: true }
+      expect.objectContaining({ localFirst: true })
     )
   })
 })

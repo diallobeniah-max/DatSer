@@ -141,9 +141,20 @@ const OfflineStatusBanner = ({ onOpenOfflineSettings }) => {
                     <p className="text-xs font-semibold text-orange-900 dark:text-orange-200">
                       {offlinePreparationProgress?.stage || 'Downloading workspace…'}
                     </p>
+                    {offlinePreparationProgress?.detail && (
+                      <p className="mt-1 text-[11px] text-orange-700 dark:text-orange-300">
+                        {offlinePreparationProgress.detail}
+                      </p>
+                    )}
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-orange-200/80 dark:bg-orange-900/60" aria-label="Offline download progress">
+                      <div
+                        className="h-full rounded-full bg-orange-600 transition-[width] duration-200"
+                        style={{ width: `${Math.min(100, Math.max(0, offlinePreparationProgress?.percent || 0))}%` }}
+                      />
+                    </div>
                     {offlinePreparationProgress?.total > 0 && (
                       <p className="mt-1 text-[11px] text-orange-700 dark:text-orange-300">
-                        Month {offlinePreparationProgress?.completed || 0} of {offlinePreparationProgress?.total} complete
+                        {offlinePreparationProgress?.percent || 0}% · {offlinePreparationProgress?.completed || 0} of {offlinePreparationProgress?.total} steps complete
                       </p>
                     )}
                   </div>

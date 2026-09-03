@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coalesceOfflineChange, filterPreviewMembersForWrite, isCompleteOfflineSnapshot, setDurableOfflineSetupMeta, getDurableOfflineSetupMeta, clearDurableOfflineSetupMeta, markOfflineSetupDismissedSession, isOfflineSetupDismissedSession } from './offlineStore'
+import { coalesceOfflineChange, filterPreviewMembersForWrite, isCompleteOfflineSnapshot, remapMemberIdInSnapshot, remapPendingChangeMemberId, setDurableOfflineSetupMeta, getDurableOfflineSetupMeta, clearDurableOfflineSetupMeta, markOfflineSetupDismissedSession, isOfflineSetupDismissedSession } from './offlineStore'
 
 describe('offline mutation coalescing', () => {
   it('keeps only the newest attendance intent for a member and Sunday', () => {
@@ -86,6 +86,57 @@ describe('member preview persistence filtering', () => {
     expect(filterPreviewMembersForWrite([active, deleted]).map((m) => m.id)).toEqual(['a'])
     expect(filterPreviewMembersForWrite([deleted])).toEqual([])
     expect(filterPreviewMembersForWrite([])).toEqual([])
+  })
+})
+
+describe('offline member-create identity reconciliation', () => {
+  const temporaryId = '11111111-1111-4111-8111-111111111111'
+  const serverId = '22222222-2222-4222-8222-222222222222'
+
+  it('replaces the temporary ID in members, all month snapshots, and attendance', () => {
+    const snapshot = {
+      members: [{ id: temporaryId, full_name: 'Offline Member', offline_pending_create: true }],
+      membersByTable: {
+        August_2026: [{ id: temporaryId, full_name: 'Offline Member', offline_pending_create: true }]
+      },
+      attendanceData: { '2026-08-02': { [temporaryId]: true } }
+    }
+    const remapped = remapMemberIdInSnapshot(snapshot, temporaryId, serverId)
+    expect(remapped.members[0]).toMatchObject({ id: serverId, offline_pending_create: false })
+    expect(remapped.membersByTable.August_2026[0].id).toBe(serverId)
+    expect(remapped.attendanceData['2026-08-02'][temporaryId]).toBeUndefined()
+    expect(remapped.attendanceData['2026-08-02'][serverId]).toBe(true)
+  })
+
+  it('rewrites a dependent update, attendance, or delete to the confirmed server ID', () => {
+    for (const action_type of ['member_update', 'attendance_mark', 'member_delete']) {
+      const remapped = remapPendingChangeMemberId({
+        action_type,
+        member_id: temporaryId,
+        member_data: { id: temporaryId, full_name: 'Offline Member' }
+      }, temporaryId, serverId)
+      expect(remapped.member_id).toBe(serverId)
+      expect(remapped.member_data.id).toBe(serverId)
+      expect(remapped.temporary_member_id).toBe(temporaryId)
+    }
+  })
+
+  it('cancels an entirely local create and its folded edits when deleted before any server attempt', () => {
+    const add = {
+      local_change_id: `member_add_${temporaryId}`,
+      action_type: 'member_add',
+      table_name: 'August_2026',
+      member_id: temporaryId,
+      request_id: `member_create_${temporaryId}`
+    }
+    const deleted = coalesceOfflineChange([add], {
+      local_change_id: `member_delete_August_2026_${temporaryId}`,
+      action_type: 'member_delete',
+      table_name: 'August_2026',
+      member_id: temporaryId
+    })
+    expect(deleted.queuedChange).toBeNull()
+    expect(deleted.removeIds).toContain(add.local_change_id)
   })
 })
 

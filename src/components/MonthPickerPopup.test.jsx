@@ -242,7 +242,7 @@ describe('MonthPickerPopup calendar mode', () => {
     expect(appState.setCurrentTable).not.toHaveBeenCalled()
   })
 
-  it('disables Manual/Auto and Sunday controls while preferences are hydrating and shows loading', () => {
+  it('keeps Manual controls usable while preferences refresh in the background', () => {
     appState.preferencesHydrated = false
     appState.preferencesLoading = true
     const onSelectSunday = vi.fn()
@@ -258,11 +258,9 @@ describe('MonthPickerPopup calendar mode', () => {
       />
     )
 
-    expect(screen.getByText('Loading calendar settings…')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(true)
-    expect(screen.getByRole('button', { name: 'auto' }).disabled).toBe(true)
-    expect(screen.getByRole('button', { name: 'Jan' }).disabled).toBe(true)
-    expect(screen.getByRole('button', { name: 'Feb 8' }).disabled).toBe(true)
+    expect(screen.getByText('Refreshing calendar settings in the background.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'auto' }).disabled).toBe(false)
 
     fireEvent.click(screen.getByRole('button', { name: 'manual' }))
     fireEvent.click(screen.getByRole('button', { name: 'Feb 8' }))
@@ -270,7 +268,7 @@ describe('MonthPickerPopup calendar mode', () => {
     expect(onSelectSunday).not.toHaveBeenCalled()
   })
 
-  it('keeps controls disabled and stays in Auto when hydration fails, with a Retry action', async () => {
+  it('keeps controls usable when hydration fails, with a Retry action', async () => {
     appState.preferencesHydrated = false
     appState.preferencesError = 'Failed to load preferences'
     appState.retryPreferenceHydration = vi.fn().mockResolvedValue(true)
@@ -287,8 +285,7 @@ describe('MonthPickerPopup calendar mode', () => {
       />
     )
 
-    expect(screen.getByText('Calendar settings could not be loaded.')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(false)
 
     fireEvent.click(screen.getByRole('button', { name: 'manual' }))
     fireEvent.click(screen.getByRole('button', { name: 'Feb 8' }))
@@ -313,7 +310,7 @@ describe('MonthPickerPopup calendar mode', () => {
     }
 
     const view = render(<MonthPickerPopup {...popupProps} />)
-    expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'manual' }).disabled).toBe(false)
 
     appState.preferencesHydrated = true
     appState.preferencesLoading = false

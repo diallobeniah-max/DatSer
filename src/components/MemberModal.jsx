@@ -19,7 +19,7 @@ import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
 
 const MemberModal = ({ isOpen, onClose }) => {
-  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment } = useApp()
+  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment, shouldUseOfflineData } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success } = useHapticFeedback()
@@ -295,29 +295,48 @@ const MemberModal = ({ isOpen, onClose }) => {
         throw new Error('Unable to determine the workspace owner for this save')
       }
 
-      if (!isSupabaseConfigured()) {
+      const isOfflineLocalCommit = shouldUseOfflineData || (typeof navigator !== 'undefined' && navigator.onLine === false)
+
+      if (!isSupabaseConfigured() || isOfflineLocalCommit) {
         const newMember = await addMember({
           ...formData,
           ...parentInfo,
           age: formData.age ? String(formData.age).trim() : null,
           phone_number: formData.phone_number || null,
           notes: formData.notes || null,
-          is_visitor: formData.is_visitor || false
+          is_visitor: formData.is_visitor || false,
+          __offline_bundle: {
+            request_id: submitRequestIdRef.current || (window.crypto?.randomUUID?.() || `member-create-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+            badges: selectedTags,
+            tag_ids: areOptionalTagsVisible(guidedFormSettings) ? Array.from(selectedTagIds) : [],
+            attendance: Object.fromEntries(Object.entries(sundayAttendance).filter(([, attendance]) => attendance !== null))
+          }
         })
 
         savedMemberId = newMember?.id || null
 
-        if (selectedTags.length > 0 && newMember?.id) {
+        if (!isOfflineLocalCommit && selectedTags.length > 0 && newMember?.id) {
           for (const tag of selectedTags) {
             await toggleMemberBadge(newMember.id, tag, { suppressToast: true })
           }
           await updateMemberBadges()
         }
 
-        for (const [date, attendance] of Object.entries(sundayAttendance)) {
-          if (attendance !== null) {
-            await markAttendance(newMember.id, new Date(date), attendance)
+        if (!isOfflineLocalCommit) {
+          for (const [date, attendance] of Object.entries(sundayAttendance)) {
+            if (attendance !== null) {
+              await markAttendance(newMember.id, new Date(date), attendance)
+            }
           }
+        }
+
+        if (isOfflineLocalCommit) {
+          setNewlyAddedMemberId(savedMemberId)
+          onClose()
+          success()
+          setIsOverrideMode(false)
+          submitRequestIdRef.current = null
+          toast.success('Saved on this device. Will sync when online.', { toastId: `offline-member-create-${savedMemberId}` })
         }
       } else {
         if (!submitRequestIdRef.current) {
@@ -948,6 +967,7 @@ const MemberModal = ({ isOpen, onClose }) => {
                     selectedTagIds={selectedTagIds}
                     onSelectionChange={setSelectedTagIds}
                     deferSave
+                    offline={shouldUseOfflineData || (typeof navigator !== 'undefined' && navigator.onLine === false)}
                   />
                 </GuidedField>
               )}

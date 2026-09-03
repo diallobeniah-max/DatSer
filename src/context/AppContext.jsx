@@ -71,6 +71,7 @@ import {
   isOfflineStoreAvailable,
   getPendingOfflineChanges as getPendingOfflineChangesRecord,
   queueOfflineChange as queueOfflineChangeRecord,
+  reconcileOfflineMemberId,
   removeOfflineChange,
   resolveServerDeletedMemberChange,
   saveMemberPreviewMembers,
@@ -706,6 +707,24 @@ const sanitizeQueuedMemberInsert = (memberData = {}) => {
       .filter(([key, value]) => !blockedKeys.has(key) && value !== undefined)
   )
 }
+
+const buildQueuedMemberBundlePayload = (memberData = {}, ownerId, workspaceName = null) => ({
+  'Full Name': memberData['Full Name'] || memberData.full_name || memberData.fullName || null,
+  'Gender': memberData['Gender'] || memberData.gender || null,
+  'Phone Number': memberData['Phone Number'] || memberData.phone_number || null,
+  'Age': memberData['Age'] || memberData.age || null,
+  date_of_birth: memberData.date_of_birth || null,
+  'Current Level': memberData['Current Level'] || memberData.current_level || null,
+  workspace: memberData.workspace || workspaceName || null,
+  parent_name_1: memberData.parent_name_1 || null,
+  parent_phone_1: memberData.parent_phone_1 || null,
+  parent_name_2: memberData.parent_name_2 || null,
+  parent_phone_2: memberData.parent_phone_2 || null,
+  notes: memberData.notes || null,
+  is_visitor: Boolean(memberData.is_visitor),
+  user_id: ownerId,
+  workspace_owner_id: ownerId
+})
 
 // Get the latest available table from localStorage, falling back to DEFAULT_TABLE
 const getLatestTable = () => {
@@ -3544,6 +3563,7 @@ export const AppProvider = ({ children }) => {
   // Add new member to current monthly table
   const addMember = async (memberData) => {
     let transformedDataForQueue = null
+    const offlineBundle = memberData?.__offline_bundle || {}
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - add to local state
@@ -3610,6 +3630,7 @@ export const AppProvider = ({ children }) => {
           inserted_at: createdAt,
           created_at: createdAt,
           updated_at: createdAt,
+          offline_pending_create: true,
           __offline_status: 'pending_add'
         })
 
@@ -3624,8 +3645,15 @@ export const AppProvider = ({ children }) => {
           local_change_id: `member_add_${createdMember.id}`,
           action_type: 'member_add',
           table_name: currentTable,
+          user_id: user?.id || null,
+          owner_id: dataOwnerId || user?.id || null,
           member_id: createdMember.id,
           member_data: createdMember,
+          temporary_member_id: createdMember.id,
+          request_id: offlineBundle.request_id || `member_create_${createdMember.id}`,
+          badges: Array.isArray(offlineBundle.badges) ? offlineBundle.badges : [],
+          tag_ids: Array.isArray(offlineBundle.tag_ids) ? offlineBundle.tag_ids : [],
+          attendance: offlineBundle.attendance || {},
           created_at: createdAt,
           sync_status: 'pending'
         })
@@ -3719,6 +3747,7 @@ export const AppProvider = ({ children }) => {
           inserted_at: createdAt,
           created_at: createdAt,
           updated_at: createdAt,
+          offline_pending_create: true,
           __offline_status: 'pending_add'
         })
         setMembers(prev => [createdMember, ...prev.filter(existing => existing.id !== createdMember.id)])
@@ -3732,8 +3761,15 @@ export const AppProvider = ({ children }) => {
           local_change_id: `member_add_${createdMember.id}`,
           action_type: 'member_add',
           table_name: currentTable,
+          user_id: user?.id || null,
+          owner_id: dataOwnerId || user?.id || null,
           member_id: createdMember.id,
           member_data: createdMember,
+          temporary_member_id: createdMember.id,
+          request_id: offlineBundle.request_id || `member_create_${createdMember.id}`,
+          badges: Array.isArray(offlineBundle.badges) ? offlineBundle.badges : [],
+          tag_ids: Array.isArray(offlineBundle.tag_ids) ? offlineBundle.tag_ids : [],
+          attendance: offlineBundle.attendance || {},
           created_at: createdAt,
           sync_status: 'pending'
         })
@@ -6879,14 +6915,6 @@ export const AppProvider = ({ children }) => {
       return false
     }
 
-    // Never attempt (or toast about) an explicit calendar save while the
-    // personal preference bundle is still hydrating. The UI disables the
-    // controls, but this guards any path that calls in before that resolves.
-    if (!preferencesHydrated && isOnline && !shouldUseOfflineData) {
-      console.warn('[AppContext] setPersonalCalendarMode skipped until preference hydration completes.')
-      return false
-    }
-
     // A Manual commit is only legitimate when the user explicitly chose a
     // Sunday. A bare/stale call (no explicit date) must never fall back to the
     // default month/date (January_2026 / its first Sunday) and persist stale
@@ -6932,19 +6960,20 @@ export const AppProvider = ({ children }) => {
           expiresAt: expiresAt.toISOString()
         })
 
-        // Preference writes return false for a refused, unhealthy, or
-        // unhydrated backend instead of always throwing.  Do not update the
-        // visible month until the authoritative personal preference confirms.
+        // A calendar change is a local working-state commit.  It must not wait
+        // for a remote preference refresh: the durable local preference and
+        // pending sync mutation are written first, then sync happens in the
+        // background when a verified session/connection is available.
         if (persistPreference) {
           if (!authContext?.savePersonalPreferences) {
             throw new Error('Calendar preferences are not ready to save yet')
           }
-          const isOffline = !isOnline || shouldUseOfflineData
           const saved = await authContext.savePersonalPreferences(nextPreferences, {
-            requireServerConfirmation: !isOffline
+            localFirst: true,
+            ownerId: dataOwnerId || user?.id
           })
           if (!saved) {
-            if (!silent) toast.error('Manual month and Sunday were not saved. Please try again.')
+            if (!silent) toast.error('Unable to save on this device. Please try again.')
             return false
           }
         }
@@ -6958,18 +6987,18 @@ export const AppProvider = ({ children }) => {
         return true
       }
 
-      if (persistPreference) {
+        if (persistPreference) {
         if (!authContext?.savePersonalPreferences) {
           throw new Error('Calendar preferences are not ready to save yet')
         }
-        const isOffline = !isOnline || shouldUseOfflineData
-        const saved = await authContext.savePersonalPreferences(buildAutoCalendarPreferences(), {
-          requireServerConfirmation: !isOffline
-        })
-        if (!saved) {
-          if (!silent) toast.error('Auto mode was not saved. Please try again.')
-          return false
-        }
+          const saved = await authContext.savePersonalPreferences(buildAutoCalendarPreferences(), {
+            localFirst: true,
+            ownerId: dataOwnerId || user?.id
+          })
+          if (!saved) {
+            if (!silent) toast.error('Unable to save on this device. Please try again.')
+            return false
+          }
       }
 
       setConfirmedCalendarPreferenceOverride(buildAutoCalendarPreferences())
@@ -6999,9 +7028,10 @@ export const AppProvider = ({ children }) => {
     currentTable,
     selectedAttendanceDate,
     changeCurrentTable,
+    dataOwnerId,
     setAndSaveAttendanceDate,
     syncCalendarToToday,
-    preferencesHydrated
+    user?.id
   ])
 
   const refreshPersonalManualInactivity = useCallback(() => {
@@ -7698,8 +7728,24 @@ export const AppProvider = ({ children }) => {
       return { success: false, error: 'offline' }
     }
 
+    const tablesToPrepare = [...new Set(monthlyTables || [])]
+    // These units are real persisted work: one preparation unit, each month,
+    // search/index persistence, and final snapshot verification.
+    const progressTotal = Math.max(4, tablesToPrepare.length + 3)
+    const reportProgress = (phase, stage, completed, detail = '') => {
+      const safeCompleted = Math.min(progressTotal, Math.max(0, completed))
+      setOfflinePreparationProgress({
+        phase,
+        stage,
+        detail,
+        completed: safeCompleted,
+        total: progressTotal,
+        percent: Math.round((safeCompleted / progressTotal) * 100)
+      })
+    }
+
     setIsPreparingOffline(true)
-    setOfflinePreparationProgress({ stage: 'Preparing workspace…', completed: 0, total: monthlyTables.length || 0 })
+    reportProgress('preparing', 'Preparing workspace…', 0, 'Checking your downloaded workspace data')
     try {
       const localMembersBeforeRefresh = (members || []).map(normalizeMemberRecord)
       const indexedMembersBeforeRefresh = currentTable
@@ -7709,6 +7755,7 @@ export const AppProvider = ({ children }) => {
       let snapshotMembers = localMembersBeforeRefresh
       let snapshotAttendanceData = attendanceData
       if (currentTable) {
+        reportProgress('workspace', 'Downloading workspace data…', 1, currentTable.replace('_', ' '))
         const [freshMembers, freshAttendance] = await Promise.all([
           fetchMembers(currentTable, {
             forceRefresh: true,
@@ -7780,14 +7827,9 @@ export const AppProvider = ({ children }) => {
       // index remains the local search engine; this snapshot metadata proves
       // that all month indexes completed as one safe generation.
       const membersByTable = {}
-      const tablesToPrepare = [...new Set(monthlyTables || [])]
       for (let index = 0; index < tablesToPrepare.length; index += 1) {
         const tableName = tablesToPrepare[index]
-        setOfflinePreparationProgress({
-          stage: `Downloading ${tableName.replace('_', ' ')}…`,
-          completed: index,
-          total: tablesToPrepare.length
-        })
+        reportProgress('months', `Downloading ${tableName.replace('_', ' ')}…`, index + 1, `${index + 1} of ${tablesToPrepare.length} months`)
         const rows = tableName === currentTable
           ? snapshotMembers
           : await fetchMembers(tableName, {
@@ -7807,7 +7849,7 @@ export const AppProvider = ({ children }) => {
           source: 'offline-full-download'
         })
       }
-      setOfflinePreparationProgress({ stage: 'Building offline search…', completed: tablesToPrepare.length, total: tablesToPrepare.length })
+      reportProgress('search-index', 'Building offline search…', tablesToPrepare.length + 1, `${tablesToPrepare.length} months indexed`)
 
       const cachedAt = await saveOfflineSnapshot({
         members: snapshotMembers,
@@ -7836,7 +7878,16 @@ export const AppProvider = ({ children }) => {
         tableCount: tablesToPrepare.length,
         downloadedMonths: tablesToPrepare
       })
+      reportProgress('verify', 'Checking offline data…', tablesToPrepare.length + 2, 'Verifying the durable device snapshot')
+      const verifiedSnapshot = await getOfflineSnapshotRecord({
+        userId: user?.id || null,
+        ownerId: dataOwnerId || user?.id || null
+      })
+      if (verifiedSnapshot?.completeness !== 'complete' || verifiedSnapshot?.snapshot?.completeness !== 'complete') {
+        throw new Error('Offline data could not be verified. Your previous offline data is still safe.')
+      }
       await refreshOfflineStatus()
+      reportProgress('complete', 'Offline access ready', progressTotal, `${tablesToPrepare.length} months saved on this device`)
       setOfflineStatusMessage('Offline data is ready.')
       notify.success('You can now use the app without internet.', {
         title: 'Offline data is ready.'
@@ -7963,11 +8014,16 @@ export const AppProvider = ({ children }) => {
     let shouldPullPreviewSync = false
     try {
       const pendingChanges = await getPendingOfflineChanges()
+      const memberIdRemaps = new Map()
       let synced = 0
       let conflicts = 0
       let failed = 0
 
-      for (const change of pendingChanges) {
+      for (const queuedChange of pendingChanges) {
+        const remappedMemberId = memberIdRemaps.get(String(queuedChange?.member_id))
+        const change = remappedMemberId
+          ? { ...queuedChange, member_id: remappedMemberId }
+          : queuedChange
         if (!change || change.sync_status === 'conflict') {
           conflicts += 1
           continue
@@ -8024,36 +8080,47 @@ export const AppProvider = ({ children }) => {
             const changeTable = change.table_name || currentTable
             if (!changeTable) throw new Error('Missing monthly table for member sync.')
             if (change.action_type === 'member_add') {
-              // A queued add must never resurrect a row that was deleted on the
-              // server (same id, deleted_at set). Reconcile instead of upserting.
-              const { data: addExistingRows, error: addCheckError } = await supabase
-                .from(changeTable)
-                .select('id, deleted_at')
-                .eq('id', change.member_id)
-                .limit(1)
-              if (addCheckError) throw addCheckError
-              const addResolution = resolveServerDeletedMemberChange(change, addExistingRows?.[0])
-              if (addResolution.action === 'fail') {
-                addMemberDeleteTombstone(change.member_id, addExistingRows?.[0]?.deleted_at || null, changeTable)
-                await updateOfflineChangeStatus(change.local_change_id, {
-                  sync_status: 'failed',
-                  error: addResolution.error
-                })
-                failed += 1
-                continue
-              }
-              const queuedMember = sanitizeQueuedMemberInsert(change.member_data || {})
-              await executeSupabaseWrite(
-                () => supabase
-                  .from(changeTable)
-                  .upsert([queuedMember], { onConflict: 'id' }),
-                { action: `Sync offline member add in ${changeTable}` }
+              const targetOwnerId = change.owner_id || dataOwnerId || user?.id
+              if (!targetOwnerId) throw new Error('Missing workspace owner for member create sync.')
+              const requestId = change.request_id || change.idempotency_key || change.local_change_id
+              const { data: bundleResult } = await executeSupabaseWrite(
+                () => supabase.rpc('save_member_bundle_resilient', {
+                  p_table_name: changeTable,
+                  p_owner_id: targetOwnerId,
+                  p_request_id: requestId,
+                  p_member: buildQueuedMemberBundlePayload(change.member_data, targetOwnerId, preferences?.workspace_name),
+                  p_badges: Array.isArray(change.badges) ? change.badges : [],
+                  p_tag_ids: Array.isArray(change.tag_ids) ? change.tag_ids : [],
+                  p_attendance: change.attendance || {}
+                }),
+                { action: `Sync offline member create in ${changeTable}` }
               )
+              if (!bundleResult?.success || !bundleResult?.member_id) {
+                throw new Error(bundleResult?.error_message || 'Backend member create was not confirmed.')
+              }
+              const serverMemberId = bundleResult.member_id
+              const temporaryMemberId = change.temporary_member_id || change.member_id
+              await reconcileOfflineMemberId({
+                userId: change.user_id || user?.id,
+                ownerId: targetOwnerId,
+                scope: workspaceCacheScope,
+                tableName: changeTable,
+                temporaryMemberId,
+                serverMemberId
+              })
+              memberIdRemaps.set(String(temporaryMemberId), serverMemberId)
               setMembers(prev => prev.map(member => (
-                member.id === change.member_id
-                  ? normalizeMemberRecord({ ...member, __offline_status: null })
+                String(member.id) === String(temporaryMemberId)
+                  ? normalizeMemberRecord({ ...member, id: serverMemberId, offline_pending_create: false, __offline_status: null })
                   : member
               )))
+              setAttendanceData(prev => Object.fromEntries(Object.entries(prev || {}).map(([dateKey, values]) => {
+                if (!values || !Object.prototype.hasOwnProperty.call(values, temporaryMemberId)) return [dateKey, values]
+                const nextValues = { ...values, [serverMemberId]: values[temporaryMemberId] }
+                delete nextValues[temporaryMemberId]
+                return [dateKey, nextValues]
+              })))
+              searchCacheRef.current.clear()
             } else if (change.action_type === 'member_update') {
               await updateMember(change.member_id, change.updates || {}, {
                 silent: true,

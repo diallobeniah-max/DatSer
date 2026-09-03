@@ -49,7 +49,7 @@ test.describe('Synthetic live-service browser simulation', () => {
     await expect(page.getByText('Something went wrong')).toHaveCount(0)
   })
 
-  test('synthetic add and edit forms preserve responsive action access', async ({ page }) => {
+  test('offline Add Member commits locally without transport errors', async ({ page, context }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.setViewportSize({ width: 430, height: 932 })
     await page.goto('/')
@@ -59,15 +59,31 @@ test.describe('Synthetic live-service browser simulation', () => {
     await page.evaluate(() => window.openAddMember?.())
 
     const modal = page.getByTestId('add-member-modal')
+    await expect(modal).toBeVisible()
+    // Vite dev serves lazy modules over HTTP, unlike a packaged Capacitor
+    // bundle. Open the form first, then take the actual form submission path
+    // offline so this browser test exercises the local commit rather than a
+    // dev-server chunk-loading artifact.
+    await context.setOffline(true)
+    await page.evaluate(() => window.dispatchEvent(new Event('offline')))
     await modal.getByPlaceholder('Enter full name').evaluate((input, value) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
       setter?.call(input, value)
       input.dispatchEvent(new Event('input', { bubbles: true }))
     }, 'Synthetic Reliability Member')
     await modal.getByTestId('member-form-gender-female').evaluate((input) => input.click())
+    await modal.getByTestId('member-form-phone').fill('0240000001')
+    await modal.getByTestId('member-form-age').fill('18')
+    await modal.getByTestId('member-form-level-toggle').click()
+    await page.getByRole('button', { name: 'JHS3', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Select Current Level' }).getByRole('button', { name: 'Save', exact: true }).click()
+    await modal.getByPlaceholder('Name', { exact: true }).first().fill('Synthetic Guardian')
+    await modal.getByPlaceholder('Phone Number', { exact: true }).first().fill('0240000002')
     await expect(modal.locator('.keyboard-safe-modal-footer')).toBeVisible()
     await expect(modal.getByRole('button', { name: 'Add Member', exact: true })).toBeEnabled()
-    await modal.getByRole('button', { name: 'Cancel', exact: true }).evaluate((button) => button.click())
+    await modal.getByRole('button', { name: 'Add Member', exact: true }).click()
     await expect(modal).toHaveCount(0)
+    await expect(page.getByText('Synthetic Reliability Member')).toBeVisible()
+    await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0)
   })
 })

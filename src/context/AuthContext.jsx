@@ -296,24 +296,23 @@ export const AuthProvider = ({ children }) => {
 
   const queuePreferenceSync = useCallback(async (userId, nextPreferences) => {
     if (!userId || !nextPreferences) return
-    try {
-      const cleanedPreferences = Object.fromEntries(
-        Object.entries(nextPreferences).filter(([k]) => !LOCAL_ONLY_PREFERENCE_KEYS.has(k))
-      )
-      await queueOfflineChange({
-        local_change_id: makePreferenceChangeId(userId),
-        action_type: 'preferences_update',
-        user_id: userId,
-        preferences: {
-          ...omitWorkspaceMemberCodeConfiguration(cleanedPreferences, userId),
-          user_id: cleanedPreferences.user_id || userId
-        },
-        created_at: new Date().toISOString(),
-        sync_status: 'pending'
-      })
-    } catch (error) {
-      console.warn('Could not queue preference sync:', error)
-    }
+    const cleanedPreferences = Object.fromEntries(
+      Object.entries(nextPreferences).filter(([k]) => !LOCAL_ONLY_PREFERENCE_KEYS.has(k))
+    )
+    // This queue write is part of a local commit.  Do not swallow an IndexedDB
+    // failure here: callers need to distinguish a local persistence failure
+    // from a perfectly normal unavailable network.
+    return queueOfflineChange({
+      local_change_id: makePreferenceChangeId(userId),
+      action_type: 'preferences_update',
+      user_id: userId,
+      preferences: {
+        ...omitWorkspaceMemberCodeConfiguration(cleanedPreferences, userId),
+        user_id: cleanedPreferences.user_id || userId
+      },
+      created_at: new Date().toISOString(),
+      sync_status: 'pending'
+    })
   }, [])
 
   // Load preferences in background. The FIRST authenticated hydration is
@@ -691,6 +690,33 @@ export const AuthProvider = ({ children }) => {
     const serverPatch = Object.fromEntries(
       Object.entries(patch).filter(([k]) => !LOCAL_ONLY_PREFERENCE_KEYS.has(k))
     )
+
+    // Calendar selection is a device-local working-state operation.  Commit it
+    // durably before any remote round trip, including while the device is
+    // online but the preference bundle is still refreshing.  The queued,
+    // idempotent preference mutation is synchronized separately by AppContext.
+    if (options?.localFirst) {
+      const targetOwnerId = resolveCanonicalOwnerId(options?.ownerId)
+      try {
+        setPersonalPreferences(nextPersonal)
+        if (user?.id) writeLocalPreferenceOverride(user.id, nextPersonal)
+        await saveOfflinePreferences(user?.id, {
+          actorId: user?.id,
+          ownerId: targetOwnerId,
+          personal: nextPersonal,
+          workspace: workspacePreferences,
+          personalRevision,
+          workspaceRevision
+        })
+        if (Object.keys(serverPatch).length > 0) {
+          await queuePreferenceSync(user?.id, serverPatch)
+        }
+        return true
+      } catch (error) {
+        console.warn('[AuthContext] local preference commit failed:', error)
+        return false
+      }
+    }
 
     if (!isBackendHealthy() || isBrowserOffline()) {
       if (options?.requireServerConfirmation) {

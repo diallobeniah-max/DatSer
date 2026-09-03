@@ -209,7 +209,7 @@ describe('AppContext member-code loading', () => {
     unmount()
   })
 
-  it('does not save or change the month while preferences are still hydrating', async () => {
+  it('locally saves and changes the month while preferences refresh in the background', async () => {
     authState.preferencesHydrated = false
     const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
@@ -235,8 +235,11 @@ describe('AppContext member-code loading', () => {
       date: new Date(2026, 0, 11)
     })
 
-    expect(saved).toBe(false)
-    expect(savePersonalPreferencesMock).not.toHaveBeenCalled()
+    expect(saved).toBe(true)
+    expect(savePersonalPreferencesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ calendar_mode: 'manual', manual_month_table: 'January_2026' }),
+      expect.objectContaining({ localFirst: true })
+    )
     expect(latest.currentTable).toBe(before)
     unmount()
   })

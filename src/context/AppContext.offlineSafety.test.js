@@ -63,6 +63,17 @@ describe('AppContext & Auth offline safety and hardening regression suite', () =
     expect(appContextSource).toContain("supabase.rpc('set_workspace_month_member_attendance'")
   })
 
+  it('3c. offline member creates use the trusted idempotent bundle RPC and reconcile temporary IDs', () => {
+    const appContextSource = readFileSync(resolve(process.cwd(), 'src/context/AppContext.jsx'), 'utf8')
+    const createSyncStart = appContextSource.indexOf("if (change.action_type === 'member_add')")
+    const createSyncEnd = appContextSource.indexOf("} else if (change.action_type === 'member_update')", createSyncStart)
+    const createSyncSource = appContextSource.slice(createSyncStart, createSyncEnd)
+
+    expect(createSyncSource).toContain("supabase.rpc('save_member_bundle_resilient'")
+    expect(createSyncSource).toContain('reconcileOfflineMemberId')
+    expect(createSyncSource).not.toMatch(/\.from\(changeTable\)\s*\.\s*(?:insert|upsert|update|delete)\s*\(/)
+  })
+
   // 4. offline setup metadata is User A / Workspace A scoped
   it('4. offline setup metadata is strictly User A and Workspace A scoped', () => {
     clearDurableOfflineSetupMeta('user-a', 'workspace-a')

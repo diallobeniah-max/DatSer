@@ -35,16 +35,13 @@ const MonthPickerPopup = ({
     const selectionSaveInFlightRef = useRef(false)
     const isCalendarSaving = calendarModeSaving || isSavingSelection
 
-    // Hydration readiness: calendar saves must wait for the personal
-    // preference bundle. While pending (or failed) the Manual/Auto controls
-    // and Sunday confirmation stay disabled and we show a status message
-    // instead of letting a save be rejected later with an error toast.
+    // Local defaults and downloaded month metadata are enough to make a
+    // calendar selection. Remote preference hydration is a background refresh,
+    // never a gate that disables Manual mode.
     const isOfflineActive = isOnline === false || shouldUseOfflineData === true
-    const calendarSettingsReady = preferencesHydrated === true || isOfflineActive
-    const calendarSettingsLoading = !preferencesHydrated && !preferencesError && !isOfflineActive
-    const calendarSettingsError = !preferencesHydrated && !!preferencesError && !isOfflineActive
+    const calendarSettingsRefreshing = !preferencesHydrated && !isOfflineActive
     const selectionDisabled = manualModeDisabled || isSavingSelection || (showCalendarModeControl
-        ? (pendingCalendarMode !== 'manual' || !calendarSettingsReady || calendarSettingsError)
+        ? pendingCalendarMode !== 'manual'
         : (showAutoToggle ? autoEnabled : false))
 
     // Confirmed/current vs preview/manual table. Inside a Manual calendar the
@@ -299,7 +296,7 @@ const MonthPickerPopup = ({
                                     <button
                                         key={mode}
                                         type="button"
-                                        disabled={isCalendarSaving || !calendarSettingsReady || calendarSettingsError || (mode === 'manual' && manualModeDisabled)}
+                                        disabled={isCalendarSaving || (mode === 'manual' && manualModeDisabled)}
                                         onClick={() => handleCalendarModeChange(mode)}
                                         aria-pressed={pendingCalendarMode === mode}
                                         className={`rounded-md px-2.5 py-1.5 capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${pendingCalendarMode === mode
@@ -348,21 +345,18 @@ const MonthPickerPopup = ({
                             {pendingCalendarMode === 'manual' ? 'Choose a month and Sunday' : 'Auto follows the live Sunday'}
                         </p>
                         <p className={`text-[11px] mt-1 ${pendingCalendarMode === 'manual' ? 'text-indigo-700/80 dark:text-indigo-300/80' : 'text-emerald-700/80 dark:text-emerald-300/80'}`}>
-                            {calendarSettingsLoading
-                                ? 'Loading calendar settings…'
-                                : calendarSettingsError
-                                    ? 'Calendar settings could not be loaded.'
-                                    : manualModeDisabled
+                            {manualModeDisabled
                                         ? disabledReason
                                         : pendingCalendarMode === 'manual'
                                             ? 'Choose a month and Sunday, then apply. Your current attendance month stays unchanged until you apply.'
-                                            : 'Choose Manual to select a historical month and Sunday.'}
+                                            : (calendarSettingsRefreshing
+                                                ? 'Refreshing calendar settings in the background.'
+                                                : 'Choose Manual to select a historical month and Sunday.')}
                         </p>
-                        {calendarSettingsError && (
+                        {preferencesError && !isOfflineActive && (
                             <button
                                 type="button"
                                 onClick={() => retryPreferenceHydration?.()}
-                                disabled={calendarSettingsLoading}
                                 className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
