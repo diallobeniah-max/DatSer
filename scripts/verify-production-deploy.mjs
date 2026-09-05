@@ -158,8 +158,12 @@ export const verifyDeployment = async ({
   }
 }
 
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 // Auto-run if executed directly as CLI script
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
+const currentFilePath = fileURLToPath(import.meta.url)
+if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
   const shaArg = process.argv[2]?.trim()
   verifyDeployment({ targetSha: shaArg })
     .then((result) => {

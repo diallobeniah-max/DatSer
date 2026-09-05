@@ -132,10 +132,10 @@ DatSer handles real-world community and member data. The platform is engineered 
 
 ## Quality Assurance & Testing
 
-DatSer maintains an extensive automated test suite covering unit logic, state synchronization, UI interactions, and database migration safety.
+DatSer includes automated unit, integration, migration, and smoke-test coverage.
 
 ```bash
-# Run complete test suite (75+ test files, 780+ automated tests)
+# Run automated Vitest test suite
 npm test
 
 # Run code style & static analysis check
