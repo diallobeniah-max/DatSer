@@ -33,6 +33,7 @@ import {
 import { DEFAULT_GUIDED_FORM_SETTINGS, normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
+import { applyPendingChangesToMemberSnapshot, reconcileAuthoritativeMemberSnapshot } from '../utils/memberSnapshotReconciliation'
 import { classifyMemberSearch, getSearchableMemberName, normalizeSearchText } from '../utils/memberSearch'
 import { normalizeHistoricalSearchSettings, resolveHistoricalSearchTables } from '../utils/historicalSearchSettings'
 import { formatMemberName, normalizeMemberNameStyle } from '../utils/memberNameStyle'
@@ -315,75 +316,6 @@ const getMemberFreshnessTime = (member = {}) => {
   const raw = member.updated_at || member.updatedAt || member.modified_at || member.last_updated || member.inserted_at || member.created_at
   const parsed = Date.parse(raw || '')
   return Number.isFinite(parsed) ? parsed : 0
-}
-
-const mergeMemberSnapshotSources = (...sources) => {
-  const byId = new Map()
-
-  sources.forEach((source) => {
-    if (!Array.isArray(source)) return
-    source.forEach((rawMember) => {
-      if (!rawMember?.id || rawMember.deleted_at) return
-      const member = normalizeMemberRecord(rawMember)
-      const key = String(member.id)
-      const existing = byId.get(key)
-
-      if (!existing) {
-        byId.set(key, member)
-        return
-      }
-
-      const existingTime = getMemberFreshnessTime(existing)
-      const memberTime = getMemberFreshnessTime(member)
-      byId.set(
-        key,
-        normalizeMemberRecord(memberTime >= existingTime
-          ? { ...existing, ...member }
-          : { ...member, ...existing })
-      )
-    })
-  })
-
-  return Array.from(byId.values())
-}
-
-const applyPendingChangesToMemberSnapshot = (snapshotMembers = [], pendingChanges = [], tableName = null) => {
-  const byId = new Map()
-  snapshotMembers.forEach((member) => {
-    if (member?.id) byId.set(String(member.id), normalizeMemberRecord(member))
-  })
-
-  ;(pendingChanges || []).forEach((change) => {
-    if (!change || (tableName && change.table_name && change.table_name !== tableName)) return
-    const memberId = change.member_id || change.member_data?.id
-    if (!memberId) return
-    const key = String(memberId)
-
-    if (change.action_type === 'member_delete') {
-      byId.delete(key)
-      return
-    }
-
-    if (change.action_type === 'member_add') {
-      byId.set(key, normalizeMemberRecord({
-        ...(byId.get(key) || {}),
-        ...(change.member_data || {}),
-        id: memberId,
-        updated_at: change.created_at || change.timestamp || new Date().toISOString()
-      }))
-      return
-    }
-
-    if (change.action_type === 'member_update') {
-      byId.set(key, normalizeMemberRecord({
-        ...(byId.get(key) || { id: memberId }),
-        ...(change.updates || {}),
-        updated_at: change.created_at || change.timestamp || new Date().toISOString()
-      }))
-    }
-  })
-
-  return Array.from(byId.values())
 }
 
 const mergeAttendanceSnapshots = (...sources) => {
@@ -2863,7 +2795,7 @@ export const AppProvider = ({ children }) => {
       source: options.source || 'background'
     }))
 
-    void runScopedRequest(syncKey, 'member-reconciliation', async () => {
+    return runScopedRequest(syncKey, 'member-reconciliation', async () => {
       await ensureMemberPreviewSyncColumns(tableName)
 
       let offset = 0
@@ -2944,6 +2876,7 @@ export const AppProvider = ({ children }) => {
 
       const indexedMembers = await readMemberPreviewIndex(tableName)
       const filteredMembers = filterDeletedMembers(indexedMembers)
+      const pendingChanges = await getPendingOfflineChanges().catch(() => [])
       const cachePayload = {
         data: filteredMembers,
         ts: Date.now(),
@@ -2956,8 +2889,16 @@ export const AppProvider = ({ children }) => {
 
       if (tableName === currentTable) {
         setMembers((prev) => {
-          const next = mergeMemberPreviewPages(prev.filter((member) => !deletedIds.includes(String(member.id))), activeRows)
-          return next
+          const remoteReconciled = mergeMemberPreviewPages(
+            prev.filter((member) => !deletedIds.includes(String(member.id))),
+            activeRows
+          )
+          return applyPendingChangesToMemberSnapshot(
+            remoteReconciled,
+            pendingChanges,
+            tableName,
+            normalizeMemberRecord
+          )
         })
         setMembersTotalCount(remoteTotalCount || filteredMembers.length)
         // An initial sync has read every preview page. Mark that fact so later
@@ -7648,12 +7589,8 @@ export const AppProvider = ({ children }) => {
 
     setIsPreparingOffline(true)
     try {
-      const localMembersBeforeRefresh = (members || []).map(normalizeMemberRecord)
-      const indexedMembersBeforeRefresh = currentTable
-        ? await readMemberPreviewIndex(currentTable).catch(() => [])
-        : []
       const pendingChangesBeforeRefresh = await getPendingOfflineChanges().catch(() => [])
-      let snapshotMembers = localMembersBeforeRefresh
+      let snapshotMembers = (members || []).map(normalizeMemberRecord)
       let snapshotAttendanceData = attendanceData
       if (currentTable) {
         const [freshMembers, freshAttendance] = await Promise.all([
@@ -7671,17 +7608,14 @@ export const AppProvider = ({ children }) => {
             return null
           })
         ])
-        if (Array.isArray(freshMembers)) {
-          snapshotMembers = mergeMemberSnapshotSources(
-            freshMembers,
-            indexedMembersBeforeRefresh,
-            localMembersBeforeRefresh
-          )
+        if (!Array.isArray(freshMembers)) {
+          throw new Error('Could not refresh current member data from the server.')
         }
-        snapshotMembers = applyPendingChangesToMemberSnapshot(
-          snapshotMembers,
+        snapshotMembers = reconcileAuthoritativeMemberSnapshot(
+          freshMembers,
           pendingChangesBeforeRefresh,
-          currentTable
+          currentTable,
+          normalizeMemberRecord
         )
         if (freshAttendance && typeof freshAttendance === 'object') {
           const hasPendingAttendanceChanges = pendingChangesBeforeRefresh.some((change) => (
@@ -8285,7 +8219,7 @@ export const AppProvider = ({ children }) => {
       }
 
       if (currentTable && !isDeveloperBypass && isSupabaseConfigured() && !shouldUseOfflineData) {
-        memberPreviewBackgroundSyncRunnerRef.current?.(currentTable, { source })
+        await memberPreviewBackgroundSyncRunnerRef.current?.(currentTable, { source, force: true })
         await loadAllAttendanceData().catch((error) => {
           console.warn(`Resume attendance refresh failed (${source}):`, error)
           return null
