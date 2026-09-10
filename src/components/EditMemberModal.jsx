@@ -379,7 +379,10 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
 
     try {
       // Clean up form data before saving
-      const currentSnapshot = members.find(m => m.id === latestMember.id) || latestMember || member
+      // Compare against the values captured when this edit session opened.
+      // A live member refresh or realtime event must never move the baseline
+      // underneath an in-progress form and turn a real edit into a no-op.
+      const currentSnapshot = stableMemberRef.current || members.find(m => m.id === latestMember.id) || latestMember || member
       const nextMemberPayload = {
         full_name: formData.full_name,
         gender: formData.gender,
@@ -426,7 +429,8 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       const normalizeComparable = (key, value) => {
         if (key === 'is_visitor') return Boolean(value)
         if (value === null || value === undefined) return ''
-        return String(value).trim()
+        const normalized = String(value).trim()
+        return key === 'gender' || key === 'Gender' ? normalized.toLowerCase() : normalized
       }
 
       const changedEntries = Object.entries(nextMemberPayload).filter(([key, value]) => {

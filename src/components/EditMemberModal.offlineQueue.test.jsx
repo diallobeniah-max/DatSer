@@ -2,6 +2,7 @@
 import React from 'react'
 import { render, fireEvent, screen, cleanup } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { toast } from 'react-toastify'
 
 let appMock = null
 let updateMemberMock = null
@@ -117,6 +118,10 @@ describe('EditMemberModal offline fallback routing', () => {
       }))
     }
     updateMemberMock = vi.fn(async (id, updates, options) => ({ id, ...updates }))
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn(), clear: vi.fn() }
+    })
     onCloseMock = vi.fn()
     rpcSpy = null
     appMock = makeAppMock()
@@ -154,6 +159,52 @@ describe('EditMemberModal offline fallback routing', () => {
     expect(options).toMatchObject({ targetTable: 'January_2026', ownerId: 'owner-1' })
     expect(onCloseMock).toHaveBeenCalled()
   }, 15000)
+
+  it('submits an override name edit from the opening snapshot instead of reporting no changes', async () => {
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+    appMock.refreshMemberPreviewById = vi.fn(async () => ({
+      ...appMock.members[0],
+      full_name: 'Test Member Renamed',
+      'Full Name': 'Test Member Renamed'
+    }))
+    rpcSpy = vi.fn(async (name, args) => {
+      if (name !== 'update_member_bundle_resilient') return { data: [], error: null }
+      expect(args.p_member_id).toBe('m-1')
+      expect(args.p_updates).toMatchObject({ 'Full Name': 'Test Member Renamed' })
+      return { data: { success: true, receipt: { request_id: 'request-1' } }, error: null }
+    })
+
+    render(<EditMemberModal isOpen onClose={onCloseMock} member={{ id: 'm-1' }} onTagsChange={vi.fn()} />)
+    await wait(60)
+    fireEvent.change(screen.getByTestId('edit-form-full-name'), { target: { value: 'Test Member Renamed' } })
+
+    // Simulate a hydration/realtime refresh that reaches the live member list
+    // while the operator is still editing. The session baseline must stay put.
+    appMock.members = [{
+      ...appMock.members[0],
+      full_name: 'Test Member Renamed',
+      'Full Name': 'Test Member Renamed'
+    }]
+    fireEvent.click(screen.getAllByRole('button', { name: /^override$/i })[0])
+    fireEvent.click(screen.getByTestId('edit-form-submit'))
+    await wait(200)
+
+    expect(toast.info).not.toHaveBeenCalledWith('No changes to save')
+    expect(onCloseMock).toHaveBeenCalled()
+  }, 15000)
+
+  it('reports no changes for a true no-op override submission', async () => {
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+
+    render(<EditMemberModal isOpen onClose={onCloseMock} member={{ id: 'm-1' }} onTagsChange={vi.fn()} />)
+    await wait(60)
+    fireEvent.click(screen.getAllByRole('button', { name: /^override$/i })[0])
+    fireEvent.click(screen.getByTestId('edit-form-submit'))
+    await wait(60)
+
+    expect(toast.info).toHaveBeenCalledWith('No changes to save')
+    expect(onCloseMock).not.toHaveBeenCalled()
+  })
 
   it('routes an offline (navigator offline) edit through the canonical updateMember queue path', async () => {
     const { default: EditMemberModal } = await import('./EditMemberModal')
