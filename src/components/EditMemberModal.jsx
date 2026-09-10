@@ -574,22 +574,15 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         }
 
         const editedAt = new Date().toISOString()
-        recordRecentMemberEdit({
-          ...currentSnapshot,
-          ...nextMemberPayload,
-          id: latestMember.id,
-          updated_at: editedAt
-        }, editedAt)
 
-        // Successful update - close modal immediately before triggering global refreshes
-        // This prevents the parent dashboard from re-rendering the modal while it's still "open" 
-        // which causes the entrance animations or "reshow" flicker.
-        success()
-        onClose()
-
-        // Patch the updated row into the lightweight local preview/search index immediately.
+        // Confirm profile updates from the trusted source row before replacing the
+        // local preview. The bundle RPC confirms the operation, but does not return
+        // the updated row. Without this read-back, an optimistic name can look saved
+        // until hydration restores the older canonical value.
+        const requestedName = backendUpdates['Full Name'] ?? backendUpdates.full_name
         try {
-          await refreshMemberPreviewById?.(latestMember.id, {
+          const confirmedMember = await refreshMemberPreviewById?.(latestMember.id, {
+            tableName: targetTable,
             fallbackMember: {
               ...currentSnapshot,
               ...nextMemberPayload,
@@ -599,13 +592,32 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
             source: 'member-bundle-update',
             action: 'update',
             summary: 'Updated member details',
-            skipRemote: true,
+            requireRemote: Object.keys(backendUpdates).length > 0,
+            preferRemote: Object.keys(backendUpdates).length > 0,
             skipBackgroundSync: true
           })
+
+          if (requestedName !== undefined) {
+            const confirmedName = confirmedMember?.full_name ?? confirmedMember?.['Full Name']
+            if (String(confirmedName ?? '').trim() !== String(requestedName ?? '').trim()) {
+              throw new Error('The server did not confirm the saved member name. Please try again.')
+            }
+          }
         } catch (refreshError) {
-          console.warn('Member updated but refresh failed:', refreshError)
-          toast.warning('Member was saved, but the local view could not refresh automatically.')
+          console.warn('Member save could not be confirmed:', refreshError)
+          throw refreshError
         }
+
+        // Close only after a profile save has been confirmed from the authoritative
+        // row. This avoids reporting a local optimistic value as a persisted edit.
+        recordRecentMemberEdit({
+          ...currentSnapshot,
+          ...nextMemberPayload,
+          id: latestMember.id,
+          updated_at: editedAt
+        }, editedAt)
+        success()
+        onClose()
 
         submitRequestIdRef.current = null
         if (onTagsChange) {

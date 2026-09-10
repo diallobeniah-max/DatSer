@@ -6207,10 +6207,14 @@ export const AppProvider = ({ children }) => {
       }
     }
 
+    if (options.requireRemote && !remoteMember) {
+      throw new Error(options.remoteFailureMessage || 'The server did not confirm the saved member.')
+    }
+
     const fallbackMember = options.fallbackMember || {}
     const remoteTime = getMemberFreshnessTime(remoteMember || {})
     const fallbackTime = getMemberFreshnessTime(fallbackMember || {})
-    const mergedMember = remoteMember && remoteTime >= fallbackTime
+    const mergedMember = remoteMember && (options.preferRemote || remoteTime >= fallbackTime)
       ? { ...fallbackMember, ...remoteMember }
       : { ...(remoteMember || {}), ...fallbackMember }
     const patchedMember = normalizeMemberRecord({
