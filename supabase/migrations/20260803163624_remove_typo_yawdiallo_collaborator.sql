@@ -14,7 +14,8 @@ begin
   limit 1;
 
   if v_owner_id is null then
-    raise exception 'Workspace owner not found';
+    raise notice 'POC bootstrap: production collaborator cleanup skipped';
+    return;
   end if;
 
   delete from public.collaborators
