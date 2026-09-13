@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 dist-rxdb-poc
+dist-rxdb-member-phase1
 *.local
 
 # Editor directories and files
