@@ -12,6 +12,17 @@ const newId = (kind, memberId) => `${kind}:${memberId}:${globalThis.crypto.rando
 const asJson = (document) => document?.toJSON?.() || document
 
 const onlineByDefault = () => typeof navigator === 'undefined' || navigator.onLine !== false
+const TARGET_NOT_REGISTERED_ERROR = 'This logical month is not registered for the workspace'
+const UNSUPPORTED_FIELD_ERROR = 'Unsupported member field'
+
+// This error happens before the server reserves the request ID. Only that
+// narrow case may be explicitly retargeted by the local POC recovery flow.
+const isRecoverableUnregisteredTargetFailure = (mutation) => mutation?.operation === 'create_member_v2'
+  && mutation?.save_state === MEMBER_SAVE_STATES.FAILED_RETRYABLE
+  && mutation?.last_error === TARGET_NOT_REGISTERED_ERROR
+const isRecoverableUnsupportedFieldFailure = (mutation) => mutation?.operation === 'create_member_v2'
+  && mutation?.save_state === MEMBER_SAVE_STATES.FAILED_RETRYABLE
+  && mutation?.last_error === UNSUPPORTED_FIELD_ERROR
 
 const memberFields = (data, { userId, ownerId, tableName, memberId, identity, saveState, requestId = null, operation = null, fingerprint = null, baseRevision = null, retryCount = 0, conflict = null } = {}) => ({
   workspace_id: ownerId, workspace_owner_id: ownerId, authenticated_user_scope: userId,
@@ -35,12 +46,12 @@ const serverDocument = ({ scopeKey, userId, ownerId, tableName, change, prior })
 })
 
 export class MemberService {
-  constructor({ supabase, userId, ownerId, database, online = onlineByDefault, batchSize = DEFAULT_BATCH_SIZE, realtimeDebounceMs = 350, closeDatabase = false }) {
+  constructor({ supabase, userId, ownerId, database, online = onlineByDefault, connectivity = null, batchSize = DEFAULT_BATCH_SIZE, realtimeDebounceMs = 350, closeDatabase = false }) {
     if (!supabase?.rpc) throw new Error('Member V2 requires an authenticated Supabase client.')
     if (!userId || !ownerId || !database) throw new Error('Member V2 requires an authenticated user, workspace owner, and local database.')
     this.supabase = supabase; this.userId = userId; this.ownerId = ownerId; this.database = database
-    this.scopeKey = createMemberV2ScopeKey({ userId, ownerId }); this.online = online; this.batchSize = Math.min(Math.max(batchSize, 1), DEFAULT_BATCH_SIZE)
-    this.realtimeDebounceMs = realtimeDebounceMs; this.closeDatabase = closeDatabase; this.channel = null; this.realtimeTimer = null; this.syncPromise = null
+    this.scopeKey = createMemberV2ScopeKey({ userId, ownerId }); this.online = online; this.connectivity = connectivity; this.batchSize = Math.min(Math.max(batchSize, 1), DEFAULT_BATCH_SIZE)
+    this.realtimeDebounceMs = realtimeDebounceMs; this.closeDatabase = closeDatabase; this.channel = null; this.realtimeTimer = null; this.syncPromise = null; this.connectivityUnsubscribe = null
   }
 
   static async create(options) {
@@ -50,15 +61,20 @@ export class MemberService {
 
   async start() {
     await this.#syncDocument()
+    this.connectivityUnsubscribe = this.connectivity?.subscribe(() => { void this.#handleConnectivityChange() }) || null
     this.#subscribeRealtime()
-    if (this.online()) void this.syncNow()
+    if (this.#isBackendReachable()) void this.syncNow()
     return this
   }
 
   async stop() {
     if (this.realtimeTimer) clearTimeout(this.realtimeTimer)
-    if (this.channel) await this.supabase.removeChannel(this.channel)
-    this.channel = null
+    this.connectivityUnsubscribe?.(); this.connectivityUnsubscribe = null
+    // A reload/close can race the automatic start-up pull. Let that bounded
+    // promise settle before closing RxDB so its checkpoint update cannot land
+    // on a closed collection.
+    await this.syncPromise?.catch(() => {})
+    await this.#unsubscribeRealtime()
     if (this.closeDatabase) await this.database.close()
   }
 
@@ -85,6 +101,60 @@ export class MemberService {
     await this.#insertMutation({ id: requestId, memberId, tableName: target.tableName, operation: 'update_member_v2', payload, identity, baseServerRevision, fingerprint })
     this.#scheduleSync()
     return this.getMember(memberId)
+  }
+
+  async listTrustedSourceTables() {
+    this.#assertBackendReachable()
+    if (!this.supabase?.from) throw new Error('The authenticated client cannot list workspace months.')
+    const { data, error } = await this.supabase
+      .from('workspace_month_tables')
+      .select('table_name, month_start')
+      .eq('owner_id', this.ownerId)
+      .order('month_start', { ascending: false })
+    if (error) throw error
+    return (data || []).filter((month) => /^[A-Z][a-z]+_[0-9]{4}$/.test(month.table_name))
+  }
+
+  async getSourceTableCapabilities(tableName) {
+    this.#assertBackendReachable()
+    const { data, error } = await this.supabase.rpc('member_v2_source_table_capabilities', { p_owner_id: this.ownerId, p_table_name: tableName })
+    if (error) throw error
+    if (data?.status !== 'SUCCESS' || !Array.isArray(data.fields)) throw new Error('The server did not confirm source-month capabilities.')
+    return { tableName: data.table_name, fields: new Set(data.fields) }
+  }
+
+  async recoverUnregisteredTargetCreates({ tableName }) {
+    assertMemberTarget({ ownerId: this.ownerId, tableName, memberId: globalThis.crypto.randomUUID() })
+    const candidates = (await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, operation: 'create_member_v2' } }).exec())
+      .map(asJson)
+      .filter(isRecoverableUnregisteredTargetFailure)
+    for (const mutation of candidates) {
+      const fingerprint = await this.#fingerprint({ operation: mutation.operation, tableName, memberId: mutation.member_id, baseServerRevision: null, payload: mutation.payload })
+      await this.#patch(this.database.mutations, mutation.id, { table_name: tableName, payload_fingerprint: fingerprint, base_server_revision: null, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, last_error: null, updated_at: now() })
+      await this.#patch(this.database.members, mutation.member_id, { table_name: tableName, source_table: tableName, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, local_save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, pending_request_id: mutation.id, pending_operation: mutation.operation, payload_fingerprint: fingerprint, base_server_revision: null, last_error: null, updated_at: now() })
+    }
+    if (candidates.length) this.#scheduleSync()
+    return { recovered: candidates.length, requestIds: candidates.map((mutation) => mutation.id) }
+  }
+
+  async recoverUnsupportedFieldCreates({ fields }) {
+    const supportedFields = new Set(fields || [])
+    const candidates = (await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, operation: 'create_member_v2' } }).exec())
+      .map(asJson)
+      .filter(isRecoverableUnsupportedFieldFailure)
+    const removedFields = new Set()
+    for (const mutation of candidates) {
+      const payload = Object.fromEntries(Object.entries(mutation.payload).filter(([key]) => {
+        const keep = supportedFields.has(key)
+        if (!keep) removedFields.add(key)
+        return keep
+      }))
+      const fingerprint = await this.#fingerprint({ operation: mutation.operation, tableName: mutation.table_name, memberId: mutation.member_id, baseServerRevision: null, payload })
+      await this.#patch(this.database.mutations, mutation.id, { payload, payload_fingerprint: fingerprint, base_server_revision: null, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, last_error: null, updated_at: now() })
+      await this.#patch(this.database.members, mutation.member_id, { data: mergeMemberPayload({}, payload), save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, local_save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, pending_request_id: mutation.id, pending_operation: mutation.operation, payload_fingerprint: fingerprint, base_server_revision: null, last_error: null, updated_at: now() })
+    }
+    if (candidates.length) this.#scheduleSync()
+    return { recovered: candidates.length, requestIds: candidates.map((mutation) => mutation.id), removedFields: [...removedFields].sort() }
   }
 
   async getMember(memberId) { return asJson(await this.database.members.findOne(memberId).exec()) }
@@ -132,7 +202,7 @@ export class MemberService {
   }
 
   async syncNow({ pullOnly = false } = {}) {
-    if (!this.online()) return this.getSyncState()
+    if (!this.#isBackendReachable()) return this.getSyncState()
     if (this.syncPromise) return this.syncPromise
     this.syncPromise = this.#sync({ pullOnly }).finally(() => { this.syncPromise = null })
     return this.syncPromise
@@ -141,15 +211,27 @@ export class MemberService {
   async getSyncState() {
     const sync = asJson(await this.database.sync.findOne(this.scopeKey).exec())
     const mutations = await this.database.mutations.find({ selector: { scope_key: this.scopeKey } }).exec()
-    const pending = mutations.map(asJson).filter((mutation) => isPendingMemberSaveState(mutation.save_state)).length
-    const conflicts = mutations.map(asJson).filter((mutation) => mutation.save_state === MEMBER_SAVE_STATES.CONFLICT).length
-    return { state: sync?.state || 'IDLE', cursor: sync?.cursor ?? null, pendingChanges: pending, conflicts, lastError: sync?.last_error || null, updatedAt: sync?.updated_at || null }
+    const local = mutations.map(asJson)
+    const pending = local.filter((mutation) => isPendingMemberSaveState(mutation.save_state)).length
+    const conflicts = local.filter((mutation) => mutation.save_state === MEMBER_SAVE_STATES.CONFLICT).length
+    const failedChanges = local.filter((mutation) => mutation.save_state === MEMBER_SAVE_STATES.FAILED_RETRYABLE).length
+    // The top-level harness state is an operator promise: it may say SYNCED
+    // only when every durable mutation has a server confirmation.
+    const offline = this.#isSimulationBlocking()
+    const state = conflicts ? MEMBER_SAVE_STATES.CONFLICT
+      : failedChanges ? MEMBER_SAVE_STATES.FAILED_RETRYABLE
+        : offline ? (pending ? 'OFFLINE_PENDING' : 'OFFLINE')
+          : pending ? 'PENDING_CHANGES'
+          : (sync?.state || 'IDLE')
+    return { state, cursor: sync?.cursor ?? null, pendingChanges: pending, conflicts, failedChanges, lastError: sync?.last_error || null, updatedAt: sync?.updated_at || null }
   }
 
   async pull() {
+    if (this.#isSimulationBlocking()) return asJson(await this.database.sync.findOne(this.scopeKey).exec())?.cursor ?? null
     let checkpoint = asJson(await this.database.sync.findOne(this.scopeKey).exec())?.cursor ?? null
     let hasMore = true
     while (hasMore) {
+      if (this.#isSimulationBlocking()) break
       const { data, error } = await this.supabase.rpc('pull_workspace_member_changes_v2', { p_owner_id: this.ownerId, p_after_server_revision: checkpoint, p_limit: PULL_LIMIT })
       if (error) throw error
       for (const change of data?.changes || []) await this.#applyServerChange(change)
@@ -161,6 +243,7 @@ export class MemberService {
   }
 
   async #sync({ pullOnly }) {
+    if (!this.#isBackendReachable()) return this.getSyncState()
     await this.#setSync({ state: pullOnly ? 'PULLING' : 'SYNCING', last_error: null })
     try {
       if (!pullOnly) await this.#pushPending()
@@ -179,6 +262,7 @@ export class MemberService {
   }
 
   async #pushMutation(mutation) {
+    if (!this.#isBackendReachable()) return
     const member = await this.getMember(mutation.member_id)
     if (!member) return
     const baseServerRevision = mutation.operation === 'create_member_v2' ? null : (mutation.base_server_revision || member.server_revision)
@@ -188,6 +272,11 @@ export class MemberService {
     }
     await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.SYNCING, last_error: null, updated_at: now(), base_server_revision: baseServerRevision })
     await this.#patch(this.database.members, mutation.member_id, { save_state: MEMBER_SAVE_STATES.SYNCING, local_save_state: MEMBER_SAVE_STATES.SYNCING, last_error: null, updated_at: now() })
+    if (!this.#isBackendReachable()) {
+      await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+      await this.#patch(this.database.members, mutation.member_id, { save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, local_save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+      return
+    }
     const fingerprint = mutation.payload_fingerprint || await this.#fingerprint({ operation: mutation.operation, tableName: mutation.table_name, memberId: mutation.member_id, baseServerRevision, payload: mutation.payload })
     const args = mutation.operation === 'create_member_v2'
       ? { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_member: mutation.payload, p_request_id: mutation.id, p_payload_fingerprint: fingerprint }
@@ -263,16 +352,40 @@ export class MemberService {
   }
 
   #scheduleSync() {
-    if (this.online()) queueMicrotask(() => { void this.syncNow() })
+    if (this.#isBackendReachable()) queueMicrotask(() => { void this.syncNow() })
   }
 
   #subscribeRealtime() {
-    if (!this.supabase.channel || this.channel) return
+    if (this.#isSimulationBlocking() || !this.supabase.channel || this.channel) return
     this.channel = this.supabase.channel(`member-v2-signal:${this.ownerId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'member_v2_realtime_signals', filter: `owner_id=eq.${this.ownerId}` }, () => {
         if (this.realtimeTimer) clearTimeout(this.realtimeTimer)
         this.realtimeTimer = setTimeout(() => { this.realtimeTimer = null; void this.syncNow({ pullOnly: true }) }, this.realtimeDebounceMs)
       }).subscribe()
+  }
+
+  async #unsubscribeRealtime() {
+    if (!this.channel) return
+    const channel = this.channel; this.channel = null
+    await this.supabase.removeChannel?.(channel)
+  }
+
+  async #handleConnectivityChange() {
+    if (!this.#isBackendReachable()) return this.#unsubscribeRealtime()
+    this.#subscribeRealtime()
+    await this.syncNow()
+  }
+
+  #isBackendReachable() {
+    return this.connectivity?.isBackendReachable?.() ?? this.online()
+  }
+
+  #isSimulationBlocking() {
+    return Boolean(this.connectivity) && !this.#isBackendReachable()
+  }
+
+  #assertBackendReachable() {
+    if (this.#isSimulationBlocking()) throw new Error('Member V2 backend calls are blocked by offline simulation.')
   }
 }
 

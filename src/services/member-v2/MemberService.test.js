@@ -4,6 +4,7 @@ import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
 import { createMemberService } from './MemberService'
 import { MEMBER_CONFLICT_OPERATIONS } from './memberConflict'
 import { MEMBER_SAVE_STATES } from './memberSaveState'
+import { createMemberV2NetworkController } from '../../experiments/rxdb-member-phase1/NetworkController'
 
 const ids = { user: '11111111-1111-4111-8111-111111111111', owner: '22222222-2222-4222-8222-222222222222', member: '33333333-3333-4333-8333-333333333333' }
 const tableName = 'January_2026'
@@ -15,8 +16,8 @@ const change = ({ memberId = ids.member, revision = 1, name = 'Remote Member', d
 })
 
 const rpcClient = (handler) => ({ rpc: handler, removeChannel: async () => {}, channel: () => ({ on: () => ({ subscribe: () => ({}) }) }) })
-const makeService = async ({ rpc, online = () => false } = {}) => {
-  const service = await createMemberService({ supabase: rpcClient(rpc), userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online })
+const makeService = async ({ rpc, online = () => false, connectivity = null } = {}) => {
+  const service = await createMemberService({ supabase: rpcClient(rpc), userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online, connectivity })
   services.push(service); await service.start(); return service
 }
 
@@ -31,6 +32,23 @@ describe('Member V2 local-first service', () => {
     expect(member.save_state).toBe(MEMBER_SAVE_STATES.LOCAL_PENDING)
     const pending = await service.getSyncState()
     expect(pending.pendingChanges).toBe(1)
+  })
+
+  it('keeps a member mutation LOCAL_PENDING and makes zero backend calls during simulated offline', async () => {
+    const storage = new Map(); const connectivity = createMemberV2NetworkController({ storage: { getItem: (key) => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) } }); connectivity.setSimulatedOffline(true)
+    const calls = []; const service = await makeService({ connectivity, rpc: async (name, args) => { calls.push({ name, args }); return { data: { changes: [], has_more: false }, error: null } } })
+    const member = await service.createMember({ tableName, member: { full_name: 'Offline only' } }); await service.syncNow()
+    expect(calls).toEqual([])
+    expect((await service.getMember(member.id)).save_state).toBe(MEMBER_SAVE_STATES.LOCAL_PENDING)
+    expect((await service.getSyncState())).toMatchObject({ state: 'OFFLINE_PENDING', pendingChanges: 1 })
+  })
+
+  it('automatically retries the same member request after simulated offline ends', async () => {
+    const storage = new Map(); const connectivity = createMemberV2NetworkController({ storage: { getItem: (key) => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) } }); connectivity.setSimulatedOffline(true)
+    const requests = []; const service = await makeService({ connectivity, rpc: async (name, args) => { if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [], next_cursor: 1, has_more: false }, error: null }; requests.push(args.p_request_id); return { data: { status: 'SUCCESS', server_revision: 1, table_name: tableName, member: { id: args.p_member_id, 'Full Name': args.p_member['Full Name'], member_code: 'M9001' } }, error: null } } })
+    const member = await service.createMember({ tableName, member: { full_name: 'Reconnect member' } }); const pending = (await service.database.mutations.find({ selector: { member_id: member.id } }).exec())[0].toJSON()
+    connectivity.setSimulatedOffline(false); await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(requests).toEqual([pending.id]); expect((await service.getMember(member.id)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
   })
 
   it('sends the exact durable request ID and confirms only an acknowledged create', async () => {
@@ -107,6 +125,46 @@ describe('Member V2 local-first service', () => {
     online = true; await service.syncNow(); expect((await service.getMember(member.id)).save_state).toBe(MEMBER_SAVE_STATES.FAILED_RETRYABLE)
     await service.syncNow(); expect((await service.getMember(member.id)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
     expect(idsSeen).toHaveLength(2); expect(idsSeen[0]).toBe(idsSeen[1])
+  })
+
+  it('retargets only a pre-reservation unregistered-month create with its original request ID', async () => {
+    let online = false; const requests = []; const rejectedTable = 'December_2025'; const trustedTable = 'January_2026'
+    const rpc = async (name, args) => {
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [], next_cursor: null, has_more: false }, error: null }
+      requests.push({ tableName: args.p_table_name, requestId: args.p_request_id })
+      if (args.p_table_name === rejectedTable) return { data: null, error: { message: 'This logical month is not registered for the workspace' } }
+      return { data: { status: 'SUCCESS', server_revision: 9, table_name: trustedTable, member: { id: args.p_member_id, 'Full Name': args.p_member['Full Name'], member_code: 'M0009' } }, error: null }
+    }
+    const service = await makeService({ rpc, online: () => online })
+    const local = await service.createMember({ tableName: rejectedTable, member: { full_name: 'Recovered local member' } })
+    const before = (await service.database.mutations.find({ selector: { member_id: local.id } }).exec())[0].toJSON()
+    online = true; await service.syncNow()
+    expect((await service.getMember(local.id)).last_error).toBe('This logical month is not registered for the workspace')
+    const repaired = await service.recoverUnregisteredTargetCreates({ tableName: trustedTable })
+    expect(repaired).toMatchObject({ recovered: 1, requestIds: [before.id] })
+    await service.syncNow()
+    const confirmed = await service.getMember(local.id)
+    expect(confirmed).toMatchObject({ save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, table_name: trustedTable })
+    expect(confirmed.data.member_code).toBe('M0009')
+    expect(requests).toEqual([{ tableName: rejectedTable, requestId: before.id }, { tableName: trustedTable, requestId: before.id }])
+  })
+
+  it('retries an unsupported-field create with the same request ID and no unsupported payload field', async () => {
+    let online = false; const payloads = []
+    const rpc = async (name, args) => {
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [], next_cursor: null, has_more: false }, error: null }
+      payloads.push({ requestId: args.p_request_id, member: args.p_member })
+      if (args.p_member.date_of_birth) return { data: null, error: { message: 'Unsupported member field' } }
+      return { data: { status: 'SUCCESS', server_revision: 10, table_name: tableName, member: { id: args.p_member_id, 'Full Name': args.p_member['Full Name'], member_code: 'M0010' } }, error: null }
+    }
+    const service = await makeService({ rpc, online: () => online }); const local = await service.createMember({ tableName, member: { full_name: 'Compatible profile', date_of_birth: '2012-01-01', notes: 'Kept' } })
+    const requestId = (await service.database.mutations.find({ selector: { member_id: local.id } }).exec())[0].id
+    online = true; await service.syncNow(); expect((await service.getMember(local.id)).last_error).toBe('Unsupported member field')
+    const repaired = await service.recoverUnsupportedFieldCreates({ fields: ['Full Name', 'notes'] })
+    expect(repaired).toMatchObject({ recovered: 1, requestIds: [requestId], removedFields: ['date_of_birth'] })
+    await service.syncNow()
+    expect((await service.getMember(local.id)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+    expect(payloads).toEqual([{ requestId, member: { 'Full Name': 'Compatible profile', date_of_birth: '2012-01-01', notes: 'Kept' } }, { requestId, member: { 'Full Name': 'Compatible profile', notes: 'Kept' } }])
   })
 
   it('creates a new request when keeping local conflict values', async () => {
