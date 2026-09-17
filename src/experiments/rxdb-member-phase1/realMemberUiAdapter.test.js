@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { getRealMemberV2UiAdapter, resetRealMemberV2UiAdapterForTests } from './realMemberUiAdapter'
+import { RealDatserConnectionController, resetRealDatserMemberV2ConnectivityForTests } from './realDatserConnectivity'
 
 const ids = {
   userId: '11111111-1111-4111-8111-111111111111',
@@ -17,6 +18,7 @@ const client = (handler) => ({
 
 afterEach(async () => {
   await resetRealMemberV2UiAdapterForTests()
+  resetRealDatserMemberV2ConnectivityForTests()
 })
 
 beforeEach(() => {
@@ -107,5 +109,36 @@ describe('real member-form Member V2 adapter', () => {
     expect(update.args.p_base_server_revision).toBe(7)
     expect(update.args.p_identity).toMatchObject({ canonical_member_id: ids.memberId, source_table: tableName })
     expect(result.member).toMatchObject({ 'Full Name': 'After edit', server_revision: 8 })
+  })
+
+  it('keeps the real UI edit local while DatSer is forced offline, then flushes that same request after reconnect', async () => {
+    const calls = []
+    const connectivity = new RealDatserConnectionController()
+    let firstPull = true
+    const adapter = await getRealMemberV2UiAdapter({
+      ...ids,
+      connectivity,
+      supabase: client(async (name, args) => {
+        calls.push({ name, args })
+        if (name === 'pull_workspace_member_changes_v2') {
+          if (!firstPull) return { data: { changes: [], next_cursor: 7, has_more: false }, error: null }
+          firstPull = false
+          return { data: { changes: [{ server_revision: 7, table_name: tableName, member_id: ids.memberId, is_deleted: false, member: { id: ids.memberId, 'Full Name': 'Before edit', member_code: 'M0101' }, changed_at: '2026-01-01T00:00:00.000Z' }], next_cursor: 7, has_more: false }, error: null }
+        }
+        return { data: { status: 'SUCCESS', server_revision: 8, table_name: tableName, member: { id: ids.memberId, 'Full Name': 'After reconnect', member_code: 'M0101' } }, error: null }
+      }),
+    })
+
+    connectivity.setConnection({ isOnline: true, offlineMode: 'offline', offlineModeStatus: 'forced-offline' })
+    const local = await adapter.update({ tableName, member: { id: ids.memberId, __canonical_member_id: ids.memberId }, updates: { full_name: 'Local offline edit' } })
+    expect(local.syncState).toMatchObject({ state: 'OFFLINE_PENDING', pendingChanges: 1 })
+    expect(calls.map((call) => call.name)).not.toContain('update_member_v2')
+
+    connectivity.setConnection({ isOnline: true, offlineMode: 'online', offlineModeStatus: 'online' })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const update = calls.find((call) => call.name === 'update_member_v2')
+    expect(update).toBeTruthy()
+    expect(update.args.p_request_id).toMatch(/^update_member_v2:/)
+    expect((await adapter.refreshGuard()).pendingChanges).toBe(0)
   })
 })

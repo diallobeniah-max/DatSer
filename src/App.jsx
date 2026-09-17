@@ -10,6 +10,7 @@ import LoginPage from './components/LoginPage'
 import TutorialPromptBar from './components/TutorialPromptBar'
 import AppUpdatePrompt from './components/AppUpdatePrompt'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
+import RealMemberV2LocalDiagnostics from './experiments/rxdb-member-phase1/RealMemberV2LocalDiagnostics'
 import useHapticFeedback from './hooks/useHapticFeedback'
 import { Check, Minimize2, X } from 'lucide-react'
 import MissingDataModal from './components/MissingDataModal'
@@ -628,6 +629,7 @@ function AppContent({ isMobile }) {
             setNavigateToSettingsSection({ section: 'data', settingId: 'offline_mode' })
           }}
         />
+        <RealMemberV2LocalDiagnostics />
         {currentView === 'dashboard' && (
           <Dashboard isAdmin={isAdmin} />
         )}

@@ -53,6 +53,20 @@ const WORKSPACE_MEMBER_CODE_CONFIGURATION_KEYS = new Set([
   'member_code_length'
 ])
 
+export const getAdminCodeLoginErrorMessage = (error) => {
+  const errorText = String(error?.message || '').toLowerCase()
+  if (error?.code === '42883' || errorText.includes('admin-code-login')) {
+    return 'Admin code login is not set up yet. Apply the latest Supabase migration first.'
+  }
+  // Supabase returns this generic transport error when the Edge Runtime or
+  // function route is unavailable. Do not surface an implementation detail to
+  // operators or imply that their code was rejected.
+  if (errorText.includes('edge function returned a non-2xx status code')) {
+    return 'Admin login is temporarily unavailable. Please try again shortly.'
+  }
+  return error?.message || 'Invalid admin code'
+}
+
 const devOnlyString = (codes) => (
   import.meta.env.DEV ? String.fromCharCode(...codes) : ''
 )
@@ -307,7 +321,10 @@ export const AuthProvider = ({ children }) => {
   // acceptable for later refreshes.
   const loadUserPreferencesBackground = useCallback((userId) => {
     const load = loadUserPreferencesRef.current
-    if (load) void load(userId)
+    // Auth callbacks run before React has committed setUser.  Supply the
+    // authenticated actor explicitly so first-time sign-ins do not skip
+    // preference hydration while user state is still stale.
+    if (load) void load(userId, userId)
   }, [])
 
   // Auto-accept collaborator invite when user signs in
@@ -1038,11 +1055,7 @@ export const AuthProvider = ({ children }) => {
       toast.success('Admin code accepted')
       return data
     } catch (error) {
-      const errorText = String(error?.message || '').toLowerCase()
-      const missingRpc = error?.code === '42883' || errorText.includes('admin-code-login')
-      const message = missingRpc
-        ? 'Admin code login is not set up yet. Apply the latest Supabase migration first.'
-        : (error?.message || 'Invalid admin code')
+      const message = getAdminCodeLoginErrorMessage(error)
       console.error('Admin code login failed:', error)
       toast.error(message)
       throw new Error(message)

@@ -84,6 +84,9 @@ import {
   isMemberStaleDeleted,
   readMemberDeleteTombstones
 } from '../utils/memberDeleteTombstones'
+import { isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { setRealDatserMemberV2Connection } from '../experiments/rxdb-member-phase1/realDatserConnectivity'
+import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 
 const AppContext = createContext()
 
@@ -1292,6 +1295,90 @@ export const AppProvider = ({ children }) => {
       : isOnline
         ? 'online'
         : 'online-unavailable'
+  useEffect(() => {
+    if (!isMemberV2LocalExperimentEnabled()) return
+    setRealDatserMemberV2Connection({ isOnline, offlineMode, offlineModeStatus })
+  }, [isOnline, offlineMode, offlineModeStatus])
+  useEffect(() => {
+    // The real application needs its Member V2 snapshot while it is still
+    // online.  Without this one local-development bootstrap, selecting the
+    // real Offline control before opening Edit Details would leave the V2
+    // service unable to locate an otherwise-visible legacy member.
+    if (
+      !isMemberV2LocalExperimentEnabled()
+      || !supabase
+      || !user?.id
+      || !(dataOwnerId || user.id)
+      || memberHydrationState !== 'HYDRATED'
+    ) return
+
+    let cancelled = false
+    let unsubscribe = null
+    const applyLocalMemberV2Records = (localMembers = []) => {
+      if (cancelled || !localMembers.length) return
+      const byId = new Map(localMembers.map((member) => [String(member.id), member]))
+      setMembers((previous) => {
+        let changed = false
+        const next = previous.map((member) => {
+          const local = byId.get(String(member.id))
+          if (!local) return member
+          const merged = normalizeMemberRecord({
+            ...member,
+            ...local,
+            // normalizeMemberRecord deliberately prefers full_name. Preserve
+            // the local V2 value over a stale legacy alias on reload.
+            full_name: local.full_name || local['Full Name'] || member.full_name,
+          })
+          if (
+            member['Full Name'] === merged['Full Name']
+            && member['Phone Number'] === merged['Phone Number']
+            && member.__member_v2_save_state === merged.__member_v2_save_state
+          ) return member
+          changed = true
+          return merged
+        })
+        return changed ? next : previous
+      })
+    }
+
+    void getRealMemberV2UiAdapter({
+      supabase,
+      userId: user.id,
+      ownerId: dataOwnerId || user.id,
+    }).then(async (adapter) => {
+      applyLocalMemberV2Records(await adapter.listLocalMembers())
+      unsubscribe = await adapter.subscribeLocalMembers(applyLocalMemberV2Records)
+      if (cancelled) unsubscribe()
+    }).catch((error) => {
+      // This experiment must never interfere with the existing DatSer UI.
+      // The normal edit flow will surface an actionable error if its own
+      // local Member V2 operation later cannot start.
+      console.warn('[Member V2 local experiment] initial workspace pull failed:', error)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [currentTable, dataOwnerId, memberHydrationState, user?.id])
+  useEffect(() => {
+    if (!isMemberV2LocalExperimentEnabled() || typeof window === 'undefined') return undefined
+    // Local-only browser-test visibility. It exposes connection and sync
+    // counters, never member data or credentials, and is not present in a
+    // production build because the experiment flag is impossible there.
+    window.__datserMemberV2LocalDiagnostic = {
+      currentTable,
+      memberCount: members.length,
+      memberHydrationState,
+      loading,
+      preferencesHydrated,
+      preferencesError,
+      offlineMode,
+      offlineModeStatus,
+      isOnline,
+      ownerId: dataOwnerId || user?.id || null,
+    }
+    return () => { delete window.__datserMemberV2LocalDiagnostic }
+  }, [currentTable, dataOwnerId, isOnline, loading, memberHydrationState, members.length, offlineMode, offlineModeStatus, preferencesError, preferencesHydrated, user?.id])
   const shouldShowOfflineSaveNotice = useCallback((count = pendingSyncCount) => {
     const isOfflineOnly = offlineMode === 'offline' || !isOnline
     return isOfflineOnly && Number(count || 0) >= offlineSaveNoticeThreshold
@@ -6212,6 +6299,25 @@ export const AppProvider = ({ children }) => {
       totalCount: Math.max(membersTotalCount || 0, nextCount),
       source: options.source || 'single-member-refresh'
     })
+    if (options.writeOfflineSnapshot) {
+      // The Member V2 experiment is the durable authority for this pending
+      // local edit. Mirror that already-durable value into DatSer's existing
+      // offline snapshot so a real forced-offline reload cannot revive the
+      // stale legacy row before the normal reconnect confirmation occurs.
+      const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+      const snapshot = snapshotRecord?.snapshot
+      if (
+        snapshot?.authenticated_user_id === user?.id
+        && Array.isArray(snapshot.members)
+      ) {
+        const snapshotMembers = snapshot.members.map((member) => (
+          String(member?.id) === String(memberId)
+            ? normalizeMemberRecord({ ...member, ...patchedMember })
+            : member
+        ))
+        await saveOfflineSnapshot({ ...snapshot, members: snapshotMembers })
+      }
+    }
     applyAttendanceColumnsFromMemberRows([patchedMember], tableName)
     markMemberPreviewSyncComplete(tableName, {
       cachedCount: Math.max(nextCount, members.length + (didInsert ? 1 : 0)),
@@ -6263,6 +6369,7 @@ export const AppProvider = ({ children }) => {
     recordRecentMemberEdit,
     refreshSearch,
     shouldUseOfflineData,
+    user?.id,
     workspaceCacheScope
   ])
 

@@ -510,6 +510,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           summary: 'Updated member with Member V2',
           skipRemote: true,
           skipBackgroundSync: true,
+          writeOfflineSnapshot: true,
         })
         recordRecentMemberEdit({ ...currentSnapshot, ...result.member, id: latestMember.id }, new Date().toISOString())
         success()
