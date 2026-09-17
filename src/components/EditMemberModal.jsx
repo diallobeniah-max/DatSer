@@ -19,12 +19,15 @@ import AttendanceChoice from './AttendanceChoice'
 import { getCanonicalAttendanceStatus } from '../utils/attendanceRecords'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
+import { assertLegacyMemberFlowIsSafe, isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
+  const memberV2Enabled = isMemberV2LocalExperimentEnabled()
 
   // Get the latest member data from the members array to ensure we have up-to-date info
   const latestMember = useMemo(() => {
@@ -465,7 +468,56 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         return
       }
 
-      if (!isSupabaseConfigured()) {
+      const ownerId = dataOwnerId || user?.id
+      if (!ownerId) {
+        throw new Error('Unable to determine the workspace owner for this save')
+      }
+      if (!memberV2Enabled) {
+        assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId })
+      }
+
+      if (memberV2Enabled) {
+        if (!isSupabaseConfigured()) {
+          throw new Error('Member V2 is available only with the local Supabase test stack.')
+        }
+        if (attendanceUpdates.length > 0) {
+          throw new Error('Attendance is not part of the Member V2 experiment. Save profile changes separately, then use the existing attendance controls.')
+        }
+        if (tagSelectionChanged) {
+          throw new Error('Workspace tags are not part of the Member V2 experiment. Remove that tag change before saving this profile.')
+        }
+        const targetTable = getMemberSourceTable(latestMember, currentTable)
+        const normalizedUpdates = {
+          ...changedPayload,
+          ...(Object.prototype.hasOwnProperty.call(changedPayload, 'gender')
+            ? { gender: String(changedPayload.gender || '').trim().replace(/^./, (character) => character.toUpperCase()) }
+            : {}),
+        }
+        const result = await (await getRealMemberV2UiAdapter({
+          supabase,
+          userId: user?.id,
+          ownerId,
+        })).update({
+          member: latestMember,
+          tableName: targetTable,
+          updates: normalizedUpdates,
+        })
+        await refreshMemberPreviewById?.(latestMember.id, {
+          tableName: targetTable,
+          fallbackMember: result.member,
+          source: 'member-v2-update',
+          action: 'update',
+          summary: 'Updated member with Member V2',
+          skipRemote: true,
+          skipBackgroundSync: true,
+        })
+        recordRecentMemberEdit({ ...currentSnapshot, ...result.member, id: latestMember.id }, new Date().toISOString())
+        success()
+        onClose()
+        submitRequestIdRef.current = null
+        if (result.syncState.pendingChanges || result.syncState.failedChanges || result.syncState.conflicts) toast.info(result.message)
+        else toast.success(result.message)
+      } else if (!isSupabaseConfigured()) {
         if (Object.keys(changedPayload).length > 0) {
           await updateMember(latestMember.id, changedPayload)
         }
@@ -532,12 +584,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         })
 
         const attendancePayload = Object.fromEntries(attendanceUpdates)
-        const ownerId = dataOwnerId || user?.id
-
-        if (!ownerId) {
-          throw new Error('Unable to determine the workspace owner for this save')
-        }
-
         const targetTable = getMemberSourceTable(latestMember, currentTable)
         console.info('[EditMemberModal] Submitting bundle update:', {
           table: targetTable,
