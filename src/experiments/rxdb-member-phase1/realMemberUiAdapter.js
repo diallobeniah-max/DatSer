@@ -1,6 +1,7 @@
 import { createMemberService } from '../../services/member-v2/MemberService'
 import { createHistoricalIdentity } from '../../services/member-v2/memberTarget'
 import { MEMBER_SAVE_STATES } from '../../services/member-v2/memberSaveState'
+import { MEMBER_CONFLICT_OPERATIONS } from '../../services/member-v2/memberConflict'
 import { updateMemberV2LocalFlowGuard } from './memberV2FeatureFlag'
 import { getRealDatserMemberV2Connectivity } from './realDatserConnectivity'
 
@@ -126,6 +127,23 @@ class RealMemberUiAdapter {
     const current = await this.service.getMember(saved.member_id || saved.id)
     await this.refreshGuard()
     return { member: memberForLegacyUi(current), syncState, message: stateMessage(syncState) }
+  }
+
+  async useServerConflictCopy({ member }) {
+    await this.start()
+    const memberId = String(member?.__canonical_member_id || member?.member_id || member?.id || '')
+    if (!memberId) throw new Error('This member has no canonical identity for conflict recovery.')
+    const resolved = await this.service.resolveConflict(memberId, MEMBER_CONFLICT_OPERATIONS.USE_SERVER)
+    const syncState = await this.refreshGuard()
+    return { member: memberForLegacyUi(resolved), syncState }
+  }
+
+  async hasConflictForMember(member) {
+    await this.start()
+    const memberId = String(member?.__canonical_member_id || member?.member_id || member?.id || '')
+    if (!memberId) return false
+    const local = await this.service.getMember(memberId)
+    return local?.save_state === MEMBER_SAVE_STATES.CONFLICT
   }
 }
 

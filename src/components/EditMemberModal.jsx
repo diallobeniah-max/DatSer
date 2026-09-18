@@ -22,6 +22,14 @@ import GuardianSectionHeader from './GuardianSectionHeader'
 import { assertLegacyMemberFlowIsSafe, isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 
+// Several existing workspace tables store phone values numerically. That
+// representation drops the Ghanaian leading zero, but the edit form requires
+// the canonical ten-digit value. Restore it only for the editable display.
+const normalizeEditablePhoneNumber = (value) => {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  return digits.length === 9 ? `0${digits}` : digits
+}
+
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
@@ -117,13 +125,14 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     stableMemberRef.current = latestMember || member
     const sourceMember = stableMemberRef.current
     if (sourceMember) {
+      setMemberV2Conflict(memberV2Enabled && sourceMember.__member_v2_save_state === 'CONFLICT')
       // Normalize gender to lowercase to match radio button values
       const rawGender = sourceMember['Gender'] || ''
       const normalizedGender = typeof rawGender === 'string' ? rawGender.toLowerCase() : ''
       setFormData({
         full_name: (sourceMember['full_name'] || sourceMember['Full Name'] || ''),
         gender: normalizedGender || (typeof sourceMember.gender === 'string' ? sourceMember.gender.toLowerCase() : ''),
-        phone_number: sourceMember['Phone Number'] || sourceMember.phone_number || '',
+        phone_number: normalizeEditablePhoneNumber(sourceMember['Phone Number'] || sourceMember.phone_number || ''),
         date_of_birth: sourceMember['date_of_birth'] || sourceMember.date_of_birth || '',
         age: sourceMember['Age'] || sourceMember.age || '',
         current_level: sourceMember['Current Level'] || sourceMember.current_level || '',
@@ -148,6 +157,21 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       isDirtyRef.current = false
     }
   }, [isOpen, member?.id, latestMember])
+
+  useEffect(() => {
+    if (!isOpen || !memberV2Enabled || !member?.id) return undefined
+    let cancelled = false
+    void getRealMemberV2UiAdapter({
+      supabase,
+      userId: user?.id,
+      ownerId: dataOwnerId || user?.id,
+    }).then((adapter) => adapter.hasConflictForMember(member)).then((hasConflict) => {
+      if (!cancelled && hasConflict) setMemberV2Conflict(true)
+    }).catch(() => {
+      // Recovery remains unavailable until the local Member V2 service can be read.
+    })
+    return () => { cancelled = true }
+  }, [dataOwnerId, isOpen, member, memberV2Enabled, user?.id])
 
   useEffect(() => {
     if (!isOpen) {
@@ -245,6 +269,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const [isLevelOpen, setIsLevelOpen] = useState(false)
   const [customLevelValue, setCustomLevelValue] = useState('')
   const [overrideMode, setOverrideMode] = useState(false)
+  const [memberV2Conflict, setMemberV2Conflict] = useState(false)
   const [parentInfo, setParentInfo] = useState({
     parent_name_1: '',
     parent_phone_1: '',
@@ -269,6 +294,36 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       setIsClosingSheet(false)
     }, 300)
   }, [isClosingSheet, onClose, selection])
+
+  const handleUseServerMemberV2ConflictCopy = async () => {
+    if (!memberV2Enabled) return
+    try {
+      setLoading(true)
+      const ownerId = dataOwnerId || user?.id
+      const result = await (await getRealMemberV2UiAdapter({
+        supabase,
+        userId: user?.id,
+        ownerId,
+      })).useServerConflictCopy({ member: latestMember })
+      await refreshMemberPreviewById?.(latestMember.id, {
+        tableName: getMemberSourceTable(latestMember, currentTable),
+        fallbackMember: result.member,
+        source: 'member-v2-conflict-use-server',
+        action: 'update',
+        summary: 'Accepted the server copy for a Member V2 conflict',
+        skipRemote: true,
+        skipBackgroundSync: true,
+        writeOfflineSnapshot: true,
+      })
+      setMemberV2Conflict(false)
+      toast.success('The newer server copy is now shown. Your local conflicting edit was not sent.')
+      closeWithAnimation({ skipHaptic: true })
+    } catch (error) {
+      toast.error(error?.message || 'Unable to use the server copy.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -513,11 +568,16 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           writeOfflineSnapshot: true,
         })
         recordRecentMemberEdit({ ...currentSnapshot, ...result.member, id: latestMember.id }, new Date().toISOString())
-        success()
-        onClose()
         submitRequestIdRef.current = null
-        if (result.syncState.pendingChanges || result.syncState.failedChanges || result.syncState.conflicts) toast.info(result.message)
-        else toast.success(result.message)
+        if (result.syncState.conflicts) {
+          setMemberV2Conflict(true)
+          toast.info(result.message)
+        } else {
+          success()
+          onClose()
+          if (result.syncState.pendingChanges || result.syncState.failedChanges) toast.info(result.message)
+          else toast.success(result.message)
+        }
       } else if (!isSupabaseConfigured()) {
         if (Object.keys(changedPayload).length > 0) {
           await updateMember(latestMember.id, changedPayload)
@@ -1331,6 +1391,16 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           )}
 
           </div>
+
+          {memberV2Conflict && (
+            <div data-testid="member-v2-conflict-resolution" className="mx-4 mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100 sm:mx-5">
+              <p className="font-semibold">A newer server edit conflicts with this local change.</p>
+              <p className="mt-1 text-xs">Your local value is still preserved. Choose the server copy only if you want to discard this local conflicting edit.</p>
+              <button type="button" data-testid="member-v2-conflict-use-server" disabled={loading} onClick={() => void handleUseServerMemberV2ConflictCopy()} className="mt-3 min-h-[40px] rounded-lg border border-amber-500 bg-white px-3 py-2 text-xs font-bold text-amber-900 disabled:opacity-50 dark:bg-gray-900 dark:text-amber-100">
+                Use server copy
+              </button>
+            </div>
+          )}
 
           {/* Form Actions */}
           <div

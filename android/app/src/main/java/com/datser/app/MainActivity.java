@@ -8,6 +8,7 @@ import android.os.Handler;
 import android.text.TextUtils;
 import android.text.InputType;
 import android.view.ViewGroup;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -30,7 +31,13 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        if (isMemberV2ValidationApp()) {
+            // This is deliberately restricted to the disposable validation package.
+            // It lets the local test operator inspect WebView console/network errors.
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
         super.onCreate(savedInstanceState);
+        configureMemberV2ValidationWebView();
         acceptTestConfiguration(getIntent());
         showConfigurationPromptIfNeeded();
     }
@@ -50,6 +57,17 @@ public class MainActivity extends BridgeActivity {
 
     private boolean isMemberV2ValidationApp() {
         return getPackageName().endsWith(TEST_PACKAGE_SUFFIX);
+    }
+
+    private void configureMemberV2ValidationWebView() {
+        if (!isMemberV2ValidationApp() || getBridge() == null) return;
+        WebView webView = getBridge().getWebView();
+        if (webView == null) return;
+        // Capacitor's page is https://localhost while the emulator reaches the
+        // intentionally local-only Supabase stack over http://10.0.2.2. Android
+        // otherwise blocks that request as mixed content. This never executes in
+        // the production package.
+        webView.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
     }
 
     private void acceptTestConfiguration(Intent intent) {

@@ -103,6 +103,15 @@ const editNameAndSubmit = async (modalElement, value) => {
 }
 
 describe('EditMemberModal offline fallback routing', () => {
+  it('restores the leading zero for a numeric database phone value before validating an edit', async () => {
+    appMock = makeAppMock()
+    appMock.members[0]['Phone Number'] = 555000123
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+    render(<EditMemberModal {...MODAL_PROPS} />)
+
+    expect((await screen.findByTestId('edit-form-phone')).value).toBe('0555000123')
+  })
+
   beforeEach(() => {
     cleanup()
     if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {

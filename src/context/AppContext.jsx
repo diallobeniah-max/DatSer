@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, isSupabaseConfigured as isSupabaseClientConfigured } from '../lib/supabase'
 import { toast } from 'react-toastify'
 import {
   assertSupabaseMutationAffected,
@@ -1863,10 +1863,7 @@ export const AppProvider = ({ children }) => {
 
   // Check if Supabase is properly configured
   const isSupabaseConfigured = useCallback(() => {
-    const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL
-    return supabase && supabaseUrl &&
-      supabaseUrl !== 'your_supabase_url_here' &&
-      supabaseUrl !== 'https://placeholder.supabase.co'
+    return isSupabaseClientConfigured()
   }, [])
 
   const fetchOwnerStickyDefaults = useCallback(async (ownerId) => {

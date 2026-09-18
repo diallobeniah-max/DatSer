@@ -867,41 +867,42 @@ export const AuthProvider = ({ children }) => {
   // Sign up with email and password
   const signUpWithEmail = async (email, password, fullName, captchaToken) => {
     try {
-      if (supabase) {
-        const redirectUrl = getRedirectUrl()
+      if (!isSupabaseConfigured() || !supabase) {
+        throw new Error('Authentication is not configured')
+      }
+      const redirectUrl = getRedirectUrl()
 
-        const signUpOptions = {
-          email,
-          password,
-          options: {
-            emailRedirectTo: redirectUrl,
-            data: {
-              full_name: fullName
-            }
+      const signUpOptions = {
+        email,
+        password,
+        options: {
+          emailRedirectTo: redirectUrl,
+          data: {
+            full_name: fullName
           }
         }
-        // Only add captchaToken if it exists
-        if (captchaToken) {
-          signUpOptions.options.captchaToken = captchaToken
-        }
-        const { data, error } = await supabase.auth.signUp(signUpOptions)
-
-        if (error) throw error
-
-        // Check if email confirmation is required
-        if (data?.user?.identities?.length === 0) {
-          toast.info('This email is already registered. Please sign in instead.')
-          return { needsSignIn: true }
-        }
-
-        if (data?.user && !data?.session) {
-          recordEmailSend()
-          toast.success('Check your email for a confirmation link!')
-          return { needsConfirmation: true }
-        }
-
-        return data
       }
+      // Only add captchaToken if it exists
+      if (captchaToken) {
+        signUpOptions.options.captchaToken = captchaToken
+      }
+      const { data, error } = await supabase.auth.signUp(signUpOptions)
+
+      if (error) throw error
+
+      // Check if email confirmation is required
+      if (data?.user?.identities?.length === 0) {
+        toast.info('This email is already registered. Please sign in instead.')
+        return { needsSignIn: true }
+      }
+
+      if (data?.user && !data?.session) {
+        recordEmailSend()
+        toast.success('Check your email for a confirmation link!')
+        return { needsConfirmation: true }
+      }
+
+      return data
     } catch (error) {
       console.error('Error signing up:', error)
       if (error.message?.includes('already registered')) {
