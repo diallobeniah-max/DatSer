@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { getAndroidMemberV2RuntimeConfig } from '../experiments/rxdb-member-phase1/androidMemberV2TestRuntimeConfig'
 
 const isTestEnv = (
   (typeof process !== 'undefined' && (process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST))) ||
@@ -6,15 +7,16 @@ const isTestEnv = (
 )
 const TEST_SUPABASE_URL = 'https://mock-test-project.invalid'
 const TEST_SUPABASE_ANON_KEY = 'mock-test-anon-key'
+const androidMemberV2RuntimeConfig = getAndroidMemberV2RuntimeConfig()
 
 // Read env at build time; guard to support demo mode when not configured
 const supabaseUrl = isTestEnv
   ? TEST_SUPABASE_URL
-  : (import.meta.env.VITE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_URL : undefined))
+  : (androidMemberV2RuntimeConfig?.url || import.meta.env.VITE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_URL : undefined))
 
 const supabaseAnonKey = isTestEnv
   ? TEST_SUPABASE_ANON_KEY
-  : (import.meta.env.VITE_SUPABASE_ANON_KEY || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_ANON_KEY : undefined))
+  : (androidMemberV2RuntimeConfig?.anonKey || import.meta.env.VITE_SUPABASE_ANON_KEY || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_ANON_KEY : undefined))
 
 // Expose a function so callers can use either `isSupabaseConfigured()` or treat it as a boolean
 export const isSupabaseConfigured = () => Boolean(

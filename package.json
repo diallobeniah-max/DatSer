@@ -19,6 +19,7 @@
     "test:poc:browser": "playwright test --config playwright.rxdb-poc.config.js",
     "build:poc": "vite build --config vite.rxdb-poc.config.js",
     "build:member-v2": "vite build --config vite.rxdb-member-phase1.config.js",
+    "build:member-v2:android-test": "vite build --config vite.member-v2-android-test.config.js --mode member-v2-android-test",
     "test:member-v2": "vitest --run --environment jsdom src/services/member-v2/MemberService.test.js src/services/member-v2/MemberAttendanceService.test.js src/experiments/rxdb-member-phase1/main.test.jsx && vitest --run src/services/member-v2/MemberService.localSupabase.integration.test.js",
     "test:member-v2:browser": "playwright test --config playwright.rxdb-member-phase1.config.js",
     "test:smoke": "playwright test tests/smoke.spec.js",
@@ -33,6 +34,7 @@
     "android:open": "cap open android",
     "android:apk": "node scripts/build-android-apk.mjs debug",
     "android:apk:local": "node scripts/build-android-apk.mjs debug --local",
+    "android:member-v2-test": "node scripts/build-member-v2-android-validation.mjs",
     "android:apk:release": "node scripts/build-android-apk.mjs release"
   },
   "dependencies": {

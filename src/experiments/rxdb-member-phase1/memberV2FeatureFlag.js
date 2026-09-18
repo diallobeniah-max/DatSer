@@ -1,9 +1,11 @@
+import { getAndroidMemberV2RuntimeConfig, isAndroidMemberV2ValidationBuild } from './androidMemberV2TestRuntimeConfig'
+
 const guardPrefix = 'datser.member-v2.local-flow-guard:'
 
 const localSupabaseUrl = (value) => {
   try {
     const url = new URL(value)
-    return url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+    return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '10.0.2.2'].includes(url.hostname)
   } catch {
     return false
   }
@@ -16,9 +18,15 @@ const localStorageFor = (storage) => storage || (typeof window === 'undefined' ?
 // This experiment is intentionally impossible to enable against a hosted
 // Supabase project. It is a local Vite opt-in, not a workspace preference.
 export const isMemberV2LocalExperimentEnabled = (env = import.meta.env) => (
-  env?.DEV === true
-  && env?.VITE_DATSER_MEMBER_V2_EXPERIMENT === 'true'
-  && localSupabaseUrl(env?.VITE_SUPABASE_URL)
+  (
+    env?.DEV === true
+    && env?.VITE_DATSER_MEMBER_V2_EXPERIMENT === 'true'
+    && localSupabaseUrl(env?.VITE_SUPABASE_URL)
+  )
+  || (
+    isAndroidMemberV2ValidationBuild(env)
+    && localSupabaseUrl(getAndroidMemberV2RuntimeConfig({ env })?.url)
+  )
 )
 
 export const getMemberV2LocalFlowGuard = ({ userId, ownerId, storage } = {}) => {
