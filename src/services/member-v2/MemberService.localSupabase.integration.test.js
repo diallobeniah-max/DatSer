@@ -175,4 +175,39 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     const row = await fixture.client.from(fixture.tableName).select('id').eq('id', created.id); expect(row.data).toHaveLength(1)
     expect(memberMutation.id).toMatch(/^update_member_v2:/); expect(attendanceSave.requestId).toMatch(/^member_v2_attendance:/)
   }, 30000)
+
+  it('rebases repeated offline profile and same-Sunday attendance edits in order without artificial conflicts', async () => {
+    let online = false; const localStorage = getRxStorageMemory()
+    const members = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: localStorage, online: () => online })
+    await members.start()
+    const created = await members.createMember({ tableName: fixture.tableName, member: { full_name: 'Rebase original', current_level: 'JHS2' } })
+    online = true; await members.syncNow()
+    const confirmed = await members.getMember(created.id)
+    expect(confirmed.save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+
+    online = false
+    await members.updateMember(created.id, { full_name: 'Rebase first local edit' })
+    await members.updateMember(created.id, { full_name: 'Rebase second local edit' })
+    const attendance = await createMemberAttendanceService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: localStorage, online: () => online })
+    await attendance.start()
+    await attendance.saveAttendance({ memberId: created.id, tableName: fixture.tableName, attendanceDate: '2025-12-28', status: 'Present' })
+    await attendance.saveAttendance({ memberId: created.id, tableName: fixture.tableName, attendanceDate: '2025-12-28', status: 'Absent' })
+
+    online = true
+    await Promise.all([members.syncNow(), attendance.syncNow()])
+    await Promise.all([members.syncNow(), attendance.syncNow()])
+    expect((await members.getMember(created.id))).toMatchObject({ save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, data: { 'Full Name': 'Rebase second local edit' } })
+    expect((await attendance.getForMember(created.id))[0]).toMatchObject({ save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, status: 'Absent', attendance_date: '2025-12-28' })
+
+    const memberChanges = await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: fixture.userId, p_after_server_revision: 0, p_limit: 100 })
+    const attendanceChanges = await fixture.client.rpc('pull_member_v2_attendance_changes_v2', { p_owner_id: fixture.userId, p_after_server_revision: 0, p_limit: 100 })
+    expect(memberChanges.error).toBeNull(); expect(attendanceChanges.error).toBeNull()
+    expect(memberChanges.data.changes.filter((change) => change.member_id === created.id)).toHaveLength(3)
+    expect(attendanceChanges.data.changes.filter((change) => change.member_id === created.id && change.attendance_date === '2025-12-28')).toHaveLength(2)
+    const memberQueue = (await members.database.mutations.find({ selector: { member_id: created.id } }).exec()).map((record) => record.toJSON())
+    const attendanceQueue = (await attendance.database.mutations.find({ selector: { member_id: created.id, attendance_date: '2025-12-28' } }).exec()).map((record) => record.toJSON())
+    expect(memberQueue).toEqual([])
+    expect(attendanceQueue).toEqual([])
+    await Promise.all([members.stop(), attendance.stop()])
+  }, 30000)
 })

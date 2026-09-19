@@ -1,10 +1,11 @@
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
 import { createMemberService } from './MemberService'
 import { MEMBER_CONFLICT_OPERATIONS } from './memberConflict'
 import { MEMBER_SAVE_STATES } from './memberSaveState'
 import { createMemberV2NetworkController } from '../../experiments/rxdb-member-phase1/NetworkController'
+import { createMemberV2Fingerprint } from '../../experiments/rxdb-member-phase1/memberContractFingerprint'
 
 const ids = { user: '11111111-1111-4111-8111-111111111111', owner: '22222222-2222-4222-8222-222222222222', member: '33333333-3333-4333-8333-333333333333' }
 const tableName = 'January_2026'
@@ -110,8 +111,8 @@ describe('Member V2 local-first service', () => {
     let online = false; const listeners = []; const rpc = async () => ({ data: { changes: [], next_cursor: null, has_more: false }, error: null })
     const client = { rpc, removeChannel: async () => {}, channel: () => ({ on: (_event, _filter, listener) => { listeners.push(listener); return { subscribe: () => ({}) } } }) }
     const service = await createMemberService({ supabase: client, userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online: () => online, realtimeDebounceMs: 0 })
-    services.push(service); await service.start(); online = true; listeners[0](); await new Promise((resolve) => setTimeout(resolve, 10))
-    expect((await service.getSyncState()).state).toBe('SYNCED')
+    services.push(service); await service.start(); online = true; listeners[0]()
+    await vi.waitFor(async () => expect((await service.getSyncState()).state).toBe('SYNCED'))
   })
 
   it('keeps the same request ID after a retryable network failure', async () => {
@@ -125,6 +126,34 @@ describe('Member V2 local-first service', () => {
     online = true; await service.syncNow(); expect((await service.getMember(member.id)).save_state).toBe(MEMBER_SAVE_STATES.FAILED_RETRYABLE)
     await service.syncNow(); expect((await service.getMember(member.id)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
     expect(idsSeen).toHaveLength(2); expect(idsSeen[0]).toBe(idsSeen[1])
+  })
+
+  it('rebases sequential local edits with a matching fingerprint instead of manufacturing a conflict', async () => {
+    let online = false; let revision = 1; let initialPull = true; const writes = []
+    const rpc = async (name, args) => {
+      if (name === 'pull_workspace_member_changes_v2') {
+        const changes = initialPull ? [change({ revision, name: 'Original server value' })] : []
+        initialPull = false
+        return { data: { changes, next_cursor: revision, has_more: false }, error: null }
+      }
+      const expectedFingerprint = await createMemberV2Fingerprint({ operation: 'update_member_v2', ownerId: service.ownerId, tableName: args.p_table_name, memberId: args.p_member_id, baseServerRevision: args.p_base_server_revision, payload: args.p_updates })
+      writes.push({ requestId: args.p_request_id, revision: args.p_base_server_revision, fingerprint: args.p_payload_fingerprint })
+      if (args.p_payload_fingerprint !== expectedFingerprint) return { data: null, error: new Error('Payload fingerprint does not match the canonical member mutation') }
+      if (args.p_base_server_revision !== revision) return { data: { status: 'CONFLICT', server_revision: revision, table_name: tableName, member: change({ revision, name: 'Server value' }).member }, error: null }
+      revision += 1
+      return { data: { status: 'SUCCESS', server_revision: revision, table_name: tableName, member: { id: args.p_member_id, 'Full Name': args.p_updates['Full Name'], member_code: 'M0001' } }, error: null }
+    }
+    const service = await makeService({ rpc, online: () => online })
+    await service.pull()
+    await service.updateMember(ids.member, { 'Full Name': 'First local edit' })
+    await service.updateMember(ids.member, { 'Full Name': 'Second local edit' })
+    online = true
+    await service.syncNow()
+
+    expect(writes.map((write) => write.revision)).toEqual([1, 2])
+    expect(new Set(writes.map((write) => write.requestId)).size).toBe(2)
+    expect((await service.getMember(ids.member))).toMatchObject({ save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, server_revision: 3, data: { 'Full Name': 'Second local edit', member_code: 'M0001' } })
+    expect((await service.getSyncState())).toMatchObject({ state: 'SYNCED', pendingChanges: 0, conflicts: 0 })
   })
 
   it('retargets only a pre-reservation unregistered-month create with its original request ID', async () => {

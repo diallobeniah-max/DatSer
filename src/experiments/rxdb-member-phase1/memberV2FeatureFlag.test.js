@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   assertLegacyMemberFlowIsSafe,
   getMemberV2LocalFlowGuard,
+  getMemberV2LocalFlowStatus,
   isMemberV2LocalExperimentEnabled,
   updateMemberV2LocalFlowGuard,
 } from './memberV2FeatureFlag'
@@ -59,5 +60,13 @@ describe('Member V2 local feature boundary', () => {
     expect(getMemberV2LocalFlowGuard({ ...ids, storage: localStorage })).not.toBeNull()
     updateMemberV2LocalFlowGuard({ ...ids, storage: localStorage, syncState: { state: 'SYNCED', pendingChanges: 0, failedChanges: 0, conflicts: 0 } })
     expect(getMemberV2LocalFlowGuard({ ...ids, storage: localStorage })).toBeNull()
+  })
+
+  it('does not present Member V2 as synced while durable work is pending, failed, or conflicted', () => {
+    expect(getMemberV2LocalFlowStatus({ pendingChanges: 1 }, { offline: false })).toMatchObject({ label: 'Sync pending', tone: 'pending' })
+    expect(getMemberV2LocalFlowStatus({ pendingChanges: 1 }, { offline: true })).toMatchObject({ label: 'Offline changes', tone: 'offline' })
+    expect(getMemberV2LocalFlowStatus({ pendingChanges: 3, failedChanges: 1 })).toMatchObject({ label: 'Sync needs retry', tone: 'failed' })
+    expect(getMemberV2LocalFlowStatus({ pendingChanges: 3, conflicts: 1 })).toMatchObject({ label: 'Conflict needs review', tone: 'conflict' })
+    expect(getMemberV2LocalFlowStatus(null)).toBeNull()
   })
 })

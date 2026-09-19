@@ -21,7 +21,7 @@ import { assertLegacyMemberFlowIsSafe, isMemberV2LocalExperimentEnabled } from '
 import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 
 const MemberModal = ({ isOpen, onClose }) => {
-  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment } = useApp()
+  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment, applyMemberV2AttendanceState } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success } = useHapticFeedback()
@@ -306,9 +306,6 @@ const MemberModal = ({ isOpen, onClose }) => {
         if (!isSupabaseConfigured()) {
           throw new Error('Member V2 is available only with the local Supabase test stack.')
         }
-        if (Object.values(sundayAttendance).some((attendance) => attendance !== null)) {
-          throw new Error('Attendance is not part of the Member V2 experiment. Save the profile without attendance, then use the existing attendance controls.')
-        }
         if (areOptionalTagsVisible(guidedFormSettings) && selectedTagIds.size > 0) {
           throw new Error('Workspace tags are not part of the Member V2 experiment. Remove them before saving this profile.')
         }
@@ -326,6 +323,7 @@ const MemberModal = ({ isOpen, onClose }) => {
           ownerId,
         })).create({
           tableName: currentTable,
+          attendance: sundayAttendance,
           payload: {
             'Full Name': formData.full_name.trim(),
             Gender: normalizedGender,
@@ -354,6 +352,18 @@ const MemberModal = ({ isOpen, onClose }) => {
           summary: 'Created member with Member V2',
           skipRemote: true,
           skipBackgroundSync: true,
+        })
+        // The isolated attendance service is the durable authority. Mirror its
+        // accepted local result into the existing card presentation without
+        // invoking the legacy attendance queue.
+        Object.entries(sundayAttendance).forEach(([attendanceDate, attendance]) => {
+          if (attendance === null || attendance === undefined) return
+          applyMemberV2AttendanceState?.({
+            memberId: savedMemberId,
+            tableName: currentTable,
+            attendanceDate,
+            status: attendance ? 'Present' : 'Absent',
+          })
         })
         setNewlyAddedMemberId(savedMemberId)
         onClose()

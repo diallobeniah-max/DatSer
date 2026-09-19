@@ -158,4 +158,16 @@ describe('MemberCard', () => {
     fireEvent.click(perSundayClear)
     expect(onAttendanceForDate).toHaveBeenCalledWith('member-1', null, sunday)
   })
+
+  it('sends both main-card Present and Absent choices through the single top-level handler', () => {
+    const onAttendance = vi.fn()
+
+    renderMemberCard({ onAttendance, attendanceStatus: undefined })
+
+    fireEvent.click(screen.getByTestId('member-card-attendance-member-1-present'))
+    fireEvent.click(screen.getByTestId('member-card-attendance-member-1-absent'))
+
+    expect(onAttendance).toHaveBeenNthCalledWith(1, 'member-1', true)
+    expect(onAttendance).toHaveBeenNthCalledWith(2, 'member-1', false)
+  })
 })

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
-import { supabase, isSupabaseConfigured as isSupabaseClientConfigured } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
 import {
   assertSupabaseMutationAffected,
@@ -86,7 +86,8 @@ import {
 } from '../utils/memberDeleteTombstones'
 import { isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { setRealDatserMemberV2Connection } from '../experiments/rxdb-member-phase1/realDatserConnectivity'
-import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
+import { getRealMemberV2UiAdapter, wakeRealMemberV2Sync } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
+import { buildMemberV2AttendanceOverlay, mergeMemberV2AttendanceOverlay } from '../experiments/rxdb-member-phase1/memberV2AttendanceOverlay'
 
 const AppContext = createContext()
 
@@ -817,6 +818,7 @@ export const AppProvider = ({ children }) => {
   const memberCountReconcileInFlightRef = useRef(false)
   const searchRequestRef = useRef(0)
   const attendanceSnapshotVersionRef = useRef(createAttendanceSnapshotVersionRegistry())
+  const memberV2AttendanceOverlayRef = useRef(new Map())
   const qrCheckInRunRef = useRef({ key: '', running: false })
   const hasInitialAppLoadRunRef = useRef(false)
   const resumeSyncCoordinatorRef = useRef(null)
@@ -1162,9 +1164,30 @@ export const AppProvider = ({ children }) => {
 
   const setOfflineMode = useCallback((mode) => {
     const nextMode = OFFLINE_MODES.includes(mode) ? mode : 'auto'
+    const browserOnline = isBrowserOnline()
+    const nextOfflineModeStatus = nextMode === 'offline'
+      ? 'forced-offline'
+      : browserOnline
+        ? 'online'
+        : 'online-unavailable'
     setOfflineModeState(nextMode)
+    setIsOnline(browserOnline)
     if (typeof window !== 'undefined') {
       localStorage.setItem(OFFLINE_MODE_STORAGE_KEY, nextMode)
+    }
+    // Do not wait for React's later effect cycle: a deliberate Offline ->
+    // Online choice must immediately wake both existing Member V2 queues.
+    if (isMemberV2LocalExperimentEnabled()) {
+      setRealDatserMemberV2Connection({
+        isOnline: browserOnline,
+        offlineMode: nextMode,
+        offlineModeStatus: nextOfflineModeStatus,
+      })
+      if (nextOfflineModeStatus === 'online') {
+        void wakeRealMemberV2Sync().catch((error) => {
+          console.warn('[Member V2 local experiment] reconnect sync could not start:', error)
+        })
+      }
     }
     window.setTimeout(async () => {
       try {
@@ -1314,6 +1337,7 @@ export const AppProvider = ({ children }) => {
 
     let cancelled = false
     let unsubscribe = null
+    let unsubscribeAttendance = null
     const applyLocalMemberV2Records = (localMembers = []) => {
       if (cancelled || !localMembers.length) return
       const byId = new Map(localMembers.map((member) => [String(member.id), member]))
@@ -1341,14 +1365,37 @@ export const AppProvider = ({ children }) => {
       })
     }
 
+    const applyLocalMemberV2AttendanceRecords = (records = []) => {
+      if (cancelled) return
+      memberV2AttendanceOverlayRef.current = buildMemberV2AttendanceOverlay(records)
+      setAttendanceData((previous) => {
+        const next = mergeMemberV2AttendanceOverlay({
+          attendanceData: previous,
+          tableName: currentTable,
+          overlay: memberV2AttendanceOverlayRef.current,
+        })
+        attendanceDataRef.current = next
+        return next
+      })
+    }
+
     void getRealMemberV2UiAdapter({
       supabase,
       userId: user.id,
       ownerId: dataOwnerId || user.id,
     }).then(async (adapter) => {
-      applyLocalMemberV2Records(await adapter.listLocalMembers())
+      const [localMembers, localAttendance] = await Promise.all([
+        adapter.listLocalMembers(),
+        adapter.listLocalAttendance(),
+      ])
+      applyLocalMemberV2Records(localMembers)
+      applyLocalMemberV2AttendanceRecords(localAttendance)
       unsubscribe = await adapter.subscribeLocalMembers(applyLocalMemberV2Records)
-      if (cancelled) unsubscribe()
+      unsubscribeAttendance = await adapter.subscribeLocalAttendance(applyLocalMemberV2AttendanceRecords)
+      if (cancelled) {
+        unsubscribe()
+        unsubscribeAttendance()
+      }
     }).catch((error) => {
       // This experiment must never interfere with the existing DatSer UI.
       // The normal edit flow will surface an actionable error if its own
@@ -1358,6 +1405,7 @@ export const AppProvider = ({ children }) => {
     return () => {
       cancelled = true
       unsubscribe?.()
+      unsubscribeAttendance?.()
     }
   }, [currentTable, dataOwnerId, memberHydrationState, user?.id])
   useEffect(() => {
@@ -1466,6 +1514,18 @@ export const AppProvider = ({ children }) => {
 
     const handleOnline = async () => {
       setIsOnline(true)
+      if (isMemberV2LocalExperimentEnabled()) {
+        setRealDatserMemberV2Connection({
+          isOnline: true,
+          offlineMode,
+          offlineModeStatus: offlineMode === 'offline' ? 'forced-offline' : 'online',
+        })
+        if (offlineMode !== 'offline') {
+          void wakeRealMemberV2Sync().catch((error) => {
+            console.warn('[Member V2 local experiment] browser reconnect sync could not start:', error)
+          })
+        }
+      }
       const pendingChanges = await getPendingOfflineChanges().catch(() => [])
       setOfflineStatusMessage(
         pendingChanges.length > 0
@@ -1482,6 +1542,13 @@ export const AppProvider = ({ children }) => {
     }
     const handleOffline = async () => {
       setIsOnline(false)
+      if (isMemberV2LocalExperimentEnabled()) {
+        setRealDatserMemberV2Connection({
+          isOnline: false,
+          offlineMode,
+          offlineModeStatus: offlineMode === 'offline' ? 'forced-offline' : 'online-unavailable',
+        })
+      }
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
       if (offlineMode === 'auto' && snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
         setOfflineStatusMessage('Offline Mode - using saved local data.')
@@ -1863,7 +1930,10 @@ export const AppProvider = ({ children }) => {
 
   // Check if Supabase is properly configured
   const isSupabaseConfigured = useCallback(() => {
-    return isSupabaseClientConfigured()
+    // The client itself is built from either the normal environment values or
+    // the private Android validation runtime configuration. Treating a live
+    // client as configured also keeps existing isolated test mocks compatible.
+    return Boolean(supabase)
   }, [])
 
   const fetchOwnerStickyDefaults = useCallback(async (ownerId) => {
@@ -4175,6 +4245,29 @@ export const AppProvider = ({ children }) => {
     })
   }, [currentTable])
 
+  // Member V2 attendance is an isolated local-only experiment. Its service
+  // owns persistence and server synchronization; this bridge only mirrors the
+  // already-accepted local result into the existing card UI. It deliberately
+  // does not enqueue the legacy attendance mutation path.
+  const applyMemberV2AttendanceState = useCallback(({ memberId, tableName, attendanceDate, status }) => {
+    if (!memberId || tableName !== currentTable || !/^\d{4}-\d{2}-\d{2}$/.test(String(attendanceDate || ''))) return
+    const existing = memberV2AttendanceOverlayRef.current
+    const record = {
+      table_name: tableName,
+      member_id: String(memberId),
+      attendance_date: String(attendanceDate),
+      status: status === 'Present' ? 'Present' : status === 'Absent' ? 'Absent' : null,
+      is_deleted: status !== 'Present' && status !== 'Absent',
+    }
+    memberV2AttendanceOverlayRef.current = buildMemberV2AttendanceOverlay([
+      ...Array.from(existing.values()).filter((item) => !(item.table_name === record.table_name && String(item.member_id) === record.member_id && item.attendance_date === record.attendance_date)),
+      record,
+    ])
+    const [year, month, day] = String(attendanceDate).split('-').map(Number)
+    const effectiveDate = new Date(year, month - 1, day)
+    applyLocalAttendanceState(memberId, effectiveDate, status === 'Present' ? true : status === 'Absent' ? false : null)
+  }, [applyLocalAttendanceState, currentTable])
+
   const rollbackLocalAttendanceState = useCallback((memberIds, effectiveDate, previousState = {}) => {
     const ids = Array.isArray(memberIds) ? memberIds : [memberIds]
     const dateKey = getLocalDateString(effectiveDate)
@@ -4234,7 +4327,13 @@ export const AppProvider = ({ children }) => {
           }
         })
       })
-      return next
+      const merged = mergeMemberV2AttendanceOverlay({
+        attendanceData: next,
+        tableName,
+        overlay: memberV2AttendanceOverlayRef.current,
+      })
+      attendanceDataRef.current = merged
+      return merged
     })
   }, [currentTable])
 
@@ -4881,8 +4980,13 @@ export const AppProvider = ({ children }) => {
         ...previous,
         [dateKey]: attendanceMap || {}
       }
-      attendanceDataRef.current = next
-      return next
+      const merged = mergeMemberV2AttendanceOverlay({
+        attendanceData: next,
+        tableName,
+        overlay: memberV2AttendanceOverlayRef.current,
+      })
+      attendanceDataRef.current = merged
+      return merged
     })
     return attendanceMap || {}
   }, [currentTable, fetchAttendanceForDateInTable])
@@ -7588,8 +7692,13 @@ export const AppProvider = ({ children }) => {
         Object.keys(reconciledAttendanceData).forEach(dk => {
           next[dk] = { ...(next[dk] || {}), ...reconciledAttendanceData[dk] }
         })
-        attendanceDataRef.current = next
-        return next
+        const merged = mergeMemberV2AttendanceOverlay({
+          attendanceData: next,
+          tableName: currentTable,
+          overlay: memberV2AttendanceOverlayRef.current,
+        })
+        attendanceDataRef.current = merged
+        return merged
       })
       console.log('Loaded attendance data for all dates:', Object.keys(reconciledAttendanceData), 'from', allData.length, 'rows')
       return reconciledAttendanceData
@@ -8784,6 +8893,7 @@ export const AppProvider = ({ children }) => {
     attendanceData,
     setAttendanceData,
     markAttendance,
+    applyMemberV2AttendanceState,
     bulkAttendance,
     fetchAttendanceForDate,
     fetchAttendanceForDateInTable,
@@ -8887,7 +8997,7 @@ export const AppProvider = ({ children }) => {
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,
     refreshSearch, forceRefreshMembers, forceRefreshMembersSilent, refreshMemberPreviewById,
     searchMemberAcrossAllTables, setMemberAttendanceFromOtherMonth, presentMemberFromOtherMonth, addMember, updateMember, deleteMember,
-    fetchMembers, fetchMoreMembers, markAttendance, bulkAttendance, fetchAttendanceForDate, fetchAttendanceForDateInTable, fetchAndApplyAttendanceForDate,
+    fetchMembers, fetchMoreMembers, markAttendance, applyMemberV2AttendanceState, bulkAttendance, fetchAttendanceForDate, fetchAttendanceForDateInTable, fetchAndApplyAttendanceForDate,
     loadAllAttendanceData, loadAllBadgeData, changeCurrentTable, createNewMonth,
     deleteMonthTable, fetchMonthlyTables, getAttendanceColumns, getAvailableAttendanceDates,
     findAttendanceColumnForDate, calculateAttendanceRate, calculateMemberBadge,

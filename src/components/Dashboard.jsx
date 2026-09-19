@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspense } from 'react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
 import { Search, Users, UserX, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine, Loader2 } from 'lucide-react'
@@ -28,6 +29,8 @@ import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import SearchScopeModal from './SearchScopeModal'
 import { formatHistoricalScopeSummary } from '../utils/historicalSearchSettings'
+import { isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 import { getRecentCsvImportMemberProvenance, fetchRecentCsvImportMemberProvenance } from '../utils/csvImportMemberProvenance'
 import {
   resolveInlineAttendanceAction,
@@ -413,6 +416,7 @@ const Dashboard = ({ isAdmin = false }) => {
     deleteMember,
     logActivity,
     markAttendance,
+    applyMemberV2AttendanceState,
     bulkAttendance,
     fetchAndApplyAttendanceForDate,
     attendanceData,
@@ -445,7 +449,6 @@ const Dashboard = ({ isAdmin = false }) => {
     missingInfoPromptEnabled,
     isCollaborator,
     dataOwnerId,
-    user,
     isDeveloperBypass,
     searchSuggestionView,
     preferences,
@@ -457,8 +460,10 @@ const Dashboard = ({ isAdmin = false }) => {
     recentMemberEdits,
     formatMemberName
   } = useApp()
+  const { user } = useAuth()
   const { isDarkMode } = useTheme()
   const workspaceOwnerId = dataOwnerId || user?.id
+  const memberV2Enabled = isMemberV2LocalExperimentEnabled()
   const [recentCsvImportMembers, setRecentCsvImportMembers] = useState(() => getRecentCsvImportMemberProvenance({ ownerId: workspaceOwnerId }))
 
   useEffect(() => {
@@ -833,7 +838,8 @@ const Dashboard = ({ isAdmin = false }) => {
 
     setIsBulkApplying(true)
     try {
-      await bulkAttendance(memberIds, dateToUse, present)
+      if (memberV2Enabled) await saveMemberV2AttendanceForMembers(memberIds, getDateString(dateToUse), present)
+      else await bulkAttendance(memberIds, dateToUse, present)
       // Record action timestamps for chronological sorting
       const dateKey = getDateString(dateToUse)
       const now = Date.now()
@@ -1460,9 +1466,74 @@ const Dashboard = ({ isAdmin = false }) => {
     setAttendanceLoading((previous) => ({ ...previous, [loadingKey]: nextCount > 0 }))
   }
 
+  const saveMemberV2Attendance = async (member, attendanceDate, present) => {
+    if (!memberV2Enabled) return null
+    if (!member || !workspaceOwnerId) throw new Error('Unable to determine the Member V2 workspace for attendance.')
+    const targetTable = member.__source_table || member.source_table || currentTable
+    if (targetTable !== currentTable) {
+      throw new Error('Attendance can only be changed from the member\'s selected source month.')
+    }
+    const adapter = await getRealMemberV2UiAdapter({ supabase, userId: user?.id, ownerId: workspaceOwnerId })
+    const result = await adapter.saveAttendance({
+      member,
+      tableName: targetTable,
+      attendanceDate,
+      status: present === null ? null : present ? 'Present' : 'Absent',
+    })
+    applyMemberV2AttendanceState?.({
+      memberId: member.id,
+      tableName: targetTable,
+      attendanceDate,
+      status: present === null ? null : present ? 'Present' : 'Absent',
+    })
+    return {
+      success: true,
+      offline: result.syncState.state === 'OFFLINE_PENDING',
+      pending: result.syncState.pendingChanges > 0,
+      syncState: result.syncState,
+    }
+  }
+
+  const showMemberV2AttendanceOutcome = (member, attendanceDate, actionLabel, toastKind, result) => {
+    if (!member) return
+    const syncState = result?.syncState || {}
+    const pending = Number(syncState.pendingChanges || 0) > 0
+    const failed = Number(syncState.failedChanges || 0) > 0
+    const conflicted = Number(syncState.conflicts || 0) > 0
+    const kind = conflicted || failed ? 'error' : pending ? 'sync' : toastKind
+    const details = conflicted
+      ? 'Saved on this device, but the server has a conflicting attendance change to resolve.'
+      : failed
+        ? 'Saved on this device, but the server has not confirmed it yet. It will remain available for retry.'
+        : pending
+          ? 'Saved on this device and queued for automatic sync.'
+          : `Attendance confirmed for ${attendanceDate}.`
+    notify.show(kind, {
+      title: getMemberSearchName(member),
+      message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+      details,
+      toastId: `attendance:${member.id}:${attendanceDate}`,
+      autoClose: conflicted || failed ? 5200 : 2400,
+    })
+  }
+
+  // Member V2 has no bulk RPC by design. Fan out only through its durable
+  // per-member attendance service so the experiment never mixes an RxDB write
+  // with the legacy monthly-table queue.
+  const saveMemberV2AttendanceForMembers = async (memberIds, attendanceDate, present) => {
+    const uniqueIds = Array.from(new Set(memberIds.map(String)))
+    const results = []
+    for (const memberId of uniqueIds) {
+      const member = members.find((candidate) => String(candidate.id) === memberId)
+      if (!member) throw new Error('A selected member is no longer available for attendance.')
+      results.push(await saveMemberV2Attendance(member, attendanceDate, present))
+    }
+    return results
+  }
+
   const handleAttendance = async (memberId, present) => {
     const targetDate = getDateString(selectedAttendanceDate)
-    const actionKey = `${memberId}:${targetDate || 'no-date'}:${present ? 'present' : 'absent'}`
+    const actionKey = `${memberId}:${targetDate || 'no-date'}:${present === null ? 'clear' : present ? 'present' : 'absent'}`
 
     if (attendanceActionLocksRef.current.has(actionKey)) {
       return
@@ -1470,7 +1541,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
     attendanceActionLocksRef.current.add(actionKey)
 
-    const member = members.find(m => m.id === memberId)
+    const member = members.find((candidate) => String(candidate.id) === String(memberId))
     try {
       // Check for missing data before marking attendance
       if (member && checkMissingDataBeforeAttendance(member, present)) {
@@ -1495,7 +1566,7 @@ const Dashboard = ({ isAdmin = false }) => {
       else if (nextStatus) success()
       else errorHaptic()
 
-      if (member) {
+      if (member && !memberV2Enabled) {
         notify.show(toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${timeLabel}`,
@@ -1505,9 +1576,13 @@ const Dashboard = ({ isAdmin = false }) => {
         })
       }
 
-      const result = await markAttendance(memberId, new Date(targetDate), nextStatus)
+      const result = memberV2Enabled
+        ? await saveMemberV2Attendance(member, targetDate, nextStatus)
+        : await markAttendance(memberId, new Date(targetDate), nextStatus)
       if (result?.superseded) return
-      if (member) {
+      if (member && memberV2Enabled) {
+        showMemberV2AttendanceOutcome(member, targetDate, actionLabel, toastKind, result)
+      } else if (member) {
         notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
@@ -1533,7 +1608,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
   const handleAttendanceForDate = async (memberId, present, specificDate) => {
     const loadingKey = `${memberId}_${specificDate}`
-    const actionKey = `${memberId}:${specificDate || 'no-date'}:${present ? 'present' : 'absent'}`
+    const actionKey = `${memberId}:${specificDate || 'no-date'}:${present === null ? 'clear' : present ? 'present' : 'absent'}`
 
     if (attendanceActionLocksRef.current.has(actionKey)) {
       return
@@ -1544,7 +1619,7 @@ const Dashboard = ({ isAdmin = false }) => {
       beginAttendanceSaving(loadingKey)
       // Read from date-keyed attendance map
       const currentStatus = attendanceData[specificDate]?.[memberId]
-      const member = members.find(m => m.id === memberId)
+      const member = members.find((candidate) => String(candidate.id) === String(memberId))
       const nextStatus = currentStatus === present ? null : present
       const actionLabel = nextStatus === null ? 'Cleared' : nextStatus ? 'Present' : 'Absent'
       const toastKind = nextStatus === null ? 'info' : nextStatus ? 'success' : 'warning'
@@ -1555,7 +1630,7 @@ const Dashboard = ({ isAdmin = false }) => {
       else if (nextStatus) success()
       else errorHaptic()
 
-      if (member) {
+      if (member && !memberV2Enabled) {
         notify.show(toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${timeLabel}`,
@@ -1565,9 +1640,13 @@ const Dashboard = ({ isAdmin = false }) => {
         })
       }
 
-      const result = await markAttendance(memberId, new Date(specificDate), nextStatus)
+      const result = memberV2Enabled
+        ? await saveMemberV2Attendance(member, specificDate, nextStatus)
+        : await markAttendance(memberId, new Date(specificDate), nextStatus)
       if (result?.superseded) return
-      if (member) {
+      if (member && memberV2Enabled) {
+        showMemberV2AttendanceOutcome(member, specificDate, actionLabel, toastKind, result)
+      } else if (member) {
         notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
@@ -1606,7 +1685,8 @@ const Dashboard = ({ isAdmin = false }) => {
       onConfirm: async () => {
         try {
           const memberIds = contextFilteredMembers.map(member => member.id)
-          await bulkAttendance(memberIds, dateToUse, present)
+          if (memberV2Enabled) await saveMemberV2AttendanceForMembers(memberIds, getDateString(dateToUse), present)
+          else await bulkAttendance(memberIds, dateToUse, present)
           // Record action timestamps for chronological sorting
           const bulkDateKey = getDateString(dateToUse)
           const bulkNow = Date.now()
@@ -1656,11 +1736,13 @@ const Dashboard = ({ isAdmin = false }) => {
       onConfirm: async () => {
         setIsBulkApplying(true)
         try {
-          const result = await bulkAttendance(markedMemberIds, new Date(selectedSundayDate), null)
-          if (!result?.success) throw result?.error || new Error('Attendance clear could not be verified.')
-          await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
+          const result = memberV2Enabled
+            ? await saveMemberV2AttendanceForMembers(markedMemberIds, selectedSundayDate, null)
+            : await bulkAttendance(markedMemberIds, new Date(selectedSundayDate), null)
+          if (!memberV2Enabled && !result?.success) throw result?.error || new Error('Attendance clear could not be verified.')
+          if (!memberV2Enabled) await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
           selection()
-          toast.success(`Cleared ${result.updated ?? markedMemberIds.length} attendance marks for ${dateLabel}.`)
+          toast.success(`Cleared ${memberV2Enabled ? markedMemberIds.length : result.updated ?? markedMemberIds.length} attendance marks for ${dateLabel}.`)
         } catch (error) {
           console.error('Error clearing selected Sunday attendance:', error)
           errorHaptic()
@@ -1774,21 +1856,26 @@ const Dashboard = ({ isAdmin = false }) => {
     try {
       // Transfer present members
       if (presentIds.length > 0) {
-        await bulkAttendance(presentIds, new Date(transferTargetDate), true)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers(presentIds, transferTargetDate, true)
+        else await bulkAttendance(presentIds, new Date(transferTargetDate), true)
       }
       // Transfer absent members
       if (absentIds.length > 0) {
-        await bulkAttendance(absentIds, new Date(transferTargetDate), false)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers(absentIds, transferTargetDate, false)
+        else await bulkAttendance(absentIds, new Date(transferTargetDate), false)
       }
 
       // Clear source date attendance for transferred members
       for (const id of [...presentIds, ...absentIds]) {
-        await markAttendance(id, new Date(selectedSundayDate), null)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers([id], selectedSundayDate, null)
+        else await markAttendance(id, new Date(selectedSundayDate), null)
       }
 
       // Refresh attendance data
-      await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
-      await fetchAndApplyAttendanceForDate(new Date(transferTargetDate))
+      if (!memberV2Enabled) {
+        await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
+        await fetchAndApplyAttendanceForDate(new Date(transferTargetDate))
+      }
 
       const sourceLabel = new Date(selectedSundayDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       const targetLabel = new Date(transferTargetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -1864,10 +1951,12 @@ const Dashboard = ({ isAdmin = false }) => {
       if (status === null) {
         // Clear individually when status is null
         for (const id of memberIds) {
-          await markAttendance(id, new Date(targetDate), null)
+          if (memberV2Enabled) await saveMemberV2AttendanceForMembers([id], targetDate, null)
+          else await markAttendance(id, new Date(targetDate), null)
         }
       } else {
-        await bulkAttendance(memberIds, new Date(targetDate), status)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers(memberIds, targetDate, status)
+        else await bulkAttendance(memberIds, new Date(targetDate), status)
       }
       // Record action timestamps for chronological sorting
       const multiNow = Date.now()
@@ -2476,7 +2565,9 @@ const Dashboard = ({ isAdmin = false }) => {
     const timer = window.setTimeout(async () => {
       turboCheckInRef.current = { key: runKey, running: true }
       try {
-        const result = await markAttendance(exactMember.id, date, true)
+        const result = memberV2Enabled
+          ? await saveMemberV2Attendance(exactMember, dateKey, true)
+          : await markAttendance(exactMember.id, date, true)
         if (result?.success === false) throw result.error || new Error('Check-in failed')
         success()
         if (memberCodeTurboNotificationEnabled) {

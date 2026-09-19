@@ -7,7 +7,14 @@ import { editableMemberPayload, mergeMemberPayload, toServerMemberPayload, valid
 
 const PULL_LIMIT = 100
 const DEFAULT_BATCH_SIZE = 25
-const now = () => new Date().toISOString()
+// Mutations are ordered by this durable timestamp. Date.now() alone can give
+// several consecutive edits the same millisecond, leaving RxDB free to replay
+// them in a different order after a restart.
+let lastTimestampMs = 0
+const now = () => {
+  lastTimestampMs = Math.max(Date.now(), lastTimestampMs + 1)
+  return new Date(lastTimestampMs).toISOString()
+}
 const newId = (kind, memberId) => `${kind}:${memberId}:${globalThis.crypto.randomUUID()}`
 const asJson = (document) => document?.toJSON?.() || document
 
@@ -263,6 +270,12 @@ export class MemberService {
 
   async #pushMutation(mutation) {
     if (!this.#isBackendReachable()) return
+    // A preceding local edit for this member can be confirmed while this
+    // batch is being processed. Always use the durable, rebased mutation row
+    // so a later edit does not submit an obsolete revision/fingerprint pair.
+    const currentMutation = asJson(await this.database.mutations.findOne(mutation.id).exec())
+    if (!currentMutation || !isPendingMemberSaveState(currentMutation.save_state)) return
+    mutation = currentMutation
     const member = await this.getMember(mutation.member_id)
     if (!member) return
     const baseServerRevision = mutation.operation === 'create_member_v2' ? null : (mutation.base_server_revision || member.server_revision)
@@ -294,12 +307,22 @@ export class MemberService {
     const revision = Number(response.server_revision || current.server_revision)
     await this.database.mutations.findOne(mutation.id).remove()
     const remaining = await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING])
+    const rebasedRemaining = []
     for (const next of remaining) {
-      if (next.operation === 'update_member_v2') await this.#patch(this.database.mutations, next.id, { base_server_revision: revision, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+      if (next.operation !== 'update_member_v2') {
+        rebasedRemaining.push(next)
+        continue
+      }
+      // The RPC fingerprints the base revision. This mutation has not reached
+      // the server yet, so rebase it without changing its durable request ID.
+      const payloadFingerprint = await this.#fingerprint({ operation: next.operation, tableName: next.table_name, memberId: next.member_id, baseServerRevision: revision, payload: next.payload })
+      const rebased = { ...next, base_server_revision: revision, payload_fingerprint: payloadFingerprint, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING }
+      await this.#patch(this.database.mutations, next.id, { base_server_revision: revision, payload_fingerprint: payloadFingerprint, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+      rebasedRemaining.push(rebased)
     }
-    const overlay = remaining.filter((entry) => entry.operation === 'update_member_v2').reduce((data, entry) => mergeMemberPayload(data, entry.payload), canonical)
-    const nextState = remaining.length ? MEMBER_SAVE_STATES.LOCAL_PENDING : MEMBER_SAVE_STATES.SERVER_CONFIRMED
-    await this.#patch(this.database.members, mutation.member_id, { data: overlay, server_revision: revision, table_name: response.table_name || current.table_name, is_deleted: false, save_state: nextState, conflict_remote: null, last_error: null, ...memberFields(overlay, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: nextState, requestId: remaining[0]?.id || null, operation: remaining[0]?.operation || null, fingerprint: remaining[0]?.payload_fingerprint || null, baseRevision: remaining[0]?.base_server_revision ?? revision, retryCount: current.retry_count || 0 }), updated_at: now() })
+    const overlay = rebasedRemaining.filter((entry) => entry.operation === 'update_member_v2').reduce((data, entry) => mergeMemberPayload(data, entry.payload), canonical)
+    const nextState = rebasedRemaining.length ? MEMBER_SAVE_STATES.LOCAL_PENDING : MEMBER_SAVE_STATES.SERVER_CONFIRMED
+    await this.#patch(this.database.members, mutation.member_id, { data: overlay, server_revision: revision, table_name: response.table_name || current.table_name, is_deleted: false, save_state: nextState, conflict_remote: null, last_error: null, ...memberFields(overlay, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: nextState, requestId: rebasedRemaining[0]?.id || null, operation: rebasedRemaining[0]?.operation || null, fingerprint: rebasedRemaining[0]?.payload_fingerprint || null, baseRevision: rebasedRemaining[0]?.base_server_revision ?? revision, retryCount: current.retry_count || 0 }), updated_at: now() })
   }
 
   async #failMutation(mutation, message) {

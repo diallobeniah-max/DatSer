@@ -4,12 +4,13 @@ import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
 import { createMemberAttendanceService } from './MemberAttendanceService'
 import { MEMBER_SAVE_STATES } from './memberSaveState'
 import { createMemberV2NetworkController } from '../../experiments/rxdb-member-phase1/NetworkController'
+import { createMemberV2AttendanceFingerprint } from '../../experiments/rxdb-member-phase1/attendanceContractFingerprint'
 
 const tableName = 'December_2025'
 const services = []
 const rpcClient = (handler) => ({ rpc: handler, removeChannel: async () => {}, channel: () => ({ on: () => ({ subscribe: () => ({}) }) }) })
-const makeService = async ({ rpc, online = () => false, connectivity = null } = {}) => {
-  const service = await createMemberAttendanceService({ supabase: rpcClient(rpc), userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online, connectivity })
+const makeService = async ({ rpc, online = () => false, connectivity = null, canPushMutation = null } = {}) => {
+  const service = await createMemberAttendanceService({ supabase: rpcClient(rpc), userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online, connectivity, canPushMutation })
   services.push(service); await service.start(); return service
 }
 afterEach(async () => { await Promise.all(services.splice(0).map((service) => service.stop())) })
@@ -59,10 +60,15 @@ describe('Member V2 isolated attendance service', () => {
     expect((await service.getSyncState()).state).toBe(MEMBER_SAVE_STATES.FAILED_RETRYABLE)
   })
 
-  it('rebases rapid local changes for one Sunday without duplicating its logical row', async () => {
-    let online = false; let revision = 0; const memberId = crypto.randomUUID()
+  it('rebases rapid local changes for one Sunday with a matching fingerprint and without duplicating its logical row', async () => {
+    let online = false; let revision = 0; const memberId = crypto.randomUUID(); const requestRevisions = []
     const service = await makeService({ online: () => online, rpc: async (name, args) => {
       if (name === 'pull_member_v2_attendance_changes_v2') return { data: { changes: [], next_cursor: revision, has_more: false }, error: null }
+      const operation = args.p_attendance_status === null ? 'clear_member_v2_attendance' : 'set_member_v2_attendance'
+      const expectedFingerprint = await createMemberV2AttendanceFingerprint({ operation, ownerId: service.ownerId, memberId: args.p_member_id, tableName: args.p_table_name, attendanceDate: args.p_attendance_date, status: args.p_attendance_status, baseServerRevision: args.p_base_server_revision })
+      requestRevisions.push(args.p_base_server_revision)
+      if (args.p_payload_fingerprint !== expectedFingerprint) return { data: null, error: new Error('Attendance payload fingerprint does not match') }
+      if (args.p_base_server_revision !== (revision || null)) return { data: { status: 'CONFLICT', server_revision: revision }, error: null }
       revision += 1; return { data: { status: 'SUCCESS', server_revision: revision, attendance: { attendance_id: args.p_attendance_id, attendance_date: args.p_attendance_date, status: args.p_attendance_status, is_deleted: args.p_attendance_status === null, table_name: args.p_table_name } }, error: null }
     } })
     await service.saveAttendance({ memberId, tableName, attendanceDate: '2025-12-21', status: 'Present' })
@@ -71,5 +77,29 @@ describe('Member V2 isolated attendance service', () => {
     expect(await service.getForMember(memberId)).toHaveLength(1)
     expect((await service.getForMember(memberId))[0].status).toBe('Absent')
     expect((await service.getSyncState()).state).toBe('SYNCED')
+    expect(requestRevisions).toEqual([null, 1])
+  })
+
+  it('holds attendance for an unconfirmed local member until its dependent profile is confirmed', async () => {
+    let confirmed = false; const calls = []; const memberId = crypto.randomUUID()
+    const service = await makeService({
+      online: () => true,
+      canPushMutation: async () => confirmed,
+      rpc: async (name, args) => {
+        calls.push(name)
+        if (name === 'pull_member_v2_attendance_changes_v2') return { data: { changes: [], next_cursor: 1, has_more: false }, error: null }
+        return { data: { status: 'SUCCESS', server_revision: 1, attendance: { attendance_id: args.p_attendance_id, attendance_date: args.p_attendance_date, status: args.p_attendance_status, is_deleted: false, table_name: args.p_table_name } }, error: null }
+      },
+    })
+    const pending = await service.saveAttendance({ memberId, tableName, attendanceDate: '2025-12-28', status: 'Present' })
+    await service.syncNow()
+    expect(calls).not.toContain('save_member_v2_attendance')
+    expect((await service.getSyncState()).pendingChanges).toBe(1)
+
+    confirmed = true
+    await service.syncNow()
+    expect(calls.filter((name) => name === 'save_member_v2_attendance')).toEqual(['save_member_v2_attendance'])
+    expect((await service.getForMember(memberId))[0]).toMatchObject({ status: 'Present', save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+    expect(pending.requestId).toMatch(/^member_v2_attendance:/)
   })
 })

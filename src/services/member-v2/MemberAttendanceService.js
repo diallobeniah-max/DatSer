@@ -3,7 +3,13 @@ import { createMemberV2ScopeKey } from '../../data/member-v2/rxdb/createMemberV2
 import { createMemberV2AttendanceFingerprint } from '../../experiments/rxdb-member-phase1/attendanceContractFingerprint'
 import { MEMBER_SAVE_STATES, isPendingMemberSaveState } from './memberSaveState'
 
-const now = () => new Date().toISOString()
+// Keep queue ordering deterministic when a rapid P → A → Clear sequence is
+// created within one clock millisecond.
+let lastTimestampMs = 0
+const now = () => {
+  lastTimestampMs = Math.max(Date.now(), lastTimestampMs + 1)
+  return new Date(lastTimestampMs).toISOString()
+}
 const asJson = (doc) => doc?.toJSON?.() || doc
 const onlineByDefault = () => typeof navigator === 'undefined' || navigator.onLine !== false
 const recordId = ({ ownerId, memberId, attendanceDate }) => `${ownerId}:${memberId}:${attendanceDate}`
@@ -11,16 +17,18 @@ const mutationId = (memberId) => `member_v2_attendance:${memberId}:${globalThis.
 const validStatus = (status) => status === null || status === 'Present' || status === 'Absent'
 
 export class MemberAttendanceService {
-  constructor({ supabase, userId, ownerId, database, online = onlineByDefault, connectivity = null, closeDatabase = false, realtimeDebounceMs = 350 }) {
+  constructor({ supabase, userId, ownerId, database, online = onlineByDefault, connectivity = null, canPushMutation = null, closeDatabase = false, realtimeDebounceMs = 350 }) {
     if (!supabase?.rpc || !userId || !ownerId || !database) throw new Error('Member V2 attendance requires an authenticated local workspace.')
     this.supabase = supabase; this.userId = userId; this.ownerId = ownerId; this.database = database; this.scopeKey = createMemberV2ScopeKey({ userId, ownerId })
-    this.online = online; this.connectivity = connectivity; this.closeDatabase = closeDatabase; this.realtimeDebounceMs = realtimeDebounceMs; this.channel = null; this.timer = null; this.syncPromise = null; this.connectivityUnsubscribe = null
+    this.online = online; this.connectivity = connectivity; this.canPushMutation = canPushMutation; this.closeDatabase = closeDatabase; this.realtimeDebounceMs = realtimeDebounceMs; this.channel = null; this.timer = null; this.syncPromise = null; this.connectivityUnsubscribe = null
   }
 
   static async create(options) { const database = options.database || await createMemberV2AttendanceDatabase(options); return new MemberAttendanceService({ ...options, database, closeDatabase: !options.database }) }
   async start() { await this.#ensureSync(); this.connectivityUnsubscribe = this.connectivity?.subscribe(() => { void this.#handleConnectivityChange() }) || null; this.#subscribeRealtime(); if (this.#isBackendReachable()) void this.syncNow(); return this }
   async stop() { if (this.timer) clearTimeout(this.timer); this.connectivityUnsubscribe?.(); this.connectivityUnsubscribe = null; await this.syncPromise?.catch(() => {}); await this.#unsubscribeRealtime(); if (this.closeDatabase) await this.database.close() }
+  observeAll() { return this.database.attendance.find({ selector: { scope_key: this.scopeKey }, sort: [{ attendance_date: 'asc' }] }).$ }
   observeForMember(memberId) { return this.database.attendance.find({ selector: { scope_key: this.scopeKey, member_id: memberId, is_deleted: false }, sort: [{ attendance_date: 'asc' }] }).$ }
+  async getAll() { return (await this.database.attendance.find({ selector: { scope_key: this.scopeKey }, sort: [{ attendance_date: 'asc' }] }).exec()).map(asJson) }
   async getForMember(memberId) { return (await this.database.attendance.find({ selector: { scope_key: this.scopeKey, member_id: memberId, is_deleted: false }, sort: [{ attendance_date: 'asc' }] }).exec()).map(asJson) }
   async getSyncState() {
     const sync = asJson(await this.database.sync.findOne(this.scopeKey).exec()); const mutations = (await this.database.mutations.find({ selector: { scope_key: this.scopeKey } }).exec()).map(asJson)
@@ -50,6 +58,16 @@ export class MemberAttendanceService {
   async #pushPending() { const docs = (await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: { $in: [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE] } }, sort: [{ created_at: 'asc' }] }).exec()).map(asJson); for (const mutation of docs.slice(0, 25)) await this.#pushMutation(mutation) }
   async #pushMutation(mutation) {
     if (!this.#isBackendReachable()) return
+    // Earlier writes for this same member/Sunday can rebase this mutation
+    // while #pushPending is iterating its initial snapshot. Re-read the
+    // durable row so we send the rebased server revision with the unchanged
+    // request ID instead of manufacturing a false conflict on reconnect.
+    mutation = asJson(await this.database.mutations.findOne(mutation.id).exec())
+    if (!mutation || ![MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE].includes(mutation.save_state)) return
+    // A profile created while offline has a durable local UUID but no trusted
+    // server revision yet. Keep dependent attendance local until Member V2 has
+    // confirmed the profile; never send a dangling attendance reference.
+    if (this.canPushMutation && !await this.canPushMutation(mutation)) return
     const record = asJson(await this.database.attendance.findOne(recordId({ ownerId: this.ownerId, memberId: mutation.member_id, attendanceDate: mutation.attendance_date })).exec()); if (!record) return
     await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.SYNCING, last_error: null, updated_at: now() }); await this.#patch(this.database.attendance, record.id, { save_state: MEMBER_SAVE_STATES.SYNCING, last_error: null, updated_at: now() })
     if (!this.#isBackendReachable()) { await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() }); await this.#patch(this.database.attendance, record.id, { save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() }); return }
@@ -58,11 +76,21 @@ export class MemberAttendanceService {
     if (error || !data || !['SUCCESS', 'IDEMPOTENT_REPLAY'].includes(data.status)) return this.#fail(mutation, error?.message || 'Server did not confirm attendance.')
     const remaining = (await this.database.mutations.find({ selector: { scope_key: this.scopeKey, member_id: mutation.member_id, attendance_date: mutation.attendance_date, save_state: { $in: [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING] } } }).exec()).map(asJson).filter((item) => item.id !== mutation.id)
     await (await this.database.mutations.findOne(mutation.id).exec()).remove()
-    const remote = data.attendance || {}; const revision = Number(data.server_revision || record.server_revision); const nextMutation = remaining.at(-1)
+    const remote = data.attendance || {}; const revision = Number(data.server_revision || record.server_revision)
     // A quick local Present → Absent → Clear sequence is still one canonical
     // attendance record. Keep its newest local intent visible and rebase each
     // queued follow-up on the server revision that was just acknowledged.
-    for (const pending of remaining) await this.#patch(this.database.mutations, pending.id, { base_server_revision: revision, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+    const rebasedRemaining = []
+    for (const pending of remaining) {
+      // The server validates a revision-bound fingerprint before it reserves a
+      // request. Rebase both values together and retain the request ID.
+      const operation = pending.status === null ? 'clear_member_v2_attendance' : 'set_member_v2_attendance'
+      const payloadFingerprint = await createMemberV2AttendanceFingerprint({ operation, ownerId: this.ownerId, memberId: pending.member_id, tableName: pending.table_name, attendanceDate: pending.attendance_date, status: pending.status, baseServerRevision: revision })
+      const rebased = { ...pending, base_server_revision: revision, payload_fingerprint: payloadFingerprint, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING }
+      await this.#patch(this.database.mutations, pending.id, { base_server_revision: revision, payload_fingerprint: payloadFingerprint, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+      rebasedRemaining.push(rebased)
+    }
+    const nextMutation = rebasedRemaining.at(-1)
     await this.#patch(this.database.attendance, record.id, { attendance_id: remote.attendance_id || record.attendance_id, table_name: remote.table_name || record.table_name, status: nextMutation ? nextMutation.status : remote.status, is_deleted: nextMutation ? nextMutation.status === null : Boolean(remote.is_deleted), server_revision: revision, save_state: nextMutation ? MEMBER_SAVE_STATES.LOCAL_PENDING : MEMBER_SAVE_STATES.SERVER_CONFIRMED, conflict_remote: null, last_error: null, updated_at: now() })
   }
   async #fail(mutation, message) { const retryCount = (mutation.retry_count || 0) + 1; await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, last_error: message, retry_count: retryCount, updated_at: now() }); await this.#patch(this.database.attendance, recordId({ ownerId: this.ownerId, memberId: mutation.member_id, attendanceDate: mutation.attendance_date }), { save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, last_error: message, updated_at: now() }) }

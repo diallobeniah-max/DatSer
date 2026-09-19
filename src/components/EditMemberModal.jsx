@@ -31,7 +31,7 @@ const normalizeEditablePhoneNumber = (value) => {
 }
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
-  const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
+  const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById, applyMemberV2AttendanceState } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
@@ -535,39 +535,58 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         if (!isSupabaseConfigured()) {
           throw new Error('Member V2 is available only with the local Supabase test stack.')
         }
-        if (attendanceUpdates.length > 0) {
-          throw new Error('Attendance is not part of the Member V2 experiment. Save profile changes separately, then use the existing attendance controls.')
-        }
         if (tagSelectionChanged) {
           throw new Error('Workspace tags are not part of the Member V2 experiment. Remove that tag change before saving this profile.')
         }
         const targetTable = getMemberSourceTable(latestMember, currentTable)
+        if (attendanceUpdates.length > 0 && targetTable !== currentTable) {
+          throw new Error('Attendance can only be changed from this member\'s selected source month.')
+        }
         const normalizedUpdates = {
           ...changedPayload,
           ...(Object.prototype.hasOwnProperty.call(changedPayload, 'gender')
             ? { gender: String(changedPayload.gender || '').trim().replace(/^./, (character) => character.toUpperCase()) }
             : {}),
         }
-        const result = await (await getRealMemberV2UiAdapter({
+        const adapter = await getRealMemberV2UiAdapter({
           supabase,
           userId: user?.id,
           ownerId,
-        })).update({
-          member: latestMember,
-          tableName: targetTable,
-          updates: normalizedUpdates,
         })
-        await refreshMemberPreviewById?.(latestMember.id, {
-          tableName: targetTable,
-          fallbackMember: result.member,
-          source: 'member-v2-update',
-          action: 'update',
-          summary: 'Updated member with Member V2',
-          skipRemote: true,
-          skipBackgroundSync: true,
-          writeOfflineSnapshot: true,
-        })
-        recordRecentMemberEdit({ ...currentSnapshot, ...result.member, id: latestMember.id }, new Date().toISOString())
+        let result = { member: latestMember, syncState: await adapter.refreshGuard(), message: 'Attendance saved locally.' }
+        if (Object.keys(normalizedUpdates).length > 0) {
+          result = await adapter.update({
+            member: latestMember,
+            tableName: targetTable,
+            updates: normalizedUpdates,
+          })
+          await refreshMemberPreviewById?.(latestMember.id, {
+            tableName: targetTable,
+            fallbackMember: result.member,
+            source: 'member-v2-update',
+            action: 'update',
+            summary: 'Updated member with Member V2',
+            skipRemote: true,
+            skipBackgroundSync: true,
+            writeOfflineSnapshot: true,
+          })
+          recordRecentMemberEdit({ ...currentSnapshot, ...result.member, id: latestMember.id }, new Date().toISOString())
+        }
+        for (const [attendanceDate, attendance] of attendanceUpdates) {
+          const attendanceResult = await adapter.saveAttendance({
+            member: latestMember,
+            tableName: targetTable,
+            attendanceDate,
+            status: attendance === null || attendance === undefined ? null : attendance ? 'Present' : 'Absent',
+          })
+          result = { ...result, syncState: attendanceResult.syncState, message: 'Attendance saved locally.' }
+          applyMemberV2AttendanceState?.({
+            memberId: latestMember.id,
+            tableName: targetTable,
+            attendanceDate,
+            status: attendance === null || attendance === undefined ? null : attendance ? 'Present' : 'Absent',
+          })
+        }
         submitRequestIdRef.current = null
         if (result.syncState.conflicts) {
           setMemberV2Conflict(true)
