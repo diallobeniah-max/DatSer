@@ -110,6 +110,41 @@ export class MemberService {
     return this.getMember(memberId)
   }
 
+  async deleteMember(memberId, options = {}) {
+    const member = await this.getMember(memberId)
+    if (!member) throw new Error('Member is not available in this local workspace.')
+    if (member.is_deleted) return member
+    const target = assertMemberTarget({ ownerId: this.ownerId, tableName: options.tableName || member.table_name, memberId })
+    const pending = await this.#mutationsForMember(memberId, [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT])
+
+    // A member which never reached the server has no historical row to delete.
+    // Removing every local mutation prevents its create/update from being replayed
+    // after a restart and therefore prevents a deleted local member being revived.
+    if (!member.server_revision) {
+      await Promise.all(pending.map((mutation) => this.database.mutations.findOne(mutation.id).remove()))
+      await this.database.members.findOne(memberId).remove()
+      return null
+    }
+
+    await Promise.all(pending.map((mutation) => this.database.mutations.findOne(mutation.id).remove()))
+    const requestId = newId('delete_member_v2', memberId)
+    const baseServerRevision = Number(member.server_revision)
+    const payload = {}
+    const fingerprint = await this.#fingerprint({ operation: 'delete_member_v2', tableName: target.tableName, memberId, baseServerRevision, payload })
+    await this.#patch(this.database.members, memberId, {
+      table_name: target.tableName,
+      is_deleted: true,
+      save_state: MEMBER_SAVE_STATES.LOCAL_PENDING,
+      conflict_remote: null,
+      last_error: null,
+      ...memberFields(member.data, { userId: this.userId, ownerId: this.ownerId, tableName: target.tableName, memberId, identity: member.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'delete_member_v2', fingerprint, baseRevision: baseServerRevision, retryCount: member.retry_count || 0 }),
+      updated_at: now(),
+    })
+    await this.#insertMutation({ id: requestId, memberId, tableName: target.tableName, operation: 'delete_member_v2', payload, identity: member.identity, baseServerRevision, fingerprint })
+    this.#scheduleSync()
+    return this.getMember(memberId)
+  }
+
   async listTrustedSourceTables() {
     this.#assertBackendReachable()
     if (!this.supabase?.from) throw new Error('The authenticated client cannot list workspace months.')
@@ -293,7 +328,9 @@ export class MemberService {
     const fingerprint = mutation.payload_fingerprint || await this.#fingerprint({ operation: mutation.operation, tableName: mutation.table_name, memberId: mutation.member_id, baseServerRevision, payload: mutation.payload })
     const args = mutation.operation === 'create_member_v2'
       ? { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_member: mutation.payload, p_request_id: mutation.id, p_payload_fingerprint: fingerprint }
-      : { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_updates: mutation.payload, p_base_server_revision: baseServerRevision, p_request_id: mutation.id, p_payload_fingerprint: fingerprint, p_identity: mutation.identity || {} }
+      : mutation.operation === 'delete_member_v2'
+        ? { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_base_server_revision: baseServerRevision, p_request_id: mutation.id, p_payload_fingerprint: fingerprint }
+        : { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_updates: mutation.payload, p_base_server_revision: baseServerRevision, p_request_id: mutation.id, p_payload_fingerprint: fingerprint, p_identity: mutation.identity || {} }
     const { data, error } = await this.supabase.rpc(mutation.operation, args)
     if (error) return this.#failMutation(mutation, error.message || 'Member save failed.')
     if (data?.status === 'CONFLICT') return this.#markConflict(mutation, data)
@@ -306,6 +343,10 @@ export class MemberService {
     const canonical = response.member || current.data
     const revision = Number(response.server_revision || current.server_revision)
     await this.database.mutations.findOne(mutation.id).remove()
+    if (mutation.operation === 'delete_member_v2') {
+      await this.#patch(this.database.members, mutation.member_id, { is_deleted: true, server_revision: revision, table_name: response.table_name || current.table_name, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, conflict_remote: null, last_error: null, ...memberFields(canonical, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: MEMBER_SAVE_STATES.SERVER_CONFIRMED, baseRevision: revision }), updated_at: now() })
+      return
+    }
     const remaining = await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING])
     const rebasedRemaining = []
     for (const next of remaining) {

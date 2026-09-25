@@ -49,6 +49,12 @@ export class MemberAttendanceService {
     await this.database.mutations.insert({ id: requestId, scope_key: this.scopeKey, owner_id: this.ownerId, member_id: memberId, table_name: tableName, attendance_date: attendanceDate, attendance_id: attendanceId, status, base_server_revision: baseServerRevision, payload_fingerprint: fingerprint, retry_count: 0, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, last_error: null, conflict_remote: null, created_at: timestamp, updated_at: timestamp })
     if (this.#isBackendReachable()) queueMicrotask(() => { void this.syncNow() }); return { noChange: false, attendance: local, requestId }
   }
+  async discardPendingForMember(memberId) {
+    const mutations = await this.database.mutations.find({ selector: { scope_key: this.scopeKey, member_id: memberId, save_state: { $in: [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT] } } }).exec()
+    await Promise.all(mutations.map((mutation) => mutation.remove()))
+    const records = await this.database.attendance.find({ selector: { scope_key: this.scopeKey, member_id: memberId } }).exec()
+    await Promise.all(records.map((record) => record.remove()))
+  }
   async syncNow({ pullOnly = false } = {}) {
     if (!this.#isBackendReachable()) return this.getSyncState(); if (this.syncPromise) return this.syncPromise
     this.syncPromise = this.#sync({ pullOnly }).finally(() => { this.syncPromise = null }); return this.syncPromise

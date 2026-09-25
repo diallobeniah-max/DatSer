@@ -86,6 +86,7 @@ import {
 } from '../utils/memberDeleteTombstones'
 import { isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { setRealDatserMemberV2Connection } from '../experiments/rxdb-member-phase1/realDatserConnectivity'
+import { initNetworkMonitoring } from '../utils/networkService'
 import { getRealMemberV2UiAdapter, wakeRealMemberV2Sync } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 import { buildMemberV2AttendanceOverlay, mergeMemberV2AttendanceOverlay } from '../experiments/rxdb-member-phase1/memberV2AttendanceOverlay'
 
@@ -1561,12 +1562,13 @@ export const AppProvider = ({ children }) => {
       refreshOfflineStatus()
     }
 
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
+    const unsubscribeNetwork = initNetworkMonitoring((status) => {
+      if (status.connected) void handleOnline()
+      else void handleOffline()
+    })
 
     return () => {
-      window.removeEventListener('online', handleOnline)
-      window.removeEventListener('offline', handleOffline)
+      unsubscribeNetwork()
     }
   }, [applyOfflineSnapshot, offlineMode, refreshOfflineStatus])
 

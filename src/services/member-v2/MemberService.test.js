@@ -84,6 +84,36 @@ describe('Member V2 local-first service', () => {
     expect((await service.getMember(ids.member)).save_state).toBe(MEMBER_SAVE_STATES.LOCAL_PENDING)
   })
 
+  it('keeps a confirmed member delete local while offline and reuses its durable request on reconnect', async () => {
+    let online = false; let deleted = false; const calls = []
+    const rpc = async (name, args) => {
+      calls.push({ name, args })
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [change({ revision: deleted ? 2 : 1, deleted })], next_cursor: deleted ? 2 : 1, has_more: false }, error: null }
+      if (name === 'delete_member_v2') {
+        deleted = true
+        return { data: { status: 'SUCCESS', server_revision: 2, table_name: tableName, member: { ...change().member, deleted_at: '2026-01-02T00:00:00.000Z' } }, error: null }
+      }
+      throw new Error(`Unexpected RPC ${name}`)
+    }
+    const service = await makeService({ rpc, online: () => online })
+    await service.pull()
+    await service.deleteMember(ids.member)
+    const pending = (await service.database.mutations.find({ selector: { member_id: ids.member } }).exec())[0].toJSON()
+    expect((await service.getMember(ids.member)).is_deleted).toBe(true)
+    expect(calls.some((call) => call.name === 'delete_member_v2')).toBe(false)
+    online = true; await service.syncNow()
+    expect(calls.find((call) => call.name === 'delete_member_v2').args.p_request_id).toBe(pending.id)
+    expect((await service.getMember(ids.member)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+  })
+
+  it('removes an unconfirmed local create and its mutation instead of replaying a delete', async () => {
+    const service = await makeService({ rpc: async () => { throw new Error('offline') } })
+    const local = await service.createMember({ tableName, member: { full_name: 'Never sent' } })
+    await service.deleteMember(local.id)
+    expect(await service.getMember(local.id)).toBeNull()
+    expect((await service.getSyncState()).pendingChanges).toBe(0)
+  })
+
   it('keeps conflicts recoverable and can use the server copy', async () => {
     let online = false
     const rpc = async (name) => {

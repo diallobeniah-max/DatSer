@@ -1297,7 +1297,7 @@ const Dashboard = ({ isAdmin = false }) => {
       onConfirm: async () => {
         try {
           for (const id of Array.from(selectedDuplicateIds)) {
-            await deleteMember(id)
+            await deleteMemberWithActiveEngine(id)
           }
           setSelectedDuplicateIds(new Set())
           toast.success(`Deleted ${selectedDuplicateIds.size} duplicate member${selectedDuplicateIds.size !== 1 ? 's' : ''}.`)
@@ -1323,7 +1323,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       // Sequentially delete members
       for (const id of idsToDelete) {
-        await deleteMember(id)
+        await deleteMemberWithActiveEngine(id)
       }
       toast.success(`Deleted ${idsToDelete.length} member${idsToDelete.length !== 1 ? 's' : ''}`)
       clearSelection()
@@ -1436,10 +1436,23 @@ const Dashboard = ({ isAdmin = false }) => {
     setIsDeleteConfirmOpen(true)
   }
 
+  const deleteMemberWithActiveEngine = async (memberOrId) => {
+    const member = typeof memberOrId === 'object'
+      ? memberOrId
+      : members.find((candidate) => String(candidate.id) === String(memberOrId))
+    if (!memberV2Enabled) return deleteMember(member?.id || memberOrId)
+    if (!member || !workspaceOwnerId) throw new Error('Unable to determine the Member V2 member to delete.')
+    const targetTable = member.__source_table || member.source_table || currentTable
+    if (targetTable !== currentTable) throw new Error('Member V2 deletion is limited to the selected source month.')
+    const adapter = await getRealMemberV2UiAdapter({ supabase, userId: user?.id, ownerId: workspaceOwnerId })
+    const result = await adapter.deleteMember({ member, tableName: targetTable })
+    return { success: true, offline: result.syncState.state === 'OFFLINE_PENDING', pending: result.syncState.pendingChanges > 0, syncState: result.syncState }
+  }
+
   const confirmDelete = async () => {
     if (!memberToDelete) return
     try {
-      const result = await deleteMember(memberToDelete.id)
+      const result = await deleteMemberWithActiveEngine(memberToDelete)
       if (!result?.success) {
         throw result?.error || new Error('Delete failed')
       }
@@ -3022,7 +3035,7 @@ const Dashboard = ({ isAdmin = false }) => {
                           console.log(`[DELETE] Delete Others clicked - deleting ${toDelete.length} members:`, toDelete)
                           for (const id of toDelete) {
                             try {
-                              await deleteMember(id)
+                              await deleteMemberWithActiveEngine(id)
                             } catch (error) {
                               console.error(`[DELETE] Failed to delete member ${id}:`, error)
                             }
@@ -3070,7 +3083,7 @@ const Dashboard = ({ isAdmin = false }) => {
                             onClick={async () => {
                               console.log(`[DELETE] Delete button clicked for member ID: ${m.id}`)
                               try {
-                                await deleteMember(m.id)
+                                await deleteMemberWithActiveEngine(m)
                               } catch (error) {
                                 console.error(`[DELETE] Failed to delete member ${m.id}:`, error)
                               }

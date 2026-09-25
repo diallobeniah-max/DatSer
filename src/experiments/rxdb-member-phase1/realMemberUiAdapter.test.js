@@ -144,6 +144,33 @@ describe('real member-form Member V2 adapter', () => {
     expect((await adapter.refreshGuard()).pendingChanges).toBe(0)
   })
 
+  it('routes deletion through the Member V2 delete RPC and leaves no local attendance replay', async () => {
+    const calls = []; let deleted = false
+    const adapter = await getRealMemberV2UiAdapter({
+      ...ids,
+      online: () => true,
+      supabase: client(async (name, args) => {
+        calls.push({ name, args })
+        if (name === 'pull_workspace_member_changes_v2') {
+          return { data: { changes: [{ server_revision: deleted ? 8 : 7, table_name: tableName, member_id: ids.memberId, is_deleted: deleted, member: { id: ids.memberId, 'Full Name': 'Delete me', member_code: 'M0101' }, changed_at: '2026-01-01T00:00:00.000Z' }], next_cursor: deleted ? 8 : 7, has_more: false }, error: null }
+        }
+        if (name === 'pull_member_v2_attendance_changes_v2') return { data: { changes: [], next_cursor: 0, has_more: false }, error: null }
+        if (name === 'delete_member_v2') {
+          deleted = true
+          return { data: { status: 'SUCCESS', server_revision: 8, table_name: tableName, member: { id: ids.memberId, 'Full Name': 'Delete me', member_code: 'M0101', deleted_at: '2026-01-02T00:00:00.000Z' } }, error: null }
+        }
+        throw new Error(`Unexpected RPC ${name}`)
+      }),
+    })
+
+    const result = await adapter.deleteMember({ tableName, member: { id: ids.memberId, __canonical_member_id: ids.memberId, __source_table: tableName } })
+    const deletion = calls.find((call) => call.name === 'delete_member_v2')
+    expect(deletion.args).toMatchObject({ p_table_name: tableName, p_member_id: ids.memberId, p_base_server_revision: 7 })
+    expect(calls.map((call) => call.name)).not.toContain('soft_delete_member')
+    expect(result.member).toBeNull()
+    expect(result.syncState.pendingChanges).toBe(0)
+  })
+
   it('queues selected attendance behind Member V2 creation and never uses a legacy attendance RPC', async () => {
     const calls = []
     const adapter = await getRealMemberV2UiAdapter({

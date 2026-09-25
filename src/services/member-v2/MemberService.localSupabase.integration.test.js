@@ -111,6 +111,32 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     await reopened.stop()
   }, 30000)
 
+  it('persists an offline Member V2 delete, then soft-deletes only through the trusted RPC', async () => {
+    let online = false
+    const service = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage, online: () => online })
+    await service.start()
+    const created = await service.createMember({ tableName: fixture.tableName, member: { full_name: 'Trusted soft delete', current_level: 'JHS2' } })
+    online = true; await service.syncNow()
+    const confirmed = await service.getMember(created.id)
+    expect(confirmed.save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+
+    online = false
+    await service.deleteMember(created.id)
+    const deletion = (await service.database.mutations.find({ selector: { member_id: created.id } }).exec())[0].toJSON()
+    expect(deletion.operation).toBe('delete_member_v2')
+    expect((await fixture.client.from(fixture.tableName).select('deleted_at').eq('id', created.id).single()).data.deleted_at).toBeNull()
+
+    online = true; await service.syncNow()
+    const local = await service.getMember(created.id)
+    expect(local).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+    const row = await fixture.client.from(fixture.tableName).select('id, deleted_at').eq('id', created.id).single()
+    expect(row.error).toBeNull(); expect(row.data.deleted_at).toBeTruthy()
+    const changes = await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: fixture.userId, p_after_server_revision: confirmed.server_revision, p_limit: 10 })
+    expect(changes.error).toBeNull()
+    expect(changes.data.changes.find((change) => change.member_id === created.id)).toMatchObject({ is_deleted: true })
+    await service.stop()
+  }, 30000)
+
   it('persists isolated Sunday attendance offline, then confirms it through the trusted local RPC', async () => {
     let online = false
     const memberService = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage, online: () => online })

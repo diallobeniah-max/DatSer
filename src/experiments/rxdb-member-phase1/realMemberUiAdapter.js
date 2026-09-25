@@ -240,6 +240,17 @@ class RealMemberUiAdapter {
     return { ...result, syncState }
   }
 
+  async deleteMember({ member, tableName }) {
+    await this.start()
+    const memberId = String(member?.__canonical_member_id || member?.member_id || member?.id || '')
+    if (!memberId) throw new Error('This member has no canonical identity for deletion.')
+    await this.attendanceService.discardPendingForMember(memberId)
+    await this.service.deleteMember(memberId, { tableName })
+    const syncState = await this.syncNow()
+    const local = await this.service.getMember(memberId)
+    return { member: local?.is_deleted ? null : local ? memberForLegacyUi(local) : null, syncState }
+  }
+
   async getAttendanceForMember(member) {
     await this.start()
     const memberId = String(member?.__canonical_member_id || member?.member_id || member?.id || '')
