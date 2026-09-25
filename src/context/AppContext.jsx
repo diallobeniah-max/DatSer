@@ -84,7 +84,7 @@ import {
   isMemberStaleDeleted,
   readMemberDeleteTombstones
 } from '../utils/memberDeleteTombstones'
-import { isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { isMemberV2SharedRouteEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { setRealDatserMemberV2Connection } from '../experiments/rxdb-member-phase1/realDatserConnectivity'
 import { initNetworkMonitoring } from '../utils/networkService'
 import { getRealMemberV2UiAdapter, wakeRealMemberV2Sync } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
@@ -1178,7 +1178,7 @@ export const AppProvider = ({ children }) => {
     }
     // Do not wait for React's later effect cycle: a deliberate Offline ->
     // Online choice must immediately wake both existing Member V2 queues.
-    if (isMemberV2LocalExperimentEnabled()) {
+    if (isMemberV2SharedRouteEnabled()) {
       setRealDatserMemberV2Connection({
         isOnline: browserOnline,
         offlineMode: nextMode,
@@ -1320,7 +1320,7 @@ export const AppProvider = ({ children }) => {
         ? 'online'
         : 'online-unavailable'
   useEffect(() => {
-    if (!isMemberV2LocalExperimentEnabled()) return
+    if (!isMemberV2SharedRouteEnabled()) return
     setRealDatserMemberV2Connection({ isOnline, offlineMode, offlineModeStatus })
   }, [isOnline, offlineMode, offlineModeStatus])
   useEffect(() => {
@@ -1329,7 +1329,7 @@ export const AppProvider = ({ children }) => {
     // real Offline control before opening Edit Details would leave the V2
     // service unable to locate an otherwise-visible legacy member.
     if (
-      !isMemberV2LocalExperimentEnabled()
+      !isMemberV2SharedRouteEnabled()
       || !supabase
       || !user?.id
       || !(dataOwnerId || user.id)
@@ -1410,7 +1410,7 @@ export const AppProvider = ({ children }) => {
     }
   }, [currentTable, dataOwnerId, memberHydrationState, user?.id])
   useEffect(() => {
-    if (!isMemberV2LocalExperimentEnabled() || typeof window === 'undefined') return undefined
+    if (!isMemberV2SharedRouteEnabled() || typeof window === 'undefined') return undefined
     // Local-only browser-test visibility. It exposes connection and sync
     // counters, never member data or credentials, and is not present in a
     // production build because the experiment flag is impossible there.
@@ -1515,7 +1515,7 @@ export const AppProvider = ({ children }) => {
 
     const handleOnline = async () => {
       setIsOnline(true)
-      if (isMemberV2LocalExperimentEnabled()) {
+      if (isMemberV2SharedRouteEnabled()) {
         setRealDatserMemberV2Connection({
           isOnline: true,
           offlineMode,
@@ -1543,7 +1543,7 @@ export const AppProvider = ({ children }) => {
     }
     const handleOffline = async () => {
       setIsOnline(false)
-      if (isMemberV2LocalExperimentEnabled()) {
+      if (isMemberV2SharedRouteEnabled()) {
         setRealDatserMemberV2Connection({
           isOnline: false,
           offlineMode,

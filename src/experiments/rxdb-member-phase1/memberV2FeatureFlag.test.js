@@ -3,7 +3,9 @@ import {
   assertLegacyMemberFlowIsSafe,
   getMemberV2LocalFlowGuard,
   getMemberV2LocalFlowStatus,
+  isMemberV2HostedRolloutAllowed,
   isMemberV2LocalExperimentEnabled,
+  isMemberV2SharedRouteEnabled,
   updateMemberV2LocalFlowGuard,
 } from './memberV2FeatureFlag'
 
@@ -37,6 +39,14 @@ describe('Member V2 local feature boundary', () => {
     expect(isMemberV2LocalExperimentEnabled({ ...localEnv, VITE_SUPABASE_URL: 'https://example.supabase.co' })).toBe(false)
     expect(isMemberV2LocalExperimentEnabled({ ...localEnv, DEV: false })).toBe(false)
     expect(isMemberV2LocalExperimentEnabled({ ...localEnv, VITE_DATSER_MEMBER_V2_EXPERIMENT: 'false' })).toBe(false)
+  })
+
+  it('enables the shared normal-web route only for explicit local validation', () => {
+    const sharedLocal = { DEV: true, VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION: 'true', VITE_SUPABASE_URL: 'http://127.0.0.1:54321' }
+    expect(isMemberV2SharedRouteEnabled(sharedLocal)).toBe(true)
+    expect(isMemberV2SharedRouteEnabled({ ...sharedLocal, VITE_SUPABASE_URL: 'https://example.supabase.co' })).toBe(false)
+    expect(isMemberV2SharedRouteEnabled({ ...sharedLocal, DEV: false })).toBe(false)
+    expect(isMemberV2HostedRolloutAllowed()).toBe(false)
   })
 
   it('blocks a local legacy fallback while Member V2 has unsynced work', () => {

@@ -35,6 +35,21 @@ export const isMemberV2LocalExperimentEnabled = (env = import.meta.env) => (
   )
 )
 
+// Routing is intentionally separate from the original experiment guard. It
+// enables the real web screens against a local Supabase project only; hosted
+// rollout remains explicitly disabled until a later production gate.
+export const isMemberV2SharedRouteEnabled = (env = import.meta.env) => (
+  isMemberV2LocalExperimentEnabled(env)
+  || (
+    env?.DEV === true
+    && env?.VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION === 'true'
+    && localSupabaseUrl(env?.VITE_SUPABASE_URL)
+  )
+)
+
+export const isMemberV2ImplementationAvailable = () => true
+export const isMemberV2HostedRolloutAllowed = () => false
+
 export const getMemberV2LocalFlowGuard = ({ userId, ownerId, storage } = {}) => {
   if (!userId || !ownerId) return null
   try {

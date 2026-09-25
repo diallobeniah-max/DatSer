@@ -17,7 +17,7 @@ import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKe
 import AttendanceChoice from './AttendanceChoice'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
-import { assertLegacyMemberFlowIsSafe, isMemberV2LocalExperimentEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { assertLegacyMemberFlowIsSafe, isMemberV2SharedRouteEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 
 const MemberModal = ({ isOpen, onClose }) => {
@@ -25,7 +25,7 @@ const MemberModal = ({ isOpen, onClose }) => {
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success } = useHapticFeedback()
-  const memberV2Enabled = isMemberV2LocalExperimentEnabled()
+  const memberV2Enabled = isMemberV2SharedRouteEnabled()
 
   // Helper function to get month display name from table name
   const getMonthDisplayName = (tableName) => {
