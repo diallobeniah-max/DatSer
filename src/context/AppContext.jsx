@@ -33,7 +33,7 @@ import {
 import { DEFAULT_GUIDED_FORM_SETTINGS, normalizeGuidedOrder, readGuidedFormSettings, writeGuidedFormSettings } from '../utils/guidedFormSettings'
 import { DEV_BYPASS_STORAGE_KEY, isLocalWebDeveloperModeAllowed } from '../utils/developerMode'
 import { mergeAttendanceMapWithPending, mergeRealtimeMemberWithPending } from '../utils/realtimeMerge'
-import { applyPendingChangesToMemberSnapshot, reconcileAuthoritativeMemberSnapshot } from '../utils/memberSnapshotReconciliation'
+import { applyPendingChangesToMemberSnapshot, reconcileAuthoritativeMemberSnapshot, removeMemberV2Tombstones } from '../utils/memberSnapshotReconciliation'
 import { classifyMemberSearch, getSearchableMemberName, normalizeSearchText } from '../utils/memberSearch'
 import { normalizeHistoricalSearchSettings, resolveHistoricalSearchTables } from '../utils/historicalSearchSettings'
 import { formatMemberName, normalizeMemberNameStyle } from '../utils/memberNameStyle'
@@ -162,6 +162,43 @@ const MEMBER_PREVIEW_CACHE_PREFIX = 'datser_member_preview_cache_v1'
 const MEMBER_PREVIEW_SYNC_META_PREFIX = 'datser_member_preview_sync_meta_v1'
 const MEMBER_CODE_SETTINGS_CACHE_PREFIX = 'datser_member_code_settings'
 const MEMBER_CODE_ASSIGNMENT_PAGE_SIZE = 500
+const getMemberV2TraceReferenceId = (row) => {
+  const trace = typeof window === 'undefined' ? null : window.__datserMemberV2IdTrace
+  if (!trace?.enabled || !row || typeof row !== 'object') return null
+  trace.objectReferences ||= new WeakMap()
+  trace.nextObjectReferenceId ||= 1
+  if (!trace.objectReferences.has(row)) trace.objectReferences.set(row, trace.nextObjectReferenceId++)
+  return trace.objectReferences.get(row)
+}
+const toMemberV2IdDiagnostics = (rows = [], memberIds = [], fallbackTable = null) => {
+  const wantedIds = new Set((memberIds || []).map(String))
+  const expectedProfileValue = typeof window === 'undefined' ? null : window.__datserMemberV2IdTrace?.expectedProfileValue
+  return (rows || [])
+    .filter((row) => wantedIds.has(String(row?.id || row?.member_id || row?.__canonical_member_id || '')))
+    .map((row) => ({
+      id: String(row.id || row.member_id || row.__canonical_member_id),
+      referenceId: getMemberV2TraceReferenceId(row),
+      tableName: row.table_name || row.source_table || row.__source_table || fallbackTable || null,
+      ownerId: row.owner_id || row.workspace_owner_id || row.user_id || null,
+      scopeKey: row.scope_key || null,
+      serverRevision: row.server_revision ?? null,
+      profileValueMatches: expectedProfileValue == null ? null : String(row['Full Name'] ?? row.full_name ?? '') === String(expectedProfileValue),
+      fullNameAliasMatches: expectedProfileValue == null ? null : String(row.full_name ?? row['full_name'] ?? '') === String(expectedProfileValue),
+      memberCardDisplayNameMatches: expectedProfileValue == null ? null : String(row.full_name || row['full_name'] || row['Full Name'] || row.name || row.Name || '') === String(expectedProfileValue),
+      deleted: Boolean(row.is_deleted || row.deleted_at),
+      saveState: row.save_state || row.__member_v2_save_state || null,
+    }))
+}
+const appendMemberV2IdTrace = (event) => {
+  if (typeof window === 'undefined') return
+  const trace = window.__datserMemberV2IdTrace
+  if (!trace?.enabled) return
+  trace.events ||= []
+  trace.events.push({ at: new Date().toISOString(), ...event })
+}
+const getMemberV2IdTraceTargets = () => (
+  typeof window === 'undefined' ? [] : window.__datserMemberV2IdTrace?.memberIds || []
+)
 const MEMBER_PREVIEW_SELECT = [
   'id',
   '"Full Name"',
@@ -1343,8 +1380,9 @@ export const AppProvider = ({ children }) => {
       if (cancelled || !localMembers.length) return
       const byId = new Map(localMembers.map((member) => [String(member.id), member]))
       setMembers((previous) => {
-        let changed = false
-        const next = previous.map((member) => {
+        const projected = removeMemberV2Tombstones(previous, localMembers)
+        let changed = projected.length !== previous.length
+        const next = projected.map((member) => {
           const local = byId.get(String(member.id))
           if (!local) return member
           const merged = normalizeMemberRecord({
@@ -1361,6 +1399,13 @@ export const AppProvider = ({ children }) => {
           ) return member
           changed = true
           return merged
+        })
+        appendMemberV2IdTrace({
+          stage: 'member-v2-hydration-overlay',
+          tableName: currentTable,
+          appContextInputRows: toMemberV2IdDiagnostics(previous, getMemberV2IdTraceTargets(), currentTable),
+          rxdbOverlayRows: toMemberV2IdDiagnostics(localMembers, getMemberV2IdTraceTargets(), currentTable),
+          appContextOutputRows: toMemberV2IdDiagnostics(changed ? next : previous, getMemberV2IdTraceTargets(), currentTable),
         })
         return changed ? next : previous
       })
@@ -1425,9 +1470,65 @@ export const AppProvider = ({ children }) => {
       offlineModeStatus,
       isOnline,
       ownerId: dataOwnerId || user?.id || null,
+      ...(window.__datserMemberV2IdTrace?.enabled ? {
+        memberRows: toMemberV2IdDiagnostics(members, window.__datserMemberV2IdTrace.memberIds, currentTable),
+        readSnapshot: async (memberIds = window.__datserMemberV2IdTrace.memberIds || []) => {
+          const wantedIds = new Set((memberIds || []).map(String))
+          const ownerId = dataOwnerId || user?.id
+          const adapter = ownerId && user?.id
+            ? await getRealMemberV2UiAdapter({ supabase, userId: user.id, ownerId })
+            : null
+          const [rxdb, previewIndex, pendingOfflineChanges] = await Promise.all([
+            adapter?.getSafeMemberDiagnostics({
+              tableName: currentTable,
+              memberIds: [...wantedIds],
+              expectedProfileValue: window.__datserMemberV2IdTrace?.expectedProfileValue,
+            }) || null,
+            readMemberPreviewIndex(currentTable),
+            getPendingOfflineChanges().catch(() => []),
+          ])
+          const attendance = ownerId && user?.id
+            ? await adapter?.getSafeAttendanceDiagnostics({ memberId: [...wantedIds][0] })
+            : null
+          const cache = membersCacheRef.current.get(currentTable) || readMemberPreviewCache(workspaceCacheScope, currentTable)
+          const snapshot = {
+            currentTable,
+            workspaceCacheScope,
+            ownerId: ownerId || null,
+            userId: user?.id || null,
+            hydration: {
+              state: memberHydrationState,
+              loading,
+              preferencesHydrated,
+            },
+            appContextRows: toMemberV2IdDiagnostics(members, [...wantedIds], currentTable),
+            rxdb,
+            attendance,
+            previewIndexRows: toMemberV2IdDiagnostics(previewIndex, [...wantedIds], currentTable),
+            previewCacheRows: toMemberV2IdDiagnostics(cache?.data || [], [...wantedIds], currentTable),
+            pendingOfflineOverlay: pendingOfflineChanges
+              .filter((change) => wantedIds.has(String(change?.member_id || change?.member_data?.id || '')))
+              .map((change) => ({
+                memberId: String(change.member_id || change.member_data?.id),
+                tableName: change.table_name || null,
+                action: change.action_type || null,
+                syncStatus: change.sync_status || null,
+              })),
+            deleteTombstones: readMemberDeleteTombstones()
+              .filter((row) => wantedIds.has(String(row?.member_id || row?.id || '')))
+              .map((row) => ({
+                memberId: String(row.member_id || row.id),
+                tableName: row.table_name || null,
+                deletedAt: row.deleted_at || null,
+              })),
+          }
+          window.__datserMemberV2IdTrace?.events?.push({ stage: 'app-context-snapshot', ...snapshot })
+          return snapshot
+        },
+      } : {}),
     }
     return () => { delete window.__datserMemberV2LocalDiagnostic }
-  }, [currentTable, dataOwnerId, isOnline, loading, memberHydrationState, members.length, offlineMode, offlineModeStatus, preferencesError, preferencesHydrated, user?.id])
+  }, [currentTable, dataOwnerId, isOnline, loading, memberHydrationState, members, offlineMode, offlineModeStatus, preferencesError, preferencesHydrated, user?.id, workspaceCacheScope])
   const shouldShowOfflineSaveNotice = useCallback((count = pendingSyncCount) => {
     const isOfflineOnly = offlineMode === 'offline' || !isOnline
     return isOfflineOnly && Number(count || 0) >= offlineSaveNoticeThreshold
@@ -2779,6 +2880,12 @@ export const AppProvider = ({ children }) => {
       tableName,
       ownerId: dataOwnerId || user?.id
     }))
+    appendMemberV2IdTrace({
+      stage: 'preview-cache-hydration',
+      tableName,
+      hydrationState: 'HYDRATED',
+      rows: toMemberV2IdDiagnostics(normalizedMembers, getMemberV2IdTraceTargets(), tableName),
+    })
     const totalCount = Number.isFinite(payload?.totalCount) ? payload.totalCount : normalizedMembers.length
     const loadedAll = Boolean(payload?.loadedAll) || normalizedMembers.length >= totalCount
     const cachePayload = {
@@ -3049,12 +3156,32 @@ export const AppProvider = ({ children }) => {
             prev.filter((member) => !deletedIds.includes(String(member.id))),
             activeRows
           )
-          return applyPendingChangesToMemberSnapshot(
+          const effectiveMembers = applyPendingChangesToMemberSnapshot(
             remoteReconciled,
             pendingChanges,
             tableName,
             normalizeMemberRecord
           )
+          const trace = typeof window !== 'undefined' ? window.__datserMemberV2IdTrace : null
+          if (trace?.enabled) {
+            const wantedIds = trace.memberIds || []
+            trace.events ||= []
+            trace.events.push({
+              stage: 'legacy-preview-pending-overlay',
+              tableName,
+              serverRows: toMemberV2IdDiagnostics(activeRows, wantedIds, tableName),
+              priorAppContextRows: toMemberV2IdDiagnostics(prev, wantedIds, tableName),
+              pendingOverlays: pendingChanges
+                .filter((change) => wantedIds.includes(String(change?.member_id || change?.member_data?.id || '')))
+                .map((change) => ({
+                  memberId: String(change.member_id || change.member_data?.id),
+                  action: change.action_type || null,
+                  syncStatus: change.sync_status || null,
+                })),
+              outputRows: toMemberV2IdDiagnostics(effectiveMembers, wantedIds, tableName),
+            })
+          }
+          return effectiveMembers
         })
         setMembersTotalCount(remoteTotalCount || filteredMembers.length)
         // An initial sync has read every preview page. Mark that fact so later
@@ -3245,6 +3372,20 @@ export const AppProvider = ({ children }) => {
           tableName,
           ownerId: dataOwnerId || user?.id
         }))
+        // A full-snapshot request can outlive the month that started it (for
+        // example, count reconciliation on a provisional month). Keep its
+        // table-scoped cache local, but never let its late result replace the
+        // currently displayed table's members.
+        if (runtimeRequestScopeRef.current?.table !== tableName) {
+          appContextLog(`Ignoring stale full member snapshot for ${tableName}; current table is ${runtimeRequestScopeRef.current?.table || 'none'}`)
+          return normalizedMembers
+        }
+        appendMemberV2IdTrace({
+          stage: 'authoritative-full-snapshot-hydration',
+          tableName,
+          hydrationState: 'HYDRATED',
+          rows: toMemberV2IdDiagnostics(normalizedMembers, getMemberV2IdTraceTargets(), tableName),
+        })
         setMembers(normalizedMembers)
         setMembersTotalCount(normalizedMembers.length)
         setMembersLoadedAll(true)
@@ -3293,6 +3434,12 @@ export const AppProvider = ({ children }) => {
       if (!forceRefresh) {
         const indexedMembers = await readMemberPreviewIndex(tableName)
         if (indexedMembers.length > 0) {
+          appendMemberV2IdTrace({
+            stage: 'preview-index-hydration',
+            tableName,
+            hydrationState: 'HYDRATED',
+            rows: toMemberV2IdDiagnostics(indexedMembers, getMemberV2IdTraceTargets(), tableName),
+          })
           appContextLog('Using IndexedDB member preview index for', cacheKey)
           const cachePayload = {
             data: indexedMembers,
@@ -3361,6 +3508,12 @@ export const AppProvider = ({ children }) => {
           tableName,
           ownerId: dataOwnerId || user?.id
         }))
+        appendMemberV2IdTrace({
+          stage: 'first-page-hydration',
+          tableName,
+          hydrationState: 'HYDRATED',
+          rows: toMemberV2IdDiagnostics(normalizedMembers, getMemberV2IdTraceTargets(), tableName),
+        })
         const totalCount = count ?? normalizedMembers.length
         const loadedAll = normalizedMembers.length >= totalCount || normalizedMembers.length < MEMBER_PREVIEW_PAGE_SIZE
         const cachePayload = { data: normalizedMembers, ts: now, totalCount, loadedAll }

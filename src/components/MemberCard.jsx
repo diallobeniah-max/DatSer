@@ -1,4 +1,4 @@
-import React, { memo } from 'react'
+import React, { memo, useEffect } from 'react'
 import { 
     ChevronDown, 
     ChevronRight, 
@@ -50,6 +50,24 @@ const MemberCard = memo(({
 }) => {
     const canonicalName = member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || ''
     const name = formatMemberName(canonicalName) || 'Unnamed member'
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        const trace = window.__datserMemberV2IdTrace
+        if (!trace?.enabled || !(trace.memberIds || []).map(String).includes(String(member?.id || ''))) return
+        trace.events ||= []
+        trace.objectReferences ||= new WeakMap()
+        trace.nextObjectReferenceId ||= 1
+        if (!trace.objectReferences.has(member)) trace.objectReferences.set(member, trace.nextObjectReferenceId++)
+        trace.events.push({
+            at: new Date().toISOString(),
+            stage: 'member-card-render',
+            id: String(member.id),
+            referenceId: trace.objectReferences.get(member),
+            serverRevision: member.server_revision ?? null,
+            saveState: member.__member_v2_save_state || member.save_state || null,
+            profileNameMatches: trace.expectedProfileValue == null ? null : String(canonicalName) === String(trace.expectedProfileValue),
+        })
+    }, [canonicalName, member])
     const regDateRaw = member.inserted_at || member.created_at
     
     const getRelativeRegTime = () => {
@@ -291,7 +309,8 @@ const MemberCard = memo(({
     )
 }, (prev, next) => {
     // Custom comparison for better performance
-    return (
+    const isEqual = (
+        prev.member === next.member &&
         prev.member.id === next.member.id &&
         prev.memberIndexCode === next.memberIndexCode &&
         prev.isExpanded === next.isExpanded &&
@@ -306,6 +325,39 @@ const MemberCard = memo(({
         prev.memberCodeBadgeStyle === next.memberCodeBadgeStyle &&
         prev.memberCodeBadgeCycleSlot === next.memberCodeBadgeCycleSlot
     )
+
+    if (typeof window !== 'undefined') {
+        const trace = window.__datserMemberV2IdTrace
+        const memberId = String(next.member?.id || '')
+        if (trace?.enabled && (trace.memberIds || []).map(String).includes(memberId)) {
+            trace.events ||= []
+            trace.objectReferences ||= new WeakMap()
+            trace.nextObjectReferenceId ||= 1
+            const referenceId = (member) => {
+                if (!member || typeof member !== 'object') return null
+                if (!trace.objectReferences.has(member)) trace.objectReferences.set(member, trace.nextObjectReferenceId++)
+                return trace.objectReferences.get(member)
+            }
+            const profileValueMatches = (member) => trace.expectedProfileValue == null
+                ? null
+                : String(member.full_name || member['full_name'] || member['Full Name'] || member.name || member.Name || '') === String(trace.expectedProfileValue)
+            trace.events.push({
+                at: new Date().toISOString(),
+                stage: 'member-card-memo-comparison',
+                id: memberId,
+                previousMemberReferenceId: referenceId(prev.member),
+                nextMemberReferenceId: referenceId(next.member),
+                memberReferenceChanged: prev.member !== next.member,
+                previousRevision: prev.member?.server_revision ?? null,
+                nextRevision: next.member?.server_revision ?? null,
+                previousProfileValueMatches: profileValueMatches(prev.member),
+                nextProfileValueMatches: profileValueMatches(next.member),
+                comparatorEqual: isEqual,
+            })
+        }
+    }
+
+    return isEqual
 })
 
 MemberCard.displayName = 'MemberCard'

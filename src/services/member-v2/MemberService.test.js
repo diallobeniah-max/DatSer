@@ -139,10 +139,136 @@ describe('Member V2 local-first service', () => {
 
   it('treats a realtime signal as one debounced cursor-pull wake-up', async () => {
     let online = false; const listeners = []; const rpc = async () => ({ data: { changes: [], next_cursor: null, has_more: false }, error: null })
+    const ownerId = crypto.randomUUID()
     const client = { rpc, removeChannel: async () => {}, channel: () => ({ on: (_event, _filter, listener) => { listeners.push(listener); return { subscribe: () => ({}) } } }) }
-    const service = await createMemberService({ supabase: client, userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online: () => online, realtimeDebounceMs: 0 })
-    services.push(service); await service.start(); online = true; listeners[0]()
+    const service = await createMemberService({ supabase: client, userId: crypto.randomUUID(), ownerId, storage: getRxStorageMemory(), online: () => online, realtimeDebounceMs: 0 })
+    services.push(service); await service.start(); online = true; listeners[0]({ new: { owner_id: ownerId } })
     await vi.waitFor(async () => expect((await service.getSyncState()).state).toBe('SYNCED'))
+  })
+
+  it('uses an unfiltered RLS-scoped signal channel and wakes only for its workspace owner', async () => {
+    let online = false
+    let pullCount = 0
+    let subscription = null
+    let listener = null
+    const ownerId = ids.owner
+    const channel = {
+      on: (event, filter, callback) => {
+        subscription = { event, filter }
+        listener = callback
+        return channel
+      },
+      subscribe: (callback) => { callback?.('SUBSCRIBED'); return channel },
+    }
+    const supabase = {
+      channel: () => channel,
+      removeChannel: async () => {},
+      rpc: async (name) => {
+        if (name === 'pull_workspace_member_changes_v2') pullCount += 1
+        return { data: { changes: [], next_cursor: null, has_more: false }, error: null }
+      },
+    }
+    const service = await createMemberService({
+      supabase, userId: ids.user, ownerId, storage: getRxStorageMemory(),
+      online: () => online, realtimeDebounceMs: 0,
+    })
+    services.push(service)
+    await service.start()
+    expect(subscription).toEqual({
+      event: 'postgres_changes',
+      filter: { event: 'INSERT', schema: 'public', table: 'member_v2_realtime_signals' },
+    })
+
+    online = true
+    listener({ new: { owner_id: '44444444-4444-4444-8444-444444444444', latest_server_revision: 9 } })
+    listener({ new: { owner_id: 'not-a-uuid', latest_server_revision: 10 } })
+    listener({ new: {} })
+    listener({ new: null })
+    listener(null)
+    await Promise.resolve()
+    expect(pullCount).toBe(0)
+
+    listener({ new: { owner_id: ownerId, latest_server_revision: 11 } })
+    await vi.waitFor(() => expect(pullCount).toBe(1))
+  })
+
+  it('waits for realtime socket teardown before recreating one channel and waking one pull', async () => {
+    let online = true
+    let disconnecting = false
+    let resolveDisconnectWaitEntered
+    const disconnectWaitEntered = new Promise((resolve) => { resolveDisconnectWaitEntered = resolve })
+    let reconnectRequested = false
+    let connectivityListener = null
+    let pullCount = 0
+    const channels = []
+    const activeChannels = new Set()
+    const realtime = {
+      isDisconnecting: () => {
+        if (disconnecting && reconnectRequested) resolveDisconnectWaitEntered()
+        return disconnecting
+      },
+    }
+    const supabase = {
+      realtime,
+      rpc: async (name) => {
+        if (name === 'pull_workspace_member_changes_v2') pullCount += 1
+        return { data: { changes: [], next_cursor: null, has_more: false }, error: null }
+      },
+      channel: () => {
+        const listeners = []
+        const channel = {
+          state: 'joining',
+          on: (_event, _filter, listener) => { listeners.push(listener); return channel },
+          subscribe: (callback) => { channel.state = 'joined'; callback?.('SUBSCRIBED'); channel.listeners = listeners; return channel },
+        }
+        channels.push(channel)
+        activeChannels.add(channel)
+        return channel
+      },
+      removeChannel: async (channel) => {
+        activeChannels.delete(channel)
+        channel.state = 'closed'
+        disconnecting = true
+        return 'ok'
+      },
+    }
+    const connectivity = {
+      isBackendReachable: () => online,
+      subscribe: (listener) => { connectivityListener = listener; return () => { connectivityListener = null } },
+    }
+    const service = await createMemberService({
+      supabase, userId: ids.user, ownerId: ids.owner, storage: getRxStorageMemory(), connectivity, realtimeDebounceMs: 0,
+    })
+    services.push(service)
+    await service.start()
+    expect(channels).toHaveLength(1)
+    const firstChannel = channels[0]
+
+    online = false
+    await connectivityListener('OFFLINE')
+    expect(firstChannel.state).toBe('closed')
+    expect(activeChannels.size).toBe(0)
+    expect(realtime.isDisconnecting()).toBe(true)
+
+    online = true
+    reconnectRequested = true
+    const reconnect = connectivityListener('ONLINE')
+    await disconnectWaitEntered
+    expect(channels).toHaveLength(1)
+    expect(activeChannels.size).toBe(0)
+
+    disconnecting = false
+    await reconnect
+    expect(channels).toHaveLength(2)
+    expect(activeChannels.size).toBe(1)
+    expect(channels[1]).not.toBe(firstChannel)
+    expect(channels[1].state).toBe('joined')
+
+    const pullsBeforeWake = pullCount
+    channels[1].listeners[0]({ new: { owner_id: ids.owner, latest_server_revision: 12 } })
+    await vi.waitFor(() => expect(pullCount).toBe(pullsBeforeWake + 1))
+    expect(activeChannels.size).toBe(1)
+    expect(channels).toHaveLength(2)
   })
 
   it('keeps the same request ID after a retryable network failure', async () => {

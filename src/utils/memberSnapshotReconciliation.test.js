@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { reconcileAuthoritativeMemberSnapshot } from './memberSnapshotReconciliation'
+import { reconcileAuthoritativeMemberSnapshot, removeMemberV2Tombstones } from './memberSnapshotReconciliation'
 
 describe('reconcileAuthoritativeMemberSnapshot', () => {
   const tableName = 'August_2026'
@@ -39,5 +39,21 @@ describe('reconcileAuthoritativeMemberSnapshot', () => {
 
     expect(result[0].full_name).toBe('New Name')
     expect(result[0].full_name).not.toBe(staleIndexedRow.full_name)
+  })
+})
+
+describe('removeMemberV2Tombstones', () => {
+  it('removes only matching active projections when RxDB reports a confirmed tombstone', () => {
+    const result = removeMemberV2Tombstones(
+      [{ id: 'UUID-1', server_revision: 7 }, { id: 'UUID-2', server_revision: 3 }],
+      [{ id: 'UUID-1', is_deleted: true, server_revision: 8, save_state: 'SERVER_CONFIRMED' }]
+    )
+
+    expect(result).toEqual([{ id: 'UUID-2', server_revision: 3 }])
+  })
+
+  it('does not remove active Member V2 rows', () => {
+    const members = [{ id: 'UUID-1', server_revision: 7 }]
+    expect(removeMemberV2Tombstones(members, [{ id: 'UUID-1', is_deleted: false }])).toBe(members)
   })
 })

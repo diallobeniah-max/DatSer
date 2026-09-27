@@ -21,14 +21,7 @@ import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
 import { assertLegacyMemberFlowIsSafe, isMemberV2SharedRouteEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
-
-// Several existing workspace tables store phone values numerically. That
-// representation drops the Ghanaian leading zero, but the edit form requires
-// the canonical ten-digit value. Restore it only for the editable display.
-const normalizeEditablePhoneNumber = (value) => {
-  const digits = String(value ?? '').replace(/\D/g, '')
-  return digits.length === 9 ? `0${digits}` : digits
-}
+import { normalizeEditablePhoneNumber } from '../utils/memberPhone'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById, applyMemberV2AttendanceState } = useApp()
@@ -132,7 +125,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       setFormData({
         full_name: (sourceMember['full_name'] || sourceMember['Full Name'] || ''),
         gender: normalizedGender || (typeof sourceMember.gender === 'string' ? sourceMember.gender.toLowerCase() : ''),
-        phone_number: normalizeEditablePhoneNumber(sourceMember['Phone Number'] || sourceMember.phone_number || ''),
+        phone_number: normalizeEditablePhoneNumber(sourceMember['Phone Number'] ?? sourceMember.phone_number ?? ''),
         date_of_birth: sourceMember['date_of_birth'] || sourceMember.date_of_birth || '',
         age: sourceMember['Age'] || sourceMember.age || '',
         current_level: sourceMember['Current Level'] || sourceMember.current_level || '',
@@ -764,10 +757,12 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     } catch (error) {
       console.error('Error updating member:', error)
       const isOfflineNow = typeof navigator !== 'undefined' && navigator.onLine === false
-      if (bundleContext && (isTransientSupabaseError(error) || isOfflineNow)) {
-        // Offline or degraded backend: keep the edit by routing it through the
-        // canonical AppContext member-update path, which queues it for retry
-        // instead of letting it silently disappear.
+      if (memberV2Enabled) {
+        // Member V2 already owns durable offline/retry work. Never reroute a
+        // V2 failure through AppContext's legacy queue or monthly-table write.
+        toast.error(error.message || 'Failed to update member')
+      } else if (bundleContext && (isTransientSupabaseError(error) || isOfflineNow)) {
+        // Legacy form only: retain its established AppContext offline queue.
         try {
           await updateMember(latestMember.id, bundleContext.backendUpdates, {
             targetTable: bundleContext.targetTable,

@@ -26,6 +26,39 @@ beforeEach(() => {
 })
 
 describe('real member-form Member V2 adapter', () => {
+  it('preserves a pulled Member V2 tombstone when projecting RxDB rows to the UI', async () => {
+    const adapter = await getRealMemberV2UiAdapter({
+      ...ids,
+      online: () => true,
+      supabase: client(async (name) => {
+        if (name === 'pull_workspace_member_changes_v2') return {
+          data: {
+            changes: [{
+              server_revision: 8,
+              table_name: tableName,
+              member_id: ids.memberId,
+              is_deleted: true,
+              member: { id: ids.memberId, 'Full Name': 'Synthetic tombstone' },
+              changed_at: '2026-01-02T00:00:00.000Z',
+            }],
+            next_cursor: 8,
+            has_more: false,
+          },
+          error: null,
+        }
+        if (name === 'pull_member_v2_attendance_changes_v2') return { data: { changes: [], next_cursor: 0, has_more: false }, error: null }
+        throw new Error(`Unexpected RPC ${name}`)
+      }),
+    })
+
+    const [member] = await adapter.listLocalMembers({ tableName })
+    expect(member).toMatchObject({ id: ids.memberId, server_revision: 8, is_deleted: true })
+    const emissions = []
+    const unsubscribe = await adapter.subscribeLocalMembers((rows) => emissions.push(rows))
+    await vi.waitFor(() => expect(emissions.at(-1)?.find((row) => row.id === ids.memberId)).toMatchObject({ is_deleted: true }))
+    unsubscribe()
+  })
+
   it('uses only the Member V2 create RPC and returns a canonical UI record', async () => {
     const calls = []
     const adapter = await getRealMemberV2UiAdapter({
@@ -57,6 +90,35 @@ describe('real member-form Member V2 adapter', () => {
       __member_v2_save_state: 'SERVER_CONFIRMED',
     })
     expect(result.syncState.pendingChanges).toBe(0)
+  })
+
+  it('projects the numeric No Phone value from a Member V2 server row back to its UI sentinel', async () => {
+    const calls = []
+    const adapter = await getRealMemberV2UiAdapter({
+      ...ids,
+      online: () => true,
+      supabase: client(async (name, args) => {
+        calls.push({ name, args })
+        if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [], next_cursor: null, has_more: false }, error: null }
+        return {
+          data: {
+            status: 'SUCCESS',
+            server_revision: 4,
+            table_name: tableName,
+            member: { id: args.p_member_id, 'Full Name': 'Synthetic no phone member', 'Phone Number': 0 },
+          },
+          error: null,
+        }
+      }),
+    })
+
+    const result = await adapter.create({ tableName, payload: { 'Full Name': 'Synthetic no phone member', 'Phone Number': '0000000000' } })
+
+    expect(calls.find((call) => call.name === 'create_member_v2').args.p_member['Phone Number']).toBe('0000000000')
+    expect(result.member['Phone Number']).toBe('0000000000')
+    const localMembers = await adapter.listLocalMembers({ tableName })
+    const localMember = localMembers.find((member) => member.id === result.member.id)
+    expect(localMember['Phone Number']).toBe('0000000000')
   })
 
   it('uses the bootstrapped revision and canonical source identity for an edit', async () => {

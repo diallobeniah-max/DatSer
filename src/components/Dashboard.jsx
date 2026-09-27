@@ -2047,6 +2047,48 @@ const Dashboard = ({ isAdmin = false }) => {
     })
   }
 
+  const memberV2DashboardDerivedRows = memberV2Enabled ? getTabFilteredMembers() : []
+  const memberV2DashboardVisibleRows = searchTerm
+    ? memberV2DashboardDerivedRows
+    : memberV2DashboardDerivedRows.slice(0, displayLimit)
+  useEffect(() => {
+    if (!memberV2Enabled || typeof window === 'undefined') return undefined
+    const trace = window.__datserMemberV2IdTrace
+    if (!trace?.enabled) return undefined
+    const wantedIds = new Set((trace.memberIds || []).map(String))
+    const safeRows = (rows = []) => rows
+      .filter((row) => wantedIds.has(String(row?.id || '')))
+      .map((row) => ({
+        id: String(row.id),
+        referenceId: (() => {
+          trace.objectReferences ||= new WeakMap()
+          trace.nextObjectReferenceId ||= 1
+          if (!trace.objectReferences.has(row)) trace.objectReferences.set(row, trace.nextObjectReferenceId++)
+          return trace.objectReferences.get(row)
+        })(),
+        tableName: row.source_table || row.__source_table || currentTable || null,
+        ownerId: row.workspace_owner_id || row.user_id || null,
+        serverRevision: row.server_revision ?? null,
+        profileValueMatches: trace.expectedProfileValue == null ? null : String(row['Full Name'] ?? row.full_name ?? '') === String(trace.expectedProfileValue),
+        fullNameAliasMatches: trace.expectedProfileValue == null ? null : String(row.full_name ?? row['full_name'] ?? '') === String(trace.expectedProfileValue),
+        memberCardDisplayNameMatches: trace.expectedProfileValue == null ? null : String(row.full_name || row['full_name'] || row['Full Name'] || row.name || row.Name || '') === String(trace.expectedProfileValue),
+        deleted: Boolean(row.deleted_at || row.is_deleted),
+        saveState: row.__member_v2_save_state || row.save_state || null,
+        reactKey: String(getMemberCanonicalId(row) || row.id),
+      }))
+    const diagnostic = {
+      currentTable,
+      contextRows: safeRows(contextFilteredMembers),
+      appContextRows: safeRows(members),
+      derivedRows: safeRows(memberV2DashboardDerivedRows),
+      visibleRows: safeRows(memberV2DashboardVisibleRows),
+    }
+    window.__datserMemberV2DashboardDiagnostic = diagnostic
+    trace.events ||= []
+    trace.events.push({ at: new Date().toISOString(), stage: 'dashboard-derived-list', ...diagnostic })
+    return () => { delete window.__datserMemberV2DashboardDiagnostic }
+  }, [contextFilteredMembers, currentTable, dashboardTab, displayLimit, memberV2DashboardDerivedRows, memberV2DashboardVisibleRows, memberV2Enabled, members, searchTerm])
+
 
 
   const handleIndividualBadgeAssignment = async (memberId, badgeType) => {

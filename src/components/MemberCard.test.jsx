@@ -129,6 +129,53 @@ describe('MemberCard', () => {
     expect(screen.getByRole('button', { name: /code B04/i })).toBeTruthy()
   })
 
+  it('updates a member profile when the same UUID receives a new revision', () => {
+    const member = {
+      id: 'member-v2-render-update',
+      full_name: 'Original Synthetic Member',
+      server_revision: 7,
+      created_at: '2026-01-10T00:00:00.000Z',
+    }
+    const props = {
+      member,
+      memberIndexCode: 'A17',
+      isExpanded: false,
+      isSelected: false,
+      selectionMode: false,
+      onToggleExpansion: vi.fn(),
+      onToggleSelection: vi.fn(),
+      onLongPressStart: vi.fn(),
+      onLongPressMove: vi.fn(),
+      onLongPressEnd: vi.fn(),
+      onMouseDown: vi.fn(),
+      onMouseUp: vi.fn(),
+      onAttendance: vi.fn(),
+      onAttendanceForDate: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      attendanceStatus: undefined,
+      attendanceLoading: false,
+      monthSundays: [],
+      attendanceData: {},
+      currentTable: 'September_2026',
+      getMonthDisplayName: (tableName) => tableName.replace('_', ' '),
+      onIndexClick: vi.fn(),
+    }
+    const { rerender } = render(<MemberCard {...props} />)
+
+    expect(screen.getByRole('heading', { name: 'Original Synthetic Member' })).toBeTruthy()
+
+    rerender(
+      <MemberCard
+        {...props}
+        member={{ ...member, full_name: 'Updated Synthetic Member', server_revision: 8 }}
+      />
+    )
+
+    expect(screen.getByRole('heading', { name: 'Updated Synthetic Member' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Original Synthetic Member' })).toBeNull()
+  })
+
   it('sends top and per-Sunday attendance choices to their matching handlers', () => {
     const onAttendance = vi.fn()
     const onAttendanceForDate = vi.fn()

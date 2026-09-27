@@ -1,5 +1,8 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import WebSocket from 'ws'
 import { createClient } from '@supabase/supabase-js'
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
 import { readLocalSupabase } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
@@ -8,12 +11,35 @@ import { createMemberService } from './MemberService'
 import { createMemberAttendanceService } from './MemberAttendanceService'
 import { MEMBER_SAVE_STATES } from './memberSaveState'
 import { createMemberV2NetworkController } from '../../experiments/rxdb-member-phase1/NetworkController'
+import { vi } from 'vitest'
 
 const fixture = {}; const storage = getRxStorageMemory()
+const safeRealtimeError = (error) => String(error?.message || '')
+  .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+  .replace(/(apikey|access_token)=([^&\s]+)/gi, '$1=[redacted]')
+  .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, '[redacted]')
+
+const execFileAsync = promisify(execFile)
+let localContainerPromise
+const inspectLocalSignalRealtime = async (ownerId) => {
+  if (!/^[0-9a-f-]{36}$/i.test(ownerId)) throw new Error('Synthetic owner UUID is invalid.')
+  const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
+  localContainerPromise ||= execFileAsync(docker, ['ps', '--filter', 'name=supabase_db_', '--format', '{{.Names}}'], { encoding: 'utf8' })
+    .then(({ stdout }) => stdout.trim().split(/\r?\n/)[0])
+  const container = await localContainerPromise
+  if (!container) throw new Error('Local Supabase database container is required for this integration test.')
+  const query = `select json_build_object(
+    'rlsEnabled', (select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='member_v2_realtime_signals'),
+    'subscriptions', coalesce((select json_agg(json_build_object('subscriptionId',subscription_id::text,'entity',entity::text,'event',action_filter,'filters',filters::text,'role',claims_role::text,'createdAt',created_at) order by subscription_id) from realtime.subscription where entity=to_regclass('public.member_v2_realtime_signals') and claims->>'sub'='${ownerId}'),'[]'::json)
+  )::text;`
+  const { stdout } = await execFileAsync(docker, ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-A', '-t', '-c', query], { encoding: 'utf8' })
+  return JSON.parse(stdout.trim())
+}
 
 beforeAll(async () => {
-  const config = readLocalSupabase(); fixture.admin = createClient(config.url, config.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const config = readLocalSupabase(); fixture.config = config; fixture.admin = createClient(config.url, config.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const email = `member-v2-client-${Date.now()}-${crypto.randomUUID().slice(0, 8)}@local.invalid`; const password = `MemberV2-${crypto.randomUUID()}-9a!`
+  fixture.email = email; fixture.password = password
   const created = await fixture.admin.auth.admin.createUser({ email, password, email_confirm: true }); if (created.error) throw created.error
   fixture.userId = created.data.user.id; fixture.client = createClient(config.url, config.anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const login = await fixture.client.auth.signInWithPassword({ email, password }); if (login.error) throw login.error
@@ -25,9 +51,454 @@ beforeAll(async () => {
 afterAll(async () => { if (fixture.userId) await fixture.admin.auth.admin.deleteUser(fixture.userId) })
 
 describe.sequential('Member V2 service with local authenticated Supabase', () => {
+  it('keeps unrelated month-table trigger capture active outside trusted delete RPCs', async () => {
+    const service = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: getRxStorageMemory(), online: () => true })
+    await service.start()
+    try {
+      const member = await service.createMember({ tableName: fixture.tableName, member: { full_name: 'Synthetic trigger capture', current_level: 'JHS2' } })
+      await service.syncNow()
+      await service.syncNow()
+      expect((await service.getMember(member.id)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+      const before = await fixture.admin.from('member_v2_heads').select('server_revision')
+        .eq('owner_id', fixture.userId).eq('table_name', fixture.tableName).eq('member_id', member.id).single()
+      expect(before.error).toBeNull()
+
+      const directUpdate = await fixture.admin.from(fixture.tableName).update({ 'Full Name': 'Synthetic trigger capture updated' }).eq('id', member.id).select('id')
+      expect(directUpdate.error).toBeNull()
+      expect(directUpdate.data).toHaveLength(1)
+
+      const captured = await fixture.admin.from('member_v2_change_events')
+        .select('server_revision, operation_name, request_id, is_deleted')
+        .eq('owner_id', fixture.userId).eq('table_name', fixture.tableName).eq('member_id', member.id)
+        .gt('server_revision', before.data.server_revision).order('server_revision', { ascending: true })
+      expect(captured.error).toBeNull()
+      expect(captured.data).toHaveLength(1)
+      expect(captured.data[0]).toMatchObject({ operation_name: 'update', request_id: null, is_deleted: false })
+    } finally {
+      await service.stop()
+    }
+  }, 30000)
+
+  it('wakes the real authenticated MemberService from an unfiltered local signal while RLS isolates other roles', async () => {
+    const clientA = createClient(fixture.config.url, fixture.config.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: WebSocket } })
+    const clientB = createClient(fixture.config.url, fixture.config.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: WebSocket } })
+    const probeClient = createClient(fixture.config.url, fixture.config.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: WebSocket } })
+    const anonClient = createClient(fixture.config.url, fixture.config.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: WebSocket } })
+    let unrelatedClient = null
+    let unrelatedUserId = null
+    let service = null
+    let initialServiceChannel = null
+    let serviceCreation
+    let disposed = false
+    let cleanupPromise
+    let pullCount = 0
+    let originalRpc = null
+    const rawRevisions = []
+    const serviceSignalRevisions = []
+    const anonRevisions = []
+    const unrelatedRevisions = []
+    const serviceStatuses = []
+    const preflightStatuses = []
+    const subscriptionStates = { raw: [], anon: [], unrelated: [] }
+    const socketIdentities = new WeakMap()
+    let nextSocketIdentity = 1
+    const connectivityListeners = new Set()
+    let connectivityOnline = true
+    const connectivity = {
+      isBackendReachable: () => connectivityOnline,
+      subscribe: (listener) => { connectivityListeners.add(listener); return () => connectivityListeners.delete(listener) },
+    }
+    let originalChannel = null
+    const removeChannelCalls = []
+    let preflightChannel = null
+    let registryAfterPreflight = null
+    // Vitest timeouts race the test body; finally alone does not run before the next test.
+    const cleanup = () => {
+      disposed = true
+      cleanupPromise ||= (async () => {
+        if (serviceCreation) service = await serviceCreation
+        await service?.stop()
+        const clients = [clientA, clientB, probeClient, anonClient, unrelatedClient].filter(Boolean)
+        await Promise.all(clients.map(async (client) => {
+          await client.removeAllChannels()
+          await client.auth.signOut()
+          expect(client.getChannels()).toHaveLength(0)
+          expect(client.realtime.isConnected()).toBe(false)
+        }))
+        if (originalRpc) clientB.rpc = originalRpc
+        if (originalChannel) clientB.channel = originalChannel
+        if (unrelatedUserId) {
+          const removed = await fixture.admin.auth.admin.deleteUser(unrelatedUserId)
+          expect(removed.error).toBeNull()
+        }
+        if (service) {
+          expect(service.database.closed).toBe(true)
+          expect(service.channel).toBeNull()
+        }
+        expect(connectivityListeners.size).toBe(0)
+      })()
+      return cleanupPromise
+    }
+    onTestFinished(cleanup)
+    const requireActiveTest = () => { if (disposed) throw new Error('Realtime test has already finished.') }
+    const makeProbe = (client, name, revisions, states) => {
+      const channel = client.channel(name)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'member_v2_realtime_signals' }, (payload) => {
+          revisions.push(payload?.new?.latest_server_revision ?? null)
+        })
+        .subscribe((state) => states.push(state))
+      return channel
+    }
+    const describeClientChannels = (client = clientB) => client.getChannels().map((channel) => ({
+      topic: channel.topic,
+      state: channel.state,
+      postgresChangeIds: (channel.bindings.postgres_changes || []).map((binding) => binding.id).filter((id) => id !== undefined && id !== null).map(String),
+    }))
+    const channelBindingIds = (channel) => (channel?.bindings?.postgres_changes || []).map((binding) => binding.id).filter((id) => id !== undefined && id !== null).map(String)
+    const describeSocket = (client) => {
+      const socket = client.realtime.conn
+      if (socket && !socketIdentities.has(socket)) socketIdentities.set(socket, `socket-${nextSocketIdentity++}`)
+      return {
+        identity: socket ? socketIdentities.get(socket) : null,
+        readyState: socket?.readyState ?? null,
+        connected: client.realtime.isConnected(),
+        connecting: client.realtime.isConnecting(),
+        disconnecting: client.realtime.isDisconnecting(),
+      }
+    }
+    const waitUntilJoinedOrRejected = (states) => vi.waitFor(() => {
+      expect(states.some((state) => ['SUBSCRIBED', 'CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(state))).toBe(true)
+    }, { timeout: 10000, interval: 50 })
+
+    try {
+      const [loginA, loginB] = await Promise.all([
+        clientA.auth.signInWithPassword({ email: fixture.email, password: fixture.password }),
+        clientB.auth.signInWithPassword({ email: fixture.email, password: fixture.password }),
+      ])
+      const probeLogin = await probeClient.auth.signInWithPassword({ email: fixture.email, password: fixture.password })
+      expect(loginA.error).toBeNull(); expect(loginB.error).toBeNull(); expect(probeLogin.error).toBeNull()
+      await Promise.all([
+        clientA.realtime.setAuth(loginA.data.session.access_token),
+        clientB.realtime.setAuth(loginB.data.session.access_token),
+        probeClient.realtime.setAuth(probeLogin.data.session.access_token),
+      ])
+      const unrelatedEmail = `member-v2-unrelated-${Date.now()}-${crypto.randomUUID().slice(0, 8)}@local.invalid`
+      const unrelatedPassword = `Unrelated-${crypto.randomUUID()}-9a!`
+      const unrelatedCreated = await fixture.admin.auth.admin.createUser({ email: unrelatedEmail, password: unrelatedPassword, email_confirm: true })
+      expect(unrelatedCreated.error).toBeNull()
+      unrelatedUserId = unrelatedCreated.data.user.id
+      unrelatedClient = createClient(fixture.config.url, fixture.config.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: WebSocket } })
+      const unrelatedLogin = await unrelatedClient.auth.signInWithPassword({ email: unrelatedEmail, password: unrelatedPassword })
+      expect(unrelatedLogin.error).toBeNull()
+      await unrelatedClient.realtime.setAuth(unrelatedLogin.data.session.access_token)
+
+      const memberId = crypto.randomUUID()
+      const initialMember = {
+        'Full Name': `Synthetic realtime ${memberId.slice(0, 8)}`,
+        'Phone Number': '0555000000', Gender: 'Female', Age: '18', 'Current Level': 'SHS3',
+      }
+      const createFingerprint = await createMemberV2Fingerprint({
+        operation: 'create_member_v2', ownerId: fixture.userId, tableName: fixture.tableName, memberId, payload: initialMember,
+      })
+      const created = await clientA.rpc('create_member_v2', {
+        p_table_name: fixture.tableName, p_owner_id: fixture.userId, p_member_id: memberId,
+        p_member: initialMember, p_request_id: crypto.randomUUID(), p_payload_fingerprint: createFingerprint,
+      })
+      expect(created.error).toBeNull()
+      expect(created.data).toMatchObject({ status: 'SUCCESS', member_id: memberId })
+
+      const bPull = clientB.rpc.bind(clientB)
+      originalRpc = clientB.rpc
+      clientB.rpc = (name, args, options) => {
+        if (name === 'pull_workspace_member_changes_v2') pullCount += 1
+        return bPull(name, args, options)
+      }
+      originalChannel = clientB.channel
+      const bChannel = clientB.channel.bind(clientB)
+      const originalRemoveChannel = clientB.removeChannel.bind(clientB)
+      clientB.removeChannel = (channel) => {
+        const call = { topic: channel?.topic || null, sameAsInitialServiceChannel: channel === initialServiceChannel, statusBefore: channel?.state || null, result: null }
+        const promise = originalRemoveChannel(channel).then((result) => { call.result = result; return result })
+        call.promise = promise
+        removeChannelCalls.push(call)
+        return promise
+      }
+      clientB.channel = (name, options) => {
+        const channel = bChannel(name, options)
+        if (name === `member-v2-signal:${fixture.userId}`) {
+          const on = channel.on.bind(channel)
+          channel.on = (type, filter, handler) => on(type, filter, (payload, ...args) => {
+            if (type === 'postgres_changes' && filter?.table === 'member_v2_realtime_signals') {
+              serviceSignalRevisions.push(payload?.new?.latest_server_revision ?? null)
+            }
+            handler?.(payload, ...args)
+          })
+          const subscribe = channel.subscribe.bind(channel)
+          channel.subscribe = (callback, timeout) => subscribe((status, error) => {
+            serviceStatuses.push({ status, errorName: error?.name || null, errorMessage: error ? safeRealtimeError(error) : null })
+            callback?.(status, error)
+          }, timeout)
+        }
+        return channel
+      }
+      preflightChannel = probeClient.channel(`member-v2-direct-preflight:${fixture.userId}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'member_v2_realtime_signals' }, (payload) => rawRevisions.push(payload?.new?.latest_server_revision ?? null))
+        .subscribe((status, error) => preflightStatuses.push({ status, errorMessage: error ? safeRealtimeError(error) : null }))
+      await vi.waitFor(() => expect(preflightStatuses.some((item) => ['SUBSCRIBED', 'CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(item.status))).toBe(true), { timeout: 10000, interval: 50 })
+      expect(preflightStatuses).toContainEqual(expect.objectContaining({ status: 'SUBSCRIBED' }))
+      const preflightBindingIds = channelBindingIds(preflightChannel)
+      expect(preflightBindingIds).toHaveLength(1)
+      await vi.waitFor(async () => {
+        registryAfterPreflight = await inspectLocalSignalRealtime(fixture.userId)
+        expect(registryAfterPreflight.subscriptions).toHaveLength(1)
+      }, { timeout: 5000, interval: 100 })
+      expect(registryAfterPreflight.rlsEnabled).toBe(true)
+      expect(registryAfterPreflight.subscriptions).toHaveLength(1)
+      expect(registryAfterPreflight.subscriptions[0]).toMatchObject({ event: 'INSERT', role: 'authenticated', filters: '{}' })
+      const rawServerSubscriptionId = registryAfterPreflight.subscriptions[0].subscriptionId
+      requireActiveTest()
+      serviceCreation = createMemberService({
+        supabase: clientB, userId: fixture.userId, ownerId: fixture.userId,
+        storage: getRxStorageMemory(), online: () => true, connectivity, realtimeDebounceMs: 0,
+      })
+      service = await serviceCreation
+      requireActiveTest()
+      await service.start()
+      await service.syncNow()
+      initialServiceChannel = service.channel
+      await vi.waitFor(() => expect(serviceStatuses.some((item) => ['SUBSCRIBED', 'CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(item.status))).toBe(true), { timeout: 10000, interval: 50 })
+      expect(serviceStatuses).toContainEqual(expect.objectContaining({ status: 'SUBSCRIBED' }))
+      await vi.waitFor(() => expect(service.channel?.state).toBe('joined'), { timeout: 10000, interval: 50 })
+      const initialServiceBindingIds = channelBindingIds(service.channel)
+      expect(initialServiceBindingIds).toHaveLength(1)
+      await vi.waitFor(async () => {
+        const currentRegistry = await inspectLocalSignalRealtime(fixture.userId)
+        expect(currentRegistry.subscriptions).toHaveLength(2)
+      }, { timeout: 5000, interval: 100 })
+      const registryAtServiceJoin = await inspectLocalSignalRealtime(fixture.userId)
+      expect(registryAtServiceJoin.rlsEnabled).toBe(true)
+      expect(registryAtServiceJoin.subscriptions).toHaveLength(2)
+      expect(registryAtServiceJoin.subscriptions.length).toBe(registryAfterPreflight.subscriptions.length + 1)
+      expect(registryAtServiceJoin.subscriptions.every((row) => row.event === 'INSERT' && row.role === 'authenticated')).toBe(true)
+      expect(registryAtServiceJoin.subscriptions.every((row) => /member_v2_realtime_signals$/.test(row.entity) && row.filters === '{}')).toBe(true)
+      const channelsBeforeDisconnect = describeClientChannels()
+      const probeChannelsBeforeDisconnect = describeClientChannels(probeClient)
+      expect(channelsBeforeDisconnect).toHaveLength(1)
+      expect(probeChannelsBeforeDisconnect).toHaveLength(1)
+      expect(channelsBeforeDisconnect.every((channel) => channel.state === 'joined' && channel.postgresChangeIds.length === 1)).toBe(true)
+      const initialServiceRegistration = registryAtServiceJoin.subscriptions.find((row) => row.subscriptionId !== rawServerSubscriptionId)
+      expect(initialServiceRegistration).toBeDefined()
+      const registryIdsBeforeDisconnect = registryAtServiceJoin.subscriptions.map((row) => row.subscriptionId)
+
+      const anonChannel = makeProbe(anonClient, `member-v2-anon-probe:${memberId}`, anonRevisions, subscriptionStates.anon)
+      const unrelatedChannel = makeProbe(unrelatedClient, `member-v2-unrelated-probe:${memberId}`, unrelatedRevisions, subscriptionStates.unrelated)
+      await Promise.all([
+        waitUntilJoinedOrRejected(subscriptionStates.anon),
+        waitUntilJoinedOrRejected(subscriptionStates.unrelated),
+      ])
+      const rlsAfterProbes = await inspectLocalSignalRealtime(fixture.userId)
+      expect(rlsAfterProbes.rlsEnabled).toBe(true)
+      expect(rlsAfterProbes.subscriptions.length).toBeGreaterThanOrEqual(2)
+      expect(rlsAfterProbes.subscriptions.every((row) => row.filters === '{}' && row.event === 'INSERT')).toBe(true)
+
+      const baseline = await service.getMember(memberId)
+      expect(baseline?.server_revision).toBe(created.data.server_revision)
+      const pullsBeforeEdit = pullCount
+      const updates = { 'Full Name': `Synthetic edited ${memberId.slice(0, 8)}` }
+      const updateFingerprint = await createMemberV2Fingerprint({
+        operation: 'update_member_v2', ownerId: fixture.userId, tableName: fixture.tableName,
+        memberId, baseServerRevision: baseline.server_revision, payload: updates,
+      })
+      const updated = await clientA.rpc('update_member_v2', {
+        p_table_name: fixture.tableName, p_owner_id: fixture.userId, p_member_id: memberId,
+        p_updates: updates, p_base_server_revision: baseline.server_revision,
+        p_request_id: crypto.randomUUID(), p_payload_fingerprint: updateFingerprint, p_identity: {},
+      })
+      expect(updated.error).toBeNull()
+      expect(updated.data.status).toBe('SUCCESS')
+      const revision = Number(updated.data.server_revision)
+      const bSignalRead = await clientB.from('member_v2_realtime_signals')
+        .select('signal_id,owner_id,latest_server_revision')
+        .eq('owner_id', fixture.userId).eq('latest_server_revision', revision).maybeSingle()
+      expect(bSignalRead.error).toBeNull()
+      expect(bSignalRead.data).toMatchObject({ owner_id: fixture.userId, latest_server_revision: revision })
+
+      await vi.waitFor(() => expect(rawRevisions).toContain(revision), { timeout: 10000, interval: 50 })
+      await vi.waitFor(() => expect(serviceSignalRevisions).toContain(revision), { timeout: 10000, interval: 50 })
+      await vi.waitFor(() => expect(pullCount).toBeGreaterThan(pullsBeforeEdit), { timeout: 10000, interval: 50 })
+      await vi.waitFor(async () => expect((await service.getMember(memberId))?.server_revision).toBe(revision), { timeout: 10000, interval: 50 })
+
+      const anonRead = await anonClient.from('member_v2_realtime_signals').select('signal_id')
+        .eq('owner_id', fixture.userId).eq('latest_server_revision', revision).maybeSingle()
+      const unrelatedRead = await unrelatedClient.from('member_v2_realtime_signals').select('signal_id')
+        .eq('owner_id', fixture.userId).eq('latest_server_revision', revision).maybeSingle()
+      expect(Boolean(anonRead.error) || anonRead.data === null).toBe(true)
+      expect(Boolean(unrelatedRead.error) || unrelatedRead.data === null).toBe(true)
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      expect(anonRevisions).not.toContain(revision)
+      expect(unrelatedRevisions).not.toContain(revision)
+      expect(rawRevisions.filter((value) => Number(value) === revision)).toHaveLength(1)
+      expect(serviceSignalRevisions.filter((value) => Number(value) === revision)).toHaveLength(1)
+      expect(pullCount - pullsBeforeEdit).toBe(1)
+      const initialEditPullCount = pullCount - pullsBeforeEdit
+
+      const firstEventCount = rawRevisions.length
+      const disconnectAt = Date.now()
+      const memberSocketBeforeDisconnect = describeSocket(clientB)
+      const probeSocketBeforeDisconnect = describeSocket(probeClient)
+      connectivityOnline = false
+      connectivityListeners.forEach((listener) => listener('OFFLINE'))
+      await vi.waitFor(() => expect(service.channel).toBeNull(), { timeout: 10000, interval: 50 })
+      await vi.waitFor(() => expect(serviceStatuses.some((item) => item.status === 'CLOSED')).toBe(true), { timeout: 10000, interval: 50 })
+      const channelsOffline = describeClientChannels()
+      expect(channelsOffline).toHaveLength(0)
+      expect(initialServiceChannel.state).toBe('closed')
+      await vi.waitFor(() => expect(removeChannelCalls.some((call) => call.topic === initialServiceChannel.topic && call.promise)).toBe(true), { timeout: 10000, interval: 50 })
+      await removeChannelCalls.find((call) => call.topic === initialServiceChannel.topic)?.promise
+      const initialServiceRemoveCall = removeChannelCalls.find((call) => call.topic === initialServiceChannel.topic)
+      expect(initialServiceRemoveCall?.sameAsInitialServiceChannel).toBe(true)
+      expect(initialServiceRemoveCall?.result).toBe('ok')
+      expect(clientB.realtime.isConnected()).toBe(false)
+      expect(probeClient.realtime.isConnected()).toBe(true)
+      const memberSocketOffline = describeSocket(clientB)
+      const probeSocketOffline = describeSocket(probeClient)
+      console.info('MEMBER_V2_OFFLINE_SOCKET_STATE_ID_ONLY', JSON.stringify({ memberSocketOffline, probeSocketOffline, oldChannelState: initialServiceChannel.state, removeChannelResult: initialServiceRemoveCall?.result }))
+      const registryOffline = await inspectLocalSignalRealtime(fixture.userId)
+      const oldServiceSubscriptionIds = [initialServiceRegistration.subscriptionId]
+      connectivityOnline = true
+      connectivityListeners.forEach((listener) => listener('ONLINE'))
+      await vi.waitFor(() => expect(serviceStatuses.length).toBeGreaterThanOrEqual(3), { timeout: 10000, interval: 50 })
+      console.info('MEMBER_V2_RECONNECT_STATUS_ID_ONLY', JSON.stringify({
+        serviceStatuses,
+        serviceChannelState: service.channel?.state,
+        memberSocket: describeSocket(clientB),
+        probeSocket: describeSocket(probeClient),
+        removeChannelResult: initialServiceRemoveCall?.result,
+      }))
+      expect(serviceStatuses.at(-1).status).toBe('SUBSCRIBED')
+      await vi.waitFor(() => expect(service.channel?.state).toBe('joined'), { timeout: 10000, interval: 50 })
+      const channelsAfterReconnect = describeClientChannels()
+      const probeChannelsAfterReconnect = describeClientChannels(probeClient)
+      const memberSocketAfterReconnect = describeSocket(clientB)
+      const probeSocketAfterReconnect = describeSocket(probeClient)
+      expect(channelsAfterReconnect).toHaveLength(1)
+      expect(probeChannelsAfterReconnect).toHaveLength(1)
+      expect(service.channel).not.toBe(initialServiceChannel)
+      expect(memberSocketAfterReconnect.identity).not.toBe(memberSocketBeforeDisconnect.identity)
+      expect(memberSocketAfterReconnect.connected).toBe(true)
+      expect(probeSocketAfterReconnect.identity).toBe(probeSocketBeforeDisconnect.identity)
+      expect(channelsAfterReconnect.every((channel) => channel.state === 'joined' && channel.postgresChangeIds.length === 1)).toBe(true)
+      let registryAtReconnect = null
+      let newServerSubscriptionRows = []
+      await vi.waitFor(async () => {
+        registryAtReconnect = await inspectLocalSignalRealtime(fixture.userId)
+        newServerSubscriptionRows = registryAtReconnect.subscriptions.filter((row) => !registryIdsBeforeDisconnect.includes(row.subscriptionId))
+        expect(newServerSubscriptionRows).toHaveLength(1)
+      }, { timeout: 5000, interval: 100 })
+      expect(newServerSubscriptionRows).toHaveLength(1)
+      const expectedLiveServerIds = new Set([rawServerSubscriptionId, newServerSubscriptionRows[0].subscriptionId])
+      const liveRegistryRows = registryAtReconnect.subscriptions.filter((row) => expectedLiveServerIds.has(row.subscriptionId))
+      const unboundRegistryRowsAtReconnect = registryAtReconnect.subscriptions.filter((row) => !expectedLiveServerIds.has(row.subscriptionId))
+      expect(liveRegistryRows).toHaveLength(2)
+      expect(registryAtReconnect.subscriptions.every((row) => row.event === 'INSERT' && row.role === 'authenticated' && row.filters === '{}')).toBe(true)
+      const registryImmediatelyBeforeEvent = await inspectLocalSignalRealtime(fixture.userId)
+      const oldRowPresentAtEvent = registryImmediatelyBeforeEvent.subscriptions.some((row) => oldServiceSubscriptionIds.includes(row.subscriptionId))
+      const pullsBeforeReconnectEdit = pullCount
+
+      const reconnectBaseline = await service.getMember(memberId)
+      expect(reconnectBaseline?.server_revision).toBe(revision)
+      const reconnectUpdates = { 'Full Name': `Synthetic reconnect ${memberId.slice(0, 8)}` }
+      const reconnectFingerprint = await createMemberV2Fingerprint({
+        operation: 'update_member_v2', ownerId: fixture.userId, tableName: fixture.tableName,
+        memberId, baseServerRevision: reconnectBaseline.server_revision, payload: reconnectUpdates,
+      })
+      const reconnectUpdated = await clientA.rpc('update_member_v2', {
+        p_table_name: fixture.tableName, p_owner_id: fixture.userId, p_member_id: memberId,
+        p_updates: reconnectUpdates, p_base_server_revision: reconnectBaseline.server_revision,
+        p_request_id: crypto.randomUUID(), p_payload_fingerprint: reconnectFingerprint, p_identity: {},
+      })
+      expect(reconnectUpdated.error).toBeNull()
+      expect(reconnectUpdated.data.status).toBe('SUCCESS')
+      const reconnectRevision = Number(reconnectUpdated.data.server_revision)
+      await vi.waitFor(() => expect(rawRevisions).toContain(reconnectRevision), { timeout: 10000, interval: 50 })
+      await vi.waitFor(() => expect(serviceSignalRevisions).toContain(reconnectRevision), { timeout: 10000, interval: 50 })
+      await vi.waitFor(() => expect(pullCount).toBe(pullsBeforeReconnectEdit + 1), { timeout: 10000, interval: 50 })
+      await vi.waitFor(async () => expect((await service.getMember(memberId))?.server_revision).toBe(reconnectRevision), { timeout: 10000, interval: 50 })
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      expect(rawRevisions.filter((value) => Number(value) === reconnectRevision)).toHaveLength(1)
+      expect(serviceSignalRevisions.filter((value) => Number(value) === reconnectRevision)).toHaveLength(1)
+      expect(pullCount - pullsBeforeReconnectEdit).toBe(1)
+      const registryAfterSignal = await inspectLocalSignalRealtime(fixture.userId)
+      let registryAfterObservation = registryAfterSignal
+      let cleanupLatencyMs = registryAfterSignal.subscriptions.some((row) => oldServiceSubscriptionIds.includes(row.subscriptionId))
+        ? null
+        : Date.now() - disconnectAt
+      while (cleanupLatencyMs === null && Date.now() - disconnectAt < 10000) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        registryAfterObservation = await inspectLocalSignalRealtime(fixture.userId)
+        if (!registryAfterObservation.subscriptions.some((row) => oldServiceSubscriptionIds.includes(row.subscriptionId))) {
+          cleanupLatencyMs = Date.now() - disconnectAt
+        }
+      }
+      const unboundRegistryRowsAfterObservation = registryAfterObservation.subscriptions.filter((row) => !expectedLiveServerIds.has(row.subscriptionId))
+
+      console.info('MEMBER_V2_DIRECT_REALTIME_WAKE_ID_ONLY', JSON.stringify({
+        ownerId: fixture.userId, memberId, baseRevision: baseline.server_revision, revision,
+        serviceStatuses, preflightStatuses, unauthorizedStatuses: { anonymous: subscriptionStates.anon, unrelated: subscriptionStates.unrelated },
+        serviceChannelState: service.channel?.state,
+        serviceRegistryRows: registryAtServiceJoin.subscriptions.length,
+        emptyFilters: registryAtServiceJoin.subscriptions[0].filters,
+        channelsBeforeDisconnect,
+        registryIdsBeforeDisconnect,
+        disconnectAt,
+        channelsOffline,
+        memberSocketBeforeDisconnect,
+        memberSocketOffline,
+        memberSocketAfterReconnect,
+        probeSocketBeforeDisconnect,
+        probeSocketOffline,
+        probeSocketAfterReconnect,
+        initialServiceChannelClosed: initialServiceChannel.state === 'closed',
+        removeChannelCalledForInitialServiceChannel: initialServiceRemoveCall?.sameAsInitialServiceChannel === true,
+        removeChannelResult: initialServiceRemoveCall?.result,
+        registryOffline: registryOffline.subscriptions,
+        oldServiceSubscriptionIds,
+        rawServerSubscriptionId,
+        initialServiceRegistration,
+        channelsAfterReconnect,
+        registryAtReconnect: registryAtReconnect.subscriptions,
+        registryImmediatelyBeforeEvent: registryImmediatelyBeforeEvent.subscriptions,
+        oldRowPresentAtEvent,
+        registryAfterSignal: registryAfterSignal.subscriptions,
+        registryAfterObservation: registryAfterObservation.subscriptions,
+        newServerSubscriptionRows,
+        unboundRegistryRowsAtReconnect,
+        unboundRegistryRowsAfterObservation,
+        cleanupLatencyMs,
+        rawCallback: rawRevisions.includes(revision),
+        serviceCallbackCount: serviceSignalRevisions.filter((value) => Number(value) === revision).length,
+        authoritativePullCount: initialEditPullCount,
+        convergedRevision: (await service.getMember(memberId))?.server_revision,
+        anonymousReadDenied: Boolean(anonRead.error) || anonRead.data === null,
+        unrelatedReadDenied: Boolean(unrelatedRead.error) || unrelatedRead.data === null,
+        anonymousEventIgnored: !anonRevisions.includes(revision),
+        unrelatedEventIgnored: !unrelatedRevisions.includes(revision),
+        reconnectRegistryRows: registryAfterObservation.subscriptions.length,
+        reconnectRawCallback: rawRevisions.length > firstEventCount,
+        reconnectRevision,
+        reconnectServiceCallbackCount: serviceSignalRevisions.filter((value) => Number(value) === reconnectRevision).length,
+        reconnectPullCount: pullCount - pullsBeforeReconnectEdit,
+        reconnectConvergedRevision: (await service.getMember(memberId))?.server_revision,
+      }))
+    } finally {
+      await cleanup()
+    }
+  }, 30000)
+
   it('recovers an authenticated realistic local create after the harness selected an unregistered source month', async () => {
     let online = false
     const service = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage, online: () => online })
+    onTestFinished(() => service.stop())
     await service.start()
     const local = await service.createMember({ tableName: 'January_2025', member: { full_name: 'Recovered authenticated member', phone_number: '0240000000', age: '12', gender: 'Male', current_level: 'JHS3', notes: 'Synthetic recovery test' } })
     const request = (await service.database.mutations.find({ selector: { member_id: local.id } }).exec())[0].toJSON()
@@ -133,7 +604,9 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     expect(row.error).toBeNull(); expect(row.data.deleted_at).toBeTruthy()
     const changes = await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: fixture.userId, p_after_server_revision: confirmed.server_revision, p_limit: 10 })
     expect(changes.error).toBeNull()
-    expect(changes.data.changes.find((change) => change.member_id === created.id)).toMatchObject({ is_deleted: true })
+    const deleteChanges = changes.data.changes.filter((change) => change.member_id === created.id)
+    expect(deleteChanges).toHaveLength(1)
+    expect(deleteChanges[0]).toMatchObject({ is_deleted: true })
     await service.stop()
   }, 30000)
 
@@ -235,5 +708,71 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     expect(memberQueue).toEqual([])
     expect(attendanceQueue).toEqual([])
     await Promise.all([members.stop(), attendance.stop()])
+  }, 30000)
+
+  it('round-trips real phones and the No Phone zero sentinel through local Member V2 storage and pull', async () => {
+    let online = true
+    const firstStorage = getRxStorageMemory()
+    const first = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: firstStorage, online: () => online })
+    await first.start()
+
+    const real = await first.createMember({ tableName: fixture.tableName, member: { full_name: 'Synthetic phone control', phone_number: '0551234567' } })
+    const realCreateMutation = (await first.database.mutations.find({ selector: { member_id: real.id, operation: 'create_member_v2' } }).exec())[0].toJSON()
+    expect(realCreateMutation.payload['Phone Number']).toBe('0551234567')
+    await first.syncNow()
+    await first.syncNow()
+    await first.awaitServerConfirmation(realCreateMutation.id)
+    const realLocal = await first.getMember(real.id)
+    expect({ state: realLocal.save_state, error: realLocal.last_error }).toEqual({ state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, error: null })
+    const realServer = await fixture.client.from(fixture.tableName).select('"Phone Number"').eq('id', real.id).single()
+    expect(realServer.error).toBeNull()
+    expect(realServer.data['Phone Number']).toBe(551234567)
+
+    await first.updateMember(real.id, { phone_number: '0000000000' })
+    const realPhoneUpdate = (await first.database.mutations.find({ selector: { member_id: real.id, operation: 'update_member_v2' } }).exec())[0].toJSON()
+    expect(realPhoneUpdate.payload['Phone Number']).toBe('0000000000')
+    await first.syncNow()
+    await first.syncNow()
+    await first.awaitServerConfirmation(realPhoneUpdate.id)
+    const editedServer = await fixture.client.from(fixture.tableName).select('"Phone Number"').eq('id', real.id).single()
+    expect(editedServer.data['Phone Number']).toBe(0)
+
+    const noPhone = await first.createMember({ tableName: fixture.tableName, member: { full_name: 'Synthetic no phone create', phone_number: '0000000000' } })
+    const noPhoneMutation = (await first.database.mutations.find({ selector: { member_id: noPhone.id, operation: 'create_member_v2' } }).exec())[0].toJSON()
+    expect(noPhoneMutation.payload['Phone Number']).toBe('0000000000')
+    await first.syncNow()
+    await first.syncNow()
+    await first.awaitServerConfirmation(noPhoneMutation.id)
+    const noPhoneServer = await fixture.client.from(fixture.tableName).select('"Phone Number"').eq('id', noPhone.id).single()
+    expect(noPhoneServer.error).toBeNull()
+    expect(noPhoneServer.data['Phone Number']).toBe(0)
+    const noPhonePull = await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: fixture.userId, p_after_server_revision: 0, p_limit: 100 })
+    expect(noPhonePull.error).toBeNull()
+    expect(noPhonePull.data.changes.filter((change) => change.member_id === noPhone.id).at(-1).member['Phone Number']).toBe(0)
+    expect((await first.getMember(noPhone.id)).data['Phone Number']).toBe(0)
+
+    online = false
+    await first.updateMember(noPhone.id, { full_name: 'Synthetic no phone edited offline' })
+    expect((await first.getMember(noPhone.id)).data['Phone Number']).toBe(0)
+    const offlineUpdate = (await first.database.mutations.find({ selector: { member_id: noPhone.id, operation: 'update_member_v2' } }).exec())[0].toJSON()
+    const offlineServer = await fixture.client.from(fixture.tableName).select('"Phone Number"').eq('id', noPhone.id).single()
+    expect(offlineServer.data['Phone Number']).toBe(0)
+    online = true
+    await first.syncNow()
+    await first.syncNow()
+    await first.awaitServerConfirmation(offlineUpdate.id)
+    const finalServer = await fixture.client.from(fixture.tableName).select('"Phone Number"').eq('id', noPhone.id).single()
+    expect(finalServer.data['Phone Number']).toBe(0)
+    await first.stop()
+
+    const pulled = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: getRxStorageMemory(), online: () => true })
+    await pulled.start()
+    await pulled.pull()
+    expect((await pulled.getMember(real.id)).data['Phone Number']).toBe(0)
+    expect((await pulled.getMember(noPhone.id)).data['Phone Number']).toBe(0)
+    expect(offlineUpdate.id).toMatch(/^update_member_v2:/)
+    const noPhonePendingMutations = await pulled.database.mutations.find({ selector: { member_id: noPhone.id } }).exec()
+    expect(noPhonePendingMutations).toHaveLength(0)
+    await pulled.stop()
   }, 30000)
 })

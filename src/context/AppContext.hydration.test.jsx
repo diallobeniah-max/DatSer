@@ -10,6 +10,7 @@ const testConfig = {
   user: null,
   session: null,
   rangeResult: { data: [], error: null },
+  rangeResultForTable: null,
   countResult: { count: 0, error: null },
   preferences: { current_month_table: 'August_2026' }
 }
@@ -57,7 +58,7 @@ vi.mock('../lib/supabase', () => {
       limit: () => base,
       order: () => base,
       is: () => base,
-      range: (from, to) => Promise.resolve(testConfig.rangeResult),
+      range: (from, to) => Promise.resolve(testConfig.rangeResultForTable?.(table, from, to) ?? testConfig.rangeResult),
       single: () => {
         if (table === 'user_preferences') {
           return Promise.resolve({ data: preferencesRow, error: null })
@@ -124,12 +125,17 @@ vi.mock('./AuthContext', () => ({
   })
 }))
 
+// Load after mock state is initialized, before individual test deadlines.
+// Cold AppContext transforms can exceed 5s when the full suite runs in parallel.
+const { AppProvider, useApp } = await import('./AppContext.jsx')
+
 describe('AppContext member hydration', () => {
   beforeEach(() => {
     testConfig.authLoading = false
     testConfig.user = { id: 'owner-1', email: 'owner@example.com' }
     testConfig.session = { user: { id: 'owner-1' } }
     testConfig.rangeResult = { data: [], error: null }
+    testConfig.rangeResultForTable = null
     testConfig.countResult = { count: 0, error: null }
     testConfig.preferences = { current_month_table: 'August_2026' }
 
@@ -154,7 +160,6 @@ describe('AppContext member hydration', () => {
   })
 
   const renderProbe = async () => {
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const state = useApp()
       useEffect(() => {
@@ -278,6 +283,37 @@ describe('AppContext member hydration', () => {
     await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
     await waitFor(() => expect(getLatest()?.membersTotalCount).toBe(389))
     await waitFor(() => expect(getLatest()?.members?.length).toBe(389))
+  })
+
+  it('does not let a late full snapshot for the previous month replace the active month', async () => {
+    const augustId = 'synthetic-august-member'
+    const januaryId = 'synthetic-january-member'
+    let resolveJanuarySnapshot
+    let deferJanuarySnapshot = false
+    testConfig.rangeResultForTable = (table, from) => {
+      if (table === 'January_2026' && from === 0 && deferJanuarySnapshot) {
+        return new Promise((resolve) => { resolveJanuarySnapshot = () => resolve({ data: [{ id: januaryId, name: 'Synthetic', deleted_at: null }], error: null }) })
+      }
+      return { data: [{ id: augustId, name: 'Synthetic', deleted_at: null }], error: null }
+    }
+
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.currentTable).toBe('August_2026'))
+    await waitFor(() => expect(getLatest()?.members?.map((member) => member.id)).toContain(augustId))
+
+    await getLatest().setCurrentTable('January_2026')
+    await waitFor(() => expect(getLatest()?.currentTable).toBe('January_2026'))
+    deferJanuarySnapshot = true
+    const pendingSnapshot = getLatest().fetchMembers('January_2026', { fullSnapshot: true, background: true })
+    await waitFor(() => expect(resolveJanuarySnapshot).toBeTypeOf('function'))
+
+    await getLatest().setCurrentTable('August_2026')
+    await waitFor(() => expect(getLatest()?.currentTable).toBe('August_2026'))
+    resolveJanuarySnapshot()
+    await pendingSnapshot
+
+    expect(getLatest()?.members?.map((member) => member.id)).toContain(augustId)
+    expect(getLatest()?.members?.map((member) => member.id)).not.toContain(januaryId)
   })
 
   it('does not mark HYDRATED on a transient error that preserves an empty list', async () => {

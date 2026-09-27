@@ -47,3 +47,8 @@ test-gemini.js
 .vercel
 .env*.local
 .trae/rules/project_rules.md
+
+# Local test evidence may contain synthetic login credentials and auth tokens.
+/output/
+/test-results/
+/playwright-report/

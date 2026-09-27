@@ -1,0 +1,2 @@
+# Vite's SSR hashbang handling requires LF for this imported Node CLI script.
+scripts/verify-production-deploy.mjs text eol=lf

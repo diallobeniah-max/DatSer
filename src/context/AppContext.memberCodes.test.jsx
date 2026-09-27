@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { useEffect } from 'react'
-import { render, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 let preferenceListeners = []
@@ -107,6 +107,10 @@ vi.mock('./AuthContext', () => ({
   useAuth: () => authState
 }))
 
+// Load after mock state is initialized, before individual test deadlines.
+// Cold AppContext transforms can exceed 5s when the full suite runs in parallel.
+const { AppProvider, useApp } = await import('./AppContext.jsx')
+
 describe('AppContext member-code loading', () => {
   beforeEach(() => {
     process.env.VITE_SUPABASE_URL = 'https://test.supabase.co'
@@ -143,12 +147,11 @@ describe('AppContext member-code loading', () => {
       { member_id: 'uuid-101', current_code: 'A02', ordinal: 2, aliases: [], updated_at: '2026-08-01T10:00:00Z' }
     ]
     memberCodeOwnerFilter = null
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
-      const { workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes } = useApp()
+      const { dataOwnerId, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes } = useApp()
       useEffect(() => {
-        onState({ workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes })
-      }, [workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, onState])
+        onState({ dataOwnerId, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes })
+      }, [dataOwnerId, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, onState])
       return null
     }
 
@@ -161,13 +164,17 @@ describe('AppContext member-code loading', () => {
 
     await waitFor(() => expect(typeof latest?.loadWorkspaceMemberCodes).toBe('function'), { timeout: 4000 })
 
-    const assignments = await latest.loadWorkspaceMemberCodes()
-    await waitFor(() => expect(latest?.workspaceMemberCodeStatus).toBe('ready'), { timeout: 4000 })
-
-    expect(latest.workspaceMemberCodeAssignments['uuid-100']?.current_code).toBe('A01')
-    expect(latest.workspaceMemberCodeAssignments['uuid-101']?.current_code).toBe('A02')
+    // Collaborator identity resolves asynchronously; do not load for the initial actor scope.
+    await waitFor(() => expect(latest?.dataOwnerId).toBe('owner-1'), { timeout: 4000 })
+    let assignments
+    await act(async () => { assignments = await latest.loadWorkspaceMemberCodes() })
+    await waitFor(() => {
+      expect(latest?.workspaceMemberCodeStatus).toBe('ready')
+      expect(latest.workspaceMemberCodeAssignments['uuid-100']?.current_code).toBe('A01')
+      expect(latest.workspaceMemberCodeAssignments['uuid-101']?.current_code).toBe('A02')
+    }, { timeout: 4000 })
     expect(assignments.length).toBeGreaterThanOrEqual(2)
-    expect(memberCodeOwnerFilter).toBeTruthy()
+    expect(memberCodeOwnerFilter).toBe('owner-1')
     unmount()
   })
 
@@ -175,7 +182,6 @@ describe('AppContext member-code loading', () => {
     memberCodeRows = [
       { member_id: 'uuid-100', current_code: 'A01', ordinal: 1, aliases: [], updated_at: '2026-08-01T10:00:00Z' }
     ]
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const { workspaceMemberCodeAssignments, currentTable, loadWorkspaceMemberCodes } = useApp()
       useEffect(() => {
@@ -211,7 +217,6 @@ describe('AppContext member-code loading', () => {
 
   it('does not save or change the month while preferences are still hydrating', async () => {
     authState.preferencesHydrated = false
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const { currentTable, setPersonalCalendarMode } = useApp()
       useEffect(() => {
@@ -242,7 +247,6 @@ describe('AppContext member-code loading', () => {
   })
 
   it('performs one confirmed save once hydration completes', async () => {
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const { currentTable, setPersonalCalendarMode } = useApp()
       useEffect(() => {
@@ -272,7 +276,6 @@ describe('AppContext member-code loading', () => {
   })
 
   it('coalesces concurrent duplicate Manual saves into a single RPC write', async () => {
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const { setPersonalCalendarMode } = useApp()
       useEffect(() => {
@@ -309,7 +312,6 @@ describe('AppContext member-code loading', () => {
   })
 
   it('returns to Auto with exactly one save and clears the manual deadline', async () => {
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const { setPersonalCalendarMode, isPersonalManualMode } = useApp()
       useEffect(() => {
@@ -337,7 +339,6 @@ describe('AppContext member-code loading', () => {
   })
 
   it('refuses a bare Manual save without an explicit Sunday (no stale January write)', async () => {
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const { setPersonalCalendarMode, currentTable } = useApp()
       useEffect(() => {

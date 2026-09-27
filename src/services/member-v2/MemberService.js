@@ -31,6 +31,14 @@ const isRecoverableUnsupportedFieldFailure = (mutation) => mutation?.operation =
   && mutation?.save_state === MEMBER_SAVE_STATES.FAILED_RETRYABLE
   && mutation?.last_error === UNSUPPORTED_FIELD_ERROR
 
+const traceMemberV2Realtime = (event) => {
+  if (typeof window === 'undefined') return
+  const trace = window.__datserMemberV2IdTrace
+  if (!trace?.enabled) return
+  trace.events ||= []
+  trace.events.push({ at: new Date().toISOString(), ...event })
+}
+
 const memberFields = (data, { userId, ownerId, tableName, memberId, identity, saveState, requestId = null, operation = null, fingerprint = null, baseRevision = null, retryCount = 0, conflict = null } = {}) => ({
   workspace_id: ownerId, workspace_owner_id: ownerId, authenticated_user_scope: userId,
   source_table: tableName || data?.__source_table || null, canonical_member_id: memberId || data?.__canonical_member_id || data?.id || null,
@@ -58,7 +66,7 @@ export class MemberService {
     if (!userId || !ownerId || !database) throw new Error('Member V2 requires an authenticated user, workspace owner, and local database.')
     this.supabase = supabase; this.userId = userId; this.ownerId = ownerId; this.database = database
     this.scopeKey = createMemberV2ScopeKey({ userId, ownerId }); this.online = online; this.connectivity = connectivity; this.batchSize = Math.min(Math.max(batchSize, 1), DEFAULT_BATCH_SIZE)
-    this.realtimeDebounceMs = realtimeDebounceMs; this.closeDatabase = closeDatabase; this.channel = null; this.realtimeTimer = null; this.syncPromise = null; this.connectivityUnsubscribe = null
+    this.realtimeDebounceMs = realtimeDebounceMs; this.closeDatabase = closeDatabase; this.channel = null; this.realtimeTimer = null; this.syncPromise = null; this.connectivityUnsubscribe = null; this.connectivityChangePromise = Promise.resolve()
   }
 
   static async create(options) {
@@ -68,7 +76,7 @@ export class MemberService {
 
   async start() {
     await this.#syncDocument()
-    this.connectivityUnsubscribe = this.connectivity?.subscribe(() => { void this.#handleConnectivityChange() }) || null
+    this.connectivityUnsubscribe = this.connectivity?.subscribe(() => this.#queueConnectivityChange()) || null
     this.#subscribeRealtime()
     if (this.#isBackendReachable()) void this.syncNow()
     return this
@@ -77,6 +85,7 @@ export class MemberService {
   async stop() {
     if (this.realtimeTimer) clearTimeout(this.realtimeTimer)
     this.connectivityUnsubscribe?.(); this.connectivityUnsubscribe = null
+    await this.connectivityChangePromise.catch(() => {})
     // A reload/close can race the automatic start-up pull. Let that bounded
     // promise settle before closing RxDB so its checkpoint update cannot land
     // on a closed collection.
@@ -421,11 +430,25 @@ export class MemberService {
 
   #subscribeRealtime() {
     if (this.#isSimulationBlocking() || !this.supabase.channel || this.channel) return
+    // Filtered joins can report SUBSCRIBED without registering in the local Realtime stack.
+    // RLS remains the row-access boundary; this owner check limits wake-ups to this scope.
     this.channel = this.supabase.channel(`member-v2-signal:${this.ownerId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'member_v2_realtime_signals', filter: `owner_id=eq.${this.ownerId}` }, () => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'member_v2_realtime_signals' }, (payload) => {
+        if (payload?.new?.owner_id !== this.ownerId) return
+        traceMemberV2Realtime({
+          stage: 'member-v2-realtime-signal-received',
+          latestServerRevision: payload?.new?.latest_server_revision ?? null,
+        })
         if (this.realtimeTimer) clearTimeout(this.realtimeTimer)
-        this.realtimeTimer = setTimeout(() => { this.realtimeTimer = null; void this.syncNow({ pullOnly: true }) }, this.realtimeDebounceMs)
-      }).subscribe()
+        this.realtimeTimer = setTimeout(async () => {
+          this.realtimeTimer = null
+          traceMemberV2Realtime({ stage: 'member-v2-realtime-pull-started' })
+          const sync = await this.syncNow({ pullOnly: true })
+          traceMemberV2Realtime({ stage: 'member-v2-realtime-pull-finished', cursor: sync?.cursor ?? null, state: sync?.state || null })
+        }, this.realtimeDebounceMs)
+      }).subscribe((status) => {
+        traceMemberV2Realtime({ stage: 'member-v2-realtime-channel-status', status })
+      })
   }
 
   async #unsubscribeRealtime() {
@@ -434,10 +457,28 @@ export class MemberService {
     await this.supabase.removeChannel?.(channel)
   }
 
+  #queueConnectivityChange() {
+    this.connectivityChangePromise = this.connectivityChangePromise
+      .catch(() => {})
+      .then(() => this.#handleConnectivityChange())
+    return this.connectivityChangePromise
+  }
+
   async #handleConnectivityChange() {
+    if (!this.#isBackendReachable()) return this.#unsubscribeRealtime()
+    await this.#waitForRealtimeDisconnect()
     if (!this.#isBackendReachable()) return this.#unsubscribeRealtime()
     this.#subscribeRealtime()
     await this.syncNow()
+  }
+
+  async #waitForRealtimeDisconnect() {
+    const isDisconnecting = this.supabase.realtime?.isDisconnecting
+    while (isDisconnecting?.call(this.supabase.realtime)) {
+      // realtime-js may resolve removeChannel before its socket has completed
+      // disconnecting. Yield to its observable state transition before connect().
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
   }
 
   #isBackendReachable() {

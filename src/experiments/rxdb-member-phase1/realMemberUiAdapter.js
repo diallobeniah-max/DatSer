@@ -5,13 +5,23 @@ import { MEMBER_SAVE_STATES } from '../../services/member-v2/memberSaveState'
 import { MEMBER_CONFLICT_OPERATIONS } from '../../services/member-v2/memberConflict'
 import { updateMemberV2LocalFlowGuard } from './memberV2FeatureFlag'
 import { getRealDatserMemberV2Connectivity } from './realDatserConnectivity'
+import { normalizeMemberPhoneForUi } from '../../utils/memberPhone'
 
 let activeAdapter = null
 
 const browserOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false
 
-const memberForLegacyUi = (record) => ({
-  ...(record?.data || {}),
+const memberForLegacyUi = (record) => {
+  const data = { ...(record?.data || {}) }
+  const phone = data['Phone Number'] ?? data.phone_number ?? data.phone
+  if (phone !== undefined) {
+    const normalizedPhone = normalizeMemberPhoneForUi(phone)
+    data['Phone Number'] = normalizedPhone
+    if (data.phone_number !== undefined) data.phone_number = normalizedPhone
+    if (data.phone !== undefined) data.phone = normalizedPhone
+  }
+  return {
+  ...data,
   id: record?.member_id || record?.id,
   member_id: record?.member_id || record?.id,
   workspace_owner_id: record?.owner_id,
@@ -19,11 +29,13 @@ const memberForLegacyUi = (record) => ({
   source_table: record?.table_name,
   __source_table: record?.table_name,
   __canonical_member_id: record?.member_id || record?.id,
+  is_deleted: Boolean(record?.is_deleted),
   server_revision: record?.server_revision ?? null,
   __member_v2_save_state: record?.save_state || MEMBER_SAVE_STATES.LOCAL_PENDING,
   __member_v2_error: record?.last_error || null,
   updated_at: record?.updated_at || new Date().toISOString(),
-})
+  }
+}
 
 const stateMessage = (syncState) => {
   if (syncState.conflicts) return 'Member V2 saved locally, but it needs conflict resolution before it can sync.'
@@ -149,6 +161,70 @@ class RealMemberUiAdapter {
     }
   }
 
+  async getSafeMemberDiagnostics({ tableName, memberIds = [], expectedProfileValue = null } = {}) {
+    await this.start()
+    const wantedIds = new Set((memberIds || []).map(String))
+    const selector = { scope_key: this.service.scopeKey }
+    if (tableName) selector.table_name = tableName
+    const [members, mutations, sync] = await Promise.all([
+      this.service.database.members.find({ selector }).exec(),
+      this.service.database.mutations.find({ selector: { scope_key: this.service.scopeKey } }).exec(),
+      this.service.database.sync.findOne(this.service.scopeKey).exec(),
+    ])
+    return {
+      scopeKey: this.service.scopeKey,
+      cursor: sync?.cursor ?? null,
+      state: sync?.state || 'IDLE',
+      members: members
+        .map((record) => record.toJSON())
+        .filter((record) => wantedIds.has(String(record.member_id || record.id)))
+        .map((record) => ({
+          id: String(record.member_id || record.id),
+          documentId: String(record.id),
+          scopeKey: record.scope_key,
+          userId: record.user_id,
+          ownerId: record.owner_id,
+          tableName: record.table_name,
+          serverRevision: record.server_revision ?? null,
+          profileValueMatches: expectedProfileValue == null ? null : String(record.data?.['Full Name'] ?? '') === String(expectedProfileValue),
+          fullNameAliasMatches: expectedProfileValue == null ? null : String(record.data?.full_name ?? record.data?.['full_name'] ?? '') === String(expectedProfileValue),
+          memberCardDisplayNameMatches: expectedProfileValue == null ? null : String(record.data?.full_name || record.data?.['full_name'] || record.data?.['Full Name'] || record.data?.name || record.data?.Name || '') === String(expectedProfileValue),
+          deleted: Boolean(record.is_deleted),
+          saveState: record.save_state,
+        })),
+      mutations: mutations
+        .map((record) => record.toJSON())
+        .filter((record) => wantedIds.has(String(record.member_id || '')))
+        .map((record) => ({
+          requestId: record.id,
+          memberId: String(record.member_id),
+          tableName: record.table_name,
+          operation: record.operation,
+          baseServerRevision: record.base_server_revision ?? null,
+          saveState: record.save_state,
+          retryCount: Number(record.retry_count || 0),
+        })),
+    }
+  }
+
+  async getSafeAttendanceDiagnostics({ memberId, attendanceDate } = {}) {
+    await this.start()
+    const selector = { scope_key: this.attendanceService.scopeKey }
+    if (memberId) selector.member_id = String(memberId)
+    if (attendanceDate) selector.attendance_date = attendanceDate
+    const [records, mutations] = await Promise.all([
+      this.attendanceService.database.attendance.find({ selector }).exec(),
+      this.attendanceService.database.mutations.find({ selector }).exec(),
+    ])
+    return {
+      records: records.map((record) => {
+        const row = record.toJSON()
+        return { memberId: row.member_id, tableName: row.table_name, attendanceDate: row.attendance_date, status: row.status, deleted: Boolean(row.is_deleted), serverRevision: row.server_revision ?? null, saveState: row.save_state }
+      }),
+      mutations: mutations.map((record) => safeMutationDiagnostic(record.toJSON())),
+    }
+  }
+
   async syncNow() {
     await this.start()
     await this.service.syncNow()
@@ -169,7 +245,9 @@ class RealMemberUiAdapter {
 
   async subscribeLocalMembers(listener) {
     await this.start()
-    const subscription = this.service.observeMembers().subscribe((records) => {
+    // UI reconciliation needs explicit tombstones so AppContext can remove a
+    // stale active row after the RxDB document becomes soft-deleted.
+    const subscription = this.service.observeMembers({ includeDeleted: true }).subscribe((records) => {
       listener(records.map((record) => memberForLegacyUi(record.toJSON())))
     })
     return () => subscription.unsubscribe()
