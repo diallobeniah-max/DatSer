@@ -22,6 +22,9 @@ or deploy a production workspace.
    default-off workspace allowlist. No owner is enabled by this migration.
 7. `20260928113003_repair_csv_import_storage_update_policy.sql` repairs the
    malformed historical storage policy without editing its applied version.
+8. `20260928114500_fix_cross_month_attendance_phone_type.sql` preserves the
+   existing cross-month RPC while matching its phone assignment to the trusted
+   target table's actual column type.
 
 The order puts all profile and attendance RPC dependencies before the server
 gate that is enforced by the shared mutation reservation function. The source
