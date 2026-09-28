@@ -105,18 +105,23 @@ describe('Member V2 isolated attendance service', () => {
 
   it('accepts only realtime wake signals for its own owner before pulling', async () => {
     let onChange
+    let subscription
     let pulls = 0
     const supabase = {
       rpc: async (name) => {
         if (name === 'pull_member_v2_attendance_changes_v2') pulls += 1
         return { data: { changes: [], next_cursor: pulls, has_more: false }, error: null }
       },
-      channel: () => ({ on: (event, filter, callback) => { onChange = callback; return { subscribe: () => ({}) } } }),
+      channel: () => ({ on: (event, filter, callback) => { subscription = { event, filter }; onChange = callback; return { subscribe: () => ({}) } } }),
       removeChannel: async () => {},
     }
     const service = await createMemberAttendanceService({ supabase, userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online: () => true, realtimeDebounceMs: 1 })
     services.push(service)
     await service.start()
+    expect(subscription).toEqual({
+      event: 'postgres_changes',
+      filter: { event: 'INSERT', schema: 'public', table: 'member_v2_realtime_signals' },
+    })
     await service.syncNow()
     const before = pulls
     onChange({ new: { owner_id: crypto.randomUUID(), latest_server_revision: 99 } })

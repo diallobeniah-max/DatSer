@@ -524,9 +524,23 @@ test('the real connection selector keeps a Member V2 profile edit local until re
 test('normal UI offline attendance survives reload and syncs once on reconnect', async ({ page }, testInfo) => {
   const fixture = await createFixture()
   const calls = []
+  const rpcResponses = []
   const sunday = '2026-09-27'
   page.on('request', (request) => {
     if (request.url().includes('/rest/v1/rpc/save_member_v2_attendance')) calls.push(request.postDataJSON() || {})
+  })
+  page.on('response', async (response) => {
+    if (!response.url().includes('/rest/v1/rpc/save_member_v2_attendance')) return
+    const body = await response.json().catch(() => null)
+    const message = String(body?.message || body?.error_message || '').toLowerCase()
+    rpcResponses.push({
+      httpStatus: response.status(),
+      resultStatus: body?.status || null,
+      errorCode: body?.code || null,
+      errorCategory: !message ? null : /rollout|not enabled/.test(message) ? 'rollout-disabled'
+        : /attendance|sunday|month|workspace|member/.test(message) ? 'attendance-contract'
+          : 'other',
+    })
   })
   await installMemberIdTrace(page, fixture)
   try {
@@ -551,16 +565,40 @@ test('normal UI offline attendance survives reload and syncs once on reconnect',
     await clickConnectionControl(page)
     await page.getByRole('button', { name: 'Online', exact: true }).click()
     await expect.poll(() => calls.length, { timeout: 30000 }).toBe(1)
-    await expect.poll(async () => fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single().then((result) => result.data?.attendance_2026_09_27), { timeout: 30000 }).toBe('Present')
+    // This legacy local month schema stores the Sunday column as boolean. The
+    // RPC response and reloaded UI must still preserve its canonical Present state.
+    await expect.poll(async () => fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single().then((result) => result.data?.attendance_2026_09_27), { timeout: 30000 }).toBe(true)
     await expect.poll(async () => page.evaluate(async (id) => window.__datserMemberV2LocalDiagnostic.readSnapshot([id]), fixture.septemberMemberId).then((snapshot) => snapshot.attendance?.mutations?.length), { timeout: 30000 }).toBe(0)
     const allAttendance = await fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single()
-    expect(allAttendance.data?.attendance_2026_09_27).toBe('Present')
+    expect(allAttendance.data?.attendance_2026_09_27).toBe(true)
     await page.reload()
     await getVisibleMemberCard(page, fixture, fixture.originalName).first().click()
     await expect(page.getByTestId(prefix + '-present')).toHaveAttribute('aria-pressed', 'true')
     expect(calls).toHaveLength(1)
   } finally {
     await testInfo.attach('offline-attendance-counts.json', { body: Buffer.from(JSON.stringify(calls.map((call) => ({ memberId: call.p_member_id, date: call.p_attendance_date, tableName: call.p_table_name })), null, 2)), contentType: 'application/json' })
+    const serverRead = await fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).maybeSingle()
+    const localAttendance = await page.evaluate(async (id) => {
+      const snapshot = await window.__datserMemberV2LocalDiagnostic.readSnapshot([id])
+      const record = snapshot.attendance?.records?.[0]
+      const mutation = snapshot.attendance?.mutations?.[0]
+      const error = String(mutation?.lastError || '').toLowerCase()
+      return {
+        record: record ? { status: record.status, saveState: record.saveState, serverRevisionPresent: record.serverRevision != null } : null,
+        mutation: mutation ? {
+          operation: mutation.operation,
+          saveState: mutation.saveState,
+          retryCount: mutation.retryCount,
+          errorCategory: !error ? null : /rollout|not enabled/.test(error) ? 'rollout-disabled'
+            : /attendance|sunday|month|workspace|member/.test(error) ? 'attendance-contract'
+              : 'other',
+        } : null,
+      }
+    }, fixture.septemberMemberId).catch(() => null)
+    await testInfo.attach('offline-attendance-diagnostic.json', {
+      body: Buffer.from(JSON.stringify({ rpcResponses, serverValue: serverRead.data?.attendance_2026_09_27 ?? null, serverReadError: serverRead.error?.code || null, localAttendance }, null, 2)),
+      contentType: 'application/json',
+    })
     await fixture.admin.auth.admin.deleteUser(fixture.userId)
   }
 })
@@ -904,7 +942,9 @@ test('normal member screens create, edit twice, mark attendance, and soft-delete
     await page.getByTestId(`member-card-attendance-${memberId}-${sunday}-present`).click()
     await expect.poll(() => rpcRequests.filter(request => request.name === 'save_member_v2_attendance').length).toBe(1)
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: 'Present', is_deleted: false })
-    await expect.poll(monthlyAttendanceValue).toBe('Present')
+    // This integration fixture uses a legacy boolean column; canonical Member V2
+    // status is still verified independently in the attendance event and UI.
+    await expect.poll(monthlyAttendanceValue).toBe(true)
     await page.reload()
     await expect(page.getByText(textExact(names[2])).first()).toBeVisible({ timeout: 30000 })
     await openCard(names[2])
@@ -912,7 +952,7 @@ test('normal member screens create, edit twice, mark attendance, and soft-delete
     await page.getByTestId(`member-card-attendance-${memberId}-${sunday}-absent`).click()
     await expect.poll(() => rpcRequests.filter(request => request.name === 'save_member_v2_attendance').length).toBe(2)
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: 'Absent', is_deleted: false })
-    await expect.poll(monthlyAttendanceValue).toBe('Absent')
+    await expect.poll(monthlyAttendanceValue).toBe(false)
     await page.reload()
     await expect(page.getByText(textExact(names[2])).first()).toBeVisible({ timeout: 30000 })
     await openCard(names[2])
@@ -1402,12 +1442,13 @@ test('diagnostic captures one local Realtime WAL signal window without modal int
 
     await expect.poll(() => rawSignalRevisions.includes(evidence.mutationRevision), { timeout: 5000 }).toBe(true).catch(() => {})
     await expect.poll(() => unfilteredControlRevisions.includes(evidence.mutationRevision), { timeout: 5000 }).toBe(true).catch(() => {})
-    await expect.poll(async () => clientB.evaluate((revision) =>
+    await clientB.waitForFunction((revision) =>
       (window.__datserMemberV2IdTrace?.events || []).some((event) =>
-        event.stage === 'member-v2-realtime-signal-received' && Number(event.latestServerRevision) === Number(revision))), { timeout: 5000 })
-      .toBe(true)
+        event.stage === 'member-v2-realtime-signal-received' && Number(event.latestServerRevision) === Number(revision)),
+    evidence.mutationRevision, { timeout: 5000, polling: 50 })
     await expect.poll(() => pullEvents.some((event) => event.client === 'B' && event.stage === 'pull-response' && Number(event.revision) === Number(evidence.mutationRevision)), { timeout: 10000 })
       .toBe(true)
+    evidence.walAfter = readLocalRealtimeWalSnapshot(fixture.userId)
     evidence.rawSignalRevisions = [...rawSignalRevisions]
     evidence.unfilteredControlRevisions = [...unfilteredControlRevisions]
     evidence.websocketSignalFrames = websocketSignalFrames
@@ -1416,10 +1457,13 @@ test('diagnostic captures one local Realtime WAL signal window without modal int
         .filter((event) => String(event.stage || '').startsWith('member-v2-realtime-'))
         .map((event) => ({ at: event.at, stage: event.stage, status: event.status ?? null, revision: event.latestServerRevision ?? event.serverRevision ?? null })))
     evidence.clientBPullsAfterWindow = pullEvents.filter((event) => event.client === 'B')
-    const realtimeSlotBefore = evidence.walBefore.realtimeSlots.find((slot) => slot.active)
+    const realtimeSlotBefore = evidence.walBefore.realtimeSlots.find((slot) =>
+      slot.active && slot.plugin === 'wal2json' && slot.name.startsWith('supabase_realtime_replication_slot_'))
     const realtimeSlotAfter = evidence.walAfter.realtimeSlots.find((slot) => slot.name === realtimeSlotBefore?.name)
     expect(evidence.authenticatedSignalRead).toMatchObject({ httpStatus: 200, visible: true, ownerMatches: true, revisionMatches: true })
-    expect(evidence.walBefore.registeredSubscriptions).toHaveLength(2)
+    // Two application services and the temporary unfiltered control are
+    // registered. The filtered negative control is absent from this registry.
+    expect(evidence.walBefore.registeredSubscriptions).toHaveLength(3)
     expect(evidence.walAfter.signalTableSubscriptionCount).toBeGreaterThanOrEqual(2)
     expect(realtimeSlotBefore?.active).toBe(true)
     expect(realtimeSlotAfter?.active).toBe(true)
@@ -1434,11 +1478,13 @@ test('diagnostic captures one local Realtime WAL signal window without modal int
     evidence.unfilteredControlRevisions = [...unfilteredControlRevisions]
     if (windowStartedAt) {
       evidence.websocketSignalFrames = evidence.websocketSignalFrames || []
-      evidence.clientBServiceEventsAfterWindow = evidence.clientBServiceEventsAfterWindow || await clientB.evaluate(() =>
-        (window.__datserMemberV2IdTrace?.events || [])
+      const browserState = await clientB.evaluate(() => ({
+        events: (window.__datserMemberV2IdTrace?.events || [])
           .filter((event) => String(event.stage || '').startsWith('member-v2-realtime-'))
-          .map((event) => ({ at: event.at, stage: event.stage, status: event.status ?? null, revision: event.latestServerRevision ?? event.serverRevision ?? null }))).catch(() => [])
-      evidence.clientBPullsAfterWindow = evidence.clientBPullsAfterWindow || pullEvents.filter((event) => event.client === 'B')
+          .map((event) => ({ at: event.at, stage: event.stage, status: event.status ?? null, revision: event.latestServerRevision ?? event.serverRevision ?? null })),
+      })).catch(() => ({ events: [] }))
+      evidence.clientBServiceEventsAfterWindow = browserState.events
+      evidence.clientBPullsAfterWindow = pullEvents.filter((event) => event.client === 'B')
     }
     console.log('MEMBER_V2_REALTIME_WAL_CDC_ID_ONLY', JSON.stringify(evidence))
     await testInfo.attach('member-v2-realtime-wal-cdc-id-only.json', {
