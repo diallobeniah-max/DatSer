@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
-import { readLocalSupabase } from '../src/experiments/rxdb-backend-poc/testing/localSupabaseFixture.js'
+import { readLocalSupabase, readLocalSupabaseDbContainer } from '../src/experiments/rxdb-backend-poc/testing/localSupabaseFixture.js'
 import { createMemberV2Fingerprint } from '../src/experiments/rxdb-member-phase1/memberContractFingerprint.js'
 
 const local = readLocalSupabase()
@@ -11,7 +11,7 @@ const textContains = (value) => new RegExp(String(value).replace(/[.*+?^${}()|[\
 const ensureCurrentAppColumns = (tableName) => {
   if (!/^[A-Z][a-z]+_\d{4}$/.test(tableName)) throw new Error('Synthetic test table name is invalid.')
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
-  const container = execFileSync(docker, ['ps', '--filter', 'name=supabase_db_', '--format', '{{.Names}}'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]
+  const container = readLocalSupabaseDbContainer()
   if (!container) throw new Error('Local Supabase database container is required for the real UI test.')
   execFileSync(docker, ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', `alter table public."${tableName}"
     add column if not exists deleted_at timestamptz,
@@ -25,19 +25,19 @@ const ensureCurrentAppColumns = (tableName) => {
     add column if not exists parent_phone_2 text,
     add column if not exists notes text,
     add column if not exists ministry text,
-    add column if not exists attendance_2026_01_04 boolean,
-    add column if not exists attendance_2026_01_11 boolean,
-    add column if not exists attendance_2026_01_18 boolean,
-    add column if not exists attendance_2026_01_25 boolean,
-    add column if not exists attendance_2026_09_06 boolean,
-    add column if not exists attendance_2026_09_13 boolean,
-    add column if not exists attendance_2026_09_20 boolean,
-    add column if not exists attendance_2026_09_27 boolean;`], { stdio: 'ignore' })
+    add column if not exists attendance_2026_01_04 text,
+    add column if not exists attendance_2026_01_11 text,
+    add column if not exists attendance_2026_01_18 text,
+    add column if not exists attendance_2026_01_25 text,
+    add column if not exists attendance_2026_09_06 text,
+    add column if not exists attendance_2026_09_13 text,
+    add column if not exists attendance_2026_09_20 text,
+    add column if not exists attendance_2026_09_27 text;`], { stdio: 'ignore' })
 }
 
 const ensureLocalPreferenceColumns = () => {
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
-  const container = execFileSync(docker, ['ps', '--filter', 'name=supabase_db_', '--format', '{{.Names}}'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]
+  const container = readLocalSupabaseDbContainer()
   if (!container) throw new Error('Local Supabase database container is required for the real UI test.')
   execFileSync(docker, ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', `alter table public.user_preferences
     add column if not exists workspace_member_codes_enabled boolean,
@@ -64,7 +64,7 @@ const ensureLocalPreferenceColumns = () => {
 const readLocalRealtimeWalSnapshot = (ownerId) => {
   if (!/^[0-9a-f-]{36}$/i.test(ownerId)) throw new Error('Synthetic owner UUID is invalid.')
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
-  const container = execFileSync(docker, ['ps', '--filter', 'name=supabase_db_', '--format', '{{.Names}}'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]
+  const container = readLocalSupabaseDbContainer()
   if (!container) throw new Error('Local Supabase database container is required for the Realtime diagnostic.')
   const query = `select json_build_object(
     'capturedAt', clock_timestamp(),
@@ -118,6 +118,8 @@ const createFixture = async ({ phoneNumber = '0240000000' } = {}) => {
   const created = await admin.auth.admin.createUser({ email, password, email_confirm: true })
   if (created.error) throw created.error
   const userId = created.data.user.id
+  const rollout = await admin.from('member_v2_rollout_workspaces').upsert({ owner_id: userId, enabled: true })
+  if (rollout.error) throw rollout.error
   const client = createClient(local.url, local.anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const signIn = await client.auth.signInWithPassword({ email, password })
   if (signIn.error) throw signIn.error
@@ -387,7 +389,7 @@ test('the real connection selector keeps a Member V2 profile edit local until re
           valueMatches: payload?.member?.['Full Name'] === fixture.editedName,
         }
       }
-      if (!response.url().includes('127.0.0.1:54321')) return
+      if (!response.url().startsWith(`${local.url}/rest/v1/`)) return
       const entry = { url: response.url().split('?')[0], status: response.status() }
       if (response.status() >= 400) entry.error = (await response.text()).slice(0, 500)
       if (response.status() === 200 && response.url().includes('/September_2026')) {
@@ -549,10 +551,10 @@ test('normal UI offline attendance survives reload and syncs once on reconnect',
     await clickConnectionControl(page)
     await page.getByRole('button', { name: 'Online', exact: true }).click()
     await expect.poll(() => calls.length, { timeout: 30000 }).toBe(1)
-    await expect.poll(async () => fixture.admin.from('member_v2_attendance_heads').select('table_name, attendance_status, is_deleted').eq('owner_id', fixture.userId).eq('member_id', fixture.septemberMemberId).eq('attendance_date', sunday).maybeSingle().then((result) => result.data), { timeout: 30000 }).toMatchObject({ table_name: 'September_2026', attendance_status: 'Present', is_deleted: false })
+    await expect.poll(async () => fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single().then((result) => result.data?.attendance_2026_09_27), { timeout: 30000 }).toBe('Present')
     await expect.poll(async () => page.evaluate(async (id) => window.__datserMemberV2LocalDiagnostic.readSnapshot([id]), fixture.septemberMemberId).then((snapshot) => snapshot.attendance?.mutations?.length), { timeout: 30000 }).toBe(0)
-    const allAttendance = await fixture.admin.from('member_v2_attendance_heads').select('attendance_date, attendance_status').eq('owner_id', fixture.userId).eq('member_id', fixture.septemberMemberId)
-    expect(allAttendance.data).toEqual([{ attendance_date: sunday, attendance_status: 'Present' }])
+    const allAttendance = await fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single()
+    expect(allAttendance.data?.attendance_2026_09_27).toBe('Present')
     await page.reload()
     await getVisibleMemberCard(page, fixture, fixture.originalName).first().click()
     await expect(page.getByTestId(prefix + '-present')).toHaveAttribute('aria-pressed', 'true')
@@ -886,15 +888,23 @@ test('normal member screens create, edit twice, mark attendance, and soft-delete
     await openCard(names[2])
     const sunday = '2026-09-06'
     const attendanceHead = async () => {
-      const result = await fixture.admin.from('member_v2_attendance_heads')
-        .select('table_name, attendance_status, is_deleted')
-        .eq('owner_id', fixture.userId).eq('member_id', memberId).eq('attendance_date', sunday).maybeSingle()
+      const result = await fixture.admin.from('member_v2_change_events')
+        .select('table_name, attendance_status, is_deleted, server_revision')
+        .eq('owner_id', fixture.userId).eq('member_id', memberId).eq('attendance_date', sunday)
+        .order('server_revision', { ascending: false }).limit(1).maybeSingle()
       if (result.error) throw result.error
       return result.data
+    }
+    const monthlyAttendanceValue = async () => {
+      const result = await fixture.admin.from('September_2026').select('"attendance_2026_09_06"')
+        .eq('id', memberId).eq('workspace_owner_id', fixture.userId).single()
+      if (result.error) throw result.error
+      return result.data?.attendance_2026_09_06 ?? null
     }
     await page.getByTestId(`member-card-attendance-${memberId}-${sunday}-present`).click()
     await expect.poll(() => rpcRequests.filter(request => request.name === 'save_member_v2_attendance').length).toBe(1)
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: 'Present', is_deleted: false })
+    await expect.poll(monthlyAttendanceValue).toBe('Present')
     await page.reload()
     await expect(page.getByText(textExact(names[2])).first()).toBeVisible({ timeout: 30000 })
     await openCard(names[2])
@@ -902,6 +912,7 @@ test('normal member screens create, edit twice, mark attendance, and soft-delete
     await page.getByTestId(`member-card-attendance-${memberId}-${sunday}-absent`).click()
     await expect.poll(() => rpcRequests.filter(request => request.name === 'save_member_v2_attendance').length).toBe(2)
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: 'Absent', is_deleted: false })
+    await expect.poll(monthlyAttendanceValue).toBe('Absent')
     await page.reload()
     await expect(page.getByText(textExact(names[2])).first()).toBeVisible({ timeout: 30000 })
     await openCard(names[2])
@@ -910,13 +921,14 @@ test('normal member screens create, edit twice, mark attendance, and soft-delete
     await expect.poll(() => rpcRequests.filter(request => request.name === 'save_member_v2_attendance').length).toBe(3)
     expect(rpcRequests.filter(request => request.name === 'save_member_v2_attendance').map(request => request.body.p_attendance_status)).toEqual(['Present', 'Absent', null])
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: null, is_deleted: true })
+    await expect.poll(monthlyAttendanceValue).toBeNull()
     await page.reload()
     await expect(page.getByText(textExact(names[2])).first()).toBeVisible({ timeout: 30000 })
     await openCard(names[2])
     await expect(page.getByTestId(`member-card-attendance-${memberId}-${sunday}-present`)).toHaveAttribute('aria-pressed', 'false')
     await expect(page.getByTestId(`member-card-attendance-${memberId}-${sunday}-absent`)).toHaveAttribute('aria-pressed', 'false')
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: null, is_deleted: true })
-    const otherSunday = await fixture.admin.from('member_v2_attendance_heads').select('member_id')
+    const otherSunday = await fixture.admin.from('member_v2_change_events').select('member_id')
       .eq('owner_id', fixture.userId).eq('member_id', memberId).eq('attendance_date', '2026-09-13')
     expect(otherSunday.data).toEqual([])
 

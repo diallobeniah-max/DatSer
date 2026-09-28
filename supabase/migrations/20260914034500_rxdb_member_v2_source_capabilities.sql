@@ -1,6 +1,6 @@
--- Isolated Phase 1 Member V2 source-month capabilities.
--- This read-only contract lets the harness omit profile fields that a trusted
--- legacy month table cannot persist; it does not alter any monthly table.
+-- Production-safe, read-only schema capability contract. It returns only an
+-- allowlisted set of field names after trusted workspace-month authorization;
+-- it never returns member rows or changes monthly tables.
 
 create or replace function public.member_v2_source_table_capabilities(
   p_owner_id uuid,

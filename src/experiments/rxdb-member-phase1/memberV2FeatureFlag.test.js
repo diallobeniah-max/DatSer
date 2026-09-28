@@ -41,12 +41,21 @@ describe('Member V2 local feature boundary', () => {
     expect(isMemberV2LocalExperimentEnabled({ ...localEnv, VITE_DATSER_MEMBER_V2_EXPERIMENT: 'false' })).toBe(false)
   })
 
-  it('enables the shared normal-web route only for explicit local validation', () => {
+  it('enables the shared normal-web route for explicit local validation', () => {
     const sharedLocal = { DEV: true, VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION: 'true', VITE_SUPABASE_URL: 'http://127.0.0.1:54321' }
     expect(isMemberV2SharedRouteEnabled(sharedLocal)).toBe(true)
     expect(isMemberV2SharedRouteEnabled({ ...sharedLocal, VITE_SUPABASE_URL: 'https://example.supabase.co' })).toBe(false)
     expect(isMemberV2SharedRouteEnabled({ ...sharedLocal, DEV: false })).toBe(false)
-    expect(isMemberV2HostedRolloutAllowed()).toBe(false)
+    expect(isMemberV2HostedRolloutAllowed({ PROD: true })).toBe(false)
+  })
+
+  it('requires both production build mode and the explicit hosted rollout flag', () => {
+    const hosted = { PROD: true, VITE_DATSER_MEMBER_V2_HOSTED_ROLLOUT: 'true' }
+    expect(isMemberV2HostedRolloutAllowed(hosted)).toBe(true)
+    expect(isMemberV2SharedRouteEnabled(hosted)).toBe(true)
+    expect(isMemberV2HostedRolloutAllowed({ ...hosted, PROD: false })).toBe(false)
+    expect(isMemberV2HostedRolloutAllowed({ ...hosted, VITE_DATSER_MEMBER_V2_HOSTED_ROLLOUT: 'false' })).toBe(false)
+    expect(isMemberV2SharedRouteEnabled({ PROD: true })).toBe(false)
   })
 
   it('blocks a local legacy fallback while Member V2 has unsynced work', () => {
@@ -62,6 +71,17 @@ describe('Member V2 local feature boundary', () => {
       storage: localStorage,
       env: { DEV: true, VITE_DATSER_MEMBER_V2_EXPERIMENT: 'false', VITE_SUPABASE_URL: 'http://127.0.0.1:54321' },
     })).toThrow(/unsynced local work/i)
+  })
+
+  it('blocks hosted legacy fallback when a durable Member V2 guard remains', () => {
+    const localStorage = storage()
+    updateMemberV2LocalFlowGuard({
+      ...ids,
+      storage: localStorage,
+      syncState: { state: 'OFFLINE_PENDING', pendingChanges: 1, failedChanges: 0, conflicts: 0 },
+    })
+    expect(() => assertLegacyMemberFlowIsSafe({ ...ids, storage: localStorage, env: { PROD: true } }))
+      .toThrow(/unsynced local work/i)
   })
 
   it('clears the local guard only after all pending, failed, and conflict work is gone', () => {

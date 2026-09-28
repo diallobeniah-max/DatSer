@@ -307,7 +307,7 @@ begin
     if tg_op = 'DELETE' then return old; end if;
     return new;
   end if;
-  v_deleted := coalesce(nullif(v_row ->> 'deleted_at', ''), '') is not null or tg_op = 'DELETE';
+  v_deleted := nullif(v_row ->> 'deleted_at', '') is not null or tg_op = 'DELETE';
   perform public.member_v2_record_change(
     v_owner_id,
     tg_table_name,
@@ -404,7 +404,7 @@ begin
   if v_payload is null then
     raise exception 'Member is unavailable for synchronization' using errcode = '42501';
   end if;
-  v_deleted := coalesce(nullif(v_payload ->> 'deleted_at', ''), '') is not null;
+  v_deleted := nullif(v_payload ->> 'deleted_at', '') is not null;
   return public.member_v2_record_change(
     p_owner_id, p_table_name, p_member_id, v_payload, v_deleted, 'bootstrap', null, auth.uid()
   );

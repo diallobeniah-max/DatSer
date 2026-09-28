@@ -102,4 +102,28 @@ describe('Member V2 isolated attendance service', () => {
     expect((await service.getForMember(memberId))[0]).toMatchObject({ status: 'Present', save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
     expect(pending.requestId).toMatch(/^member_v2_attendance:/)
   })
+
+  it('accepts only realtime wake signals for its own owner before pulling', async () => {
+    let onChange
+    let pulls = 0
+    const supabase = {
+      rpc: async (name) => {
+        if (name === 'pull_member_v2_attendance_changes_v2') pulls += 1
+        return { data: { changes: [], next_cursor: pulls, has_more: false }, error: null }
+      },
+      channel: () => ({ on: (event, filter, callback) => { onChange = callback; return { subscribe: () => ({}) } } }),
+      removeChannel: async () => {},
+    }
+    const service = await createMemberAttendanceService({ supabase, userId: crypto.randomUUID(), ownerId: crypto.randomUUID(), storage: getRxStorageMemory(), online: () => true, realtimeDebounceMs: 1 })
+    services.push(service)
+    await service.start()
+    await service.syncNow()
+    const before = pulls
+    onChange({ new: { owner_id: crypto.randomUUID(), latest_server_revision: 99 } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(pulls).toBe(before)
+    onChange({ new: { owner_id: service.ownerId, latest_server_revision: 100 } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(pulls).toBe(before + 1)
+  })
 })

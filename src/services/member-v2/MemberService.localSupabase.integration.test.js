@@ -5,10 +5,11 @@ import { promisify } from 'node:util'
 import WebSocket from 'ws'
 import { createClient } from '@supabase/supabase-js'
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
-import { readLocalSupabase } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
+import { readLocalSupabase, readLocalSupabaseDbContainer } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
 import { createMemberV2Fingerprint } from '../../experiments/rxdb-member-phase1/memberContractFingerprint'
 import { createMemberService } from './MemberService'
 import { createMemberAttendanceService } from './MemberAttendanceService'
+import { createMemberV2AttendanceFingerprint } from '../../experiments/rxdb-member-phase1/attendanceContractFingerprint'
 import { MEMBER_SAVE_STATES } from './memberSaveState'
 import { createMemberV2NetworkController } from '../../experiments/rxdb-member-phase1/NetworkController'
 import { vi } from 'vitest'
@@ -20,14 +21,10 @@ const safeRealtimeError = (error) => String(error?.message || '')
   .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, '[redacted]')
 
 const execFileAsync = promisify(execFile)
-let localContainerPromise
 const inspectLocalSignalRealtime = async (ownerId) => {
   if (!/^[0-9a-f-]{36}$/i.test(ownerId)) throw new Error('Synthetic owner UUID is invalid.')
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
-  localContainerPromise ||= execFileAsync(docker, ['ps', '--filter', 'name=supabase_db_', '--format', '{{.Names}}'], { encoding: 'utf8' })
-    .then(({ stdout }) => stdout.trim().split(/\r?\n/)[0])
-  const container = await localContainerPromise
-  if (!container) throw new Error('Local Supabase database container is required for this integration test.')
+  const container = readLocalSupabaseDbContainer()
   const query = `select json_build_object(
     'rlsEnabled', (select c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='member_v2_realtime_signals'),
     'subscriptions', coalesce((select json_agg(json_build_object('subscriptionId',subscription_id::text,'entity',entity::text,'event',action_filter,'filters',filters::text,'role',claims_role::text,'createdAt',created_at) order by subscription_id) from realtime.subscription where entity=to_regclass('public.member_v2_realtime_signals') and claims->>'sub'='${ownerId}'),'[]'::json)
@@ -42,10 +39,23 @@ beforeAll(async () => {
   fixture.email = email; fixture.password = password
   const created = await fixture.admin.auth.admin.createUser({ email, password, email_confirm: true }); if (created.error) throw created.error
   fixture.userId = created.data.user.id; fixture.client = createClient(config.url, config.anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const rollout = await fixture.admin.from('member_v2_rollout_workspaces').upsert({ owner_id: fixture.userId, enabled: true })
+  if (rollout.error) throw rollout.error
+  const rolloutCheck = await fixture.admin.from('member_v2_rollout_workspaces').select('enabled').eq('owner_id', fixture.userId).single()
+  if (rolloutCheck.error || rolloutCheck.data?.enabled !== true) throw rolloutCheck.error || new Error('Synthetic test workspace rollout gate did not persist.')
   const login = await fixture.client.auth.signInWithPassword({ email, password }); if (login.error) throw login.error
   await fixture.client.realtime.setAuth(login.data.session.access_token)
   const month = await fixture.client.rpc('create_workspace_month', { p_owner_id: fixture.userId, p_year: 2025, p_month: 12, p_source_month: null, p_copy_mode: 'empty', p_member_ids: [] })
   if (month.error) throw month.error; fixture.tableName = month.data.table_name
+  if (!/^[A-Z][a-z]+_\d{4}$/.test(fixture.tableName)) throw new Error('Synthetic workspace month table name is invalid.')
+  await execFileAsync(process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker', [
+    'exec', '-i', readLocalSupabaseDbContainer(), 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1',
+    '-c', `alter table public."${fixture.tableName}" add column if not exists deleted_at timestamptz;`,
+  ], { encoding: 'utf8' })
+  for (const attendanceDate of ['2025-12-07', '2025-12-14', '2025-12-21', '2025-12-28']) {
+    const column = await fixture.client.rpc('ensure_workspace_attendance_column', { p_owner_id: fixture.userId, p_month_start: '2025-12-01', p_attendance_date: attendanceDate })
+    if (column.error) throw column.error
+  }
 }, 30000)
 
 afterAll(async () => { if (fixture.userId) await fixture.admin.auth.admin.deleteUser(fixture.userId) })
@@ -613,6 +623,7 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
   it('persists isolated Sunday attendance offline, then confirms it through the trusted local RPC', async () => {
     let online = false
     const memberService = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage, online: () => online })
+    onTestFinished(() => memberService.stop())
     await memberService.start()
     const member = await memberService.createMember({ tableName: fixture.tableName, member: { full_name: 'Attendance synthetic member', phone_number: '0240000000', age: '18', gender: 'Female', current_level: 'SHS3' } })
     online = true; await memberService.syncNow()
@@ -621,6 +632,7 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
 
     online = false
     const attendance = await createMemberAttendanceService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage, online: () => online })
+    onTestFinished(() => attendance.stop())
     await attendance.start()
     await attendance.saveAttendance({ memberId: confirmed.id, tableName: fixture.tableName, attendanceDate: '2025-12-07', status: 'Present' })
     await attendance.saveAttendance({ memberId: confirmed.id, tableName: fixture.tableName, attendanceDate: '2025-12-14', status: 'Absent' })
@@ -628,10 +640,13 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     await attendance.stop()
 
     const reopened = await createMemberAttendanceService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage, online: () => online })
+    onTestFinished(() => reopened.stop())
     await reopened.start()
     expect((await reopened.getForMember(confirmed.id)).map((row) => row.status)).toEqual(['Present', 'Absent'])
     online = true; await reopened.syncNow()
-    expect((await reopened.getSyncState()).state).toBe('SYNCED')
+    const attendanceSync = await reopened.getSyncState()
+    const attendanceMutations = (await reopened.database.mutations.find({ selector: { member_id: confirmed.id } }).exec()).map((mutation) => mutation.toJSON())
+    expect(attendanceSync.state, JSON.stringify({ state: attendanceSync.state, lastError: attendanceSync.lastError, mutations: attendanceMutations.map(({ id, save_state, last_error }) => ({ id, save_state, last_error })) })).toBe('SYNCED')
     await reopened.saveAttendance({ memberId: confirmed.id, tableName: fixture.tableName, attendanceDate: '2025-12-07', status: null })
     await reopened.syncNow()
     expect((await reopened.getForMember(confirmed.id)).map((row) => row.status)).toEqual(['Absent'])
@@ -708,6 +723,114 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     expect(memberQueue).toEqual([])
     expect(attendanceQueue).toEqual([])
     await Promise.all([members.stop(), attendance.stop()])
+  }, 30000)
+
+  it('stores V2 attendance in the monthly row and captures a Quick Sunday write into the same pull feed', async () => {
+    const activeServices = []
+    try {
+    const members = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: getRxStorageMemory(), online: () => true })
+    activeServices.push(members)
+    await members.start()
+    await members.syncNow()
+    const created = await members.createMember({ tableName: fixture.tableName, member: { full_name: 'Synthetic attendance interoperability' } })
+    const mutation = (await members.database.mutations.find({ selector: { member_id: created.id } }).exec())[0].toJSON()
+    await members.syncNow()
+    await members.syncNow()
+    const confirmed = await members.awaitServerConfirmation(mutation.id)
+    const syncDiagnostic = await members.getSyncState()
+    expect(confirmed.state, JSON.stringify({ confirmed: confirmed.state, sync: syncDiagnostic.state, pending: syncDiagnostic.pendingChanges, failed: syncDiagnostic.failedChanges, lastError: syncDiagnostic.lastError })).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+
+    const attendanceDate = '2025-12-07'
+    const column = 'attendance_2025_12_07'
+    const ensureColumn = await fixture.client.rpc('ensure_workspace_attendance_column', {
+      p_owner_id: fixture.userId,
+      p_month_start: '2025-12-01',
+      p_attendance_date: attendanceDate,
+    })
+    expect(ensureColumn.error).toBeNull()
+    const attendance = await createMemberAttendanceService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: getRxStorageMemory(), online: () => true })
+    activeServices.push(attendance)
+    await attendance.start()
+    const v2Save = await attendance.saveAttendance({ memberId: created.id, tableName: fixture.tableName, attendanceDate, status: 'Present' })
+    await attendance.syncNow()
+    await attendance.syncNow()
+    const attendanceState = await attendance.getSyncState()
+    const failedMutation = await attendance.database.mutations.findOne(v2Save.requestId).exec()
+    const v2Row = await fixture.admin.from(fixture.tableName).select(`"${column}"`).eq('id', created.id).single()
+    expect(v2Row.error).toBeNull()
+    expect(v2Row.data[column], JSON.stringify({ state: attendanceState.state, pending: attendanceState.pendingChanges, lastError: attendanceState.lastError, mutationError: failedMutation?.toJSON?.().last_error })).toBe('Present')
+    const replayFingerprint = await createMemberV2AttendanceFingerprint({ operation: 'set_member_v2_attendance', ownerId: fixture.userId, memberId: created.id, tableName: fixture.tableName, attendanceDate, status: 'Present', baseServerRevision: null })
+    const replay = await fixture.client.rpc('save_member_v2_attendance', {
+      p_owner_id: fixture.userId, p_member_id: created.id, p_table_name: fixture.tableName,
+      p_attendance_date: attendanceDate, p_attendance_status: 'Present',
+      p_attendance_id: v2Save.attendance.attendance_id, p_base_server_revision: null,
+      p_request_id: v2Save.requestId, p_payload_fingerprint: replayFingerprint,
+    })
+    expect(replay.error).toBeNull()
+    expect(replay.data?.status).toBe('IDEMPOTENT_REPLAY')
+    const conflictFingerprint = await createMemberV2AttendanceFingerprint({ operation: 'set_member_v2_attendance', ownerId: fixture.userId, memberId: created.id, tableName: fixture.tableName, attendanceDate, status: 'Absent', baseServerRevision: null })
+    const conflict = await fixture.client.rpc('save_member_v2_attendance', {
+      p_owner_id: fixture.userId, p_member_id: created.id, p_table_name: fixture.tableName,
+      p_attendance_date: attendanceDate, p_attendance_status: 'Absent',
+      p_attendance_id: v2Save.attendance.attendance_id, p_base_server_revision: null,
+      p_request_id: crypto.randomUUID(), p_payload_fingerprint: conflictFingerprint,
+    })
+    expect(conflict.error).toBeNull()
+    expect(conflict.data?.status).toBe('CONFLICT')
+
+    const legacy = await fixture.client.rpc('set_workspace_month_member_attendance', {
+      p_owner_id: fixture.userId,
+      p_month_start: '2025-12-01',
+      p_member_id: created.id,
+      p_attendance_date: attendanceDate,
+      p_attendance_status: 'Absent',
+      p_request_id: crypto.randomUUID(),
+    })
+    expect(legacy.error).toBeNull()
+    expect(legacy.data).toMatchObject({ success: true })
+    await attendance.syncNow({ pullOnly: true })
+    await attendance.syncNow({ pullOnly: true })
+    expect((await attendance.getForMember(created.id))[0]).toMatchObject({ status: 'Absent', save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+    const legacyRow = await fixture.admin.from(fixture.tableName).select(`"${column}"`).eq('id', created.id).single()
+    expect(legacyRow.data[column]).toBe('Absent')
+
+    const nextMonth = await fixture.client.rpc('create_workspace_month', {
+      p_owner_id: fixture.userId, p_year: 2026, p_month: 1, p_source_month: null, p_copy_mode: 'empty', p_member_ids: [],
+    })
+    expect(nextMonth.error).toBeNull()
+    const crossMonth = await fixture.client.rpc('set_member_attendance_from_other_month', {
+      p_owner_id: fixture.userId,
+      p_source_month: '2025-12-01',
+      p_target_month: '2026-01-01',
+      p_member_id: created.id,
+      p_attendance_date: '2026-01-04',
+      p_attendance_status: 'Present',
+      p_request_id: crypto.randomUUID(),
+    })
+    expect(crossMonth.error).toBeNull()
+    expect(crossMonth.data, JSON.stringify(crossMonth.data)).toMatchObject({ success: true })
+    await attendance.syncNow({ pullOnly: true })
+    await attendance.syncNow({ pullOnly: true })
+    expect((await attendance.getForMember(created.id)).find((row) => row.attendance_date === '2026-01-04')).toMatchObject({
+      table_name: nextMonth.data.table_name, status: 'Present', save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED,
+    })
+    const crossMonthRow = await fixture.admin.from(nextMonth.data.table_name).select('attendance_2026_01_04').eq('id', created.id).single()
+    expect(crossMonthRow.error).toBeNull()
+    expect(crossMonthRow.data.attendance_2026_01_04).toBe('Present')
+
+    const changes = await fixture.admin.from('member_v2_change_events').select('server_revision, attendance_status, operation_name')
+      .eq('owner_id', fixture.userId).eq('table_name', fixture.tableName).eq('member_id', created.id).eq('attendance_date', attendanceDate)
+      .order('server_revision')
+    expect(changes.error).toBeNull()
+    expect(changes.data.map((change) => change.attendance_status)).toEqual(['Present', 'Absent'])
+    expect(changes.data).toHaveLength(2)
+    const crossMonthChanges = await fixture.admin.from('member_v2_change_events').select('attendance_status,operation_name')
+      .eq('owner_id', fixture.userId).eq('table_name', nextMonth.data.table_name).eq('member_id', created.id).eq('attendance_date', '2026-01-04')
+    expect(crossMonthChanges.error).toBeNull()
+    expect(crossMonthChanges.data).toEqual([{ attendance_status: 'Present', operation_name: 'legacy_attendance_write' }])
+    } finally {
+      await Promise.all(activeServices.map((service) => service.stop()))
+    }
   }, 30000)
 
   it('round-trips real phones and the No Phone zero sentinel through local Member V2 storage and pull', async () => {

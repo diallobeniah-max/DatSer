@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
-import { readLocalSupabase } from '../rxdb-backend-poc/testing/localSupabaseFixture'
+import { readLocalSupabase, readLocalSupabaseDbContainer } from '../rxdb-backend-poc/testing/localSupabaseFixture'
 import { createMemberV2Fingerprint } from './memberContractFingerprint'
 
 const fixture = {}
@@ -10,10 +10,7 @@ const runLocalSql = (sql) => {
   const docker = process.platform === 'win32'
     ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
     : 'docker'
-  const container = execFileSync(docker, [
-    'ps', '--filter', 'name=supabase_db_', '--format', '{{.Names}}',
-  ], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]
-  if (!container) throw new Error('Local Supabase database container is required for this integration test.')
+  const container = readLocalSupabaseDbContainer()
   execFileSync(docker, [
     'exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'postgres',
     '-v', 'ON_ERROR_STOP=1', '-c', sql,
@@ -93,6 +90,8 @@ beforeAll(async () => {
   })
   if (ownerMonth.error) throw ownerMonth.error
   fixture.tableName = ownerMonth.data.table_name
+  const rollout = await fixture.admin.from('member_v2_rollout_workspaces').upsert({ owner_id: fixture.owner.id, enabled: true })
+  if (rollout.error) throw rollout.error
 
   const otherMonth = await fixture.other.client.rpc('create_workspace_month', {
     p_owner_id: fixture.other.id,
@@ -201,6 +200,8 @@ describe.sequential('RxDB member Phase 1 trusted server contract', () => {
   it('prevents a UUID claimed in another workspace from becoming a second member', async () => {
     const create = await createMutation({ client: fixture.owner.client, ownerId: fixture.owner.id, payload: memberPayload('UUID Claim') })
     expect(create.error).toBeNull()
+    const allowOtherForClaimCheck = await fixture.admin.from('member_v2_rollout_workspaces').upsert({ owner_id: fixture.other.id, enabled: true })
+    expect(allowOtherForClaimCheck.error).toBeNull()
     const conflict = await createMutation({
       client: fixture.other.client,
       ownerId: fixture.other.id,
@@ -208,6 +209,8 @@ describe.sequential('RxDB member Phase 1 trusted server contract', () => {
       payload: memberPayload('UUID Claim Cross Workspace'),
     })
     expect(conflict.error?.message).toMatch(/UUID is already claimed/)
+    const clearOtherRollout = await fixture.admin.from('member_v2_rollout_workspaces').delete().eq('owner_id', fixture.other.id)
+    expect(clearOtherRollout.error).toBeNull()
   })
 
   it('updates with a matching revision, preserves identity and code, and replays safely', async () => {
@@ -376,5 +379,22 @@ describe.sequential('RxDB member Phase 1 trusted server contract', () => {
       p_owner_id: fixture.owner.id, p_after_server_revision: 0, p_limit: 1,
     })
     expect(otherPull.error?.message).toMatch(/Not authorized/)
+  })
+
+  it('keeps the server rollout gate off for a registered workspace without an explicit allowlist row', async () => {
+    const month = await fixture.other.client.rpc('create_workspace_month', {
+      p_owner_id: fixture.other.id,
+      p_year: 2024,
+      p_month: 12,
+      p_source_month: null,
+      p_copy_mode: 'empty',
+      p_member_ids: [],
+    })
+    expect(month.error).toBeNull()
+    const blocked = await createMutation({ client: fixture.other.client, ownerId: fixture.other.id, tableName: month.data.table_name, payload: memberPayload('Gate remains off') })
+    expect(blocked.error?.message).toMatch(/mutations are not enabled/i)
+    const allowlist = await fixture.admin.from('member_v2_rollout_workspaces').select('enabled').eq('owner_id', fixture.other.id).maybeSingle()
+    expect(allowlist.error).toBeNull()
+    expect(allowlist.data).toBeNull()
   })
 })

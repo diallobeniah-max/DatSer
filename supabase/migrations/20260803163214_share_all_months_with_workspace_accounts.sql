@@ -190,12 +190,12 @@ begin
   where lower(au.email) = 'datser@gmail.com'
   limit 1;
 
-  -- POC bootstrap has no hosted Auth users or production workspace data.
-  -- Preserve the reusable functions and triggers above, but leave this
-  -- production-only one-time backfill inactive when its source users are absent.
-  if v_owner_id is null or v_secondary_id is null then
-    raise notice 'POC bootstrap: production workspace registration backfill skipped';
-    return;
+  if v_owner_id is null then
+    raise exception 'Could not find diallobeniah@gmail.com';
+  end if;
+
+  if v_secondary_id is null then
+    raise exception 'Could not find datser@gmail.com';
   end if;
 
   with workspace_users as (

@@ -1,0 +1,194 @@
+param(
+  [switch] $IncludeBrowser,
+  [switch] $FullSuite,
+  [switch] $Serial,
+  [string] $TestName,
+  [string] $BrowserTestName
+)
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$supabaseCli = Join-Path $repoRoot 'node_modules\.bin\supabase.cmd'
+$dockerExe = Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'
+if (-not (Test-Path -LiteralPath $supabaseCli)) { throw 'Repository-pinned Supabase CLI is missing.' }
+$script:dockerPublishedPorts = @(& $dockerExe ps --format '{{.Ports}}' | ForEach-Object {
+  [regex]::Matches($_, ':(\d+)->') | ForEach-Object { [int]$_.Groups[1].Value }
+})
+
+function Test-PortAvailable([int] $Port) {
+  if ($script:dockerPublishedPorts -contains $Port) { return $false }
+  $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+  try { $listener.Start(); return $true } catch { return $false } finally { try { $listener.Stop() } catch {} }
+}
+
+$basePort = 55000
+while ($basePort -lt 63000) {
+  $ports = @($basePort, ($basePort + 1), ($basePort + 2), ($basePort + 3), ($basePort + 5), ($basePort + 7), ($basePort + 9))
+  if (($ports | Where-Object { -not (Test-PortAvailable $_) }).Count -eq 0) { break }
+  $basePort += 11
+}
+if ($basePort -ge 63000) { throw 'Could not reserve an unused local port range for the isolated Supabase replay.' }
+
+$projectId = 'DatSer-MemberV2-Replay-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+$tempRoot = Join-Path $env:TEMP $projectId
+$tempSupabase = Join-Path $tempRoot 'supabase'
+$tempMigrations = Join-Path $tempSupabase 'migrations'
+$tempTests = Join-Path $tempSupabase 'tests'
+New-Item -ItemType Directory -Path $tempMigrations -Force | Out-Null
+New-Item -ItemType Directory -Path $tempTests -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot 'supabase\config.toml') -Destination (Join-Path $tempSupabase 'config.toml')
+
+$configPath = Join-Path $tempSupabase 'config.toml'
+$config = Get-Content -LiteralPath $configPath -Raw
+$config = $config.Replace('project_id = "DatSer-RxDB-Backend-POC"', "project_id = `"$projectId`"")
+$config = $config.Replace('port = 54321', "port = $basePort")
+$config = $config.Replace('port = 54322', "port = $($basePort + 1)")
+$config = $config.Replace('shadow_port = 54320', "shadow_port = $($basePort - 1)")
+$config = $config.Replace('port = 54323', "port = $($basePort + 2)")
+$config = $config.Replace('port = 54324', "port = $($basePort + 3)")
+$config = $config.Replace('inspector_port = 8083', "inspector_port = $($basePort + 9)")
+$config = $config.Replace('port = 54327', "port = $($basePort + 7)")
+$config = [regex]::Replace($config, '(?ms)(\[db\.seed\][^\[]*?^enabled = )true', '$1false', 1)
+Set-Content -LiteralPath $configPath -Value $config -NoNewline -Encoding utf8
+
+$migrationFiles = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'supabase\migrations') -File -Filter '*.sql' |
+  Where-Object { $_.Name -match '^\d{14}_.+\.sql$' } | Sort-Object Name
+foreach ($migration in $migrationFiles) { Copy-Item -LiteralPath $migration.FullName -Destination (Join-Path $tempMigrations $migration.Name) }
+
+# February existed before the historical policy migrations were created. A
+# fresh empty database needs this disposable baseline fixture before replay.
+$februaryBaseline = Join-Path $repoRoot 'tests\fixtures\local-only-migrations\20260207120000_poc_create_february_2026_prerequisite.sql'
+Copy-Item -LiteralPath $februaryBaseline -Destination (Join-Path $tempMigrations '20260207100000_local_replay_february_baseline.sql')
+$replayCompatibilityFixtures = @(
+  @{ Source = '20260314235959_poc_prepare_member_bundle_function_return_types.sql'; Target = '20260314235959_local_replay_member_bundle_return_types.sql' },
+  @{ Source = '20260315000000_poc_reconcile_member_bundle_transactions.sql'; Target = '20260315000000_local_replay_member_bundle_compatibility.sql' },
+  @{ Source = '20260701110000_poc_prepare_update_owner_admin_override_return_type.sql'; Target = '20260701110000_local_replay_admin_override_return_type.sql' },
+  @{ Source = '20260802064000_poc_prepare_cross_month_attendance_return_type.sql'; Target = '20260802064000_local_replay_cross_month_return_type.sql' },
+  @{ Source = '20260815154000_poc_prepare_ai_provider_resolve_key_return_type.sql'; Target = '20260815154000_local_replay_ai_provider_return_type.sql' }
+)
+foreach ($fixture in $replayCompatibilityFixtures) {
+  Copy-Item -LiteralPath (Join-Path $repoRoot "tests\fixtures\local-only-migrations\$($fixture.Source)") -Destination (Join-Path $tempMigrations $fixture.Target)
+}
+# The repository-wide local Supabase suite still exercises the retired POC
+# independently. Apply that schema only to this disposable replay database.
+Copy-Item -LiteralPath (Join-Path $repoRoot 'tests\fixtures\local-only-migrations\20260912200747_rxdb_backend_poc_phase0.sql') -Destination (Join-Path $tempMigrations '20260928114000_local_only_poc_phase0.sql')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'supabase\tests\member_v2_production_security.test.sql') -Destination (Join-Path $tempTests 'member_v2_production_security.test.sql')
+
+# These edits apply only to disposable copies used for empty local replay.
+$sharePath = Join-Path $tempMigrations '20260803163214_share_all_months_with_workspace_accounts.sql'
+$shareSql = Get-Content -LiteralPath $sharePath -Raw
+$sharePattern = "(?s)  if v_owner_id is null then\s+raise exception 'Could not find [^']+';\s+end if;\s+if v_secondary_id is null then\s+raise exception 'Could not find [^']+';\s+end if;"
+$shareReplacement = "  if v_owner_id is null or v_secondary_id is null then`r`n    raise notice 'Disposable local replay: production workspace backfill skipped';`r`n    return;`r`n  end if;"
+if ($shareSql -notmatch 'POC bootstrap: production workspace registration backfill skipped') {
+  $shareSql = [regex]::Replace($shareSql, $sharePattern, $shareReplacement, 1)
+  if ($shareSql -notmatch 'Disposable local replay: production workspace backfill skipped') { throw 'Could not apply the local-only workspace backfill compatibility patch.' }
+}
+Set-Content -LiteralPath $sharePath -Value $shareSql -NoNewline -Encoding utf8
+
+$collaboratorPath = Join-Path $tempMigrations '20260803163624_remove_typo_yawdiallo_collaborator.sql'
+$collaboratorSql = Get-Content -LiteralPath $collaboratorPath -Raw
+$collaboratorPattern = "if v_owner_id is null then\s+raise exception 'Workspace owner not found';\s+end if;"
+if ($collaboratorSql -notmatch 'POC bootstrap: production collaborator cleanup skipped') {
+  $collaboratorSql = [regex]::Replace($collaboratorSql, $collaboratorPattern, "if v_owner_id is null then`r`n    raise notice 'Disposable local replay: collaborator cleanup skipped';`r`n    return;`r`n  end if;", 1)
+  if ($collaboratorSql -notmatch 'Disposable local replay: collaborator cleanup skipped') { throw 'Could not apply the local-only collaborator compatibility patch.' }
+}
+Set-Content -LiteralPath $collaboratorPath -Value $collaboratorSql -NoNewline -Encoding utf8
+
+$csvPath = Join-Path $tempMigrations '20260825200845_csv_import_history.sql'
+$csvSql = Get-Content -LiteralPath $csvPath -Raw
+$start = $csvSql.IndexOf('create policy "CSV import source images update"')
+$end = $csvSql.IndexOf('drop policy if exists "CSV import source images delete"', $start)
+if ($start -lt 0 -or $end -lt 0) { throw 'Could not locate the historical CSV storage policy in its local replay copy.' }
+$policy = $csvSql.Substring($start, $end - $start)
+$missingPolicyClosers = [regex]::Matches($policy, 'false\)\)(?!\))').Count
+if ($missingPolicyClosers -eq 2) {
+  $policy = [regex]::Replace($policy, 'false\)\)(?!\))', 'false)))')
+} elseif ($missingPolicyClosers -ne 0 -or [regex]::Matches($policy, 'false\)\)\)').Count -ne 2) {
+  throw 'Unexpected historical CSV policy syntax; refusing to patch the local replay copy.'
+}
+$csvSql = $csvSql.Substring(0, $start) + $policy + $csvSql.Substring($end)
+Set-Content -LiteralPath $csvPath -Value $csvSql -NoNewline -Encoding utf8
+
+$dbContainer = "supabase_db_$projectId"
+$viteProcess = $null
+$stackStarted = $false
+$startAttempted = $false
+Push-Location $repoRoot
+try {
+  $startAttempted = $true
+  $startOutput = & $supabaseCli start --workdir $tempRoot --ignore-health-check 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    $safeStartOutput = $startOutput | ForEach-Object { "$_" }
+    $safeStartOutput = ($safeStartOutput -join "`n") -replace '(?im)^.*(?:ANON_KEY|SERVICE_ROLE_KEY|JWT_SECRET|ACCESS_TOKEN|REFRESH_TOKEN|SECRET_KEY).*$','[credential-bearing line redacted]'
+    $safeStartOutput = $safeStartOutput -replace '\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b','[JWT redacted]'
+    $safeStartOutput = $safeStartOutput -replace '(?s)At statement:.*','[migration SQL omitted]'
+    $safeStartOutput = $safeStartOutput -replace '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}','[email redacted]'
+    Write-Output $safeStartOutput
+    throw 'Isolated Supabase could not start.'
+  }
+  $stackStarted = $true
+
+  $statusOutput = & $supabaseCli status --workdir $tempRoot --output json 2>$null
+  if ($LASTEXITCODE -ne 0) { throw 'Could not read isolated local Supabase status.' }
+  $status = ($statusOutput -join "`n") | ConvertFrom-Json
+  $env:DATSER_LOCAL_SUPABASE_URL = $status.API_URL
+  $env:DATSER_LOCAL_SUPABASE_ANON_KEY = $status.ANON_KEY
+  $env:DATSER_LOCAL_SUPABASE_SERVICE_ROLE_KEY = $status.SERVICE_ROLE_KEY
+  $env:DATSER_LOCAL_SUPABASE_DB_CONTAINER = $dbContainer
+  $env:VITE_SUPABASE_URL = $status.API_URL
+  $env:VITE_SUPABASE_ANON_KEY = $status.ANON_KEY
+  $env:VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION = 'true'
+
+  $schemaQuery = "select json_build_object('memberTables', (select count(*) from pg_tables where schemaname='public' and tablename like 'member_v2_%'), 'createRpc', to_regprocedure('public.create_member_v2(text,uuid,uuid,jsonb,text,text)') is not null, 'attendanceSaveRpc', to_regprocedure('public.save_member_v2_attendance(uuid,uuid,text,date,text,uuid,bigint,text,text)') is not null, 'gateDefaultOff', not exists(select 1 from public.member_v2_rollout_workspaces where enabled))::text;"
+  $proof = & (Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe') exec -i $dbContainer psql -U postgres -d postgres -v ON_ERROR_STOP=1 -A -t -c $schemaQuery
+  if ($LASTEXITCODE -ne 0) { throw 'Production schema proof query failed.' }
+  $schema = ($proof -join '').Trim() | ConvertFrom-Json
+  if (-not $schema.createRpc -or -not $schema.attendanceSaveRpc -or -not $schema.gateDefaultOff -or $schema.memberTables -lt 5) {
+    throw 'Fresh database does not satisfy the expected Member V2 production schema contract.'
+  }
+  Write-Output 'FRESH_PRODUCTION_MIGRATION_REPLAY: PASS'
+  Write-Output 'ROLLOUT_GATE_DEFAULT_OFF: PASS'
+
+  $dbTestOutput = & $supabaseCli test db --local --workdir $tempRoot 2>&1
+  if ($LASTEXITCODE -ne 0) { $dbTestOutput | ForEach-Object { Write-Output $_ }; throw 'Member V2 database security tests failed.' }
+  $dbTestOutput | ForEach-Object { Write-Output $_ }
+
+  if ($TestName) {
+    $targetOutput = & node_modules\.bin\vitest.cmd --run src/services/member-v2/MemberService.localSupabase.integration.test.js -t $TestName 2>&1
+  } elseif ($FullSuite -and $Serial) {
+    $targetOutput = & node_modules\.bin\vitest.cmd --run --environment jsdom --maxWorkers=1 --minWorkers=1 2>&1
+  } elseif ($FullSuite) {
+    $targetOutput = & npm test 2>&1
+  } else {
+    $targetOutput = & npm run test:member-v2 2>&1
+  }
+  if ($LASTEXITCODE -ne 0) { $targetOutput | ForEach-Object { Write-Output $_ }; throw 'Selected local test suite failed.' }
+  $targetOutput | ForEach-Object { Write-Output $_ }
+
+  if ($IncludeBrowser) {
+    $appPort = $basePort + 5
+    $env:PLAYWRIGHT_REAL_MEMBER_V2_URL = "http://127.0.0.1:$appPort"
+    $viteOut = Join-Path $tempRoot 'vite.stdout.log'
+    $viteErr = Join-Path $tempRoot 'vite.stderr.log'
+    $viteEntry = Join-Path $repoRoot 'node_modules\vite\bin\vite.js'
+    $viteProcess = Start-Process -FilePath 'node.exe' -ArgumentList @("`"$viteEntry`"",'--host','127.0.0.1','--port',"$appPort",'--strictPort') -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $viteOut -RedirectStandardError $viteErr
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+      try { $null = Invoke-WebRequest -Uri "$($env:PLAYWRIGHT_REAL_MEMBER_V2_URL)/index.html" -TimeoutSec 2; $ready = $true; break } catch { Start-Sleep -Seconds 1 }
+    }
+    if (-not $ready) { throw 'Isolated Vite app did not become ready for Member V2 browser validation.' }
+    $browserArgs = @('test','--config','playwright.real-member-v2-offline.config.js')
+    if ($BrowserTestName) { $browserArgs += @('--grep', $BrowserTestName) }
+    $browserOutput = & node_modules\.bin\playwright.cmd @browserArgs 2>&1
+    if ($LASTEXITCODE -ne 0) { $browserOutput | ForEach-Object { Write-Output $_ }; throw 'Member V2 browser validation failed.' }
+    $browserOutput | ForEach-Object { Write-Output $_ }
+  }
+} finally {
+  if ($viteProcess -and -not $viteProcess.HasExited) { Stop-Process -Id $viteProcess.Id -Force -ErrorAction SilentlyContinue }
+  if ($startAttempted) { $null = & $supabaseCli stop --workdir $tempRoot --no-backup 2>&1 }
+  Remove-Item Env:DATSER_LOCAL_SUPABASE_URL, Env:DATSER_LOCAL_SUPABASE_ANON_KEY, Env:DATSER_LOCAL_SUPABASE_SERVICE_ROLE_KEY, Env:DATSER_LOCAL_SUPABASE_DB_CONTAINER, Env:VITE_SUPABASE_URL, Env:VITE_SUPABASE_ANON_KEY, Env:VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION, Env:PLAYWRIGHT_REAL_MEMBER_V2_URL -ErrorAction SilentlyContinue
+  if ((Resolve-Path -LiteralPath $tempRoot).Path.StartsWith((Resolve-Path -LiteralPath $env:TEMP).Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Remove-Item -LiteralPath $tempRoot -Recurse -Force
+  }
+  Pop-Location
+}

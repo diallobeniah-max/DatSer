@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
-import { readLocalSupabase } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
+import { readLocalSupabase, readLocalSupabaseDbContainer } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
 
 let admin
 let ownerId
@@ -16,6 +16,8 @@ beforeAll(async () => {
   const created = await admin.auth.admin.createUser({ email, password, email_confirm: true })
   if (created.error) throw created.error
   ownerId = created.data.user.id
+  const rollout = await admin.from('member_v2_rollout_workspaces').upsert({ owner_id: ownerId, enabled: true })
+  if (rollout.error) throw rollout.error
   const client = createClient(config.url, config.anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const login = await client.auth.signInWithPassword({ email, password })
   if (login.error) throw login.error
@@ -26,8 +28,8 @@ beforeAll(async () => {
   await client.auth.signOut()
   if (!/^[0-9a-f-]{36}$/i.test(ownerId)) throw new Error('Invalid synthetic owner')
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
-  const container = execFileSync(docker, ['ps', '--filter', 'name=supabase_db_', '--format', '{{.Names}}'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]
-  if (!container) throw new Error('Local Supabase is required')
+  const container = readLocalSupabaseDbContainer()
+  execFileSync(docker, ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', 'alter table public.\"November_2025\" add column if not exists deleted_at timestamptz; alter table public.\"January_2025\" add column if not exists deleted_at timestamptz;'], { encoding: 'utf8' })
   // All member changes, including the retained historical row, roll back.
   // Suppressed inserts model rows that existed before V2 capture was installed.
   const sql = `

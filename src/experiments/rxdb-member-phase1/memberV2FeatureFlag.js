@@ -35,9 +35,14 @@ export const isMemberV2LocalExperimentEnabled = (env = import.meta.env) => (
   )
 )
 
-// Routing is intentionally separate from the original experiment guard. It
-// enables the real web screens against a local Supabase project only; hosted
-// rollout remains explicitly disabled until a later production gate.
+// Routing is separate from the local experiment guard. Hosted routing requires
+// a production build and an explicit public deployment flag; server RPCs also
+// enforce workspace eligibility before accepting any mutation.
+export const isMemberV2HostedRolloutAllowed = (env = import.meta.env) => (
+  env?.PROD === true
+  && env?.VITE_DATSER_MEMBER_V2_HOSTED_ROLLOUT === 'true'
+)
+
 export const isMemberV2SharedRouteEnabled = (env = import.meta.env) => (
   isMemberV2LocalExperimentEnabled(env)
   || (
@@ -45,10 +50,10 @@ export const isMemberV2SharedRouteEnabled = (env = import.meta.env) => (
     && env?.VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION === 'true'
     && localSupabaseUrl(env?.VITE_SUPABASE_URL)
   )
+  || isMemberV2HostedRolloutAllowed(env)
 )
 
 export const isMemberV2ImplementationAvailable = () => true
-export const isMemberV2HostedRolloutAllowed = () => false
 
 export const getMemberV2LocalFlowGuard = ({ userId, ownerId, storage } = {}) => {
   if (!userId || !ownerId) return null
@@ -111,10 +116,9 @@ export const updateMemberV2LocalFlowGuard = ({ userId, ownerId, syncState, stora
 }
 
 export const assertLegacyMemberFlowIsSafe = ({ userId, ownerId, env = import.meta.env, storage } = {}) => {
-  // Production has no Member V2 switch and therefore never reads this local
-  // development guard. In a local Vite build, however, a pending V2 change
-  // must be recovered through V2 instead of silently switching write paths.
-  if (env?.DEV !== true || isMemberV2LocalExperimentEnabled(env)) return
+  // A disabled route must not silently redirect unresolved durable V2 work to
+  // a legacy writer, in either a local or production build.
+  if (isMemberV2SharedRouteEnabled(env)) return
   const guard = getMemberV2LocalFlowGuard({ userId, ownerId, storage })
   if (!guard) return
   throw new Error('Member V2 has unsynced local work. Re-enable the local Member V2 experiment and sync or resolve it before using the legacy member form.')
