@@ -133,26 +133,29 @@ export class MemberService {
     if (member.is_deleted) return member
     const target = assertMemberTarget({ ownerId: this.ownerId, tableName: options.tableName || member.table_name, memberId })
     const pending = await this.#mutationsForMember(memberId, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT])
+    const inFlight = pending.filter((mutation) => mutation.save_state === MEMBER_SAVE_STATES.SYNCING)
+    const supersedable = pending.filter((mutation) => mutation.save_state !== MEMBER_SAVE_STATES.SYNCING)
 
     // A member which never reached the server has no historical row to delete.
-    // Journal the cancellation before removing the local projection so restart
-    // can finish the same operation if the process exits between writes.
-    if (!member.server_revision) {
+    // Journal cancellation only when no request has already been dispatched.
+    // A SYNCING RPC is an unknown server outcome until its stable request ID is
+    // confirmed, so deletion must wait for that outcome and then rebase.
+    if (!member.server_revision && inFlight.length === 0) {
       const requestId = newId('cancel_local_member_v2', memberId); const timestamp = now(); const payload = {}
       const fingerprint = await this.#fingerprint({ operation: 'cancel_local_member_v2', tableName: target.tableName, memberId, baseServerRevision: null, payload })
-      const mutation = { ...this.#mutationRecord({ id: requestId, memberId, tableName: target.tableName, operation: 'cancel_local_member_v2', payload, identity: member.identity, baseServerRevision: null, fingerprint, timestamp }), supersedes_request_ids: pending.map((entry) => entry.id) }
+      const mutation = { ...this.#mutationRecord({ id: requestId, memberId, tableName: target.tableName, operation: 'cancel_local_member_v2', payload, identity: member.identity, baseServerRevision: null, fingerprint, timestamp }), supersedes_request_ids: supersedable.map((entry) => entry.id) }
       await persistPreparedMutationFirst({ mutations: this.database.mutations, mutation, updatedAt: timestamp, project: async () => { await this.#removeSuperseded(mutation.supersedes_request_ids); const row = await this.database.members.findOne(memberId).exec(); if (row) await row.remove(); const journal = await this.database.mutations.findOne(requestId).exec(); if (journal) await journal.remove() } })
       return null
     }
 
     const requestId = newId('delete_member_v2', memberId)
-    const baseServerRevision = Number(member.server_revision)
+    const baseServerRevision = member.server_revision == null ? null : Number(member.server_revision)
     const payload = {}
     const fingerprint = await this.#fingerprint({ operation: 'delete_member_v2', tableName: target.tableName, memberId, baseServerRevision, payload })
     const timestamp = now()
     const mutation = { ...this.#mutationRecord({ id: requestId, memberId, tableName: target.tableName, operation: 'delete_member_v2', payload, identity: member.identity, baseServerRevision, fingerprint, timestamp }), supersedes_request_ids: pending.map((entry) => entry.id) }
     await persistPreparedMutationFirst({ mutations: this.database.mutations, mutation, updatedAt: timestamp, project: async () => {
-      await this.#removeSuperseded(mutation.supersedes_request_ids)
+      await this.#removeSuperseded(supersedable.map((entry) => entry.id))
       await this.#patch(this.database.members, memberId, {
       table_name: target.tableName,
       is_deleted: true,
@@ -321,9 +324,23 @@ export class MemberService {
   async #pushPending() {
     await this.localMutationWrites.wait()
     await this.#recoverMutationJournal()
-    const mutations = await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: { $in: [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE] } } }).exec()
-    const batch = mutations.map(asJson).sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, this.batchSize)
-    for (const mutation of batch) await this.#pushMutation(mutation)
+    const attempted = new Set()
+    while (this.#isBackendReachable()) {
+      const mutations = await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: { $in: [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE] } } }).exec()
+      const ordered = mutations.map(asJson).sort((a, b) => a.created_at.localeCompare(b.created_at))
+      const ready = []
+      for (const mutation of ordered) {
+        if (attempted.has(mutation.id)) continue
+        if (mutation.operation === 'delete_member_v2' && !await this.#dependenciesResolved(mutation)) continue
+        ready.push(mutation)
+      }
+      const batch = ready.slice(0, this.batchSize)
+      if (batch.length === 0) break
+      for (const mutation of batch) {
+        attempted.add(mutation.id)
+        await this.#pushMutation(mutation)
+      }
+    }
   }
 
   async #pushMutation(mutation) {
@@ -334,6 +351,7 @@ export class MemberService {
     const currentMutation = asJson(await this.database.mutations.findOne(mutation.id).exec())
     if (!currentMutation || !isPendingMemberSaveState(currentMutation.save_state)) return
     mutation = currentMutation
+    if (mutation.operation === 'delete_member_v2' && !await this.#dependenciesResolved(mutation)) return
     const member = await this.getMember(mutation.member_id)
     if (!member) return
     const baseServerRevision = mutation.operation === 'create_member_v2' ? null : (mutation.base_server_revision || member.server_revision)
@@ -341,6 +359,7 @@ export class MemberService {
       await this.#failMutation(mutation, 'Member creation is awaiting server confirmation.')
       return
     }
+    if (mutation.operation === 'delete_member_v2' && !baseServerRevision) return
     await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.SYNCING, last_error: null, updated_at: now(), base_server_revision: baseServerRevision })
     await this.#patch(this.database.members, mutation.member_id, { save_state: MEMBER_SAVE_STATES.SYNCING, local_save_state: MEMBER_SAVE_STATES.SYNCING, last_error: null, updated_at: now() })
     if (!this.#isBackendReachable()) {
@@ -355,22 +374,48 @@ export class MemberService {
         ? { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_base_server_revision: baseServerRevision, p_request_id: mutation.id, p_payload_fingerprint: fingerprint }
         : { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_updates: mutation.payload, p_base_server_revision: baseServerRevision, p_request_id: mutation.id, p_payload_fingerprint: fingerprint, p_identity: mutation.identity || {} }
     const { data, error } = await this.supabase.rpc(mutation.operation, args)
-    if (error) return this.#failMutation(mutation, error.message || 'Member save failed.')
+    if (error) return this.#failMutation(mutation, error.message || 'Member save failed.', error)
     if (data?.status === 'CONFLICT') return this.#markConflict(mutation, data)
     if (data?.status !== 'SUCCESS' && data?.status !== 'IDEMPOTENT_REPLAY') return this.#failMutation(mutation, 'Server did not confirm this member change.')
     await this.#confirmMutation(mutation, data)
   }
 
   async #confirmMutation(mutation, response) {
+    await this.localMutationWrites.wait()
     const current = await this.getMember(mutation.member_id)
+    if (!current) return
     const canonical = response.member || current.data
     const revision = Number(response.server_revision || current.server_revision)
-    await this.database.mutations.findOne(mutation.id).remove()
     if (mutation.operation === 'delete_member_v2') {
-      await this.#patch(this.database.members, mutation.member_id, { is_deleted: true, server_revision: revision, table_name: response.table_name || current.table_name, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, conflict_remote: null, last_error: null, ...memberFields(canonical, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: MEMBER_SAVE_STATES.SERVER_CONFIRMED, baseRevision: revision }), updated_at: now() })
+      await this.#patch(this.database.members, mutation.member_id, { server_revision: revision, table_name: response.table_name || current.table_name, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED, conflict_remote: null, last_error: null, ...memberFields(canonical, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: MEMBER_SAVE_STATES.SERVER_CONFIRMED, baseRevision: revision }), is_deleted: true, updated_at: now() })
+      const journal = await this.database.mutations.findOne(mutation.id).exec()
+      if (journal) await journal.remove()
       return
     }
-    const remaining = await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING])
+    const remaining = (await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT]))
+      .filter((entry) => entry.id !== mutation.id)
+    const newerDeletes = remaining.filter((entry) => entry.operation === 'delete_member_v2' && (
+      entry.supersedes_request_ids?.includes(mutation.id) || entry.created_at > mutation.created_at
+    ))
+    if (newerDeletes.length > 0) {
+      for (const deletion of newerDeletes) await this.#rebaseDeleteAfterParent(deletion, mutation.id, revision, response.table_name || current.table_name)
+      const deletion = newerDeletes.at(-1)
+      const tombstone = await this.getMember(mutation.member_id)
+      await this.#patch(this.database.members, mutation.member_id, {
+        data: canonical,
+        server_revision: revision,
+        table_name: response.table_name || current.table_name,
+        is_deleted: true,
+        save_state: MEMBER_SAVE_STATES.LOCAL_PENDING,
+        conflict_remote: null,
+        last_error: null,
+        ...memberFields(tombstone?.data || canonical, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: deletion.id, operation: deletion.operation, fingerprint: deletion.payload_fingerprint, baseRevision: revision, retryCount: current.retry_count || 0 }),
+        updated_at: now(),
+      })
+      const journal = await this.database.mutations.findOne(mutation.id).exec()
+      if (journal) await journal.remove()
+      return
+    }
     const rebasedRemaining = []
     for (const next of remaining) {
       if (next.operation !== 'update_member_v2') {
@@ -387,15 +432,73 @@ export class MemberService {
     const overlay = rebasedRemaining.filter((entry) => entry.operation === 'update_member_v2').reduce((data, entry) => mergeMemberPayload(data, entry.payload), canonical)
     const nextState = rebasedRemaining.length ? MEMBER_SAVE_STATES.LOCAL_PENDING : MEMBER_SAVE_STATES.SERVER_CONFIRMED
     await this.#patch(this.database.members, mutation.member_id, { data: overlay, server_revision: revision, table_name: response.table_name || current.table_name, is_deleted: false, save_state: nextState, conflict_remote: null, last_error: null, ...memberFields(overlay, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: nextState, requestId: rebasedRemaining[0]?.id || null, operation: rebasedRemaining[0]?.operation || null, fingerprint: rebasedRemaining[0]?.payload_fingerprint || null, baseRevision: rebasedRemaining[0]?.base_server_revision ?? revision, retryCount: current.retry_count || 0 }), updated_at: now() })
+    const journal = await this.database.mutations.findOne(mutation.id).exec()
+    if (journal) await journal.remove()
   }
 
-  async #failMutation(mutation, message) {
+  async #failMutation(mutation, message, error = null) {
+    if (mutation.operation === 'update_member_v2' && this.#isDefinitiveRpcFailure(error)) {
+      const member = await this.getMember(mutation.member_id)
+      const pending = await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING])
+      const deletion = pending.find((entry) => entry.operation === 'delete_member_v2' && entry.supersedes_request_ids?.includes(mutation.id))
+      if (deletion && Number(member?.server_revision) > 0) {
+        const revision = Number(member.server_revision)
+        await this.#rebaseDeleteAfterParent(deletion, mutation.id, revision, member.table_name)
+        const journal = await this.database.mutations.findOne(mutation.id).exec()
+        if (journal) await journal.remove()
+        await this.#patch(this.database.members, mutation.member_id, {
+          server_revision: revision,
+          save_state: MEMBER_SAVE_STATES.LOCAL_PENDING,
+          conflict_remote: null,
+          last_error: null,
+          ...memberFields(member.data, { userId: this.userId, ownerId: this.ownerId, tableName: member.table_name, memberId: mutation.member_id, identity: member.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: deletion.id, operation: deletion.operation, fingerprint: deletion.payload_fingerprint, baseRevision: revision }),
+          is_deleted: true,
+          updated_at: now(),
+        })
+        return
+      }
+    }
+    if (mutation.operation === 'create_member_v2' && this.#isDefinitiveRpcFailure(error)) {
+      const member = await this.getMember(mutation.member_id)
+      const pending = await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING])
+      const deletion = pending.find((entry) => entry.operation === 'delete_member_v2' && entry.supersedes_request_ids?.includes(mutation.id))
+      if (deletion && !member?.server_revision) {
+        await this.#finishLocalCancelAfterRejectedCreate(mutation, deletion, member)
+        return
+      }
+    }
     const retryCount = (mutation.retry_count || 0) + 1
     await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, retry_count: retryCount, last_error: message, updated_at: now() })
     await this.#patch(this.database.members, mutation.member_id, { save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, local_save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, retry_count: retryCount, last_error: message, updated_at: now() })
   }
 
   async #markConflict(mutation, response) {
+    await this.localMutationWrites.wait()
+    if (mutation.operation === 'update_member_v2') {
+      const pending = await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING])
+      const deletion = pending.find((entry) => entry.operation === 'delete_member_v2' && (
+        entry.supersedes_request_ids?.includes(mutation.id) || entry.created_at > mutation.created_at
+      ))
+      const revision = Number(response?.server_revision)
+      const current = await this.getMember(mutation.member_id)
+      if (deletion && Number.isFinite(revision) && revision > 0 && current) {
+        await this.#rebaseDeleteAfterParent(deletion, mutation.id, revision, response.table_name || current.table_name)
+        await this.#patch(this.database.members, mutation.member_id, {
+          data: response.member || current.data,
+          server_revision: revision,
+          table_name: response.table_name || current.table_name,
+          is_deleted: true,
+          save_state: MEMBER_SAVE_STATES.LOCAL_PENDING,
+          conflict_remote: null,
+          last_error: null,
+          ...memberFields(current.data, { userId: this.userId, ownerId: this.ownerId, tableName: response.table_name || current.table_name, memberId: mutation.member_id, identity: current.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: deletion.id, operation: deletion.operation, fingerprint: deletion.payload_fingerprint, baseRevision: revision }),
+          updated_at: now(),
+        })
+        const journal = await this.database.mutations.findOne(mutation.id).exec()
+        if (journal) await journal.remove()
+        return
+      }
+    }
     await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.CONFLICT, last_error: 'The server has a newer member revision.', updated_at: now() })
     await this.#patch(this.database.members, mutation.member_id, { save_state: MEMBER_SAVE_STATES.CONFLICT, local_save_state: MEMBER_SAVE_STATES.CONFLICT, conflict_remote: response, remote_conflict_snapshot: response, last_error: 'The server has a newer member revision.', updated_at: now() })
   }
@@ -427,16 +530,21 @@ export class MemberService {
         continue
       }
       let current = await this.getMember(mutation.member_id)
-      await this.#removeSuperseded(mutation.supersedes_request_ids)
+      if (mutation.operation !== 'delete_member_v2') await this.#removeSuperseded(mutation.supersedes_request_ids)
       if (mutation.operation === 'create_member_v2' && !current) {
         const timestamp = mutation.created_at
         try { await this.database.members.insert({ id: mutation.member_id, scope_key: this.scopeKey, user_id: this.userId, owner_id: this.ownerId, table_name: mutation.table_name, member_id: mutation.member_id, identity: mutation.identity || null, data: mutation.payload, server_revision: null, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, retry_count: mutation.retry_count || 0, ...memberFields(mutation.payload, { userId: this.userId, ownerId: this.ownerId, tableName: mutation.table_name, memberId: mutation.member_id, identity: mutation.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: mutation.id, operation: mutation.operation, fingerprint: mutation.payload_fingerprint }), created_at: timestamp, updated_at: timestamp }) } catch (error) { if (!await this.database.members.findOne(mutation.member_id).exec()) throw error }
         current = await this.getMember(mutation.member_id)
       } else if (mutation.operation === 'update_member_v2' && current) {
+        const newerDelete = (await this.#mutationsForMember(mutation.member_id, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING]))
+          .some((entry) => entry.operation === 'delete_member_v2' && (entry.supersedes_request_ids?.includes(mutation.id) || entry.created_at > mutation.created_at))
+        if (newerDelete) {
+          if (mutation.save_state === MEMBER_SAVE_STATES.SYNCING || mutation.save_state === MEMBER_SAVE_STATES.PREPARED) await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+          continue
+        }
         const next = mergeMemberPayload(current.data, mutation.payload)
         await this.#patch(this.database.members, mutation.member_id, { data: next, table_name: mutation.table_name, identity: mutation.identity || current.identity, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(next, { userId: this.userId, ownerId: this.ownerId, tableName: mutation.table_name, memberId: mutation.member_id, identity: mutation.identity || current.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: mutation.id, operation: mutation.operation, fingerprint: mutation.payload_fingerprint, baseRevision: mutation.base_server_revision }), updated_at: mutation.updated_at })
       } else if (mutation.operation === 'delete_member_v2' && current) {
-        await this.#removeSuperseded(mutation.supersedes_request_ids)
         await this.#patch(this.database.members, mutation.member_id, { table_name: mutation.table_name, is_deleted: true, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(current.data, { userId: this.userId, ownerId: this.ownerId, tableName: mutation.table_name, memberId: mutation.member_id, identity: current.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: mutation.id, operation: mutation.operation, fingerprint: mutation.payload_fingerprint, baseRevision: mutation.base_server_revision }), updated_at: mutation.updated_at })
       }
       if (mutation.save_state === MEMBER_SAVE_STATES.SYNCING || mutation.save_state === MEMBER_SAVE_STATES.PREPARED) await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
@@ -450,6 +558,53 @@ export class MemberService {
   async #mutationsForMember(memberId, states) {
     const docs = await this.database.mutations.find({ selector: { scope_key: this.scopeKey, member_id: memberId, save_state: { $in: states } } }).exec()
     return docs.map(asJson).sort((a, b) => a.created_at.localeCompare(b.created_at))
+  }
+
+  async #dependenciesResolved(mutation) {
+    for (const requestId of mutation.supersedes_request_ids || []) {
+      if (await this.database.mutations.findOne(requestId).exec()) return false
+    }
+    return true
+  }
+
+  async #rebaseDeleteAfterParent(deletion, parentRequestId, serverRevision, tableName) {
+    const payload = deletion.payload || {}
+    const fingerprint = await this.#fingerprint({ operation: 'delete_member_v2', tableName: deletion.table_name || tableName, memberId: deletion.member_id, baseServerRevision: serverRevision, payload })
+    await this.#patch(this.database.mutations, deletion.id, {
+      base_server_revision: serverRevision,
+      payload_fingerprint: fingerprint,
+      supersedes_request_ids: (deletion.supersedes_request_ids || []).filter((id) => id !== parentRequestId),
+      save_state: MEMBER_SAVE_STATES.LOCAL_PENDING,
+      updated_at: now(),
+    })
+  }
+
+  #isDefinitiveRpcFailure(error) {
+    const status = Number(error?.status)
+    return Number.isInteger(status) && status >= 400 && status < 500 && ![408, 429].includes(status) && /^[0-9A-Z]{5}$/i.test(String(error?.code || ''))
+  }
+
+  async #finishLocalCancelAfterRejectedCreate(createMutation, deletion, member) {
+    const requestId = newId('cancel_local_member_v2', createMutation.member_id)
+    const timestamp = now()
+    const payload = {}
+    const fingerprint = await this.#fingerprint({ operation: 'cancel_local_member_v2', tableName: createMutation.table_name, memberId: createMutation.member_id, baseServerRevision: null, payload })
+    const mutation = {
+      ...this.#mutationRecord({ id: requestId, memberId: createMutation.member_id, tableName: createMutation.table_name, operation: 'cancel_local_member_v2', payload, identity: createMutation.identity, baseServerRevision: null, fingerprint, timestamp }),
+      supersedes_request_ids: [createMutation.id, deletion.id],
+    }
+    await persistPreparedMutationFirst({
+      mutations: this.database.mutations,
+      mutation,
+      updatedAt: timestamp,
+      project: async () => {
+        await this.#removeSuperseded(mutation.supersedes_request_ids)
+        const row = await this.database.members.findOne(createMutation.member_id).exec()
+        if (row) await row.remove()
+        const journal = await this.database.mutations.findOne(requestId).exec()
+        if (journal) await journal.remove()
+      },
+    })
   }
 
   async #patch(collection, id, values) {

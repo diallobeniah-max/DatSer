@@ -174,6 +174,133 @@ describe('Member V2 local-first service', () => {
     expect((await service.getSyncState()).pendingChanges).toBe(0)
   })
 
+  it.each(['create', 'update'])('queues delete behind an in-flight %s and preserves the tombstone through confirmation', async (parentOperation) => {
+    let online = false
+    let resolveParent
+    const calls = []
+    let deleted = false
+    const rpc = async (name, args) => {
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: deleted ? [change({ revision: 3, deleted: true })] : (parentOperation === 'update' ? [change()] : []), next_cursor: deleted ? 3 : 1, has_more: false }, error: null }
+      calls.push({ name, args })
+      if (name === `${parentOperation}_member_v2`) {
+        return new Promise((resolve) => { resolveParent = () => resolve({ data: { status: 'SUCCESS', server_revision: parentOperation === 'create' ? 1 : 2, table_name: tableName, member: { id: args.p_member_id, 'Full Name': parentOperation === 'create' ? args.p_member.full_name : args.p_updates.full_name, member_code: 'M1001' } }, error: null }) })
+      }
+      if (name === 'delete_member_v2') {
+        deleted = true
+        return { data: { status: 'SUCCESS', server_revision: parentOperation === 'create' ? 2 : 3, table_name: tableName, member: { id: args.p_member_id, ...change({ revision: 3, deleted: true }).member } }, error: null }
+      }
+      throw new Error(`Unexpected RPC ${name}`)
+    }
+    const service = await makeService({ rpc, online: () => online })
+    let member
+    if (parentOperation === 'update') {
+      await service.pull()
+      member = await service.updateMember(ids.member, { 'Full Name': 'Parent update' })
+    } else {
+      member = await service.createMember({ tableName, member: { full_name: 'Parent create' } })
+    }
+    const parent = (await service.database.mutations.find({ selector: { member_id: member.id } }).exec()).map((row) => row.toJSON()).find((row) => row.operation === `${parentOperation}_member_v2`)
+    online = true
+    const syncing = service.syncNow()
+    await vi.waitFor(() => expect(resolveParent).toBeTypeOf('function'))
+    await service.deleteMember(member.id)
+    expect(await service.getMember(member.id)).toMatchObject({ is_deleted: true })
+    resolveParent()
+    await syncing
+    const deleteCall = calls.find((call) => call.name === 'delete_member_v2')
+    expect(deleteCall).toBeTruthy()
+    expect(deleteCall.args.p_request_id).not.toBe(parent.id)
+    expect(deleteCall.args.p_base_server_revision).toBe(parentOperation === 'create' ? 1 : 2)
+    expect(calls.filter((call) => call.name === `${parentOperation}_member_v2`)).toHaveLength(1)
+    expect(calls.filter((call) => call.name === 'delete_member_v2')).toHaveLength(1)
+    expect(await service.getMember(member.id)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+    expect(deleted).toBe(true)
+  })
+
+  it('replays an unknown SYNCING create by the same request ID after restart, then applies its durable delete', async () => {
+    let online = false
+    const calls = []
+    const userId = crypto.randomUUID(); const ownerId = crypto.randomUUID()
+    let database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() })
+    const serverCreateReplay = new Map()
+    const options = {
+      database, userId, ownerId, online: () => online,
+      supabase: rpcClient(async (name, args) => {
+        if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [], next_cursor: 1, has_more: false }, error: null }
+        calls.push({ name, args })
+        if (name === 'create_member_v2') {
+          serverCreateReplay.set(args.p_request_id, true)
+          return { data: { status: 'IDEMPOTENT_REPLAY', server_revision: 1, table_name: tableName, member: { id: args.p_member_id, 'Full Name': args.p_member.full_name, member_code: 'M1001' } }, error: null }
+        }
+        if (name === 'delete_member_v2') return { data: { status: 'SUCCESS', server_revision: 2, table_name: tableName, member: { id: args.p_member_id, deleted_at: '2026-01-02T00:00:00.000Z' } }, error: null }
+        throw new Error(`Unexpected RPC ${name}`)
+      }),
+    }
+    const first = await createMemberService(options); services.push(first); await first.start()
+    const local = await first.createMember({ tableName, member: { full_name: 'Unknown outcome' } })
+    const createDoc = (await database.mutations.find({ selector: { member_id: local.id } }).exec())[0]
+    const createMutation = createDoc.toJSON()
+    await createDoc.incrementalPatch({ save_state: MEMBER_SAVE_STATES.SYNCING })
+    await database.members.findOne(local.id).incrementalPatch({ save_state: MEMBER_SAVE_STATES.SYNCING })
+    await first.deleteMember(local.id)
+    const deleteMutation = (await database.mutations.find({ selector: { member_id: local.id } }).exec()).map((doc) => doc.toJSON()).find((entry) => entry.operation === 'delete_member_v2')
+    expect(deleteMutation.supersedes_request_ids).toContain(createMutation.id)
+    await first.stop(); await database.close()
+
+    database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() }); options.database = database
+    const restarted = await createMemberService(options); services.push(restarted); await restarted.start()
+    online = true
+    await restarted.syncNow()
+    expect(calls.filter((call) => call.name === 'create_member_v2').map((call) => call.args.p_request_id)).toEqual([createMutation.id])
+    expect(serverCreateReplay.get(createMutation.id)).toBe(true)
+    expect(calls.filter((call) => call.name === 'delete_member_v2')).toHaveLength(1)
+    expect(await restarted.getMember(local.id)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+    await database.close()
+  })
+
+  it('cancels a pending delete locally when its in-flight create is definitively rejected', async () => {
+    let online = false
+    let rejectCreate
+    const service = await makeService({ online: () => online, rpc: async (name) => {
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [], next_cursor: 1, has_more: false }, error: null }
+      if (name === 'create_member_v2') return new Promise((resolve) => { rejectCreate = () => resolve({ data: null, error: { message: 'rejected by local constraint', status: 400, code: '23514' } }) })
+      throw new Error(`Unexpected RPC ${name}`)
+    } })
+    const local = await service.createMember({ tableName, member: { full_name: 'Rejected before server insert' } })
+    online = true
+    const syncing = service.syncNow()
+    await vi.waitFor(() => expect(rejectCreate).toBeTypeOf('function'))
+    await service.deleteMember(local.id)
+    rejectCreate()
+    await syncing
+    expect(await service.getMember(local.id)).toBeNull()
+    expect((await service.database.mutations.find({ selector: { member_id: local.id } }).exec())).toHaveLength(0)
+  })
+
+  it('rebases a delete to the last confirmed revision when an in-flight update is definitively rejected', async () => {
+    let online = false
+    let rejectUpdate
+    const calls = []
+    let deleted = false
+    const service = await makeService({ online: () => online, rpc: async (name, args) => {
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [change({ revision: deleted ? 2 : 1, deleted })], next_cursor: deleted ? 2 : 1, has_more: false }, error: null }
+      calls.push({ name, args })
+      if (name === 'update_member_v2') return new Promise((resolve) => { rejectUpdate = () => resolve({ data: null, error: { message: 'rejected by local constraint', status: 400, code: '23514' } }) })
+      if (name === 'delete_member_v2') { deleted = true; return { data: { status: 'SUCCESS', server_revision: 2, table_name: tableName, member: { id: args.p_member_id, deleted_at: '2026-01-02T00:00:00.000Z' } }, error: null } }
+      throw new Error(`Unexpected RPC ${name}`)
+    } })
+    await service.pull()
+    await service.updateMember(ids.member, { 'Full Name': 'Rejected update' })
+    online = true
+    const syncing = service.syncNow()
+    await vi.waitFor(() => expect(rejectUpdate).toBeTypeOf('function'))
+    await service.deleteMember(ids.member)
+    rejectUpdate()
+    await syncing
+    expect(calls.find((call) => call.name === 'delete_member_v2')?.args.p_base_server_revision).toBe(1)
+    expect(await service.getMember(ids.member)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+  })
+
   it('keeps conflicts recoverable and can use the server copy', async () => {
     let online = false
     const rpc = async (name) => {
