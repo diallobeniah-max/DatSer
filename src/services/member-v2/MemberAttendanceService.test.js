@@ -1,7 +1,9 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
+import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie'
 import { createMemberAttendanceService } from './MemberAttendanceService'
+import { createMemberV2AttendanceDatabase } from '../../data/member-v2/rxdb/createMemberV2AttendanceDatabase'
 import { MEMBER_SAVE_STATES } from './memberSaveState'
 import { createMemberV2NetworkController } from '../../experiments/rxdb-member-phase1/NetworkController'
 import { createMemberV2AttendanceFingerprint } from '../../experiments/rxdb-member-phase1/attendanceContractFingerprint'
@@ -23,6 +25,24 @@ describe('Member V2 isolated attendance service', () => {
     expect(await service.getForMember(memberId)).toHaveLength(1)
     expect((await service.getForMember(memberId))[0]).toMatchObject({ status: 'Absent', save_state: MEMBER_SAVE_STATES.LOCAL_PENDING })
     expect((await service.getSyncState()).pendingChanges).toBe(2)
+  })
+
+  it('recovers an attendance intent after interruption before its RxDB projection', async () => {
+    let online = false; const calls = []; const userId = crypto.randomUUID(); const ownerId = crypto.randomUUID(); const memberId = crypto.randomUUID()
+    let database = await createMemberV2AttendanceDatabase({ userId, ownerId, storage: getRxStorageDexie() })
+    const options = { database, userId, ownerId, online: () => online, supabase: rpcClient(async (name, args) => { calls.push(name); if (name === 'save_member_v2_attendance') return { data: { status: 'SUCCESS', server_revision: 1, attendance: { attendance_id: args.p_attendance_id, attendance_date: args.p_attendance_date, status: args.p_attendance_status, is_deleted: false, table_name: args.p_table_name } }, error: null }; return { data: { changes: [], next_cursor: 1, has_more: false }, error: null } }) }
+    const first = await createMemberAttendanceService(options); services.push(first); await first.start()
+    const insert = database.attendance.insert.bind(database.attendance); database.attendance.insert = async (...args) => { database.attendance.insert = insert; throw new Error('simulated process interruption') }
+    await expect(first.saveAttendance({ memberId, tableName, attendanceDate: '2025-12-07', status: 'Present' })).rejects.toThrow('simulated process interruption')
+    const journal = (await database.mutations.find().exec())[0].toJSON(); expect(journal.save_state).toBe(MEMBER_SAVE_STATES.PREPARED)
+    await first.stop()
+    await database.close(); database = await createMemberV2AttendanceDatabase({ userId, ownerId, storage: getRxStorageDexie() }); options.database = database
+    const restarted = await createMemberAttendanceService(options); services.push(restarted); await restarted.start()
+    expect(await restarted.getForMember(memberId)).toMatchObject([{ status: 'Present', save_state: MEMBER_SAVE_STATES.LOCAL_PENDING }])
+    online = true; await restarted.syncNow()
+    expect(calls.filter((name) => name === 'save_member_v2_attendance')).toHaveLength(1)
+    expect((await restarted.getForMember(memberId))[0].save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+    await database.close()
   })
 
   it('keeps attendance LOCAL_PENDING and makes zero backend calls during simulated offline', async () => {

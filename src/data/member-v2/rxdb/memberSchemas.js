@@ -26,8 +26,9 @@ export const memberMutationV2Schema = {
   title: 'DatSer Member V2 durable mutation', version: 0, primaryKey: 'id', type: 'object', additionalProperties: false,
   properties: {
     id: { type: 'string', maxLength: 200 }, scope_key: { type: 'string', maxLength: 160 }, member_id: { type: 'string', maxLength: 36 },
-    table_name: { type: 'string', maxLength: 120 }, owner_id: { type: 'string', maxLength: 36 }, operation: { type: 'string', enum: ['create_member_v2', 'update_member_v2'], maxLength: 32 },
+    table_name: { type: 'string', maxLength: 120 }, owner_id: { type: 'string', maxLength: 36 }, operation: { type: 'string', enum: ['create_member_v2', 'update_member_v2', 'delete_member_v2', 'cancel_local_member_v2'], maxLength: 40 },
     payload: { type: 'object', additionalProperties: true }, identity: jsonObject, base_server_revision: nullableNumber,
+    supersedes_request_ids: { type: 'array', items: { type: 'string', maxLength: 200 } },
     payload_fingerprint: { type: 'string', minLength: 64, maxLength: 64 }, retry_count: { type: 'integer', minimum: 0 },
     save_state: { type: 'string', enum: Object.values(MEMBER_SAVE_STATES), maxLength: 32 }, last_error: nullableString,
     created_at: { type: 'string', maxLength: 40 }, updated_at: { type: 'string', maxLength: 40 },

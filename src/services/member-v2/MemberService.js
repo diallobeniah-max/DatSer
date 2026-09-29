@@ -2,6 +2,7 @@ import { createMemberV2Fingerprint } from '../../experiments/rxdb-member-phase1/
 import { createMemberV2Database, createMemberV2ScopeKey } from '../../data/member-v2/rxdb/createMemberV2Database'
 import { MEMBER_CONFLICT_OPERATIONS, assertConflictOperation, parseConflictRemote } from './memberConflict'
 import { MEMBER_SAVE_STATES, isPendingMemberSaveState } from './memberSaveState'
+import { createDurableMutationWriteQueue, persistPreparedMutationFirst } from './durableMutationWriter'
 import { assertMemberTarget, createHistoricalIdentity, targetFromMember } from './memberTarget'
 import { editableMemberPayload, mergeMemberPayload, toServerMemberPayload, validateMemberPayload } from './memberValidation'
 
@@ -66,7 +67,7 @@ export class MemberService {
     if (!userId || !ownerId || !database) throw new Error('Member V2 requires an authenticated user, workspace owner, and local database.')
     this.supabase = supabase; this.userId = userId; this.ownerId = ownerId; this.database = database
     this.scopeKey = createMemberV2ScopeKey({ userId, ownerId }); this.online = online; this.connectivity = connectivity; this.batchSize = Math.min(Math.max(batchSize, 1), DEFAULT_BATCH_SIZE)
-    this.realtimeDebounceMs = realtimeDebounceMs; this.closeDatabase = closeDatabase; this.channel = null; this.realtimeTimer = null; this.syncPromise = null; this.connectivityUnsubscribe = null; this.connectivityChangePromise = Promise.resolve()
+    this.realtimeDebounceMs = realtimeDebounceMs; this.closeDatabase = closeDatabase; this.channel = null; this.realtimeTimer = null; this.syncPromise = null; this.connectivityUnsubscribe = null; this.connectivityChangePromise = Promise.resolve(); this.localMutationWrites = createDurableMutationWriteQueue()
   }
 
   static async create(options) {
@@ -76,6 +77,7 @@ export class MemberService {
 
   async start() {
     await this.#syncDocument()
+    await this.#recoverMutationJournal()
     this.connectivityUnsubscribe = this.connectivity?.subscribe(() => this.#queueConnectivityChange()) || null
     this.#subscribeRealtime()
     if (this.#isBackendReachable()) void this.syncNow()
@@ -94,18 +96,22 @@ export class MemberService {
     if (this.closeDatabase) await this.database.close()
   }
 
-  async createMember({ tableName, member, identity = null }) {
+  async createMember(input) { return this.localMutationWrites.run(() => this.#createMember(input)) }
+
+  async #createMember({ tableName, member, identity = null }) {
     const memberId = globalThis.crypto.randomUUID()
     assertMemberTarget({ ownerId: this.ownerId, tableName, memberId })
     const payload = toServerMemberPayload(validateMemberPayload(member, { requireName: true }), identity?.field_map)
     const timestamp = now(); const requestId = newId('create_member_v2', memberId); const fingerprint = await this.#fingerprint({ operation: 'create_member_v2', tableName, memberId, baseServerRevision: null, payload })
-    await this.database.members.insert({ id: memberId, scope_key: this.scopeKey, user_id: this.userId, owner_id: this.ownerId, table_name: tableName, member_id: memberId, identity, data: payload, server_revision: null, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, retry_count: 0, ...memberFields(payload, { userId: this.userId, ownerId: this.ownerId, tableName, memberId, identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'create_member_v2', fingerprint }), created_at: timestamp, updated_at: timestamp })
-    await this.#insertMutation({ id: requestId, memberId, tableName, operation: 'create_member_v2', payload, identity, baseServerRevision: null, fingerprint })
+    const mutation = this.#mutationRecord({ id: requestId, memberId, tableName, operation: 'create_member_v2', payload, identity, baseServerRevision: null, fingerprint, timestamp })
+    await persistPreparedMutationFirst({ mutations: this.database.mutations, mutation, updatedAt: timestamp, project: async () => this.database.members.insert({ id: memberId, scope_key: this.scopeKey, user_id: this.userId, owner_id: this.ownerId, table_name: tableName, member_id: memberId, identity, data: payload, server_revision: null, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, retry_count: 0, ...memberFields(payload, { userId: this.userId, ownerId: this.ownerId, tableName, memberId, identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'create_member_v2', fingerprint }), created_at: timestamp, updated_at: timestamp }) })
     this.#scheduleSync()
     return this.getMember(memberId)
   }
 
-  async updateMember(memberId, updates, options = {}) {
+  async updateMember(memberId, updates, options = {}) { return this.localMutationWrites.run(() => this.#updateMember(memberId, updates, options)) }
+
+  async #updateMember(memberId, updates, options = {}) {
     const member = await this.getMember(memberId)
     if (!member) throw new Error('Member is not available in this local workspace.')
     if (member.is_deleted) throw new Error('A deleted member cannot be edited.')
@@ -113,43 +119,50 @@ export class MemberService {
     const payload = toServerMemberPayload(validateMemberPayload(updates), options.identity?.field_map || member.identity?.field_map)
     const requestId = newId('update_member_v2', memberId); const timestamp = now(); const identity = options.identity || createHistoricalIdentity(member); const baseServerRevision = member.server_revision || 0; const fingerprint = await this.#fingerprint({ operation: 'update_member_v2', tableName: target.tableName, memberId, baseServerRevision, payload })
     const nextData = mergeMemberPayload(member.data, payload)
-    await this.#patch(this.database.members, memberId, { table_name: target.tableName, data: nextData, identity, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(nextData, { userId: this.userId, ownerId: this.ownerId, tableName: target.tableName, memberId, identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'update_member_v2', fingerprint, baseRevision: baseServerRevision, retryCount: member.retry_count || 0 }), updated_at: timestamp })
-    await this.#insertMutation({ id: requestId, memberId, tableName: target.tableName, operation: 'update_member_v2', payload, identity, baseServerRevision, fingerprint })
+    const mutation = this.#mutationRecord({ id: requestId, memberId, tableName: target.tableName, operation: 'update_member_v2', payload, identity, baseServerRevision, fingerprint, timestamp })
+    await persistPreparedMutationFirst({ mutations: this.database.mutations, mutation, updatedAt: timestamp, project: () => this.#patch(this.database.members, memberId, { table_name: target.tableName, data: nextData, identity, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(nextData, { userId: this.userId, ownerId: this.ownerId, tableName: target.tableName, memberId, identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'update_member_v2', fingerprint, baseRevision: baseServerRevision, retryCount: member.retry_count || 0 }), updated_at: timestamp }) })
     this.#scheduleSync()
     return this.getMember(memberId)
   }
 
-  async deleteMember(memberId, options = {}) {
+  async deleteMember(memberId, options = {}) { return this.localMutationWrites.run(() => this.#deleteMember(memberId, options)) }
+
+  async #deleteMember(memberId, options = {}) {
     const member = await this.getMember(memberId)
     if (!member) throw new Error('Member is not available in this local workspace.')
     if (member.is_deleted) return member
     const target = assertMemberTarget({ ownerId: this.ownerId, tableName: options.tableName || member.table_name, memberId })
-    const pending = await this.#mutationsForMember(memberId, [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT])
+    const pending = await this.#mutationsForMember(memberId, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT])
 
     // A member which never reached the server has no historical row to delete.
-    // Removing every local mutation prevents its create/update from being replayed
-    // after a restart and therefore prevents a deleted local member being revived.
+    // Journal the cancellation before removing the local projection so restart
+    // can finish the same operation if the process exits between writes.
     if (!member.server_revision) {
-      await Promise.all(pending.map((mutation) => this.database.mutations.findOne(mutation.id).remove()))
-      await this.database.members.findOne(memberId).remove()
+      const requestId = newId('cancel_local_member_v2', memberId); const timestamp = now(); const payload = {}
+      const fingerprint = await this.#fingerprint({ operation: 'cancel_local_member_v2', tableName: target.tableName, memberId, baseServerRevision: null, payload })
+      const mutation = { ...this.#mutationRecord({ id: requestId, memberId, tableName: target.tableName, operation: 'cancel_local_member_v2', payload, identity: member.identity, baseServerRevision: null, fingerprint, timestamp }), supersedes_request_ids: pending.map((entry) => entry.id) }
+      await persistPreparedMutationFirst({ mutations: this.database.mutations, mutation, updatedAt: timestamp, project: async () => { await this.#removeSuperseded(mutation.supersedes_request_ids); const row = await this.database.members.findOne(memberId).exec(); if (row) await row.remove(); const journal = await this.database.mutations.findOne(requestId).exec(); if (journal) await journal.remove() } })
       return null
     }
 
-    await Promise.all(pending.map((mutation) => this.database.mutations.findOne(mutation.id).remove()))
     const requestId = newId('delete_member_v2', memberId)
     const baseServerRevision = Number(member.server_revision)
     const payload = {}
     const fingerprint = await this.#fingerprint({ operation: 'delete_member_v2', tableName: target.tableName, memberId, baseServerRevision, payload })
-    await this.#patch(this.database.members, memberId, {
+    const timestamp = now()
+    const mutation = { ...this.#mutationRecord({ id: requestId, memberId, tableName: target.tableName, operation: 'delete_member_v2', payload, identity: member.identity, baseServerRevision, fingerprint, timestamp }), supersedes_request_ids: pending.map((entry) => entry.id) }
+    await persistPreparedMutationFirst({ mutations: this.database.mutations, mutation, updatedAt: timestamp, project: async () => {
+      await this.#removeSuperseded(mutation.supersedes_request_ids)
+      await this.#patch(this.database.members, memberId, {
       table_name: target.tableName,
       is_deleted: true,
       save_state: MEMBER_SAVE_STATES.LOCAL_PENDING,
       conflict_remote: null,
       last_error: null,
       ...memberFields(member.data, { userId: this.userId, ownerId: this.ownerId, tableName: target.tableName, memberId, identity: member.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'delete_member_v2', fingerprint, baseRevision: baseServerRevision, retryCount: member.retry_count || 0 }),
-      updated_at: now(),
-    })
-    await this.#insertMutation({ id: requestId, memberId, tableName: target.tableName, operation: 'delete_member_v2', payload, identity: member.identity, baseServerRevision, fingerprint })
+      updated_at: timestamp,
+      })
+    } })
     this.#scheduleSync()
     return this.getMember(memberId)
   }
@@ -244,10 +257,9 @@ export class MemberService {
     const payload = toServerMemberPayload(validateMemberPayload(editableMemberPayload(desired)), member.identity?.field_map)
     const tableName = remote.table_name || member.table_name; const identity = createHistoricalIdentity(member); const baseServerRevision = Number(remote.server_revision); const requestId = newId('update_member_v2', memberId)
     const fingerprint = await this.#fingerprint({ operation: 'update_member_v2', tableName, memberId, baseServerRevision, payload })
-    await Promise.all(conflictMutations.map((mutation) => this.database.mutations.findOne(mutation.id).remove()))
     const nextData = mergeMemberPayload(remote.member, payload)
-    await this.#patch(this.database.members, memberId, { data: nextData, server_revision: baseServerRevision, table_name: tableName, identity, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(nextData, { userId: this.userId, ownerId: this.ownerId, tableName, memberId, identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'update_member_v2', fingerprint, baseRevision: baseServerRevision, retryCount: member.retry_count || 0 }), updated_at: now() })
-    await this.#insertMutation({ id: requestId, memberId, tableName, operation: 'update_member_v2', payload, identity, baseServerRevision, fingerprint })
+    const timestamp = now(); const mutation = { ...this.#mutationRecord({ id: requestId, memberId, tableName, operation: 'update_member_v2', payload, identity, baseServerRevision, fingerprint, timestamp }), supersedes_request_ids: conflictMutations.map((entry) => entry.id) }
+    await persistPreparedMutationFirst({ mutations: this.database.mutations, mutation, updatedAt: timestamp, project: async () => { await this.#removeSuperseded(mutation.supersedes_request_ids); await this.#patch(this.database.members, memberId, { data: nextData, server_revision: baseServerRevision, table_name: tableName, identity, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(nextData, { userId: this.userId, ownerId: this.ownerId, tableName, memberId, identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId, operation: 'update_member_v2', fingerprint, baseRevision: baseServerRevision, retryCount: member.retry_count || 0 }), updated_at: timestamp }) } })
     this.#scheduleSync()
     return this.getMember(memberId)
   }
@@ -307,6 +319,8 @@ export class MemberService {
   }
 
   async #pushPending() {
+    await this.localMutationWrites.wait()
+    await this.#recoverMutationJournal()
     const mutations = await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: { $in: [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE] } } }).exec()
     const batch = mutations.map(asJson).sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, this.batchSize)
     for (const mutation of batch) await this.#pushMutation(mutation)
@@ -388,16 +402,45 @@ export class MemberService {
 
   async #applyServerChange(change) {
     const id = String(change.member_id); const existing = await this.getMember(id)
-    const pending = await this.#mutationsForMember(id, [MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT])
+    const pending = await this.#mutationsForMember(id, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT])
     if (existing && pending.length) return
     const record = serverDocument({ scopeKey: this.scopeKey, userId: this.userId, ownerId: this.ownerId, change, prior: existing })
     if (existing) await this.#patch(this.database.members, id, record)
     else await this.database.members.insert(record)
   }
 
-  async #insertMutation({ id, memberId, tableName, operation, payload, identity, baseServerRevision, fingerprint }) {
-    const timestamp = now()
-    await this.database.mutations.insert({ id, scope_key: this.scopeKey, member_id: memberId, table_name: tableName, owner_id: this.ownerId, operation, payload, identity, base_server_revision: baseServerRevision, payload_fingerprint: fingerprint, retry_count: 0, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, last_error: null, created_at: timestamp, updated_at: timestamp })
+  #mutationRecord({ id, memberId, tableName, operation, payload, identity, baseServerRevision, fingerprint, timestamp }) {
+    return { id, scope_key: this.scopeKey, member_id: memberId, table_name: tableName, owner_id: this.ownerId, operation, payload, identity, base_server_revision: baseServerRevision, payload_fingerprint: fingerprint, retry_count: 0, save_state: MEMBER_SAVE_STATES.PREPARED, last_error: null, created_at: timestamp, updated_at: timestamp }
+  }
+
+  async #removeSuperseded(ids = []) {
+    await Promise.all(ids.map(async (id) => { const row = await this.database.mutations.findOne(id).exec(); if (row) await row.remove() }))
+  }
+
+  async #recoverMutationJournal() {
+    const rows = (await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: { $in: [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.SYNCING] } } }).exec()).map(asJson).sort((a, b) => a.created_at.localeCompare(b.created_at))
+    for (const mutation of rows) {
+      if (mutation.operation === 'cancel_local_member_v2') {
+        await this.#removeSuperseded(mutation.supersedes_request_ids)
+        const member = await this.database.members.findOne(mutation.member_id).exec(); if (member) await member.remove()
+        const journal = await this.database.mutations.findOne(mutation.id).exec(); if (journal) await journal.remove()
+        continue
+      }
+      let current = await this.getMember(mutation.member_id)
+      await this.#removeSuperseded(mutation.supersedes_request_ids)
+      if (mutation.operation === 'create_member_v2' && !current) {
+        const timestamp = mutation.created_at
+        try { await this.database.members.insert({ id: mutation.member_id, scope_key: this.scopeKey, user_id: this.userId, owner_id: this.ownerId, table_name: mutation.table_name, member_id: mutation.member_id, identity: mutation.identity || null, data: mutation.payload, server_revision: null, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, retry_count: mutation.retry_count || 0, ...memberFields(mutation.payload, { userId: this.userId, ownerId: this.ownerId, tableName: mutation.table_name, memberId: mutation.member_id, identity: mutation.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: mutation.id, operation: mutation.operation, fingerprint: mutation.payload_fingerprint }), created_at: timestamp, updated_at: timestamp }) } catch (error) { if (!await this.database.members.findOne(mutation.member_id).exec()) throw error }
+        current = await this.getMember(mutation.member_id)
+      } else if (mutation.operation === 'update_member_v2' && current) {
+        const next = mergeMemberPayload(current.data, mutation.payload)
+        await this.#patch(this.database.members, mutation.member_id, { data: next, table_name: mutation.table_name, identity: mutation.identity || current.identity, is_deleted: false, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(next, { userId: this.userId, ownerId: this.ownerId, tableName: mutation.table_name, memberId: mutation.member_id, identity: mutation.identity || current.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: mutation.id, operation: mutation.operation, fingerprint: mutation.payload_fingerprint, baseRevision: mutation.base_server_revision }), updated_at: mutation.updated_at })
+      } else if (mutation.operation === 'delete_member_v2' && current) {
+        await this.#removeSuperseded(mutation.supersedes_request_ids)
+        await this.#patch(this.database.members, mutation.member_id, { table_name: mutation.table_name, is_deleted: true, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, conflict_remote: null, last_error: null, ...memberFields(current.data, { userId: this.userId, ownerId: this.ownerId, tableName: mutation.table_name, memberId: mutation.member_id, identity: current.identity, saveState: MEMBER_SAVE_STATES.LOCAL_PENDING, requestId: mutation.id, operation: mutation.operation, fingerprint: mutation.payload_fingerprint, baseRevision: mutation.base_server_revision }), updated_at: mutation.updated_at })
+      }
+      if (mutation.save_state === MEMBER_SAVE_STATES.SYNCING || mutation.save_state === MEMBER_SAVE_STATES.PREPARED) await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.LOCAL_PENDING, updated_at: now() })
+    }
   }
 
   #fingerprint({ operation, tableName, memberId, baseServerRevision, payload }) {

@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
+import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie'
+import { createMemberV2Database } from '../../data/member-v2/rxdb/createMemberV2Database'
 import { createMemberService } from './MemberService'
 import { MEMBER_CONFLICT_OPERATIONS } from './memberConflict'
 import { MEMBER_SAVE_STATES } from './memberSaveState'
@@ -33,6 +35,64 @@ describe('Member V2 local-first service', () => {
     expect(member.save_state).toBe(MEMBER_SAVE_STATES.LOCAL_PENDING)
     const pending = await service.getSyncState()
     expect(pending.pendingChanges).toBe(1)
+  })
+
+  it('recovers a create whose process stopped after the durable intent but before the member projection', async () => {
+    let online = false; const calls = []; const userId = crypto.randomUUID(); const ownerId = crypto.randomUUID()
+    let database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() })
+    const options = { database, userId, ownerId, online: () => online, supabase: rpcClient(async (name, args) => { calls.push(name); if (name === 'create_member_v2') return { data: { status: 'SUCCESS', server_revision: 1, table_name: tableName, member: { id: args.p_member_id, ...args.p_member } }, error: null }; return { data: { changes: [], next_cursor: 1, has_more: false }, error: null } }) }
+    const first = await createMemberService(options); services.push(first); await first.start()
+    const insert = database.members.insert.bind(database.members); database.members.insert = async (...args) => { database.members.insert = insert; throw new Error('simulated process interruption') }
+    await expect(first.createMember({ tableName, member: { full_name: 'Recovered create' } })).rejects.toThrow('simulated process interruption')
+    const journal = (await database.mutations.find().exec())[0].toJSON(); expect(journal.save_state).toBe(MEMBER_SAVE_STATES.PREPARED)
+    await first.stop()
+    await database.close(); database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() }); options.database = database
+    const restarted = await createMemberService(options); services.push(restarted); await restarted.start()
+    expect(await restarted.getMember(journal.member_id)).toMatchObject({ data: { 'Full Name': 'Recovered create' }, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING })
+    online = true; await restarted.syncNow()
+    expect(calls.filter((name) => name === 'create_member_v2')).toHaveLength(1)
+    expect((await restarted.getMember(journal.member_id)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+    await database.close()
+  })
+
+  it('replays an interrupted update from its durable intent after service restart', async () => {
+    let online = false; const calls = []; const userId = crypto.randomUUID(); const ownerId = crypto.randomUUID()
+    let database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() })
+    const options = { database, userId, ownerId, online: () => online, supabase: rpcClient(async (name, args) => { calls.push(name); if (name === 'update_member_v2') return { data: { status: 'SUCCESS', server_revision: 2, table_name: tableName, member: { id: args.p_member_id, 'Full Name': args.p_updates.full_name, member_code: 'M0001' } }, error: null }; return { data: { changes: [change()], next_cursor: 1, has_more: false }, error: null } }) }
+    const first = await createMemberService(options); services.push(first); await first.start(); await first.pull()
+    let interrupted = false; const findOne = database.members.findOne.bind(database.members)
+    database.members.findOne = (...args) => { const query = findOne(...args); const exec = query.exec.bind(query); query.exec = async () => { const target = await exec(); if (!target) return target; return new Proxy(target, { get(object, property) { if (property === 'incrementalPatch') return async (values) => { if (!interrupted && values.data?.['Full Name'] === 'Recovered update') { interrupted = true; throw new Error('simulated process interruption') }; return object.incrementalPatch(values) }; const value = Reflect.get(object, property, object); return typeof value === 'function' ? value.bind(object) : value } }) }; return query }
+    await expect(first.updateMember(ids.member, { 'Full Name': 'Recovered update' })).rejects.toThrow('simulated process interruption')
+    const journal = (await database.mutations.find({ selector: { member_id: ids.member } }).exec())[0].toJSON(); expect(journal.save_state).toBe(MEMBER_SAVE_STATES.PREPARED)
+    await first.stop()
+    await database.close(); database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() }); options.database = database
+    const restarted = await createMemberService(options); services.push(restarted); await restarted.start()
+    expect((await restarted.getMember(ids.member)).data['Full Name']).toBe('Recovered update')
+    online = true; await restarted.syncNow()
+    expect(calls.filter((name) => name === 'update_member_v2')).toHaveLength(1)
+    expect((await restarted.getMember(ids.member)).save_state).toBe(MEMBER_SAVE_STATES.SERVER_CONFIRMED)
+    await database.close()
+  })
+
+  it('replays an interrupted server delete and keeps its superseding tombstone after restart', async () => {
+    let online = false; const calls = []; const userId = crypto.randomUUID(); const ownerId = crypto.randomUUID()
+    let database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() })
+    let deleted = false; const options = { database, userId, ownerId, online: () => online, supabase: rpcClient(async (name, args) => { calls.push(name); if (name === 'delete_member_v2') { deleted = true; return { data: { status: 'SUCCESS', server_revision: 2, table_name: tableName, member: { id: args.p_member_id, ...change().member, deleted_at: '2026-01-02T00:00:00.000Z' } }, error: null } }; return { data: { changes: [change({ revision: deleted ? 2 : 1, deleted })], next_cursor: deleted ? 2 : 1, has_more: false }, error: null } }) }
+    const first = await createMemberService(options); services.push(first); await first.start(); await first.pull(); await first.updateMember(ids.member, { 'Full Name': 'Pending before delete' })
+    const supersededUpdate = (await database.mutations.find({ selector: { member_id: ids.member } }).exec())[0].toJSON().id
+    let interrupted = false; const findOne = database.members.findOne.bind(database.members)
+    database.members.findOne = (...args) => { const query = findOne(...args); const exec = query.exec.bind(query); query.exec = async () => { const target = await exec(); if (!target) return target; return new Proxy(target, { get(object, property) { if (property === 'incrementalPatch') return async (values) => { if (!interrupted && values.is_deleted === true) { interrupted = true; throw new Error('simulated process interruption') }; return object.incrementalPatch(values) }; const value = Reflect.get(object, property, object); return typeof value === 'function' ? value.bind(object) : value } }) }; return query }
+    await expect(first.deleteMember(ids.member)).rejects.toThrow('simulated process interruption')
+    const journal = (await database.mutations.find({ selector: { member_id: ids.member } }).exec()).map((row) => row.toJSON()).find((row) => row.operation === 'delete_member_v2'); expect(journal).toMatchObject({ operation: 'delete_member_v2', save_state: MEMBER_SAVE_STATES.PREPARED, supersedes_request_ids: [supersededUpdate] })
+    expect((await database.mutations.find({ selector: { member_id: ids.member } }).exec()).map((row) => row.toJSON()).filter((row) => row.operation === 'update_member_v2')).toHaveLength(0)
+    await first.stop(); await database.close(); database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() }); options.database = database
+    const restarted = await createMemberService(options); services.push(restarted); await restarted.start()
+    expect(await restarted.getMember(ids.member)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.LOCAL_PENDING })
+    expect((await database.mutations.find({ selector: { member_id: ids.member } }).exec()).map((row) => row.toJSON()).map((row) => row.operation)).toEqual(['delete_member_v2'])
+    online = true; await restarted.syncNow()
+    expect(calls.filter((name) => name === 'delete_member_v2')).toHaveLength(1)
+    expect(await restarted.getMember(ids.member)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+    await database.close()
   })
 
   it('keeps a member mutation LOCAL_PENDING and makes zero backend calls during simulated offline', async () => {
