@@ -1,5 +1,5 @@
 begin;
-select plan(7);
+select plan(9);
 
 select ok(
   (select relrowsecurity from pg_class where oid = 'public.member_v2_rollout_workspaces'::regclass),
@@ -16,6 +16,14 @@ select ok(
 select ok(
   not has_function_privilege('anon', 'public.save_member_v2_attendance(uuid,uuid,text,date,text,uuid,bigint,text,text)', 'EXECUTE'),
   'anonymous callers cannot write Member V2 attendance'
+);
+select ok(
+  not has_function_privilege('anon', 'public.member_v2_lock_change_event_order(uuid)', 'EXECUTE'),
+  'anonymous callers cannot acquire the internal change-feed ordering lock'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.member_v2_lock_change_event_order(uuid)', 'EXECUTE'),
+  'authenticated callers cannot acquire the internal change-feed ordering lock'
 );
 select ok(
   has_function_privilege('authenticated', 'public.member_v2_source_table_capabilities(uuid,text)', 'EXECUTE'),

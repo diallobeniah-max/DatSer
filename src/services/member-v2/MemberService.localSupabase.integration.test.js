@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import WebSocket from 'ws'
 import { createClient } from '@supabase/supabase-js'
@@ -21,6 +21,29 @@ const safeRealtimeError = (error) => String(error?.message || '')
   .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, '[redacted]')
 
 const execFileAsync = promisify(execFile)
+const psqlProcess = (applicationName) => {
+  const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
+  const child = spawn(docker, ['exec', '-i', '-e', `PGAPPNAME=${applicationName}`, readLocalSupabaseDbContainer(), 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-A', '-t'], { stdio: ['pipe', 'pipe', 'pipe'] })
+  let output = ''; let error = ''; child.stdout.on('data', (chunk) => { output += chunk.toString() }); child.stderr.on('data', (chunk) => { error += chunk.toString() })
+  return { child, output: () => output, error: () => error, send: (sql) => child.stdin.write(`${sql}\n`), finish: async () => { child.stdin.end('\\q\n'); await new Promise((resolve, reject) => { child.once('close', (code) => code === 0 ? resolve() : reject(new Error(`psql exited ${code}: ${error}`))) }) } }
+}
+const waitForPsql = async (process, marker, timeoutMs = 5000) => {
+  const start = Date.now()
+  while (!process.output().includes(marker)) {
+    if (Date.now() - start > timeoutMs) throw new Error(`Timed out waiting for local SQL transaction marker ${marker}. ${process.error()}`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+const waitForLockWait = async (applicationName) => {
+  const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
+  const start = Date.now()
+  while (Date.now() - start < 5000) {
+    const { stdout } = await execFileAsync(docker, ['exec', '-i', readLocalSupabaseDbContainer(), 'psql', '-U', 'postgres', '-d', 'postgres', '-A', '-t', '-c', `select coalesce(wait_event_type,'') from pg_stat_activity where application_name='${applicationName}' and state='active' order by query_start desc limit 1`], { encoding: 'utf8' })
+    if (stdout.trim() === 'Lock') return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error(`Local SQL transaction ${applicationName} did not enter an advisory-lock wait.`)
+}
 const inspectLocalSignalRealtime = async (ownerId) => {
   if (!/^[0-9a-f-]{36}$/i.test(ownerId)) throw new Error('Synthetic owner UUID is invalid.')
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
@@ -38,7 +61,10 @@ beforeAll(async () => {
   const email = `member-v2-client-${Date.now()}-${crypto.randomUUID().slice(0, 8)}@local.invalid`; const password = `MemberV2-${crypto.randomUUID()}-9a!`
   fixture.email = email; fixture.password = password
   const created = await fixture.admin.auth.admin.createUser({ email, password, email_confirm: true }); if (created.error) throw created.error
-  fixture.userId = created.data.user.id; fixture.client = createClient(config.url, config.anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  fixture.userId = created.data.user.id
+  const otherUser = await fixture.admin.auth.admin.createUser({ email: `member-v2-other-${crypto.randomUUID().slice(0, 8)}@local.invalid`, password: `MemberV2-${crypto.randomUUID()}-9a!`, email_confirm: true }); if (otherUser.error) throw otherUser.error
+  fixture.otherOwnerId = otherUser.data.user.id
+  fixture.client = createClient(config.url, config.anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const rollout = await fixture.admin.from('member_v2_rollout_workspaces').upsert({ owner_id: fixture.userId, enabled: true })
   if (rollout.error) throw rollout.error
   const rolloutCheck = await fixture.admin.from('member_v2_rollout_workspaces').select('enabled').eq('owner_id', fixture.userId).single()
@@ -58,9 +84,65 @@ beforeAll(async () => {
   }
 }, 30000)
 
-afterAll(async () => { if (fixture.userId) await fixture.admin.auth.admin.deleteUser(fixture.userId) })
+afterAll(async () => { if (fixture.userId) await fixture.admin.auth.admin.deleteUser(fixture.userId); if (fixture.otherOwnerId) await fixture.admin.auth.admin.deleteUser(fixture.otherOwnerId) })
 
 describe.sequential('Member V2 service with local authenticated Supabase', () => {
+  const assertCommitOrderedFeedPair = async (feed, rollbackFirst = false) => {
+    const ownerId = fixture.userId; const memberA = crypto.randomUUID(); const memberB = crypto.randomUUID(); const otherOwner = fixture.otherOwnerId; const otherMember = crypto.randomUUID()
+    const latest = await fixture.admin.from('member_v2_change_events').select('server_revision').eq('owner_id', ownerId).order('server_revision', { ascending: false }).limit(1).maybeSingle()
+    if (latest.error) throw latest.error
+    const afterRevision = latest.data?.server_revision || 0; const applicationA = `datser-order-a-${crypto.randomUUID().slice(0, 8)}`; const applicationB = `datser-order-b-${crypto.randomUUID().slice(0, 8)}`; const applicationOther = `datser-order-o-${crypto.randomUUID().slice(0, 8)}`
+    const first = psqlProcess(applicationA); const second = psqlProcess(applicationB); const other = psqlProcess(applicationOther)
+    const eventSql = (owner, member, status) => feed === 'profile'
+      ? `select public.member_v2_record_change('${owner}', '${fixture.tableName}', '${member}', '{}'::jsonb, false, 'ordering_test', '${crypto.randomUUID()}', '${owner}')`
+      : `select public.member_v2_record_attendance_change('${owner}', '${fixture.tableName}', '${member}', '2025-12-07'::date, '${status}', false, 'ordering_test', '${crypto.randomUUID()}', '${owner}', '${crypto.randomUUID()}')`
+    try {
+      first.send(`begin;\n${eventSql(ownerId, memberA, 'Present')};\n\\echo ORDER_A_READY`)
+      await waitForPsql(first, 'ORDER_A_READY')
+      second.send(`begin;\n${eventSql(ownerId, memberB, feed === 'profile' ? 'Present' : 'Absent')};\n\\echo ORDER_B_READY`)
+      await waitForLockWait(applicationB)
+      // A different workspace must not wait on the first workspace's lock.
+      other.send(`begin;\n${eventSql(otherOwner, otherMember, 'Present')};\ncommit;\n\\echo ORDER_OTHER_DONE`)
+      await waitForPsql(other, 'ORDER_OTHER_DONE')
+      const beforeCommit = feed === 'profile'
+        ? await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: ownerId, p_after_server_revision: afterRevision, p_limit: 100 })
+        : await fixture.client.rpc('pull_member_v2_attendance_changes_v2', { p_owner_id: ownerId, p_after_server_revision: afterRevision, p_limit: 100 })
+      if (beforeCommit.error) throw beforeCommit.error
+      expect((beforeCommit.data.changes || []).map((row) => row.member_id)).not.toEqual(expect.arrayContaining([memberA, memberB]))
+      first.send(`${rollbackFirst ? 'rollback' : 'commit'};\n\\echo ORDER_A_FINISHED`); await waitForPsql(first, 'ORDER_A_FINISHED')
+      await waitForPsql(second, 'ORDER_B_READY')
+      second.send('commit;\n\\echo ORDER_B_COMMITTED'); await waitForPsql(second, 'ORDER_B_COMMITTED')
+      const pulled = feed === 'profile'
+        ? await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: ownerId, p_after_server_revision: afterRevision, p_limit: 100 })
+        : await fixture.client.rpc('pull_member_v2_attendance_changes_v2', { p_owner_id: ownerId, p_after_server_revision: afterRevision, p_limit: 100 })
+      if (pulled.error) throw pulled.error
+      const changes = pulled.data.changes || []; const ownPair = changes.filter((row) => [memberA, memberB].includes(row.member_id))
+      expect(ownPair.map((row) => row.member_id)).toEqual(rollbackFirst ? [memberB] : [memberA, memberB])
+      if (!rollbackFirst) expect(ownPair[0].server_revision).toBeLessThan(ownPair[1].server_revision)
+      expect(changes.some((row) => row.member_id === otherMember)).toBe(false)
+      const next = feed === 'profile'
+        ? await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: ownerId, p_after_server_revision: pulled.data.next_cursor, p_limit: 100 })
+        : await fixture.client.rpc('pull_member_v2_attendance_changes_v2', { p_owner_id: ownerId, p_after_server_revision: pulled.data.next_cursor, p_limit: 100 })
+      if (next.error) throw next.error
+      expect((next.data.changes || []).filter((row) => [memberA, memberB].includes(row.member_id))).toEqual([])
+    } finally {
+      for (const session of [first, second, other]) { if (!session.child.killed && session.child.exitCode === null) { try { session.send('rollback;') } catch {} session.child.stdin.end('\\q\n') } }
+      await Promise.all([first, second, other].map((session) => session.child.exitCode === null ? new Promise((resolve) => session.child.once('close', resolve)) : Promise.resolve()))
+    }
+  }
+
+  it('serializes profile-feed revisions through transaction commit and leaves other workspaces independent', async () => {
+    await assertCommitOrderedFeedPair('profile')
+  }, 20000)
+
+  it('serializes attendance-feed revisions through transaction commit', async () => {
+    await assertCommitOrderedFeedPair('attendance')
+  }, 20000)
+
+  it('does not expose rolled-back revisions and still returns the next committed event', async () => {
+    await assertCommitOrderedFeedPair('profile', true)
+  }, 20000)
+
   it('keeps unrelated month-table trigger capture active outside trusted delete RPCs', async () => {
     const service = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: getRxStorageMemory(), online: () => true })
     await service.start()
