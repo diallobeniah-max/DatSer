@@ -53,20 +53,6 @@ const WORKSPACE_MEMBER_CODE_CONFIGURATION_KEYS = new Set([
   'member_code_length'
 ])
 
-export const getAdminCodeLoginErrorMessage = (error) => {
-  const errorText = String(error?.message || '').toLowerCase()
-  if (error?.code === '42883' || errorText.includes('admin-code-login')) {
-    return 'Admin code login is not set up yet. Apply the latest Supabase migration first.'
-  }
-  // Supabase returns this generic transport error when the Edge Runtime or
-  // function route is unavailable. Do not surface an implementation detail to
-  // operators or imply that their code was rejected.
-  if (errorText.includes('edge function returned a non-2xx status code')) {
-    return 'Admin login is temporarily unavailable. Please try again shortly.'
-  }
-  return error?.message || 'Invalid admin code'
-}
-
 const devOnlyString = (codes) => (
   import.meta.env.DEV ? String.fromCharCode(...codes) : ''
 )
@@ -321,10 +307,7 @@ export const AuthProvider = ({ children }) => {
   // acceptable for later refreshes.
   const loadUserPreferencesBackground = useCallback((userId) => {
     const load = loadUserPreferencesRef.current
-    // Auth callbacks run before React has committed setUser.  Supply the
-    // authenticated actor explicitly so first-time sign-ins do not skip
-    // preference hydration while user state is still stale.
-    if (load) void load(userId, userId)
+    if (load) void load(userId)
   }, [])
 
   // Auto-accept collaborator invite when user signs in
@@ -867,42 +850,41 @@ export const AuthProvider = ({ children }) => {
   // Sign up with email and password
   const signUpWithEmail = async (email, password, fullName, captchaToken) => {
     try {
-      if (!isSupabaseConfigured() || !supabase) {
-        throw new Error('Authentication is not configured')
-      }
-      const redirectUrl = getRedirectUrl()
+      if (supabase) {
+        const redirectUrl = getRedirectUrl()
 
-      const signUpOptions = {
-        email,
-        password,
-        options: {
-          emailRedirectTo: redirectUrl,
-          data: {
-            full_name: fullName
+        const signUpOptions = {
+          email,
+          password,
+          options: {
+            emailRedirectTo: redirectUrl,
+            data: {
+              full_name: fullName
+            }
           }
         }
-      }
-      // Only add captchaToken if it exists
-      if (captchaToken) {
-        signUpOptions.options.captchaToken = captchaToken
-      }
-      const { data, error } = await supabase.auth.signUp(signUpOptions)
+        // Only add captchaToken if it exists
+        if (captchaToken) {
+          signUpOptions.options.captchaToken = captchaToken
+        }
+        const { data, error } = await supabase.auth.signUp(signUpOptions)
 
-      if (error) throw error
+        if (error) throw error
 
-      // Check if email confirmation is required
-      if (data?.user?.identities?.length === 0) {
-        toast.info('This email is already registered. Please sign in instead.')
-        return { needsSignIn: true }
+        // Check if email confirmation is required
+        if (data?.user?.identities?.length === 0) {
+          toast.info('This email is already registered. Please sign in instead.')
+          return { needsSignIn: true }
+        }
+
+        if (data?.user && !data?.session) {
+          recordEmailSend()
+          toast.success('Check your email for a confirmation link!')
+          return { needsConfirmation: true }
+        }
+
+        return data
       }
-
-      if (data?.user && !data?.session) {
-        recordEmailSend()
-        toast.success('Check your email for a confirmation link!')
-        return { needsConfirmation: true }
-      }
-
-      return data
     } catch (error) {
       console.error('Error signing up:', error)
       if (error.message?.includes('already registered')) {
@@ -1056,7 +1038,11 @@ export const AuthProvider = ({ children }) => {
       toast.success('Admin code accepted')
       return data
     } catch (error) {
-      const message = getAdminCodeLoginErrorMessage(error)
+      const errorText = String(error?.message || '').toLowerCase()
+      const missingRpc = error?.code === '42883' || errorText.includes('admin-code-login')
+      const message = missingRpc
+        ? 'Admin code login is not set up yet. Apply the latest Supabase migration first.'
+        : (error?.message || 'Invalid admin code')
       console.error('Admin code login failed:', error)
       toast.error(message)
       throw new Error(message)

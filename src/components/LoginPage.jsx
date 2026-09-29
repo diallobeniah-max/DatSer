@@ -12,15 +12,6 @@ const devOnlyLabel = (codes) => (
   import.meta.env.DEV ? String.fromCharCode(...codes) : ''
 )
 
-const getSignupErrorMessage = (error) => {
-  const message = String(error?.message || '').toLowerCase()
-  if (message.includes('not configured')) return 'Authentication is not configured. Check the local setup and try again.'
-  if (message.includes('network') || message.includes('fetch')) return 'Could not reach authentication. Check your connection and try again.'
-  if (message.includes('already registered')) return 'This email is already registered. Please sign in instead.'
-  if (message.includes('password')) return 'Your password was not accepted. Review the password requirements and try again.'
-  return 'We could not create the account. Please try again.'
-}
-
 const getPasswordStrength = (password) => {
   if (!password) return { score: 0, label: '', color: '' }
 
@@ -215,7 +206,7 @@ const LoginPage = () => {
         setMode('login')
       }
     } catch (err) {
-      setError(getSignupErrorMessage(err))
+      // Error is handled in AuthContext
     } finally {
       setIsLoading(false)
     }

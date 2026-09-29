@@ -7,6 +7,7 @@ import Header from './components/Header'
 import Dashboard from './components/Dashboard'
 import ErrorBoundary from './components/ErrorBoundary'
 import LoginPage from './components/LoginPage'
+import TutorialPromptBar from './components/TutorialPromptBar'
 import AppUpdatePrompt from './components/AppUpdatePrompt'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
 import RealMemberV2LocalDiagnostics from './experiments/rxdb-member-phase1/RealMemberV2LocalDiagnostics'
@@ -177,6 +178,7 @@ function AppContent({ isMobile }) {
 
   // Onboarding wizard for new users
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const [onboardingAutoChecked, setOnboardingAutoChecked] = useState(false)
 
   // Global modals - accessible from profile dropdown anywhere
   const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false)
@@ -187,6 +189,8 @@ function AppContent({ isMobile }) {
   const [showSetPassword, setShowSetPassword] = useState(false)
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false)
   
+  // Tutorial prompt bar instead of auto-popup
+  const [showTutorialPrompt, setShowTutorialPrompt] = useState(false)
   const [showCompactSuggestion, setShowCompactSuggestion] = useState(false)
   const [isCompactSuggestionClosing, setIsCompactSuggestionClosing] = useState(false)
 
@@ -466,6 +470,23 @@ function AppContent({ isMobile }) {
       setCurrentView('dashboard')
     }
   }, [currentView, isExecutive])
+
+  // Auto-show tutorial prompt for new users (optional onboarding)
+  useEffect(() => {
+    if (appLoading || onboardingAutoChecked) return
+    const onboardingComplete = localStorage.getItem('onboardingComplete')
+    const tutorialDismissed = localStorage.getItem('tutorialPrompt_dismissed')
+    const hasWorkspace = !!preferences?.workspace_name
+    const hasMembers = (members?.length || 0) > 0
+
+    // Show tutorial prompt bar for new users who haven't dismissed it
+    // The full onboarding wizard only opens when user taps Yes on the prompt bar
+    if (!tutorialDismissed && !onboardingComplete && (!hasWorkspace || !hasMembers)) {
+      setTimeout(() => setShowTutorialPrompt(true), 1000)
+    }
+
+    setOnboardingAutoChecked(true)
+  }, [appLoading, onboardingAutoChecked, members, preferences])
 
   // Check if collaborator needs to set up a password (logged in via magic link/invite)
   useEffect(() => {
@@ -758,6 +779,19 @@ function AppContent({ isMobile }) {
           />
         </Suspense>
       )}
+
+      {/* Tutorial Prompt Bar - shown after password setup */}
+      <TutorialPromptBar
+        isOpen={showTutorialPrompt}
+        onAccept={() => {
+          setShowTutorialPrompt(false)
+          setShowOnboarding(true)
+        }}
+        onDismiss={() => {
+          setShowTutorialPrompt(false)
+          localStorage.setItem('tutorialPrompt_dismissed', 'true')
+        }}
+      />
 
       {/* Onboarding Wizard for new users */}
       {showOnboarding && (

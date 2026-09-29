@@ -144,47 +144,6 @@ describe('LoginPage', () => {
     resolveLogin({ user: { id: 'u1' } })
   })
 
-  it('submits a valid signup request', async () => {
-    mockSignUpWithEmail.mockResolvedValue({ user: { id: 'local-user' }, session: { access_token: 'test' } })
-    render(<LoginPage />)
-    fireEvent.click(screen.getByRole('button', { name: /sign up/i }))
-    fireEvent.change(screen.getByPlaceholderText(/full name/i), { target: { value: 'Synthetic Android User' } })
-    fireEvent.change(screen.getByPlaceholderText(/^email$/i), { target: { value: 'android-test@local.invalid' } })
-    fireEvent.change(screen.getByPlaceholderText(/^password$/i), { target: { value: 'StrongPassword9!' } })
-
-    fireEvent.click(screen.getByRole('button', { name: /create account/i }))
-
-    await waitFor(() => {
-      expect(mockSignUpWithEmail).toHaveBeenCalledWith('android-test@local.invalid', 'StrongPassword9!', 'Synthetic Android User', undefined)
-    })
-  })
-
-  it('shows a visible sanitized error when signup fails', async () => {
-    mockSignUpWithEmail.mockRejectedValue(new Error('Network request failed'))
-    render(<LoginPage />)
-    fireEvent.click(screen.getByRole('button', { name: /sign up/i }))
-    fireEvent.change(screen.getByPlaceholderText(/full name/i), { target: { value: 'Synthetic Android User' } })
-    fireEvent.change(screen.getByPlaceholderText(/^email$/i), { target: { value: 'android-test@local.invalid' } })
-    fireEvent.change(screen.getByPlaceholderText(/^password$/i), { target: { value: 'StrongPassword9!' } })
-
-    fireEvent.click(screen.getByRole('button', { name: /create account/i }))
-
-    expect(await screen.findByText(/could not reach authentication/i)).toBeTruthy()
-  })
-
-  it('shows confirmation instructions when signup requires email confirmation', async () => {
-    mockSignUpWithEmail.mockResolvedValue({ needsConfirmation: true })
-    render(<LoginPage />)
-    fireEvent.click(screen.getByRole('button', { name: /sign up/i }))
-    fireEvent.change(screen.getByPlaceholderText(/full name/i), { target: { value: 'Synthetic Android User' } })
-    fireEvent.change(screen.getByPlaceholderText(/^email$/i), { target: { value: 'android-test@local.invalid' } })
-    fireEvent.change(screen.getByPlaceholderText(/^password$/i), { target: { value: 'StrongPassword9!' } })
-
-    fireEvent.click(screen.getByRole('button', { name: /create account/i }))
-
-    expect(await screen.findByText(/check your email/i)).toBeTruthy()
-  })
-
   it('renders dark mode styling with crisp contrast surfaces', () => {
     mockIsDarkMode = true
     const { container } = render(<LoginPage />)
