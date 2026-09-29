@@ -307,7 +307,10 @@ export const AuthProvider = ({ children }) => {
   // acceptable for later refreshes.
   const loadUserPreferencesBackground = useCallback((userId) => {
     const load = loadUserPreferencesRef.current
-    if (load) void load(userId)
+    // Auth callbacks run before React commits setUser. Supply the authenticated
+    // actor explicitly so first-time sign-ins can hydrate preferences and unblock
+    // AppContext's month resolution/member fetch.
+    if (load) void load(userId, userId)
   }, [])
 
   // Auto-accept collaborator invite when user signs in

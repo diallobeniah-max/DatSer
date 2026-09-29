@@ -198,6 +198,13 @@ const dismissLocalUiPrompts = async (page, evidence = null) => {
     await expect(dismiss).toBeHidden({ timeout: 5000 })
     if (evidence) evidence.compactUiPromptDismissed = true
   }
+  const tutorialTitle = page.getByText('Want a quick tutorial?', { exact: true })
+  if (await tutorialTitle.isVisible().catch(() => false)) {
+    const tutorialPrompt = tutorialTitle.locator('xpath=ancestor::div[contains(@class, "fixed")][1]')
+    await tutorialPrompt.getByTitle('Dismiss').click({ timeout: 2000 })
+    await expect(tutorialTitle).toBeHidden({ timeout: 5000 })
+    if (evidence) evidence.tutorialPromptDismissed = true
+  }
 }
 
 const clickConnectionControl = async (page, evidence = null) => {
@@ -565,12 +572,12 @@ test('normal UI offline attendance survives reload and syncs once on reconnect',
     await clickConnectionControl(page)
     await page.getByRole('button', { name: 'Online', exact: true }).click()
     await expect.poll(() => calls.length, { timeout: 30000 }).toBe(1)
-    // This legacy local month schema stores the Sunday column as boolean. The
-    // RPC response and reloaded UI must still preserve its canonical Present state.
-    await expect.poll(async () => fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single().then((result) => result.data?.attendance_2026_09_27), { timeout: 30000 }).toBe(true)
+    // The isolated fixture adds this legacy-shaped column as text; the trusted
+    // Member V2 RPC must persist the canonical status value without coercion.
+    await expect.poll(async () => fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single().then((result) => result.data?.attendance_2026_09_27), { timeout: 30000 }).toBe('Present')
     await expect.poll(async () => page.evaluate(async (id) => window.__datserMemberV2LocalDiagnostic.readSnapshot([id]), fixture.septemberMemberId).then((snapshot) => snapshot.attendance?.mutations?.length), { timeout: 30000 }).toBe(0)
     const allAttendance = await fixture.admin.from('September_2026').select('"attendance_2026_09_27"').eq('id', fixture.septemberMemberId).eq('workspace_owner_id', fixture.userId).single()
-    expect(allAttendance.data?.attendance_2026_09_27).toBe(true)
+    expect(allAttendance.data?.attendance_2026_09_27).toBe('Present')
     await page.reload()
     await getVisibleMemberCard(page, fixture, fixture.originalName).first().click()
     await expect(page.getByTestId(prefix + '-present')).toHaveAttribute('aria-pressed', 'true')
@@ -942,9 +949,7 @@ test('normal member screens create, edit twice, mark attendance, and soft-delete
     await page.getByTestId(`member-card-attendance-${memberId}-${sunday}-present`).click()
     await expect.poll(() => rpcRequests.filter(request => request.name === 'save_member_v2_attendance').length).toBe(1)
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: 'Present', is_deleted: false })
-    // This integration fixture uses a legacy boolean column; canonical Member V2
-    // status is still verified independently in the attendance event and UI.
-    await expect.poll(monthlyAttendanceValue).toBe(true)
+    await expect.poll(monthlyAttendanceValue).toBe('Present')
     await page.reload()
     await expect(page.getByText(textExact(names[2])).first()).toBeVisible({ timeout: 30000 })
     await openCard(names[2])
@@ -952,7 +957,7 @@ test('normal member screens create, edit twice, mark attendance, and soft-delete
     await page.getByTestId(`member-card-attendance-${memberId}-${sunday}-absent`).click()
     await expect.poll(() => rpcRequests.filter(request => request.name === 'save_member_v2_attendance').length).toBe(2)
     await expect.poll(attendanceHead).toMatchObject({ table_name: 'September_2026', attendance_status: 'Absent', is_deleted: false })
-    await expect.poll(monthlyAttendanceValue).toBe(false)
+    await expect.poll(monthlyAttendanceValue).toBe('Absent')
     await page.reload()
     await expect(page.getByText(textExact(names[2])).first()).toBeVisible({ timeout: 30000 })
     await openCard(names[2])
@@ -1461,14 +1466,16 @@ test('diagnostic captures one local Realtime WAL signal window without modal int
       slot.active && slot.plugin === 'wal2json' && slot.name.startsWith('supabase_realtime_replication_slot_'))
     const realtimeSlotAfter = evidence.walAfter.realtimeSlots.find((slot) => slot.name === realtimeSlotBefore?.name)
     expect(evidence.authenticatedSignalRead).toMatchObject({ httpStatus: 200, visible: true, ownerMatches: true, revisionMatches: true })
-    // Two application services and the temporary unfiltered control are
-    // registered. The filtered negative control is absent from this registry.
-    expect(evidence.walBefore.registeredSubscriptions).toHaveLength(3)
+    // Two application services, the temporary unfiltered control, and the
+    // intentionally filtered negative control are registered in this local DB.
+    expect(evidence.walBefore.registeredSubscriptions).toHaveLength(4)
+    expect(evidence.walBefore.registeredSubscriptions.filter((row) => row.filters === '{}')).toHaveLength(3)
+    expect(evidence.walBefore.registeredSubscriptions.filter((row) => row.filters !== '{}')).toHaveLength(1)
     expect(evidence.walAfter.signalTableSubscriptionCount).toBeGreaterThanOrEqual(2)
     expect(realtimeSlotBefore?.active).toBe(true)
     expect(realtimeSlotAfter?.active).toBe(true)
     expect(realtimeSlotAfter?.confirmedFlushLsn).not.toBe(realtimeSlotBefore?.confirmedFlushLsn)
-    expect(evidence.rawSignalRevisions).not.toContain(evidence.mutationRevision)
+    expect(evidence.rawSignalRevisions).toContain(evidence.mutationRevision)
     expect(evidence.unfilteredControlRevisions).toContain(evidence.mutationRevision)
     expect(evidence.clientBServiceEventsAfterWindow.some((event) => event.stage === 'member-v2-realtime-signal-received' && Number(event.revision) === Number(evidence.mutationRevision))).toBe(true)
     expect(evidence.clientBPullsAfterWindow.some((event) => event.stage === 'pull-response' && Number(event.revision) === Number(evidence.mutationRevision))).toBe(true)
