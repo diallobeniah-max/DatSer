@@ -1,12 +1,13 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createSyntheticFixture } from './testing/localSupabaseFixture'
+import { acquireLocalSupabaseIntegrationLock, createSyntheticFixture } from './testing/localSupabaseFixture'
 
 let f
+let releaseLocalSupabaseLock
 const ids = {}
 describe.sequential('local authenticated Supabase POC', () => {
-  beforeAll(async () => { f = await createSyntheticFixture(); ids.member = crypto.randomUUID(); ids.attendance = crypto.randomUUID() }, 30000)
-  afterAll(async () => { if (!f) return; for (const user of [f.ownerA, f.collaboratorA, f.userB]) await f.admin.auth.admin.deleteUser(user.id) })
+  beforeAll(async () => { releaseLocalSupabaseLock = await acquireLocalSupabaseIntegrationLock(); f = await createSyntheticFixture(); ids.member = crypto.randomUUID(); ids.attendance = crypto.randomUUID() }, 180000)
+  afterAll(async () => { try { if (f) for (const user of [f.ownerA, f.collaboratorA, f.userB]) await f.admin.auth.admin.deleteUser(user.id) } finally { await releaseLocalSupabaseLock?.() } })
 
   it('allows owner create and idempotent lost-response retry', async () => {
     const args = { p_workspace_id: f.workspaceA, p_member_id: ids.member, p_full_name: 'Synthetic Member', p_request_id: 'create-stable' }

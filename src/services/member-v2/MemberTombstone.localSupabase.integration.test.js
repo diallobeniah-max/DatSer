@@ -2,13 +2,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
-import { readLocalSupabase, readLocalSupabaseDbContainer } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
+import { acquireLocalSupabaseIntegrationLock, readLocalSupabase, readLocalSupabaseDbContainer } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
 
 let admin
 let ownerId
 let results
+let releaseLocalSupabaseLock
 
 beforeAll(async () => {
+  releaseLocalSupabaseLock = await acquireLocalSupabaseIntegrationLock()
   const config = readLocalSupabase()
   admin = createClient(config.url, config.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const password = crypto.randomUUID()
@@ -90,9 +92,12 @@ rollback;
 `
   const output = execFileSync(docker, ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-At'], { input: sql, encoding: 'utf8' })
   results = JSON.parse(output.split(/\r?\n/).find(line => line.startsWith('{"') && line.includes('ordinaryUpdates')))
-}, 30000)
+}, 180000)
 
-afterAll(async () => { if (ownerId) await admin.auth.admin.deleteUser(ownerId) })
+afterAll(async () => {
+  try { if (ownerId) await admin.auth.admin.deleteUser(ownerId) }
+  finally { await releaseLocalSupabaseLock?.() }
+})
 
 describe('Member V2 tombstone semantics on local Supabase', () => {
   it('keeps a trusted create active', () => expect(results.trustedCreateDeleted).toBe(false))

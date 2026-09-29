@@ -1,4 +1,8 @@
 import { execFileSync, execSync } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
@@ -25,6 +29,53 @@ export const readLocalSupabaseDbContainer = () => {
   const container = result.trim().split(/\r?\n/)[0]
   if (!container) throw new Error('Local Supabase database container is required for this integration test.')
   return container
+}
+
+// Vitest may run several integration files in parallel, but they share one
+// local Supabase database and create workspace-month tables/catalog objects.
+// Serialize only those database-backed suites; all unit/browser tests remain
+// parallel. The lock is process-safe and recovers an abandoned owner.
+export const acquireLocalSupabaseIntegrationLock = async ({ timeoutMs = 180000 } = {}) => {
+  const identity = process.env.DATSER_LOCAL_SUPABASE_DB_CONTAINER
+    || process.env.DATSER_LOCAL_SUPABASE_URL
+    || 'datser-local-supabase'
+  const suffix = createHash('sha256').update(identity).digest('hex').slice(0, 20)
+  const lockDirectory = join(tmpdir(), `datser-local-supabase-test-${suffix}.lock`)
+  const token = randomUUID()
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await mkdir(lockDirectory)
+      await writeFile(join(lockDirectory, 'owner.json'), JSON.stringify({ pid: process.pid, token, createdAt: Date.now() }), { flag: 'wx' })
+      return async () => {
+        try {
+          const owner = JSON.parse(await readFile(join(lockDirectory, 'owner.json'), 'utf8'))
+          if (owner.token === token) await rm(lockDirectory, { recursive: true, force: true })
+        } catch { /* The lock was already recovered or released. */ }
+      }
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        await rm(lockDirectory, { recursive: true, force: true }).catch(() => {})
+        throw error
+      }
+      try {
+        const owner = JSON.parse(await readFile(join(lockDirectory, 'owner.json'), 'utf8'))
+        let processAlive = true
+        try { process.kill(owner.pid, 0) } catch { processAlive = false }
+        if (!processAlive || Date.now() - Number(owner.createdAt) > 15 * 60 * 1000) {
+          await rm(lockDirectory, { recursive: true, force: true })
+          continue
+        }
+      } catch {
+        try {
+          const lockInfo = await stat(lockDirectory)
+          if (Date.now() - lockInfo.mtimeMs > 10000) await rm(lockDirectory, { recursive: true, force: true })
+        } catch { /* Another process removed the lock. */ }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+  throw new Error('Timed out waiting for the shared local Supabase integration lock.')
 }
 
 export const createSyntheticFixture = async () => {

@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import WebSocket from 'ws'
 import { createClient } from '@supabase/supabase-js'
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory'
-import { readLocalSupabase, readLocalSupabaseDbContainer } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
+import { acquireLocalSupabaseIntegrationLock, readLocalSupabase, readLocalSupabaseDbContainer } from '../../experiments/rxdb-backend-poc/testing/localSupabaseFixture'
 import { createMemberV2Fingerprint } from '../../experiments/rxdb-member-phase1/memberContractFingerprint'
 import { createMemberService } from './MemberService'
 import { createMemberAttendanceService } from './MemberAttendanceService'
@@ -15,6 +15,7 @@ import { createMemberV2NetworkController } from '../../experiments/rxdb-member-p
 import { vi } from 'vitest'
 
 const fixture = {}; const storage = getRxStorageMemory()
+let releaseLocalSupabaseLock
 const safeRealtimeError = (error) => String(error?.message || '')
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
   .replace(/(apikey|access_token)=([^&\s]+)/gi, '$1=[redacted]')
@@ -34,7 +35,7 @@ const waitForPsql = async (process, marker, timeoutMs = 5000) => {
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }
-const waitForLockWait = async (applicationName) => {
+const waitForLockWait = async (applicationName, session = null) => {
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
   const start = Date.now()
   while (Date.now() - start < 5000) {
@@ -42,7 +43,7 @@ const waitForLockWait = async (applicationName) => {
     if (stdout.trim() === 'Lock') return
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
-  throw new Error(`Local SQL transaction ${applicationName} did not enter an advisory-lock wait.`)
+  throw new Error(`Local SQL transaction ${applicationName} did not enter an advisory-lock wait. ${session?.output() || ''} ${session?.error() || ''}`)
 }
 const inspectLocalSignalRealtime = async (ownerId) => {
   if (!/^[0-9a-f-]{36}$/i.test(ownerId)) throw new Error('Synthetic owner UUID is invalid.')
@@ -57,6 +58,7 @@ const inspectLocalSignalRealtime = async (ownerId) => {
 }
 
 beforeAll(async () => {
+  releaseLocalSupabaseLock = await acquireLocalSupabaseIntegrationLock()
   const config = readLocalSupabase(); fixture.config = config; fixture.admin = createClient(config.url, config.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const email = `member-v2-client-${Date.now()}-${crypto.randomUUID().slice(0, 8)}@local.invalid`; const password = `MemberV2-${crypto.randomUUID()}-9a!`
   fixture.email = email; fixture.password = password
@@ -82,9 +84,14 @@ beforeAll(async () => {
     const column = await fixture.client.rpc('ensure_workspace_attendance_column', { p_owner_id: fixture.userId, p_month_start: '2025-12-01', p_attendance_date: attendanceDate })
     if (column.error) throw column.error
   }
-}, 30000)
+}, 180000)
 
-afterAll(async () => { if (fixture.userId) await fixture.admin.auth.admin.deleteUser(fixture.userId); if (fixture.otherOwnerId) await fixture.admin.auth.admin.deleteUser(fixture.otherOwnerId) })
+afterAll(async () => {
+  try {
+    if (fixture.userId) await fixture.admin.auth.admin.deleteUser(fixture.userId)
+    if (fixture.otherOwnerId) await fixture.admin.auth.admin.deleteUser(fixture.otherOwnerId)
+  } finally { await releaseLocalSupabaseLock?.() }
+})
 
 describe.sequential('Member V2 service with local authenticated Supabase', () => {
   const assertCommitOrderedFeedPair = async (feed, rollbackFirst = false) => {
@@ -131,6 +138,123 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     }
   }
 
+  const assertBootstrapWriterLockOrder = async (feed) => {
+    const ownerId = fixture.userId
+    const memberService = await createMemberService({ supabase: fixture.client, userId: ownerId, ownerId, storage: getRxStorageMemory(), online: () => true })
+    await memberService.start()
+    let attendanceService = null
+    const members = []
+    const suffix = crypto.randomUUID().slice(0, 8)
+    const gateKey = `datser-bootstrap-gate-${crypto.randomUUID()}`
+    const functionName = `member_v2_test_gate_${suffix}`
+    const triggerName = `member_v2_test_gate_${suffix}`
+    let ddlReady = false
+    let gate; let bootstrap; let writer
+    try {
+      for (const label of ['bootstrap', 'writer']) {
+        const member = await memberService.createMember({ tableName: fixture.tableName, member: { full_name: `Synthetic ${feed} ${label} ${suffix}`, current_level: 'JHS2' } })
+        await memberService.syncNow()
+        members.push(member)
+      }
+      const [bootstrapMember, writerMember] = members
+      let attendanceBaseRevision = null
+      if (feed === 'attendance') {
+        attendanceService = await createMemberAttendanceService({ supabase: fixture.client, userId: ownerId, ownerId, storage: getRxStorageMemory(), online: () => true })
+        await attendanceService.start()
+        for (const member of members) {
+          await attendanceService.saveAttendance({ memberId: member.id, tableName: fixture.tableName, attendanceDate: '2025-12-07', status: 'Present' })
+          await attendanceService.syncNow()
+        }
+        const latest = await fixture.admin.from('member_v2_change_events').select('server_revision')
+          .eq('owner_id', ownerId).eq('table_name', fixture.tableName).eq('member_id', writerMember.id)
+          .eq('attendance_date', '2025-12-07').order('server_revision', { ascending: false }).limit(1).single()
+        if (latest.error) throw latest.error
+        attendanceBaseRevision = latest.data.server_revision
+        const cleared = await fixture.admin.from('member_v2_change_events').delete()
+          .eq('owner_id', ownerId).eq('table_name', fixture.tableName).eq('member_id', bootstrapMember.id)
+          .eq('attendance_date', '2025-12-07')
+        if (cleared.error) throw cleared.error
+      } else {
+        const cleared = await fixture.admin.from('member_v2_heads').delete()
+          .eq('owner_id', ownerId).eq('table_name', fixture.tableName).eq('member_id', bootstrapMember.id)
+        if (cleared.error) throw cleared.error
+      }
+
+      const latestOwnerEvent = await fixture.admin.from('member_v2_change_events').select('server_revision')
+        .eq('owner_id', ownerId).order('server_revision', { ascending: false }).limit(1).single()
+      if (latestOwnerEvent.error) throw latestOwnerEvent.error
+      const afterRevision = latestOwnerEvent.data?.server_revision || 0
+      const writerRevision = Number((await memberService.getMember(members[1].id))?.server_revision)
+      if (!Number.isFinite(writerRevision) || writerRevision < 1) throw new Error('Synthetic profile writer has no confirmed base revision.')
+      const gateSql = `create function public.${functionName}() returns trigger language plpgsql as $$ begin
+        if new.member_id = '${bootstrapMember.id}'::uuid and new.operation_name = '${feed === 'profile' ? 'bootstrap' : 'attendance_bootstrap'}' then
+          perform pg_advisory_xact_lock(hashtextextended('${gateKey}', 0));
+        end if;
+        return new;
+      end; $$;
+      create trigger ${triggerName} before insert on public.member_v2_change_events for each row execute function public.${functionName}();`
+      const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
+      await execFileAsync(docker, ['exec', '-i', readLocalSupabaseDbContainer(), 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', gateSql], { encoding: 'utf8' })
+      ddlReady = true
+      gate = psqlProcess(`datser-gate-${suffix}`)
+      gate.send(`select pg_advisory_lock(hashtextextended('${gateKey}', 0));\n\\echo GATE_HELD`)
+      await waitForPsql(gate, 'GATE_HELD')
+
+      const setActor = `set local role authenticated; set local request.jwt.claim.sub = '${ownerId}';`
+      bootstrap = psqlProcess(`datser-bootstrap-${suffix}`)
+      const bootstrapRpc = feed === 'profile'
+        ? `select public.pull_workspace_member_changes_v2('${ownerId}', null, 100);`
+        : `select public.pull_member_v2_attendance_changes_v2('${ownerId}', null, 100);`
+      bootstrap.send(`begin; ${setActor} ${bootstrapRpc} commit;\n\\echo BOOTSTRAP_DONE`)
+      await waitForLockWait(`datser-bootstrap-${suffix}`, bootstrap)
+
+      writer = psqlProcess(`datser-writer-${suffix}`)
+      if (feed === 'profile') {
+        const updates = { 'Current Level': 'JHS3' }
+        const fingerprint = await createMemberV2Fingerprint({ operation: 'update_member_v2', ownerId, tableName: fixture.tableName, memberId: writerMember.id, baseServerRevision: writerRevision, payload: updates })
+        writer.send(`begin; ${setActor} select public.update_member_v2('${fixture.tableName}', '${ownerId}', '${writerMember.id}', '${JSON.stringify(updates)}'::jsonb, ${writerRevision}, 'lock-order-${suffix}', '${fingerprint}', '{}'::jsonb); commit;\n\\echo WRITER_DONE`)
+      } else {
+        const status = 'Absent'
+        const fingerprint = await createMemberV2AttendanceFingerprint({ operation: 'set_member_v2_attendance', ownerId, memberId: writerMember.id, tableName: fixture.tableName, attendanceDate: '2025-12-07', status, baseServerRevision: attendanceBaseRevision })
+        writer.send(`begin; ${setActor} select public.save_member_v2_attendance('${ownerId}', '${writerMember.id}', '${fixture.tableName}', '2025-12-07', '${status}', null, ${attendanceBaseRevision}, 'lock-order-${suffix}', '${fingerprint}'); commit;\n\\echo WRITER_DONE`)
+      }
+      await waitForLockWait(`datser-writer-${suffix}`, writer)
+      gate.send(`select pg_advisory_unlock(hashtextextended('${gateKey}', 0));\n\\echo GATE_RELEASED`)
+      await waitForPsql(gate, 'GATE_RELEASED')
+      await Promise.all([waitForPsql(bootstrap, 'BOOTSTRAP_DONE', 10000), waitForPsql(writer, 'WRITER_DONE', 10000)])
+      await bootstrap.finish(); await writer.finish(); await gate.finish()
+
+      const events = await fixture.admin.from('member_v2_change_events')
+        .select('member_id,server_revision,operation_name,attendance_status,attendance_date,table_name')
+        .eq('owner_id', ownerId).gt('server_revision', afterRevision).in('member_id', members.map((member) => member.id))
+        .order('server_revision', { ascending: true })
+      if (events.error) throw events.error
+      const bootstrapEvent = events.data.find((row) => row.member_id === bootstrapMember.id && row.operation_name === (feed === 'profile' ? 'bootstrap' : 'attendance_bootstrap'))
+      const writerEvent = events.data.find((row) => row.member_id === writerMember.id && row.operation_name === (feed === 'profile' ? 'update_member_v2' : 'set_member_v2_attendance'))
+      expect(bootstrapEvent).toBeTruthy()
+      expect(writerEvent).toBeTruthy()
+      if (feed === 'attendance') expect(writerEvent).toMatchObject({ attendance_date: '2025-12-07', attendance_status: 'Absent', table_name: fixture.tableName })
+      const pulled = feed === 'profile'
+        ? await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: ownerId, p_after_server_revision: afterRevision, p_limit: 100 })
+        : await fixture.client.rpc('pull_member_v2_attendance_changes_v2', { p_owner_id: ownerId, p_after_server_revision: afterRevision, p_limit: 100 })
+      if (pulled.error) throw pulled.error
+      const pulledIds = (pulled.data.changes || []).map((row) => row.member_id)
+      expect(pulledIds).toEqual(expect.arrayContaining(members.map((member) => member.id)))
+    } finally {
+      try { gate?.send(`select pg_advisory_unlock(hashtextextended('${gateKey}', 0));`) } catch {}
+      for (const session of [bootstrap, writer, gate]) {
+        if (session && !session.child.killed && session.child.exitCode === null) { try { session.send('rollback;') } catch {}; session.child.stdin.end('\\q\n') }
+      }
+      await Promise.all([bootstrap, writer, gate].filter(Boolean).map((session) => session.child.exitCode === null ? new Promise((resolve) => session.child.once('close', resolve)) : Promise.resolve()))
+      if (ddlReady) {
+        const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
+        await execFileAsync(docker, ['exec', '-i', readLocalSupabaseDbContainer(), 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', `drop trigger if exists ${triggerName} on public.member_v2_change_events; drop function if exists public.${functionName}();`], { encoding: 'utf8' })
+      }
+      await attendanceService?.stop()
+      await memberService.stop()
+    }
+  }
+
   it('serializes profile-feed revisions through transaction commit and leaves other workspaces independent', async () => {
     await assertCommitOrderedFeedPair('profile')
   }, 20000)
@@ -142,6 +266,14 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
   it('does not expose rolled-back revisions and still returns the next committed event', async () => {
     await assertCommitOrderedFeedPair('profile', true)
   }, 20000)
+
+  it('completes profile bootstrap beside a same-workspace profile writer without lock inversion', async () => {
+    await assertBootstrapWriterLockOrder('profile')
+  }, 30000)
+
+  it('completes attendance bootstrap beside a same-workspace attendance writer without lock inversion', async () => {
+    await assertBootstrapWriterLockOrder('attendance')
+  }, 30000)
 
   it('keeps unrelated month-table trigger capture active outside trusted delete RPCs', async () => {
     const service = await createMemberService({ supabase: fixture.client, userId: fixture.userId, ownerId: fixture.userId, storage: getRxStorageMemory(), online: () => true })

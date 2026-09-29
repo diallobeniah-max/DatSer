@@ -1,10 +1,11 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
-import { readLocalSupabase, readLocalSupabaseDbContainer } from '../rxdb-backend-poc/testing/localSupabaseFixture'
+import { acquireLocalSupabaseIntegrationLock, readLocalSupabase, readLocalSupabaseDbContainer } from '../rxdb-backend-poc/testing/localSupabaseFixture'
 import { createMemberV2Fingerprint } from './memberContractFingerprint'
 
 const fixture = {}
+let releaseLocalSupabaseLock
 
 const runLocalSql = (sql) => {
   const docker = process.platform === 'win32'
@@ -72,6 +73,7 @@ const updateMutation = async ({ client, ownerId, tableName = fixture.tableName, 
 }
 
 beforeAll(async () => {
+  releaseLocalSupabaseLock = await acquireLocalSupabaseIntegrationLock()
   const config = readLocalSupabase()
   fixture.config = config
   fixture.admin = createClient(config.url, config.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -112,7 +114,9 @@ beforeAll(async () => {
     is_admin: false,
   })
   if (collaborator.error) throw collaborator.error
-})
+}, 180000)
+
+afterAll(async () => { await releaseLocalSupabaseLock?.() })
 
 describe.sequential('RxDB member Phase 1 trusted server contract', () => {
   it('makes the client UUID canonical, assigns a code, and safely replays a lost response', async () => {

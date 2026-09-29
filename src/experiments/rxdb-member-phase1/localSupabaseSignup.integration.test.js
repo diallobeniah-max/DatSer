@@ -1,8 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createClient } from '@supabase/supabase-js'
-import { readLocalSupabase } from '../rxdb-backend-poc/testing/localSupabaseFixture'
+import { acquireLocalSupabaseIntegrationLock, readLocalSupabase } from '../rxdb-backend-poc/testing/localSupabaseFixture'
 
 const createdUserIds = []
+let releaseLocalSupabaseLock
+
+beforeAll(async () => { releaseLocalSupabaseLock = await acquireLocalSupabaseIntegrationLock() }, 180000)
+afterAll(async () => { await releaseLocalSupabaseLock?.() })
 
 afterEach(async () => {
   if (!createdUserIds.length) return
