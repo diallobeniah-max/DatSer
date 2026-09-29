@@ -63,6 +63,11 @@ const getDateString = (date) => {
   return `${year}-${month}-${day}`
 }
 
+const getSafeAttendanceErrorMessage = (error, fallback) => {
+  const message = String(error?.message || '')
+  return message.startsWith('Member V2 has unsynced local work.') ? message : fallback
+}
+
 const isPreferenceEnabled = (value) => (
   value === true ||
   value === 'true' ||
@@ -853,7 +858,7 @@ const Dashboard = ({ isAdmin = false }) => {
     } catch (error) {
       console.error('Bulk action error:', error)
       errorHaptic()
-      toast.error('Failed to update attendance')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to update attendance'))
     } finally {
       setIsBulkApplying(false)
     }
@@ -1612,7 +1617,7 @@ const Dashboard = ({ isAdmin = false }) => {
     } catch (error) {
       console.error('Error marking attendance:', error)
       errorHaptic()
-      toast.error('Failed to update attendance. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to update attendance. Please try again.'))
     } finally {
       endAttendanceSaving(memberId)
       attendanceActionLocksRef.current.delete(actionKey)
@@ -1676,7 +1681,7 @@ const Dashboard = ({ isAdmin = false }) => {
     } catch (error) {
       console.error('Error marking attendance:', error)
       errorHaptic()
-      toast.error('Failed to update attendance. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to update attendance. Please try again.'))
     } finally {
       endAttendanceSaving(loadingKey)
       attendanceActionLocksRef.current.delete(actionKey)
@@ -1714,7 +1719,7 @@ const Dashboard = ({ isAdmin = false }) => {
         } catch (error) {
           console.error('Error with bulk attendance:', error)
           errorHaptic()
-          toast.error('Error updating attendance. Please try again.', {
+          toast.error(getSafeAttendanceErrorMessage(error, 'Error updating attendance. Please try again.'), {
             style: { background: '#ef4444', color: '#ffffff' }
           })
         }
@@ -1901,7 +1906,7 @@ const Dashboard = ({ isAdmin = false }) => {
       setSelectedSundayDate(transferTargetDate) // Switch to target date
     } catch (error) {
       console.error('Transfer failed:', error)
-      toast.error('Failed to transfer attendance. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to transfer attendance. Please try again.'))
     } finally {
       setIsTransferring(false)
     }
@@ -1980,7 +1985,7 @@ const Dashboard = ({ isAdmin = false }) => {
       toast.success(`Bulk ${actionText} applied to ${memberIds.length} member(s) for ${dateLabel}.`)
     } catch (error) {
       console.error('Bulk attendance failed:', error)
-      toast.error('Failed to apply bulk update. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to apply bulk update. Please try again.'))
     } finally {
       setIsBulkApplying(false)
     }
@@ -2636,6 +2641,7 @@ const Dashboard = ({ isAdmin = false }) => {
         }
       } catch (error) {
         console.error('Turbo code check-in failed:', error)
+        toast.error(getSafeAttendanceErrorMessage(error, 'Check-in failed. Please try again.'))
       } finally {
         turboCheckInRef.current.running = false
       }

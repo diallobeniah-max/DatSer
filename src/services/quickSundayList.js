@@ -1,4 +1,5 @@
 import { matchGeminiRowToMember, MATCH_STATUSES } from '../utils/paperScanCompare'
+import { assertLegacyMemberFlowIsSafe } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 
 export const QUICK_SUNDAY_STATUS = Object.freeze({ READY: 'ready', NEEDS_REVIEW: 'needs-review', NOT_FOUND: 'not-found', SKIPPED: 'skipped' })
 
@@ -23,7 +24,8 @@ export const matchQuickSundayNames = ({ names, members }) => (Array.isArray(name
 export const stableQuickSundayRequestId = ({ scanId, memberId, attendanceDate }) =>
   `quick_sunday:${String(scanId)}:${String(memberId)}:${String(attendanceDate)}`
 
-export const saveQuickSundayAttendance = async ({ supabase, ownerId, monthStart, attendanceDate, scanId, rows }) => {
+export const saveQuickSundayAttendance = async ({ supabase, ownerId, actorUserId, monthStart, attendanceDate, scanId, rows, guardEnv, guardStorage }) => {
+  assertLegacyMemberFlowIsSafe({ userId: actorUserId, ownerId, env: guardEnv, storage: guardStorage })
   const confirmed = (Array.isArray(rows) ? rows : []).filter((row) => row?.status === QUICK_SUNDAY_STATUS.READY && row?.selectedMemberId)
   const outcomes = []
   for (const row of confirmed) {

@@ -115,11 +115,10 @@ export const updateMemberV2LocalFlowGuard = ({ userId, ownerId, syncState, stora
   }
 }
 
-export const assertLegacyMemberFlowIsSafe = ({ userId, ownerId, env = import.meta.env, storage } = {}) => {
-  // A disabled route must not silently redirect unresolved durable V2 work to
-  // a legacy writer, in either a local or production build.
-  if (isMemberV2SharedRouteEnabled(env)) return
+export const assertLegacyMemberFlowIsSafe = ({ userId, ownerId, storage } = {}) => {
+  // Legacy writers must not race unresolved durable V2 work, whether V2 routing
+  // is enabled (for explicit legacy workflows) or has been disabled for rollback.
   const guard = getMemberV2LocalFlowGuard({ userId, ownerId, storage })
   if (!guard) return
-  throw new Error('Member V2 has unsynced local work. Re-enable the local Member V2 experiment and sync or resolve it before using the legacy member form.')
+  throw new Error('Member V2 has unsynced local work. Re-enable it if disabled, then sync or resolve the pending changes before using legacy writes.')
 }

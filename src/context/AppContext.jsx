@@ -40,6 +40,7 @@ import { formatMemberName, normalizeMemberNameStyle } from '../utils/memberNameS
 import { createAttendanceSnapshotVersionRegistry } from '../utils/attendanceSnapshot'
 import { createAttendanceWriteQueue } from '../utils/attendanceWriteQueue'
 import { writeManualAttendance } from '../utils/manualAttendanceWrite'
+import { assertLegacyMemberFlowIsSafe } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { createResumeSyncCoordinator } from '../utils/appResumeSync'
 import { createSyncFlushScheduler } from '../utils/syncFlushScheduler'
 import {
@@ -4601,6 +4602,7 @@ export const AppProvider = ({ children }) => {
 
   // Mark attendance for a member in monthly table
   const markAttendance = async (memberId, date, present) => {
+    assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId: dataOwnerId || user?.id })
     let optimisticApplied = false
     let optimisticRollbackState = null
     let optimisticEffectiveDate = null
@@ -4673,6 +4675,7 @@ export const AppProvider = ({ children }) => {
           executeWrite: executeSupabaseWrite,
           tableName: currentTable,
           ownerId: attendanceOwnerId,
+          actorUserId: user?.id,
           memberId,
           attendanceDate: effectiveDate,
           present,
@@ -4865,6 +4868,7 @@ export const AppProvider = ({ children }) => {
 
   // Bulk attendance marking for monthly table
   const bulkAttendance = async (memberIds, date, present) => {
+    assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId: dataOwnerId || user?.id })
     let rollbackState = null
     let rollbackDate = null
     let shouldRollback = true
@@ -6831,6 +6835,7 @@ export const AppProvider = ({ children }) => {
     if (!targetOwnerId) {
       return { success: false, error_message: 'Owner identification missing' }
     }
+    assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId: targetOwnerId })
 
     const dateObj = attendanceDate ? new Date(attendanceDate) : (selectedAttendanceDate || new Date())
     const dateStr = getLocalDateString(dateObj)
@@ -6954,7 +6959,9 @@ export const AppProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('setMemberAttendanceFromOtherMonth error:', err)
-      const msg = 'The secure attendance update is not available yet. No member data was changed.'
+      const msg = String(err?.message || '').match(/Member V2 has unsynced local work/i)
+        ? err.message
+        : 'The secure attendance update is not available yet. No member data was changed.'
       toast.error(msg)
       return { success: false, error_message: msg }
     } finally {

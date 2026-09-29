@@ -73,6 +73,18 @@ describe('Member V2 local feature boundary', () => {
     })).toThrow(/unsynced local work/i)
   })
 
+  it('blocks explicit legacy workflows too while Member V2 routing is active and work remains pending', () => {
+    const localStorage = storage()
+    updateMemberV2LocalFlowGuard({
+      ...ids,
+      storage: localStorage,
+      syncState: { state: 'OFFLINE_PENDING', pendingChanges: 1, failedChanges: 0, conflicts: 0 },
+    })
+
+    expect(() => assertLegacyMemberFlowIsSafe({ ...ids, storage: localStorage })).toThrow(/unsynced local work/i)
+    expect(getMemberV2LocalFlowGuard({ ...ids, storage: localStorage })).toMatchObject({ pendingChanges: 1 })
+  })
+
   it('blocks hosted legacy fallback when a durable Member V2 guard remains', () => {
     const localStorage = storage()
     updateMemberV2LocalFlowGuard({
