@@ -4,6 +4,8 @@ import { render, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invalidateRequestScope } from '../utils/runtimeRequestRegistry'
 
+const localAdapterConfig = vi.hoisted(() => ({ listLocalMembers: async () => [] }))
+
 // Configurable per-test controls for the mocked supabase client.
 const testConfig = {
   authLoading: false,
@@ -125,6 +127,16 @@ vi.mock('./AuthContext', () => ({
   })
 }))
 
+vi.mock('../experiments/rxdb-member-phase1/realMemberUiAdapter', () => ({
+  getRealMemberV2UiAdapter: vi.fn(async () => ({
+    listLocalMembers: (...args) => localAdapterConfig.listLocalMembers(...args),
+    listLocalAttendance: async () => [],
+    subscribeLocalMembers: async () => () => {},
+    subscribeLocalAttendance: async () => () => {},
+  })),
+  wakeRealMemberV2Sync: vi.fn(async () => ({})),
+}))
+
 // Load after mock state is initialized, before individual test deadlines.
 // Cold AppContext transforms can exceed 5s when the full suite runs in parallel.
 const { AppProvider, useApp } = await import('./AppContext.jsx')
@@ -138,6 +150,10 @@ describe('AppContext member hydration', () => {
     testConfig.rangeResultForTable = null
     testConfig.countResult = { count: 0, error: null }
     testConfig.preferences = { current_month_table: 'August_2026' }
+    localAdapterConfig.listLocalMembers = async () => []
+    vi.stubEnv('DEV', true)
+    vi.stubEnv('VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION', 'true')
+    vi.stubEnv('VITE_SUPABASE_URL', 'http://127.0.0.1:54321')
 
     if (!globalThis.localStorage || typeof globalThis.localStorage.clear !== 'function') {
       Object.defineProperty(globalThis, 'localStorage', {
@@ -153,6 +169,7 @@ describe('AppContext member hydration', () => {
 
   let currentUnmount = null
   afterEach(() => {
+    vi.unstubAllEnvs()
     if (typeof currentUnmount === 'function') {
       currentUnmount()
       currentUnmount = null
@@ -324,5 +341,37 @@ describe('AppContext member hydration', () => {
     // Give any stale background resolution a chance to settle, then confirm the
     // error path never reported hydrated (a transient error must not show empty).
     expect(getLatest().memberHydrationState).not.toBe('HYDRATED')
+  })
+
+  it('ignores a late offline Member V2 projection after the active month changes', async () => {
+    localStorage.setItem('datser_offline_mode', 'offline')
+    let resolveAugust
+    localAdapterConfig.listLocalMembers = async ({ tableName } = {}) => {
+      if (!tableName) return []
+      if (tableName === 'August_2026') return new Promise((resolve) => { resolveAugust = () => resolve([{ id: 'stale-august', name: 'Stale August', deleted_at: null }]) })
+      return [{ id: 'current-january', name: 'Current January', deleted_at: null }]
+    }
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(resolveAugust).toBeTypeOf('function'))
+
+    await getLatest().setCurrentTable('January_2026')
+    await waitFor(() => expect(getLatest()?.currentTable).toBe('January_2026'))
+    await waitFor(() => expect(getLatest()?.members?.map((member) => member.id)).toContain('current-january'))
+    resolveAugust()
+    await waitFor(() => expect(getLatest()?.loading).toBe(false))
+
+    expect(getLatest()?.members?.map((member) => member.id)).toContain('current-january')
+    expect(getLatest()?.members?.map((member) => member.id)).not.toContain('stale-august')
+    expect(getLatest()?.memberHydrationState).toBe('HYDRATED')
+  })
+
+  it('finishes hydration with an explicit unavailable state when forced offline with no cached members', async () => {
+    localStorage.setItem('datser_offline_mode', 'offline')
+    localAdapterConfig.listLocalMembers = async () => []
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('OFFLINE_UNAVAILABLE'))
+    expect(getLatest()?.loading).toBe(false)
+    expect(getLatest()?.members || []).toEqual([])
+    expect(getLatest()?.offlineStatusMessage).toContain('not saved on this device')
   })
 })

@@ -3,7 +3,8 @@ param(
   [switch] $FullSuite,
   [switch] $Serial,
   [string] $TestName,
-  [string] $BrowserTestName
+  [string] $BrowserTestName,
+  [ValidateRange(1, 10)] [int] $BrowserRepeatEach = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -183,6 +184,7 @@ try {
     if (-not $ready) { throw 'Isolated Vite app did not become ready for Member V2 browser validation.' }
     $browserArgs = @('test','--config','playwright.real-member-v2-offline.config.js')
     if ($BrowserTestName) { $browserArgs += @('--grep', $BrowserTestName) }
+    if ($BrowserRepeatEach -gt 1) { $browserArgs += @('--repeat-each', "$BrowserRepeatEach", '--workers', '1') }
     $browserOutput = & node_modules\.bin\playwright.cmd @browserArgs 2>&1
     if ($LASTEXITCODE -ne 0) { $browserOutput | ForEach-Object { Write-Output $_ }; throw 'Member V2 browser validation failed.' }
     $browserOutput | ForEach-Object { Write-Output $_ }

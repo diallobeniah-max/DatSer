@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, memo } from 'react'
 import { supabase } from '../lib/supabase'
 import { toast } from 'react-toastify'
 import {
@@ -875,7 +875,7 @@ export const AppProvider = ({ children }) => {
   }, [attendanceData])
   const [currentTable, setCurrentTable] = useState(getLatestTable())
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const nextScope = {
       workspace: workspaceCacheScope,
       owner: dataOwnerId || user?.id || 'guest',
@@ -893,7 +893,7 @@ export const AppProvider = ({ children }) => {
         invalidateRequestScope(`${previous.owner}:workspace`)
       }
     }
-    runtimeRequestScopeRef.current = nextScope
+    runtimeRequestScopeRef.current = { ...nextScope, generation: (previous?.generation || 0) + 1 }
   }, [currentTable, dataOwnerId, user?.id, workspaceCacheScope])
 
   useEffect(() => {
@@ -3218,6 +3218,16 @@ export const AppProvider = ({ children }) => {
   // Fetch members from current monthly table or use mock data
   const fetchMembers = async (tableName = currentTable, options = {}) => {
     const { forceRefresh = false, background = false, forceOnline = false, fullSnapshot = false } = options
+    const requestScope = runtimeRequestScopeRef.current
+    const isRequestScopeCurrent = () => {
+      const current = runtimeRequestScopeRef.current
+      return Boolean(current && requestScope
+        && current.workspace === requestScope.workspace
+        && current.owner === requestScope.owner
+        && current.table === tableName
+        && current.table === requestScope.table
+        && current.generation === requestScope.generation)
+    }
     // Tracks whether this call applied authoritative data. Used to keep the
     // dashboard in a loading state (never false-empty) when a foreground fetch
     // ends with an error and no usable data.
@@ -3274,6 +3284,10 @@ export const AppProvider = ({ children }) => {
                 ownerId: dataOwnerId || user.id,
               })
               const localRows = await adapter.listLocalMembers({ tableName })
+              if (!isRequestScopeCurrent()) {
+                appContextLog(`Ignoring stale offline Member V2 projection for ${tableName}`)
+                return
+              }
               const localMembers = localRows
                 .filter((member) => !member?.is_deleted && !member?.deleted_at)
                 .map((member) => normalizeMemberRecord(member, {
@@ -3297,11 +3311,9 @@ export const AppProvider = ({ children }) => {
           }
           if (!background) {
             toast.warn('No offline cache found. Download offline data while online first.')
-          }
-          // No offline snapshot and no data: keep the loading/offline state so the
-          // dashboard never renders a false "No members yet".
-          if (!background) {
-            setMemberHydrationState('LOADING')
+            setOfflineStatusMessage('Offline member data is not saved on this device. Reconnect to load this workspace.')
+            setLoading(false)
+            setMemberHydrationState('OFFLINE_UNAVAILABLE')
           }
           return
         }
@@ -3589,8 +3601,13 @@ export const AppProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Unexpected error in fetchMembers:', error)
+      if (!isRequestScopeCurrent()) {
+        appContextLog(`Ignoring stale member fetch error for ${tableName}`)
+        return
+      }
       if (isTransientSupabaseError(error) || !isBrowserOnline()) {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        if (!isRequestScopeCurrent()) return
         if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
           markHydrated()
           setOfflineStatusMessage('Offline Mode - using saved local data.')
@@ -3605,7 +3622,7 @@ export const AppProvider = ({ children }) => {
       // Only clear the loading state if this call produced usable data (authoritative
       // load or existing members). A transient error with nothing to show keeps the
       // dashboard in its loading/skeleton state — never a false "No members yet".
-      if (!background && (hydratedThisFetch || (members && members.length > 0))) {
+      if (!background && isRequestScopeCurrent() && (hydratedThisFetch || (members && members.length > 0))) {
         setLoading(false)
       }
     }

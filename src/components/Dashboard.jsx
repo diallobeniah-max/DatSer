@@ -2768,7 +2768,7 @@ const Dashboard = ({ isAdmin = false }) => {
     )
   }
 
-  if ((loading || memberHydrationState !== 'HYDRATED') && (!members || members.length === 0)) {
+  if ((loading || (memberHydrationState !== 'HYDRATED' && memberHydrationState !== 'OFFLINE_UNAVAILABLE')) && (!members || members.length === 0)) {
     return (
       <div className={`${dashboardShellClass} mx-auto mt-8`}>
         <TableSkeleton />
@@ -2778,6 +2778,11 @@ const Dashboard = ({ isAdmin = false }) => {
 
   return (
     <div className={`space-y-2 pb-0 md:pb-14 ${isSearchFocused ? 'keyboard-search-active' : ''} ${dashboardShellClass} mx-auto`}>
+      {memberHydrationState === 'OFFLINE_UNAVAILABLE' && (!members || members.length === 0) && (
+        <div role="status" className="mx-auto mt-6 w-[96%] rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+          Offline member data is not saved on this device. Reconnect to load this workspace.
+        </div>
+      )}
       {/* Header removed; summary now shown in sticky Header */}
 
       {/* Desktop tab navigation removed; use mobile segmented control in Header */}
