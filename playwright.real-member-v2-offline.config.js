@@ -3,7 +3,7 @@ import { readLocalSupabase } from './src/experiments/rxdb-backend-poc/testing/lo
 
 const local = readLocalSupabase()
 const localUrl = new URL(local.url)
-if (!['127.0.0.1', 'localhost'].includes(localUrl.hostname) || localUrl.port !== '54321') {
+if (!['127.0.0.1', 'localhost'].includes(localUrl.hostname)) {
   throw new Error('The Member V2 browser gate requires local Supabase.')
 }
 process.env.DATSER_LOCAL_SUPABASE_URL = local.url
@@ -16,6 +16,6 @@ export default defineConfig({
   timeout: 90000,
   fullyParallel: false,
   outputDir: 'output/playwright/real-member-v2',
-  use: { baseURL: 'http://127.0.0.1:5176', trace: 'retain-on-failure' },
+  use: { baseURL: process.env.PLAYWRIGHT_REAL_MEMBER_V2_URL || 'http://127.0.0.1:5176', trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 })

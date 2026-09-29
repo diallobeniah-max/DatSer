@@ -1,0 +1,62 @@
+{
+  "mode": "known-production-history",
+  "description": "Replays tracked production migrations unchanged except for historical versions whose known applied effects must be modeled without production data or invalid SQL.",
+  "historicalBaselines": [
+    {
+      "version": "20260803163214",
+      "source": "supabase/migrations/20260803163214_share_all_months_with_workspace_accounts.sql",
+      "fixture": "tests/fixtures/production-replay/20260803163214_historical_schema_baseline.sql",
+      "reason": "The migration installs schema/functions and also runs a production-owner data backfill. The fixture models schema effects only and contains no production identity data."
+    },
+    {
+      "version": "20260803163624",
+      "source": "supabase/migrations/20260803163624_remove_typo_yawdiallo_collaborator.sql",
+      "fixture": "tests/fixtures/production-replay/20260803163624_historical_cleanup_baseline.sql",
+      "reason": "This migration is a one-time cleanup of production collaborator rows and has no schema effect. The disposable database contains no such production rows."
+    },
+    {
+      "version": "20260825200845",
+      "source": "supabase/migrations/20260825200845_csv_import_history.sql",
+      "fixture": "tests/fixtures/production-replay/20260825200845_csv_history_applied_baseline.sql",
+      "reason": "This already-applied historical migration has invalid storage UPDATE policy syntax in the tracked source. The fixture explicitly models its intended applied schema/policies; the new forward repair migration is still replayed afterward."
+    }
+  ],
+  "compatibilityPrerequisites": [
+    {
+      "source": "tests/fixtures/local-only-migrations/20260207120000_poc_create_february_2026_prerequisite.sql",
+      "temporaryVersion": "20260207100000",
+      "reason": "Creates the pre-existing February workspace table needed by later tracked migrations in an empty disposable database."
+    },
+    {
+      "source": "tests/fixtures/local-only-migrations/20260314235959_poc_prepare_member_bundle_function_return_types.sql",
+      "temporaryVersion": "20260314235959",
+      "reason": "Models a previously deployed member-bundle return type before the next tracked ALTER/replace migration."
+    },
+    {
+      "source": "tests/fixtures/local-only-migrations/20260315000000_poc_reconcile_member_bundle_transactions.sql",
+      "temporaryVersion": "20260315000000",
+      "reason": "Models the previously deployed transaction contract needed by later tracked function replacements."
+    },
+    {
+      "source": "tests/fixtures/local-only-migrations/20260701110000_poc_prepare_update_owner_admin_override_return_type.sql",
+      "temporaryVersion": "20260701110000",
+      "reason": "Models a pre-existing RPC signature required by a later tracked replacement migration."
+    },
+    {
+      "source": "tests/fixtures/local-only-migrations/20260802064000_poc_prepare_cross_month_attendance_return_type.sql",
+      "temporaryVersion": "20260802064000",
+      "reason": "Models the deployed cross-month attendance return contract before tracked hardening migrations."
+    },
+    {
+      "source": "tests/fixtures/local-only-migrations/20260815154000_poc_prepare_ai_provider_resolve_key_return_type.sql",
+      "temporaryVersion": "20260815154000",
+      "reason": "Models the deployed AI provider RPC return type before a tracked production replacement migration."
+    }
+  ],
+  "localOnlySql": [
+    {
+      "source": "tests/fixtures/local-only-migrations/20260912200747_rxdb_backend_poc_phase0.sql",
+      "mode": "apply-after-production-replay-for-opt-in-tests-only"
+    }
+  ]
+}

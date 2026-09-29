@@ -11,6 +11,6 @@ attendance harness migration is retained here for explicit legacy-harness
 reproduction only; the production Member V2 integration tests must use the
 monthly attendance contract and must not apply that override.
 
-The three historical production-applied migrations remain canonical in the
-production path. Local replay compatibility is handled by the disposable replay
-script under `scripts/local/`, which patches only temporary migration copies.
+Three historical production-applied versions need explicit modeling in a blank local replay: two contain production-data-only operations and one contains invalid legacy policy syntax. The `tests/fixtures/production-replay/` manifest and named baseline SQL files document those exceptions; the replay script never edits or patches copied production migration SQL. Its other compatibility fixtures are listed as test-only prerequisites in that manifest. The forward CSV policy repair remains a new tracked production migration.
+
+The retired POC phase-0 fixture is applied only after production replay assertions, through an explicit local-only query step. It never enters `supabase/migrations` or the production replay migration path.
