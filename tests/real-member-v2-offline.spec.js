@@ -231,6 +231,16 @@ const clickConnectionControl = async (page, evidence = null) => {
 
 const installMemberIdTrace = (page, fixture) => page.addInitScript(({ memberId, expectedProfileValue }) => {
   window.__datserMemberV2IdTrace = { enabled: true, memberIds: [memberId], expectedProfileValue, events: [] }
+  const originalSetItem = window.Storage.prototype.setItem
+  window.Storage.prototype.setItem = function (key, value) {
+    if (key === 'selectedMonthTable') {
+      const traceKey = '__datserMonthWriteTrace'
+      const writes = JSON.parse(window.sessionStorage.getItem(traceKey) || '[]')
+      writes.push({ value: String(value), at: Date.now() })
+      originalSetItem.call(window.sessionStorage, traceKey, JSON.stringify(writes))
+    }
+    return originalSetItem.call(this, key, value)
+  }
 }, { memberId: fixture.septemberMemberId, expectedProfileValue: fixture.editedName })
 
 const getMemberAttendanceSelector = (memberId) => `[data-testid="member-card-attendance-${memberId}"], [data-testid^="member-card-attendance-${memberId}-"]`
@@ -265,6 +275,9 @@ const captureMemberIdState = async (page, fixture) => {
     at: new Date().toISOString(),
     id: memberId,
     tableName: snapshot.currentTable,
+    hydration: snapshot.hydration,
+    locallySelectedMonth: localStorage.getItem('selectedMonthTable'),
+    monthWrites: JSON.parse(sessionStorage.getItem('__datserMonthWriteTrace') || '[]').map((write) => write.value),
     rxdb: {
       present: Boolean(rxdbMember),
       revision: rxdbMember?.serverRevision ?? null,
@@ -430,12 +443,16 @@ test('the real connection selector keeps a Member V2 profile edit local until re
       rxdb: { present: true, valueMatches: true, pendingCount: 1 },
     })
 
+    await page.evaluate(() => sessionStorage.setItem('__datserMonthWriteTrace', '[]'))
     await page.reload()
     try {
       await expect.poll(async () => {
         const snapshot = await captureMemberIdState(page, fixture)
         diagnostics.clientASnapshots.push({ stage: 'offline-reload-convergence-sample', ...snapshot })
-        return snapshot.rendered?.valueMatches || false
+        return snapshot.tableName === 'September_2026'
+          && snapshot.hydration?.state === 'HYDRATED'
+          && snapshot.hydration?.loading === false
+          && snapshot.rendered?.valueMatches === true
       }, { timeout: 30000, intervals: [100, 250, 500, 1000] }).toBe(true)
     } catch (error) {
       diagnostics.clientASnapshots.push({ stage: 'offline-reload-immediate-timeout-sample', ...(await captureMemberIdState(page, fixture)) })
@@ -445,11 +462,16 @@ test('the real connection selector keeps a Member V2 profile edit local until re
     diagnostics.clientASnapshots.push({ stage: 'offline-reload', ...(await captureMemberIdState(page, fixture)) })
     expect(diagnostics.clientASnapshots.at(-1)).toMatchObject({
       tableName: 'September_2026',
+      hydration: { state: 'HYDRATED', loading: false },
+      locallySelectedMonth: 'September_2026',
       rxdb: { present: true, valueMatches: true, pendingCount: 1 },
       appContext: { present: true, valueMatches: true },
       dashboard: { present: true, valueMatches: true },
       rendered: { present: true, valueMatches: true },
     })
+    expect(diagnostics.clientASnapshots
+      .filter((snapshot) => snapshot.stage?.startsWith('offline-reload'))
+      .flatMap((snapshot) => snapshot.monthWrites || [])).not.toContain('January_2026')
     await dismissLocalUiPrompts(page, diagnostics.uiPrompt)
 
     secondContext = await browser.newContext()

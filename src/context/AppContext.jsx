@@ -3262,6 +3262,39 @@ export const AppProvider = ({ children }) => {
           return filterDeletedMembers(snapshotRecord?.snapshot?.members || [])
         }
         if (offlineMode === 'offline') {
+          if (isMemberV2SharedRouteEnabled() && supabase && user?.id && (dataOwnerId || user.id)) {
+            try {
+              // A forced-offline reload may have no full legacy offline
+              // snapshot. Member V2 already has a durable local projection;
+              // use it so pending profile intent remains visible and the
+              // dashboard can finish hydration without a server request.
+              const adapter = await getRealMemberV2UiAdapter({
+                supabase,
+                userId: user.id,
+                ownerId: dataOwnerId || user.id,
+              })
+              const localRows = await adapter.listLocalMembers({ tableName })
+              const localMembers = localRows
+                .filter((member) => !member?.is_deleted && !member?.deleted_at)
+                .map((member) => normalizeMemberRecord(member, {
+                  tableName,
+                  ownerId: dataOwnerId || user.id,
+                }))
+              if (localMembers.length > 0) {
+                setMembers(localMembers)
+                setMembersTotalCount(localMembers.length)
+                setMembersLoadedAll(true)
+                markHydrated()
+                if (!background) {
+                  setLoading(false)
+                  setOfflineStatusMessage('Offline Mode - using saved Member V2 data.')
+                }
+                return localMembers
+              }
+            } catch (error) {
+              console.warn('[Member V2 offline hydration] Local projection could not be loaded:', error)
+            }
+          }
           if (!background) {
             toast.warn('No offline cache found. Download offline data while online first.')
           }
@@ -7609,6 +7642,10 @@ export const AppProvider = ({ children }) => {
 
   // Restore saved month or fall back to a valid table on load
   useEffect(() => {
+    // AuthContext starts with no user while it restores an existing Supabase
+    // session. Do not mistake that transient state for a signed-out user and
+    // overwrite their persisted workspace month with January.
+    if (authLoading) return
     if (monthlyTables.length > 0) {
       // If the user is not authenticated locally, prefer a known-safe default table
       if (!authContext?.user) {
@@ -7644,7 +7681,7 @@ export const AppProvider = ({ children }) => {
         localStorage.setItem(storageKey, latest)
       }
     }
-  }, [authContext?.preferences?.current_month_table, authContext?.user, currentTable, dataOwnerId, isCollaborator, monthlyTables, ownerStickyMonth])
+  }, [authContext?.preferences?.current_month_table, authContext?.user, authLoading, currentTable, dataOwnerId, isCollaborator, monthlyTables, ownerStickyMonth])
 
   // Fetch members on component mount and when current table changes
   // Wait for auth AND month resolution before fetching to avoid the
