@@ -94,6 +94,101 @@ afterAll(async () => {
 })
 
 describe.sequential('Member V2 service with local authenticated Supabase', () => {
+  const assertSameRowWriterOrder = async (kind) => {
+    const ownerId = fixture.userId
+    const service = await createMemberService({ supabase: fixture.client, userId: ownerId, ownerId, storage: getRxStorageMemory(), online: () => true })
+    await service.start()
+    let attendanceService
+    const suffix = crypto.randomUUID().slice(0, 8)
+    const first = psqlProcess(`datser-same-row-first-${suffix}`)
+    const secondName = `datser-same-row-second-${suffix}`
+    const second = psqlProcess(secondName)
+    try {
+      const member = await service.createMember({ tableName: fixture.tableName, member: { full_name: `Synthetic same row ${suffix}`, current_level: 'JHS2' } })
+      await service.syncNow()
+      let base = Number((await service.getMember(member.id)).server_revision)
+      if (kind === 'attendance') {
+        attendanceService = await createMemberAttendanceService({ supabase: fixture.client, userId: ownerId, ownerId, storage: getRxStorageMemory(), online: () => true })
+        await attendanceService.start()
+        await attendanceService.saveAttendance({ memberId: member.id, tableName: fixture.tableName, attendanceDate: '2025-12-07', status: 'Present' })
+        await attendanceService.syncNow()
+        const latest = await fixture.admin.from('member_v2_change_events').select('server_revision').eq('owner_id', ownerId).eq('member_id', member.id).eq('attendance_date', '2025-12-07').order('server_revision', { ascending: false }).limit(1).single()
+        if (latest.error) throw latest.error
+        base = Number(latest.data.server_revision)
+      }
+      const latest = await fixture.admin.from('member_v2_change_events').select('server_revision').eq('owner_id', ownerId).order('server_revision', { ascending: false }).limit(1).single()
+      if (latest.error) throw latest.error
+      const cursor = latest.data.server_revision
+      // Hold ONLY the broad lock. Previously a delete/legacy UPDATE could take
+      // this same member's head/physical row and then wait for this owner lock.
+      first.send(`begin; set local request.jwt.claim.sub = '${ownerId}'; select public.member_v2_lock_change_event_order('${ownerId}');\n\\echo SAME_ROW_OWNER_HELD`)
+      await waitForPsql(first, 'SAME_ROW_OWNER_HELD')
+      const actor = `set local role authenticated; set local request.jwt.claim.sub = '${ownerId}';`
+      let secondSql
+      if (kind === 'delete') {
+        const fingerprint = await createMemberV2Fingerprint({ operation: 'delete_member_v2', ownerId, tableName: fixture.tableName, memberId: member.id, baseServerRevision: base, payload: {} })
+        secondSql = `select public.delete_member_v2('${fixture.tableName}', '${ownerId}', '${member.id}', ${base}, 'same-row-delete-${suffix}', '${fingerprint}');`
+      } else {
+        const column = kind === 'attendance' ? 'attendance_2025_12_07' : 'Current Level'
+        const value = kind === 'attendance' ? 'Present' : 'SHS1'
+        secondSql = `update public."${fixture.tableName}" set "${column}" = '${value}' where id = '${member.id}' and workspace_owner_id = '${ownerId}';`
+      }
+      second.send(`begin; ${actor} ${secondSql} commit;\n\\echo SAME_ROW_SECOND_DONE`)
+      await waitForLockWait(secondName, second)
+      if (kind === 'attendance') {
+        const fingerprint = await createMemberV2AttendanceFingerprint({ operation: 'set_member_v2_attendance', ownerId, memberId: member.id, tableName: fixture.tableName, attendanceDate: '2025-12-07', status: 'Absent', baseServerRevision: base })
+        first.send(`select public.save_member_v2_attendance('${ownerId}', '${member.id}', '${fixture.tableName}', '2025-12-07', 'Absent', null, ${base}, 'same-row-first-${suffix}', '${fingerprint}'); commit;\n\\echo SAME_ROW_FIRST_DONE`)
+      } else {
+        const updates = { 'Current Level': 'JHS3' }
+        const fingerprint = await createMemberV2Fingerprint({ operation: 'update_member_v2', ownerId, tableName: fixture.tableName, memberId: member.id, baseServerRevision: base, payload: updates })
+        first.send(`select public.update_member_v2('${fixture.tableName}', '${ownerId}', '${member.id}', '${JSON.stringify(updates)}'::jsonb, ${base}, 'same-row-first-${suffix}', '${fingerprint}', '{}'::jsonb); commit;\n\\echo SAME_ROW_FIRST_DONE`)
+      }
+      await Promise.all([waitForPsql(first, 'SAME_ROW_FIRST_DONE', 10000), waitForPsql(second, 'SAME_ROW_SECOND_DONE', 10000)])
+      expect(first.error()).not.toMatch(/deadlock|ERROR/)
+      expect(second.error()).not.toMatch(/deadlock|ERROR/)
+      if (kind === 'delete') {
+        // The intervening update makes the old base conflict. Reconcile, then
+        // submit the last delete intent against the confirmed revision.
+        expect(second.output()).toContain('CONFLICT')
+        const head = await fixture.admin.from('member_v2_heads').select('server_revision').eq('owner_id', ownerId).eq('member_id', member.id).eq('table_name', fixture.tableName).single()
+        if (head.error) throw head.error
+        const nextBase = Number(head.data.server_revision)
+        const fingerprint = await createMemberV2Fingerprint({ operation: 'delete_member_v2', ownerId, tableName: fixture.tableName, memberId: member.id, baseServerRevision: nextBase, payload: {} })
+        const deleted = await fixture.client.rpc('delete_member_v2', { p_table_name: fixture.tableName, p_owner_id: ownerId, p_member_id: member.id, p_base_server_revision: nextBase, p_request_id: `same-row-delete-reconciled-${suffix}`, p_payload_fingerprint: fingerprint })
+        if (deleted.error) throw deleted.error
+        expect(deleted.data.status).toBe('SUCCESS')
+      }
+      const pull = kind === 'attendance'
+        ? await fixture.client.rpc('pull_member_v2_attendance_changes_v2', { p_owner_id: ownerId, p_after_server_revision: cursor, p_limit: 100 })
+        : await fixture.client.rpc('pull_workspace_member_changes_v2', { p_owner_id: ownerId, p_after_server_revision: cursor, p_limit: 100 })
+      if (pull.error) throw pull.error
+      const events = pull.data.changes.filter((row) => row.member_id === member.id)
+      expect(events).toHaveLength(2)
+      expect(Number(events[0].server_revision)).toBeLessThan(Number(events[1].server_revision))
+      const row = await fixture.admin.from(fixture.tableName).select('*').eq('id', member.id).eq('workspace_owner_id', ownerId).single()
+      if (row.error) throw row.error
+      if (kind === 'delete') {
+        expect(row.data.deleted_at).toBeTruthy()
+        expect(events.filter((event) => event.is_deleted)).toHaveLength(1)
+      } else if (kind === 'attendance') {
+        expect(row.data.attendance_2025_12_07).toBe('Present')
+      } else {
+        expect(row.data['Current Level']).toBe('SHS1')
+        expect(events[1].operation).toBe('update')
+      }
+    } finally {
+      for (const session of [first, second]) {
+        if (session.child.exitCode === null) { session.send('rollback;'); await session.finish() }
+      }
+      await attendanceService?.stop()
+      await service.stop()
+    }
+  }
+
+  it.each(['delete', 'profile', 'attendance'])('coordinates a same-row %s contender before it takes narrow locks', async (kind) => {
+    await assertSameRowWriterOrder(kind)
+  }, 30000)
+
   const assertCommitOrderedFeedPair = async (feed, rollbackFirst = false) => {
     const ownerId = fixture.userId; const memberA = crypto.randomUUID(); const memberB = crypto.randomUUID(); const otherOwner = fixture.otherOwnerId; const otherMember = crypto.randomUUID()
     const latest = await fixture.admin.from('member_v2_change_events').select('server_revision').eq('owner_id', ownerId).order('server_revision', { ascending: false }).limit(1).maybeSingle()
@@ -138,7 +233,7 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     }
   }
 
-  const assertBootstrapWriterLockOrder = async (feed) => {
+  const assertBootstrapWriterLockOrder = async (feed, sameMember = false) => {
     const ownerId = fixture.userId
     const memberService = await createMemberService({ supabase: fixture.client, userId: ownerId, ownerId, storage: getRxStorageMemory(), online: () => true })
     await memberService.start()
@@ -152,6 +247,7 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
     let gate; let bootstrap; let writer
     try {
       for (const label of ['bootstrap', 'writer']) {
+        if (sameMember && label === 'writer') { members.push(members[0]); continue }
         const member = await memberService.createMember({ tableName: fixture.tableName, member: { full_name: `Synthetic ${feed} ${label} ${suffix}`, current_level: 'JHS2' } })
         await memberService.syncNow()
         members.push(member)
@@ -209,7 +305,20 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
       await waitForLockWait(`datser-bootstrap-${suffix}`, bootstrap)
 
       writer = psqlProcess(`datser-writer-${suffix}`)
-      if (feed === 'profile') {
+      if (sameMember) {
+        // Wait for the owner lock BEFORE reading the newly bootstrapped base;
+        // then contend for the exact same head/cell, without fabricating a stale
+        // revision. SQL helper access is confined to this privileged fixture.
+        const table = fixture.tableName
+        const memberId = writerMember.id
+        const baseSql = feed === 'profile'
+          ? `(select server_revision from public.member_v2_heads where owner_id='${ownerId}' and table_name='${table}' and member_id='${memberId}')`
+          : `(select server_revision from public.member_v2_change_events where owner_id='${ownerId}' and table_name='${table}' and member_id='${memberId}' and attendance_date='2025-12-07' order by server_revision desc limit 1)`
+        const writeSql = feed === 'profile'
+          ? `select public.update_member_v2('${table}', '${ownerId}', '${memberId}', '{"Current Level":"JHS3"}'::jsonb, ${baseSql}, 'lock-order-${suffix}', public.member_v2_fingerprint('update_member_v2', '${ownerId}', '${table}', '${memberId}', ${baseSql}, '{"Current Level":"JHS3"}'::jsonb), '{}'::jsonb);`
+          : `select public.save_member_v2_attendance('${ownerId}', '${memberId}', '${table}', '2025-12-07', 'Absent', null, ${baseSql}, 'lock-order-${suffix}', public.member_v2_attendance_fingerprint('set_member_v2_attendance', '${ownerId}', '${memberId}', '${table}', '2025-12-07', 'Absent', ${baseSql}));`
+        writer.send(`begin; set local request.jwt.claim.sub = '${ownerId}'; select public.member_v2_lock_change_event_order('${ownerId}'); ${writeSql} commit;\n\\echo WRITER_DONE`)
+      } else if (feed === 'profile') {
         const updates = { 'Current Level': 'JHS3' }
         const fingerprint = await createMemberV2Fingerprint({ operation: 'update_member_v2', ownerId, tableName: fixture.tableName, memberId: writerMember.id, baseServerRevision: writerRevision, payload: updates })
         writer.send(`begin; ${setActor} select public.update_member_v2('${fixture.tableName}', '${ownerId}', '${writerMember.id}', '${JSON.stringify(updates)}'::jsonb, ${writerRevision}, 'lock-order-${suffix}', '${fingerprint}', '{}'::jsonb); commit;\n\\echo WRITER_DONE`)
@@ -273,6 +382,10 @@ describe.sequential('Member V2 service with local authenticated Supabase', () =>
 
   it('completes attendance bootstrap beside a same-workspace attendance writer without lock inversion', async () => {
     await assertBootstrapWriterLockOrder('attendance')
+  }, 30000)
+
+  it.each(['profile', 'attendance'])('completes %s bootstrap beside a writer on the same member', async (feed) => {
+    await assertBootstrapWriterLockOrder(feed, true)
   }, 30000)
 
   it('keeps unrelated month-table trigger capture active outside trusted delete RPCs', async () => {
