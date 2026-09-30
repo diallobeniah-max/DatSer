@@ -10,7 +10,7 @@ const TutorialPromptBar = ({ isOpen, onAccept, onDismiss }) => {
                 <div className="p-2 bg-white/20 rounded-lg flex-shrink-0">
                     <HelpCircle className="w-5 h-5" />
                 </div>
-                
+
                 <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm">Want a quick tutorial?</p>
                     <p className="text-xs text-white/80">Learn how to use Datser with our getting started guide</p>

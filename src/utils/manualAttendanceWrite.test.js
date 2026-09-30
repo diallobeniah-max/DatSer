@@ -1,5 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { writeManualAttendance } from './manualAttendanceWrite'
+import { updateMemberV2LocalFlowGuard } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+
+const legacyRouteEnv = { DEV: true, VITE_DATSER_MEMBER_V2_EXPERIMENT: 'false', VITE_SUPABASE_URL: 'http://127.0.0.1:54321' }
+
+const memoryStorage = () => {
+  const values = new Map()
+  return {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  }
+}
 
 const setup = async (present, response = { success: true, member_id: 'member-1' }) => {
   const rpc = vi.fn(() => Promise.resolve({ data: response, error: null }))
@@ -9,10 +21,12 @@ const setup = async (present, response = { success: true, member_id: 'member-1' 
     executeWrite,
     tableName: 'January_2026',
     ownerId: 'owner-1',
+    actorUserId: 'actor-1',
     memberId: 'member-1',
     attendanceDate: new Date(2026, 0, 25),
     present,
-    identity: { source: 'manual-test' }
+    identity: { source: 'manual-test' },
+    guardEnv: legacyRouteEnv,
   })
   return { rpc, executeWrite, result }
 }
@@ -56,4 +70,29 @@ describe('writeManualAttendance', () => {
   it('rejects a response that does not confirm the requested member', async () => {
     await expect(setup(true, { success: true, member_id: 'another-member' })).rejects.toThrow('Attendance save could not be verified')
   })
+
+  it.each([['Present', true], ['Absent', false], ['Clear', null]])(
+    'blocks the %s legacy RPC while a durable Member V2 mutation is pending',
+    async (_label, present) => {
+      const localStorage = memoryStorage()
+      updateMemberV2LocalFlowGuard({
+        userId: 'actor-1',
+        ownerId: 'owner-1',
+        storage: localStorage,
+        syncState: { state: 'OFFLINE_PENDING', pendingChanges: 1, failedChanges: 0, conflicts: 0 },
+      })
+      const rpc = vi.fn()
+      const executeWrite = vi.fn((operation) => operation())
+
+      await expect(writeManualAttendance({
+        supabase: { rpc }, executeWrite, tableName: 'January_2026', ownerId: 'owner-1', actorUserId: 'actor-1',
+        memberId: 'member-1', attendanceDate: new Date(2026, 0, 25), present,
+        guardEnv: legacyRouteEnv, guardStorage: localStorage,
+      })).rejects.toThrow(/unsynced local work/i)
+
+      expect(executeWrite).not.toHaveBeenCalled()
+      expect(rpc).not.toHaveBeenCalled()
+      expect(localStorage.getItem('datser.member-v2.local-flow-guard:actor-1:owner-1')).toContain('"pendingChanges":1')
+    }
+  )
 })

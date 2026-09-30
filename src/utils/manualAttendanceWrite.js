@@ -6,6 +6,7 @@
 //   payload. The narrow RPC intentionally accepts only Present / Absent.
 //
 // Neither path sends a dynamic attendance column through a profile update.
+import { assertLegacyMemberFlowIsSafe } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 
 const toDateKey = (date) => {
   const year = date.getFullYear()
@@ -24,11 +25,15 @@ export const writeManualAttendance = async ({
   executeWrite,
   tableName,
   ownerId,
+  actorUserId,
   memberId,
   attendanceDate,
   present,
-  identity
+  identity,
+  guardEnv,
+  guardStorage
 }) => {
+  assertLegacyMemberFlowIsSafe({ userId: actorUserId, ownerId, env: guardEnv, storage: guardStorage })
   if (!tableName || !ownerId || !memberId || !(attendanceDate instanceof Date) || Number.isNaN(attendanceDate.getTime())) {
     throw new Error('Manual attendance is missing its workspace, member, or Sunday.')
   }

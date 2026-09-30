@@ -1,9 +1,20 @@
+import { Capacitor } from '@capacitor/core'
+
+const nativeCachePrefix = 'datser-offline-'
+const removeNativeBrowserShell = () => {
+  navigator.serviceWorker?.getRegistrations?.().then((registrations) => Promise.all(registrations.map((registration) => registration.unregister()))).catch(() => {})
+  window.caches?.keys?.().then((keys) => Promise.all(keys.filter((key) => key.startsWith(nativeCachePrefix)).map((key) => window.caches.delete(key)))).catch(() => {})
+}
+
 export const registerServiceWorker = () => {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
-  const shouldRegister =
-    import.meta.env.PROD ||
-    window.location.protocol === 'capacitor:'
+  if (Capacitor.isNativePlatform()) {
+    removeNativeBrowserShell()
+    return
+  }
+
+  const shouldRegister = import.meta.env.PROD
 
   if (!shouldRegister) return
 

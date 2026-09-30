@@ -8,6 +8,7 @@ let appMock = null
 let updateMemberMock = null
 let onCloseMock = null
 let rpcSpy = null
+const memberV2AdapterMock = vi.hoisted(() => ({ update: null }))
 
 vi.mock('../context/AppContext', () => ({
   useApp: () => appMock
@@ -40,6 +41,13 @@ vi.mock('../lib/supabase', () => {
     }
   }
 })
+
+vi.mock('../experiments/rxdb-member-phase1/realMemberUiAdapter', () => ({
+  getRealMemberV2UiAdapter: vi.fn(async () => ({
+    refreshGuard: vi.fn(async () => ({ state: 'SYNCED', pendingChanges: 0, failedChanges: 0, conflicts: 0 })),
+    update: (...args) => memberV2AdapterMock.update(...args),
+  }))
+}))
 
 vi.mock('react-toastify', () => ({
   toast: {
@@ -103,6 +111,24 @@ const editNameAndSubmit = async (modalElement, value) => {
 }
 
 describe('EditMemberModal offline fallback routing', () => {
+  it('restores the leading zero for a numeric database phone value before validating an edit', async () => {
+    appMock = makeAppMock()
+    appMock.members[0]['Phone Number'] = 555000123
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+    render(<EditMemberModal {...MODAL_PROPS} />)
+
+    expect((await screen.findByTestId('edit-form-phone')).value).toBe('0555000123')
+  })
+
+  it('restores the No Phone sentinel when the numeric database value is zero', async () => {
+    appMock = makeAppMock()
+    appMock.members[0]['Phone Number'] = 0
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+    render(<EditMemberModal {...MODAL_PROPS} />)
+
+    expect((await screen.findByTestId('edit-form-phone')).value).toBe('0000000000')
+  })
+
   beforeEach(() => {
     cleanup()
     if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
@@ -124,6 +150,8 @@ describe('EditMemberModal offline fallback routing', () => {
     })
     onCloseMock = vi.fn()
     rpcSpy = null
+    memberV2AdapterMock.update = vi.fn(async () => ({ member: {}, syncState: { state: 'SYNCED' } }))
+    vi.unstubAllEnvs()
     appMock = makeAppMock()
     Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true })
   })
@@ -229,6 +257,26 @@ describe('EditMemberModal offline fallback routing', () => {
     expect(updates).toMatchObject({ 'Full Name': 'Test Member Offline Edit' })
     expect(options).toMatchObject({ targetTable: 'January_2026', ownerId: 'owner-1' })
     expect(onCloseMock).toHaveBeenCalled()
+  }, 15000)
+
+  it('does not fall back from a Member V2 edit failure into the legacy AppContext queue', async () => {
+    vi.stubEnv('DEV', true)
+    vi.stubEnv('VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION', 'true')
+    vi.stubEnv('VITE_SUPABASE_URL', 'http://127.0.0.1:54321')
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false })
+    memberV2AdapterMock.update = vi.fn(async () => { throw new Error('Failed to fetch') })
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+
+    await editNameAndSubmit(
+      <EditMemberModal isOpen onClose={onCloseMock} member={{ id: 'm-1' }} onTagsChange={vi.fn()} />,
+      'Test Member V2 Offline Edit'
+    )
+    await wait(2000)
+
+    expect(memberV2AdapterMock.update).toHaveBeenCalledTimes(1)
+    expect(updateMemberMock).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('Failed to fetch')
+    expect(onCloseMock).not.toHaveBeenCalled()
   }, 15000)
 
   it('keeps showing an error for non-transient failures without queueing or closing', async () => {
