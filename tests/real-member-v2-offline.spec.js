@@ -194,8 +194,10 @@ const dismissLocalUiPrompts = async (page, evidence = null) => {
   const dismiss = page.getByRole('button', { name: 'Dismiss compact UI suggestion' })
   if (await dismiss.isVisible().catch(() => false)) {
     if (evidence) evidence.compactUiPromptDetected = true
-    await dismiss.click({ timeout: 2000 })
-    await expect(dismiss).toBeHidden({ timeout: 5000 })
+    await expect(async () => {
+      if (await dismiss.isVisible().catch(() => false)) await dismiss.click({ timeout: 2000 })
+      await expect(dismiss).toBeHidden({ timeout: 2000 })
+    }).toPass({ timeout: 8000 })
     if (evidence) evidence.compactUiPromptDismissed = true
   }
   const tutorialTitle = page.getByText('Want a quick tutorial?', { exact: true })
@@ -223,7 +225,8 @@ const clickConnectionControl = async (page, evidence = null) => {
     } catch (error) {
       const compactVisible = await dismiss.isVisible().catch(() => false)
       const fullVisible = await keepFull.isVisible().catch(() => false)
-      if (!compactVisible && !fullVisible) throw error
+      const statusVisible = await dismissStatus.isVisible().catch(() => false)
+      if (!compactVisible && !fullVisible && !statusVisible) throw error
     }
   }
   throw new Error('Connection control remained covered after supported local UI prompts were dismissed.')
