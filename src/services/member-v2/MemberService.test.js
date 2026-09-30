@@ -258,6 +258,41 @@ describe('Member V2 local-first service', () => {
     await database.close()
   })
 
+  it.each(['lost-response', 'offline-restart'])('keeps a dispatched create before a later delete after %s', async (kind) => {
+    let online = false
+    const calls = []; const userId = crypto.randomUUID(); const ownerId = crypto.randomUUID()
+    let database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() })
+    const options = { database, userId, ownerId, online: () => online, supabase: rpcClient(async (name, args) => {
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [], next_cursor: null, has_more: false }, error: null }
+      calls.push({ name, args })
+      if (name === 'create_member_v2') {
+        if (calls.filter((call) => call.name === name).length === 1) return { data: null, error: { message: 'Response lost after server commit', status: 504 } }
+        return { data: { status: 'IDEMPOTENT_REPLAY', server_revision: 1, table_name: tableName, member: { id: args.p_member_id, 'Full Name': 'Synthetic uncertain create', member_code: 'M1001' } }, error: null }
+      }
+      if (name === 'delete_member_v2') return { data: { status: 'SUCCESS', server_revision: 2, table_name: tableName, member: { id: args.p_member_id, deleted_at: '2026-01-02T00:00:00.000Z' } }, error: null }
+      throw new Error(`Unexpected RPC ${name}`)
+    }) }
+    let service = await createMemberService(options); services.push(service); await service.start()
+    const local = await service.createMember({ tableName, member: { full_name: 'Synthetic uncertain create' } })
+    online = true; await service.syncNow(); online = false
+    const createRequest = calls.find((call) => call.name === 'create_member_v2').args.p_request_id
+    if (kind === 'offline-restart') {
+      const doc = await database.mutations.findOne(createRequest).exec()
+      await doc.incrementalPatch({ save_state: MEMBER_SAVE_STATES.SYNCING })
+      await service.stop(); await database.close()
+      database = await createMemberV2Database({ userId, ownerId, storage: getRxStorageDexie() }); options.database = database
+      service = await createMemberService(options); services.push(service); await service.start()
+    }
+    await service.deleteMember(local.id)
+    expect(await service.getMember(local.id)).toMatchObject({ is_deleted: true })
+    expect(await database.mutations.findOne(createRequest).exec()).not.toBeNull()
+    online = true; await service.syncNow()
+    expect(calls.filter((call) => call.name === 'create_member_v2').map((call) => call.args.p_request_id)).toEqual([createRequest, createRequest])
+    expect(calls.filter((call) => call.name === 'delete_member_v2')).toHaveLength(1)
+    expect(await service.getMember(local.id)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+    await service.stop(); await database.close()
+  })
+
   it('cancels a pending delete locally when its in-flight create is definitively rejected', async () => {
     let online = false
     let rejectCreate
@@ -299,6 +334,21 @@ describe('Member V2 local-first service', () => {
     await syncing
     expect(calls.find((call) => call.name === 'delete_member_v2')?.args.p_base_server_revision).toBe(1)
     expect(await service.getMember(ids.member)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.SERVER_CONFIRMED })
+  })
+
+  it('allows a later delete to supersede a known rejected update conflict', async () => {
+    let online = false; const calls = []
+    const service = await makeService({ online: () => online, rpc: async (name) => {
+      if (name === 'pull_workspace_member_changes_v2') return { data: { changes: [change()], next_cursor: 1, has_more: false }, error: null }
+      calls.push(name)
+      return { data: { status: 'CONFLICT', server_revision: 2, table_name: tableName, member: change({ revision: 2 }).member }, error: null }
+    } })
+    await service.pull(); await service.updateMember(ids.member, { 'Full Name': 'Synthetic conflicted edit' })
+    online = true; await service.syncNow(); online = false
+    await service.deleteMember(ids.member)
+    online = true; await service.syncNow()
+    expect(calls).toEqual(['update_member_v2', 'delete_member_v2'])
+    expect(await service.getMember(ids.member)).toMatchObject({ is_deleted: true, save_state: MEMBER_SAVE_STATES.CONFLICT })
   })
 
   it('keeps conflicts recoverable and can use the server copy', async () => {

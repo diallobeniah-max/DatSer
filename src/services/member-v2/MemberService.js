@@ -133,8 +133,12 @@ export class MemberService {
     if (member.is_deleted) return member
     const target = assertMemberTarget({ ownerId: this.ownerId, tableName: options.tableName || member.table_name, memberId })
     const pending = await this.#mutationsForMember(memberId, [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.LOCAL_PENDING, MEMBER_SAVE_STATES.FAILED_RETRYABLE, MEMBER_SAVE_STATES.SYNCING, MEMBER_SAVE_STATES.CONFLICT])
-    const inFlight = pending.filter((mutation) => mutation.save_state === MEMBER_SAVE_STATES.SYNCING)
-    const supersedable = pending.filter((mutation) => mutation.save_state !== MEMBER_SAVE_STATES.SYNCING)
+    const inFlight = pending.filter((mutation) => mutation.save_state === MEMBER_SAVE_STATES.SYNCING
+      || mutation.server_outcome_unknown === true
+      // Older journals did not persist dispatch metadata. Preserve a retried
+      // request conservatively until its stable ID confirms the outcome.
+      || (mutation.server_outcome_unknown === undefined && mutation.retry_count > 0))
+    const supersedable = pending.filter((mutation) => !inFlight.includes(mutation))
 
     // A member which never reached the server has no historical row to delete.
     // Journal cancellation only when no request has already been dispatched.
@@ -373,6 +377,9 @@ export class MemberService {
       : mutation.operation === 'delete_member_v2'
         ? { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_base_server_revision: baseServerRevision, p_request_id: mutation.id, p_payload_fingerprint: fingerprint }
         : { p_table_name: mutation.table_name, p_owner_id: this.ownerId, p_member_id: mutation.member_id, p_updates: mutation.payload, p_base_server_revision: baseServerRevision, p_request_id: mutation.id, p_payload_fingerprint: fingerprint, p_identity: mutation.identity || {} }
+    // Persist before dispatch: a crash, lost response, or offline restart must
+    // never turn this request back into a provably unsent local cancellation.
+    await this.#patch(this.database.mutations, mutation.id, { server_outcome_unknown: true })
     const { data, error } = await this.supabase.rpc(mutation.operation, args)
     if (error) return this.#failMutation(mutation, error.message || 'Member save failed.', error)
     if (data?.status === 'CONFLICT') return this.#markConflict(mutation, data)
@@ -468,7 +475,7 @@ export class MemberService {
       }
     }
     const retryCount = (mutation.retry_count || 0) + 1
-    await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, retry_count: retryCount, last_error: message, updated_at: now() })
+    await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, retry_count: retryCount, last_error: message, ...(this.#isDefinitiveRpcFailure(error) ? { server_outcome_unknown: false } : {}), updated_at: now() })
     await this.#patch(this.database.members, mutation.member_id, { save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, local_save_state: MEMBER_SAVE_STATES.FAILED_RETRYABLE, retry_count: retryCount, last_error: message, updated_at: now() })
   }
 
@@ -499,7 +506,7 @@ export class MemberService {
         return
       }
     }
-    await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.CONFLICT, last_error: 'The server has a newer member revision.', updated_at: now() })
+    await this.#patch(this.database.mutations, mutation.id, { save_state: MEMBER_SAVE_STATES.CONFLICT, server_outcome_unknown: false, last_error: 'The server has a newer member revision.', updated_at: now() })
     await this.#patch(this.database.members, mutation.member_id, { save_state: MEMBER_SAVE_STATES.CONFLICT, local_save_state: MEMBER_SAVE_STATES.CONFLICT, conflict_remote: response, remote_conflict_snapshot: response, last_error: 'The server has a newer member revision.', updated_at: now() })
   }
 
@@ -523,6 +530,9 @@ export class MemberService {
   async #recoverMutationJournal() {
     const rows = (await this.database.mutations.find({ selector: { scope_key: this.scopeKey, save_state: { $in: [MEMBER_SAVE_STATES.PREPARED, MEMBER_SAVE_STATES.SYNCING] } } }).exec()).map(asJson).sort((a, b) => a.created_at.localeCompare(b.created_at))
     for (const mutation of rows) {
+      if (mutation.save_state === MEMBER_SAVE_STATES.SYNCING) {
+        await this.#patch(this.database.mutations, mutation.id, { server_outcome_unknown: true })
+      }
       if (mutation.operation === 'cancel_local_member_v2') {
         await this.#removeSuperseded(mutation.supersedes_request_ids)
         const member = await this.database.members.findOne(mutation.member_id).exec(); if (member) await member.remove()
