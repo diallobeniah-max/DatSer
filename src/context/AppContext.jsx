@@ -879,7 +879,8 @@ export const AppProvider = ({ children }) => {
     const nextScope = {
       workspace: workspaceCacheScope,
       owner: dataOwnerId || user?.id || 'guest',
-      table: currentTable || 'none'
+      table: currentTable || 'none',
+      authenticatedUser: user?.id || null
     }
     const previous = runtimeRequestScopeRef.current
     if (previous && (
@@ -1202,6 +1203,7 @@ export const AppProvider = ({ children }) => {
   }, [offlinePendingChanges])
 
   const setOfflineMode = useCallback((mode) => {
+    const requestScope = runtimeRequestScopeRef.current
     const nextMode = OFFLINE_MODES.includes(mode) ? mode : 'auto'
     const browserOnline = isBrowserOnline()
     const nextOfflineModeStatus = nextMode === 'offline'
@@ -1233,7 +1235,10 @@ export const AppProvider = ({ children }) => {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
         const pendingChanges = await getPendingOfflineChanges().catch(() => [])
         const snapshot = snapshotRecord?.snapshot
-        setOfflineCacheMeta(snapshotRecord ? {
+        if (requestScope !== runtimeRequestScopeRef.current) return
+        const snapshotOwner = snapshot?.data_owner_id || (snapshot?.is_collaborator ? null : snapshot?.authenticated_user_id)
+        const snapshotMatchesWorkspace = snapshot?.authenticated_user_id === requestScope?.authenticatedUser && snapshotOwner === requestScope?.owner
+        setOfflineCacheMeta(snapshotRecord && snapshotMatchesWorkspace ? {
           cached_at: snapshotRecord.cached_at,
           member_count: snapshot?.members?.length || 0,
           table_count: snapshot?.monthlyTables?.length || 0,
@@ -1245,12 +1250,12 @@ export const AppProvider = ({ children }) => {
         setOfflinePendingChanges(pendingChanges)
         setPendingSyncCount(pendingChanges.length)
         if (nextMode === 'offline' && snapshotRecord) {
-          applyOfflineSnapshotRef.current?.(snapshotRecord)
+          if (!applyOfflineSnapshotRef.current?.(snapshotRecord, requestScope)) return
           setOfflineStatusMessage('Offline Mode - using saved local data.')
         } else if (nextMode === 'offline') {
           setOfflineStatusMessage('Download offline data before using forced offline mode.')
         } else if (nextMode === 'auto' && !isBrowserOnline() && snapshotRecord) {
-          applyOfflineSnapshotRef.current?.(snapshotRecord)
+          if (!applyOfflineSnapshotRef.current?.(snapshotRecord, requestScope)) return
           setOfflineStatusMessage('Offline Mode - using saved local data.')
         } else if (nextMode === 'online') {
           setOfflineStatusMessage('')
@@ -1536,6 +1541,7 @@ export const AppProvider = ({ children }) => {
   }, [isOnline, offlineMode, offlineSaveNoticeThreshold, pendingSyncCount])
 
   const refreshOfflineStatus = useCallback(async () => {
+    const requestScope = runtimeRequestScopeRef.current
     try {
       // A pending change that has already spent its automatic retry budget can
       // never be auto-flushed again; surface it as an explicit recoverable
@@ -1556,7 +1562,10 @@ export const AppProvider = ({ children }) => {
       ])
 
       const snapshot = snapshotRecord?.snapshot
-      setOfflineCacheMeta(snapshotRecord ? {
+      if (requestScope !== runtimeRequestScopeRef.current) return
+      const snapshotOwner = snapshot?.data_owner_id || (snapshot?.is_collaborator ? null : snapshot?.authenticated_user_id)
+      const snapshotMatchesWorkspace = snapshot?.authenticated_user_id === requestScope?.authenticatedUser && snapshotOwner === requestScope?.owner
+      setOfflineCacheMeta(snapshotRecord && snapshotMatchesWorkspace ? {
         cached_at: snapshotRecord.cached_at,
         member_count: snapshot?.members?.length || 0,
         table_count: snapshot?.monthlyTables?.length || 0,
@@ -1572,13 +1581,17 @@ export const AppProvider = ({ children }) => {
     }
   }, [])
 
-  const applyOfflineSnapshot = useCallback((snapshotRecord) => {
+  const applyOfflineSnapshot = useCallback((snapshotRecord, requestScope = runtimeRequestScopeRef.current, restoreWorkspace = false) => {
     const snapshot = snapshotRecord?.snapshot || snapshotRecord
     if (!snapshot) return false
+    if (requestScope !== runtimeRequestScopeRef.current) return false
     if (user?.id && snapshot.authenticated_user_id !== user.id) {
       console.warn('Ignoring offline snapshot for a different authenticated user.')
       return false
     }
+    const snapshotOwnerId = snapshot.data_owner_id || (snapshot.is_collaborator ? null : snapshot.authenticated_user_id)
+    if (!snapshotOwnerId) return false
+    if (!restoreWorkspace && (snapshotOwnerId !== requestScope?.owner || snapshot.currentTable !== requestScope?.table)) return false
 
     if (Array.isArray(snapshot.members)) {
       // A soft-deleted member must never be restored as active from a stale
@@ -1616,6 +1629,7 @@ export const AppProvider = ({ children }) => {
     if (typeof window === 'undefined') return undefined
 
     const handleOnline = async () => {
+      const requestScope = runtimeRequestScopeRef.current
       setIsOnline(true)
       if (isMemberV2SharedRouteEnabled()) {
         setRealDatserMemberV2Connection({
@@ -1630,6 +1644,7 @@ export const AppProvider = ({ children }) => {
         }
       }
       const pendingChanges = await getPendingOfflineChanges().catch(() => [])
+      if (requestScope !== runtimeRequestScopeRef.current) return
       setOfflineStatusMessage(
         pendingChanges.length > 0
           ? `Back online - ${pendingChanges.length} change${pendingChanges.length === 1 ? '' : 's'} waiting to sync.`
@@ -1644,6 +1659,7 @@ export const AppProvider = ({ children }) => {
       await refreshOfflineStatus()
     }
     const handleOffline = async () => {
+      const requestScope = runtimeRequestScopeRef.current
       setIsOnline(false)
       if (isMemberV2SharedRouteEnabled()) {
         setRealDatserMemberV2Connection({
@@ -1653,7 +1669,8 @@ export const AppProvider = ({ children }) => {
         })
       }
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
-      if (offlineMode === 'auto' && snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
+      if (requestScope !== runtimeRequestScopeRef.current) return
+      if (offlineMode === 'auto' && snapshotRecord && applyOfflineSnapshot(snapshotRecord, requestScope)) {
         setOfflineStatusMessage('Offline Mode - using saved local data.')
       } else if (offlineMode === 'online') {
         setOfflineStatusMessage('Online mode is selected, but internet is unavailable.')
@@ -1679,10 +1696,11 @@ export const AppProvider = ({ children }) => {
 
     let cancelled = false
     const loadCachedData = async () => {
+      const requestScope = runtimeRequestScopeRef.current
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
       if (!cancelled && snapshotRecord) {
-        applyOfflineSnapshot(snapshotRecord)
-        if (offlineMode === 'offline') {
+        const applied = applyOfflineSnapshot(snapshotRecord, requestScope)
+        if (applied && offlineMode === 'offline') {
           setOfflineStatusMessage('Offline Mode - using saved local data.')
         }
       }
@@ -1693,7 +1711,7 @@ export const AppProvider = ({ children }) => {
     return () => {
       cancelled = true
     }
-  }, [applyOfflineSnapshot, offlineMode, shouldUseOfflineData])
+  }, [applyOfflineSnapshot, currentTable, dataOwnerId, offlineMode, shouldUseOfflineData])
 
   useEffect(() => {
     if (!isOnline || pendingSyncCount > 0 || !offlineStatusMessage) return undefined
@@ -2344,6 +2362,7 @@ export const AppProvider = ({ children }) => {
 
   // Check if current user is a collaborator and get the owner's ID
   const checkCollaboratorStatus = async () => {
+    const requestScope = runtimeRequestScopeRef.current
     appContextLog('=== checkCollaboratorStatus STARTED ===')
     appContextLog('User email:', user?.email)
     appContextLog('User ID:', user?.id)
@@ -2384,7 +2403,7 @@ export const AppProvider = ({ children }) => {
     if (shouldUseOfflineData) {
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
       const snapshot = snapshotRecord?.snapshot
-      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord)) {
+      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord, requestScope, !dataOwnerId)) {
         setIsCollaborator(Boolean(snapshot.is_collaborator))
         setIsAdminCollaborator(Boolean(snapshot.is_admin_collaborator))
         // An incomplete collaborator snapshot must never silently become the
@@ -2462,8 +2481,9 @@ export const AppProvider = ({ children }) => {
         if (isBackendDegradedError(accessContextError)) {
           markBackendDegraded(accessContextError)
           const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+          if (requestScope !== runtimeRequestScopeRef.current) return null
           const snapshot = snapshotRecord?.snapshot
-          const confirmedOwnerId = snapshot?.data_owner_id || dataOwnerId || null
+          const confirmedOwnerId = (snapshot?.authenticated_user_id === user.id ? snapshot?.data_owner_id : null) || dataOwnerId || null
           if (confirmedOwnerId) {
             setIsCollaborator(Boolean(snapshot?.is_collaborator ?? confirmedOwnerId !== user.id))
             setIsAdminCollaborator(Boolean(snapshot?.is_admin_collaborator))
@@ -2619,7 +2639,7 @@ export const AppProvider = ({ children }) => {
       console.error('ERROR in checkCollaboratorStatus:', err)
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
       const snapshot = snapshotRecord?.snapshot
-      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord)) {
+      if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord, requestScope, !dataOwnerId)) {
         setIsCollaborator(Boolean(snapshot.is_collaborator))
         setIsAdminCollaborator(Boolean(snapshot.is_admin_collaborator))
         // A collaborator snapshot without a confirmed owner must not be
@@ -3224,9 +3244,22 @@ export const AppProvider = ({ children }) => {
       return Boolean(current && requestScope
         && current.workspace === requestScope.workspace
         && current.owner === requestScope.owner
+        && current.authenticatedUser === requestScope.authenticatedUser
         && current.table === tableName
         && current.table === requestScope.table
         && current.generation === requestScope.generation)
+    }
+    const applyRequestOfflineSnapshot = (snapshotRecord) => {
+      if (!isRequestScopeCurrent()) return false
+      const snapshot = snapshotRecord?.snapshot
+      const snapshotOwnerId = snapshot?.data_owner_id || (
+        snapshot?.is_collaborator ? null : snapshot?.authenticated_user_id
+      )
+      return Boolean(snapshot
+        && snapshot.authenticated_user_id === requestScope?.authenticatedUser
+        && snapshotOwnerId === requestScope?.owner
+        && snapshot.currentTable === tableName
+        && applyOfflineSnapshot(snapshotRecord))
     }
     // Tracks whether this call applied authoritative data. Used to keep the
     // dashboard in a loading state (never false-empty) when a foreground fetch
@@ -3263,7 +3296,11 @@ export const AppProvider = ({ children }) => {
 
       if (shouldUseOfflineData && !forceOnline) {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
-        if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
+        if (!isRequestScopeCurrent()) {
+          appContextLog(`Ignoring stale offline snapshot read for ${tableName}`)
+          return
+        }
+        if (applyRequestOfflineSnapshot(snapshotRecord)) {
           markHydrated()
           if (!background) {
             setLoading(false)
@@ -3306,6 +3343,10 @@ export const AppProvider = ({ children }) => {
                 return localMembers
               }
             } catch (error) {
+              if (!isRequestScopeCurrent()) {
+                appContextLog(`Ignoring stale offline Member V2 projection failure for ${tableName}`)
+                return
+              }
               console.warn('[Member V2 offline hydration] Local projection could not be loaded:', error)
             }
           }
@@ -3337,6 +3378,7 @@ export const AppProvider = ({ children }) => {
 
       // Check if we have a valid session
       const { data: { session } } = await supabase.auth.getSession()
+      if (!isRequestScopeCurrent()) return
       appContextLog('Current session:', session ? `authenticated as ${session.user?.id}` : 'not authenticated')
       if (!session) {
         const isAdminCodeLogin = authContext?.preferences?.admin_code_login === true
@@ -3391,11 +3433,14 @@ export const AppProvider = ({ children }) => {
             .select('*')))
           const { data, error } = await fullSnapshotQuery.range(from, from + pageSize - 1)
 
+          if (!isRequestScopeCurrent()) return
+
           if (error) {
             console.error('Error fetching full offline member snapshot:', error)
 
             if (isConfirmedMissingMonthTableError(error)) {
               await handleMissingTable(tableName)
+              if (!isRequestScopeCurrent()) return
               setMembers([])
               markHydrated()
               return []
@@ -3422,7 +3467,7 @@ export const AppProvider = ({ children }) => {
         // example, count reconciliation on a provisional month). Keep its
         // table-scoped cache local, but never let its late result replace the
         // currently displayed table's members.
-        if (runtimeRequestScopeRef.current?.table !== tableName) {
+        if (!isRequestScopeCurrent()) {
           appContextLog(`Ignoring stale full member snapshot for ${tableName}; current table is ${runtimeRequestScopeRef.current?.table || 'none'}`)
           return normalizedMembers
         }
@@ -3517,6 +3562,8 @@ export const AppProvider = ({ children }) => {
         { force: forceRefresh }
       )
 
+      if (!isRequestScopeCurrent()) return
+
       appContextLog(`Query result: ${data?.length || 0} rows, error: ${error?.message || 'none'}`)
 
       if (error) {
@@ -3525,6 +3572,7 @@ export const AppProvider = ({ children }) => {
 
         if (isConfirmedMissingMonthTableError(error)) {
           await handleMissingTable(tableName)
+          if (!isRequestScopeCurrent()) return
           setMembers([])
           markHydrated()
           return
@@ -3536,7 +3584,8 @@ export const AppProvider = ({ children }) => {
 
         if (isTransientSupabaseError(error) || !isBrowserOnline()) {
           const snapshotRecord = await getOfflineSnapshot().catch(() => null)
-          if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
+          if (!isRequestScopeCurrent()) return
+          if (applyRequestOfflineSnapshot(snapshotRecord)) {
             markHydrated()
             setOfflineStatusMessage('Offline Mode - using saved local data.')
             return filterDeletedMembers(snapshotRecord?.snapshot?.members || [])
@@ -3608,7 +3657,7 @@ export const AppProvider = ({ children }) => {
       if (isTransientSupabaseError(error) || !isBrowserOnline()) {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
         if (!isRequestScopeCurrent()) return
-        if (snapshotRecord && applyOfflineSnapshot(snapshotRecord)) {
+        if (applyRequestOfflineSnapshot(snapshotRecord)) {
           markHydrated()
           setOfflineStatusMessage('Offline Mode - using saved local data.')
           return filterDeletedMembers(snapshotRecord?.snapshot?.members || [])
@@ -6009,6 +6058,7 @@ export const AppProvider = ({ children }) => {
 
   // Fetch available month tables from database
   const fetchMonthlyTables = useCallback(async (options = {}) => {
+    const requestScope = runtimeRequestScopeRef.current
     // Helper to clear invalid table selection
     const clearInvalidTable = () => {
       console.log('Clearing invalid/empty table selection')
@@ -6061,9 +6111,11 @@ export const AppProvider = ({ children }) => {
 
       if (shouldUseOfflineData) {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        if (requestScope !== runtimeRequestScopeRef.current) return
         const snapshot = snapshotRecord?.snapshot
         if (
           snapshot?.authenticated_user_id === user?.id &&
+          (snapshot.data_owner_id || (snapshot.is_collaborator ? null : snapshot.authenticated_user_id)) === ownerId &&
           Array.isArray(snapshot.monthlyTables) &&
           snapshot.monthlyTables.length > 0
         ) {
@@ -6088,6 +6140,7 @@ export const AppProvider = ({ children }) => {
         }),
         { force: options?.forceRefresh || false, cacheResult: true }
       )
+      if (requestScope !== runtimeRequestScopeRef.current) return
 
       if (error) {
         // If RPC is missing (legacy), try fallback to direct select if we are the owner
@@ -6110,6 +6163,8 @@ export const AppProvider = ({ children }) => {
             .from('user_month_tables')
             .select('table_name')
             .eq('user_id', ownerId)
+
+          if (requestScope !== runtimeRequestScopeRef.current) return
 
           if (!directError && directData) {
             const tableNames = directData.map(entry => entry.table_name).filter(Boolean)
@@ -6141,6 +6196,8 @@ export const AppProvider = ({ children }) => {
             .from('user_month_tables')
             .select('table_name')
             .eq('user_id', ownerId)
+
+          if (requestScope !== runtimeRequestScopeRef.current) return
 
           if (!directError && directData) {
             const directTables = directData.map(entry => entry.table_name).filter(Boolean)
@@ -7780,6 +7837,7 @@ export const AppProvider = ({ children }) => {
 
   // Load all attendance data for all Sunday dates in the current month
   const loadAllAttendanceData = useCallback(async (options = {}) => {
+    const runtimeScope = runtimeRequestScopeRef.current
     const { forceOnline = false } = options
     const ownerId = dataOwnerId || user?.id
     const requestScope = `${ownerId || 'guest'}:${currentTable}`
@@ -7787,7 +7845,7 @@ export const AppProvider = ({ children }) => {
       if (shouldUseOfflineData && !forceOnline) {
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
         const snapshot = snapshotRecord?.snapshot
-        if (snapshot?.attendanceData && applyOfflineSnapshot(snapshotRecord)) {
+        if (snapshot?.attendanceData && applyOfflineSnapshot(snapshotRecord, runtimeScope)) {
           return snapshot.attendanceData
         }
       }
@@ -7901,6 +7959,8 @@ export const AppProvider = ({ children }) => {
       const reconciledAttendanceData = pendingChanges.length > 0
         ? applyPendingAttendanceChanges(newAttendanceData, pendingChanges, currentTable)
         : newAttendanceData
+
+      if (runtimeScope !== runtimeRequestScopeRef.current) return attendanceDataRef.current
 
       // Update attendance data state cleanly
       setAttendanceData(prev => {
