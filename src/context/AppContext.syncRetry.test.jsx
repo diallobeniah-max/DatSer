@@ -217,6 +217,10 @@ const seededMemberAddChange = (overrides = {}) => ({
   ...overrides
 })
 
+// Load after mock state is initialized, before individual test deadlines.
+// Cold AppContext transforms can exceed 5s when the full suite runs in parallel.
+const { AppProvider, useApp } = await import('./AppContext.jsx')
+
 describe('AppContext offline sync flush retry safety', () => {
   beforeEach(() => {
     process.env.VITE_SUPABASE_URL = 'https://test.supabase.co'
@@ -265,7 +269,6 @@ describe('AppContext offline sync flush retry safety', () => {
   }
 
   const mountApp = async () => {
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const app = useApp()
       useEffect(() => {
@@ -523,7 +526,6 @@ describe('AppContext offline sync flush retry safety', () => {
 
   it('recreates the flush scheduler after a StrictMode dispose/remount so auto-sync still fires', async () => {
     pendingStore = [seededMemberUpdateChange()]
-    const { AppProvider, useApp } = await import('./AppContext.jsx')
     const StateProbe = ({ onState }) => {
       const app = useApp()
       useEffect(() => {

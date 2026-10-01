@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, memo, Suspense } from 'react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { supabase } from '../lib/supabase'
 import { Search, Users, UserX, Filter, Edit3, Trash2, Calendar, ChevronDown, ChevronUp, ChevronRight, ChevronLeft, UserPlus, Award, Star, UserCheck, Check, X, Feather, StickyNote, History, Eye, Shield, MoreHorizontal, Phone, MessageSquare, Mail, Share2, Church, ScanLine, Loader2 } from 'lucide-react'
@@ -28,6 +29,7 @@ import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import SearchScopeModal from './SearchScopeModal'
 import { formatHistoricalScopeSummary } from '../utils/historicalSearchSettings'
+import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 import { getRecentCsvImportMemberProvenance, fetchRecentCsvImportMemberProvenance } from '../utils/csvImportMemberProvenance'
 import {
   resolveInlineAttendanceAction,
@@ -58,6 +60,11 @@ const getDateString = (date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+const getSafeAttendanceErrorMessage = (error, fallback) => {
+  const message = String(error?.message || '')
+  return message.startsWith('Member V2 has unsynced local work.') ? message : fallback
 }
 
 const isPreferenceEnabled = (value) => (
@@ -413,6 +420,7 @@ const Dashboard = ({ isAdmin = false }) => {
     deleteMember,
     logActivity,
     markAttendance,
+    applyMemberV2AttendanceState,
     bulkAttendance,
     fetchAndApplyAttendanceForDate,
     attendanceData,
@@ -445,7 +453,6 @@ const Dashboard = ({ isAdmin = false }) => {
     missingInfoPromptEnabled,
     isCollaborator,
     dataOwnerId,
-    user,
     isDeveloperBypass,
     searchSuggestionView,
     preferences,
@@ -455,8 +462,10 @@ const Dashboard = ({ isAdmin = false }) => {
     workspaceMemberCodeStatus,
     guidedFormSettings,
     recentMemberEdits,
-    formatMemberName
+    formatMemberName,
+    memberV2Enabled
   } = useApp()
+  const { user } = useAuth()
   const { isDarkMode } = useTheme()
   const workspaceOwnerId = dataOwnerId || user?.id
   const [recentCsvImportMembers, setRecentCsvImportMembers] = useState(() => getRecentCsvImportMemberProvenance({ ownerId: workspaceOwnerId }))
@@ -833,7 +842,8 @@ const Dashboard = ({ isAdmin = false }) => {
 
     setIsBulkApplying(true)
     try {
-      await bulkAttendance(memberIds, dateToUse, present)
+      if (memberV2Enabled) await saveMemberV2AttendanceForMembers(memberIds, getDateString(dateToUse), present)
+      else await bulkAttendance(memberIds, dateToUse, present)
       // Record action timestamps for chronological sorting
       const dateKey = getDateString(dateToUse)
       const now = Date.now()
@@ -847,7 +857,7 @@ const Dashboard = ({ isAdmin = false }) => {
     } catch (error) {
       console.error('Bulk action error:', error)
       errorHaptic()
-      toast.error('Failed to update attendance')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to update attendance'))
     } finally {
       setIsBulkApplying(false)
     }
@@ -1291,7 +1301,7 @@ const Dashboard = ({ isAdmin = false }) => {
       onConfirm: async () => {
         try {
           for (const id of Array.from(selectedDuplicateIds)) {
-            await deleteMember(id)
+            await deleteMemberWithActiveEngine(id)
           }
           setSelectedDuplicateIds(new Set())
           toast.success(`Deleted ${selectedDuplicateIds.size} duplicate member${selectedDuplicateIds.size !== 1 ? 's' : ''}.`)
@@ -1317,7 +1327,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
       // Sequentially delete members
       for (const id of idsToDelete) {
-        await deleteMember(id)
+        await deleteMemberWithActiveEngine(id)
       }
       toast.success(`Deleted ${idsToDelete.length} member${idsToDelete.length !== 1 ? 's' : ''}`)
       clearSelection()
@@ -1430,10 +1440,23 @@ const Dashboard = ({ isAdmin = false }) => {
     setIsDeleteConfirmOpen(true)
   }
 
+  const deleteMemberWithActiveEngine = async (memberOrId) => {
+    const member = typeof memberOrId === 'object'
+      ? memberOrId
+      : members.find((candidate) => String(candidate.id) === String(memberOrId))
+    if (!memberV2Enabled) return deleteMember(member?.id || memberOrId)
+    if (!member || !workspaceOwnerId) throw new Error('Unable to determine the Member V2 member to delete.')
+    const targetTable = member.__source_table || member.source_table || currentTable
+    if (targetTable !== currentTable) throw new Error('Member V2 deletion is limited to the selected source month.')
+    const adapter = await getRealMemberV2UiAdapter({ supabase, userId: user?.id, ownerId: workspaceOwnerId })
+    const result = await adapter.deleteMember({ member, tableName: targetTable })
+    return { success: true, offline: result.syncState.state === 'OFFLINE_PENDING', pending: result.syncState.pendingChanges > 0, syncState: result.syncState }
+  }
+
   const confirmDelete = async () => {
     if (!memberToDelete) return
     try {
-      const result = await deleteMember(memberToDelete.id)
+      const result = await deleteMemberWithActiveEngine(memberToDelete)
       if (!result?.success) {
         throw result?.error || new Error('Delete failed')
       }
@@ -1460,9 +1483,74 @@ const Dashboard = ({ isAdmin = false }) => {
     setAttendanceLoading((previous) => ({ ...previous, [loadingKey]: nextCount > 0 }))
   }
 
+  const saveMemberV2Attendance = async (member, attendanceDate, present) => {
+    if (!memberV2Enabled) return null
+    if (!member || !workspaceOwnerId) throw new Error('Unable to determine the Member V2 workspace for attendance.')
+    const targetTable = member.__source_table || member.source_table || currentTable
+    if (targetTable !== currentTable) {
+      throw new Error('Attendance can only be changed from the member\'s selected source month.')
+    }
+    const adapter = await getRealMemberV2UiAdapter({ supabase, userId: user?.id, ownerId: workspaceOwnerId })
+    const result = await adapter.saveAttendance({
+      member,
+      tableName: targetTable,
+      attendanceDate,
+      status: present === null ? null : present ? 'Present' : 'Absent',
+    })
+    applyMemberV2AttendanceState?.({
+      memberId: member.id,
+      tableName: targetTable,
+      attendanceDate,
+      status: present === null ? null : present ? 'Present' : 'Absent',
+    })
+    return {
+      success: true,
+      offline: result.syncState.state === 'OFFLINE_PENDING',
+      pending: result.syncState.pendingChanges > 0,
+      syncState: result.syncState,
+    }
+  }
+
+  const showMemberV2AttendanceOutcome = (member, attendanceDate, actionLabel, toastKind, result) => {
+    if (!member) return
+    const syncState = result?.syncState || {}
+    const pending = Number(syncState.pendingChanges || 0) > 0
+    const failed = Number(syncState.failedChanges || 0) > 0
+    const conflicted = Number(syncState.conflicts || 0) > 0
+    const kind = conflicted || failed ? 'error' : pending ? 'sync' : toastKind
+    const details = conflicted
+      ? 'Saved on this device, but the server has a conflicting attendance change to resolve.'
+      : failed
+        ? 'Saved on this device, but the server has not confirmed it yet. It will remain available for retry.'
+        : pending
+          ? 'Saved on this device and queued for automatic sync.'
+          : `Attendance confirmed for ${attendanceDate}.`
+    notify.show(kind, {
+      title: getMemberSearchName(member),
+      message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+      details,
+      toastId: `attendance:${member.id}:${attendanceDate}`,
+      autoClose: conflicted || failed ? 5200 : 2400,
+    })
+  }
+
+  // Member V2 has no bulk RPC by design. Fan out only through its durable
+  // per-member attendance service so the experiment never mixes an RxDB write
+  // with the legacy monthly-table queue.
+  const saveMemberV2AttendanceForMembers = async (memberIds, attendanceDate, present) => {
+    const uniqueIds = Array.from(new Set(memberIds.map(String)))
+    const results = []
+    for (const memberId of uniqueIds) {
+      const member = members.find((candidate) => String(candidate.id) === memberId)
+      if (!member) throw new Error('A selected member is no longer available for attendance.')
+      results.push(await saveMemberV2Attendance(member, attendanceDate, present))
+    }
+    return results
+  }
+
   const handleAttendance = async (memberId, present) => {
     const targetDate = getDateString(selectedAttendanceDate)
-    const actionKey = `${memberId}:${targetDate || 'no-date'}:${present ? 'present' : 'absent'}`
+    const actionKey = `${memberId}:${targetDate || 'no-date'}:${present === null ? 'clear' : present ? 'present' : 'absent'}`
 
     if (attendanceActionLocksRef.current.has(actionKey)) {
       return
@@ -1470,7 +1558,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
     attendanceActionLocksRef.current.add(actionKey)
 
-    const member = members.find(m => m.id === memberId)
+    const member = members.find((candidate) => String(candidate.id) === String(memberId))
     try {
       // Check for missing data before marking attendance
       if (member && checkMissingDataBeforeAttendance(member, present)) {
@@ -1495,7 +1583,7 @@ const Dashboard = ({ isAdmin = false }) => {
       else if (nextStatus) success()
       else errorHaptic()
 
-      if (member) {
+      if (member && !memberV2Enabled) {
         notify.show(toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${timeLabel}`,
@@ -1505,9 +1593,13 @@ const Dashboard = ({ isAdmin = false }) => {
         })
       }
 
-      const result = await markAttendance(memberId, new Date(targetDate), nextStatus)
+      const result = memberV2Enabled
+        ? await saveMemberV2Attendance(member, targetDate, nextStatus)
+        : await markAttendance(memberId, new Date(targetDate), nextStatus)
       if (result?.superseded) return
-      if (member) {
+      if (member && memberV2Enabled) {
+        showMemberV2AttendanceOutcome(member, targetDate, actionLabel, toastKind, result)
+      } else if (member) {
         notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
@@ -1524,7 +1616,7 @@ const Dashboard = ({ isAdmin = false }) => {
     } catch (error) {
       console.error('Error marking attendance:', error)
       errorHaptic()
-      toast.error('Failed to update attendance. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to update attendance. Please try again.'))
     } finally {
       endAttendanceSaving(memberId)
       attendanceActionLocksRef.current.delete(actionKey)
@@ -1533,7 +1625,7 @@ const Dashboard = ({ isAdmin = false }) => {
 
   const handleAttendanceForDate = async (memberId, present, specificDate) => {
     const loadingKey = `${memberId}_${specificDate}`
-    const actionKey = `${memberId}:${specificDate || 'no-date'}:${present ? 'present' : 'absent'}`
+    const actionKey = `${memberId}:${specificDate || 'no-date'}:${present === null ? 'clear' : present ? 'present' : 'absent'}`
 
     if (attendanceActionLocksRef.current.has(actionKey)) {
       return
@@ -1544,7 +1636,7 @@ const Dashboard = ({ isAdmin = false }) => {
       beginAttendanceSaving(loadingKey)
       // Read from date-keyed attendance map
       const currentStatus = attendanceData[specificDate]?.[memberId]
-      const member = members.find(m => m.id === memberId)
+      const member = members.find((candidate) => String(candidate.id) === String(memberId))
       const nextStatus = currentStatus === present ? null : present
       const actionLabel = nextStatus === null ? 'Cleared' : nextStatus ? 'Present' : 'Absent'
       const toastKind = nextStatus === null ? 'info' : nextStatus ? 'success' : 'warning'
@@ -1555,7 +1647,7 @@ const Dashboard = ({ isAdmin = false }) => {
       else if (nextStatus) success()
       else errorHaptic()
 
-      if (member) {
+      if (member && !memberV2Enabled) {
         notify.show(toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${timeLabel}`,
@@ -1565,9 +1657,13 @@ const Dashboard = ({ isAdmin = false }) => {
         })
       }
 
-      const result = await markAttendance(memberId, new Date(specificDate), nextStatus)
+      const result = memberV2Enabled
+        ? await saveMemberV2Attendance(member, specificDate, nextStatus)
+        : await markAttendance(memberId, new Date(specificDate), nextStatus)
       if (result?.superseded) return
-      if (member) {
+      if (member && memberV2Enabled) {
+        showMemberV2AttendanceOutcome(member, specificDate, actionLabel, toastKind, result)
+      } else if (member) {
         notify.show(result?.success === false ? 'error' : result?.offline ? 'sync' : toastKind, {
           title: getMemberSearchName(member),
           message: `${actionLabel} • ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
@@ -1584,7 +1680,7 @@ const Dashboard = ({ isAdmin = false }) => {
     } catch (error) {
       console.error('Error marking attendance:', error)
       errorHaptic()
-      toast.error('Failed to update attendance. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to update attendance. Please try again.'))
     } finally {
       endAttendanceSaving(loadingKey)
       attendanceActionLocksRef.current.delete(actionKey)
@@ -1606,7 +1702,8 @@ const Dashboard = ({ isAdmin = false }) => {
       onConfirm: async () => {
         try {
           const memberIds = contextFilteredMembers.map(member => member.id)
-          await bulkAttendance(memberIds, dateToUse, present)
+          if (memberV2Enabled) await saveMemberV2AttendanceForMembers(memberIds, getDateString(dateToUse), present)
+          else await bulkAttendance(memberIds, dateToUse, present)
           // Record action timestamps for chronological sorting
           const bulkDateKey = getDateString(dateToUse)
           const bulkNow = Date.now()
@@ -1621,7 +1718,7 @@ const Dashboard = ({ isAdmin = false }) => {
         } catch (error) {
           console.error('Error with bulk attendance:', error)
           errorHaptic()
-          toast.error('Error updating attendance. Please try again.', {
+          toast.error(getSafeAttendanceErrorMessage(error, 'Error updating attendance. Please try again.'), {
             style: { background: '#ef4444', color: '#ffffff' }
           })
         }
@@ -1656,11 +1753,13 @@ const Dashboard = ({ isAdmin = false }) => {
       onConfirm: async () => {
         setIsBulkApplying(true)
         try {
-          const result = await bulkAttendance(markedMemberIds, new Date(selectedSundayDate), null)
-          if (!result?.success) throw result?.error || new Error('Attendance clear could not be verified.')
-          await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
+          const result = memberV2Enabled
+            ? await saveMemberV2AttendanceForMembers(markedMemberIds, selectedSundayDate, null)
+            : await bulkAttendance(markedMemberIds, new Date(selectedSundayDate), null)
+          if (!memberV2Enabled && !result?.success) throw result?.error || new Error('Attendance clear could not be verified.')
+          if (!memberV2Enabled) await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
           selection()
-          toast.success(`Cleared ${result.updated ?? markedMemberIds.length} attendance marks for ${dateLabel}.`)
+          toast.success(`Cleared ${memberV2Enabled ? markedMemberIds.length : result.updated ?? markedMemberIds.length} attendance marks for ${dateLabel}.`)
         } catch (error) {
           console.error('Error clearing selected Sunday attendance:', error)
           errorHaptic()
@@ -1774,21 +1873,26 @@ const Dashboard = ({ isAdmin = false }) => {
     try {
       // Transfer present members
       if (presentIds.length > 0) {
-        await bulkAttendance(presentIds, new Date(transferTargetDate), true)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers(presentIds, transferTargetDate, true)
+        else await bulkAttendance(presentIds, new Date(transferTargetDate), true)
       }
       // Transfer absent members
       if (absentIds.length > 0) {
-        await bulkAttendance(absentIds, new Date(transferTargetDate), false)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers(absentIds, transferTargetDate, false)
+        else await bulkAttendance(absentIds, new Date(transferTargetDate), false)
       }
 
       // Clear source date attendance for transferred members
       for (const id of [...presentIds, ...absentIds]) {
-        await markAttendance(id, new Date(selectedSundayDate), null)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers([id], selectedSundayDate, null)
+        else await markAttendance(id, new Date(selectedSundayDate), null)
       }
 
       // Refresh attendance data
-      await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
-      await fetchAndApplyAttendanceForDate(new Date(transferTargetDate))
+      if (!memberV2Enabled) {
+        await fetchAndApplyAttendanceForDate(new Date(selectedSundayDate))
+        await fetchAndApplyAttendanceForDate(new Date(transferTargetDate))
+      }
 
       const sourceLabel = new Date(selectedSundayDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       const targetLabel = new Date(transferTargetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -1801,7 +1905,7 @@ const Dashboard = ({ isAdmin = false }) => {
       setSelectedSundayDate(transferTargetDate) // Switch to target date
     } catch (error) {
       console.error('Transfer failed:', error)
-      toast.error('Failed to transfer attendance. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to transfer attendance. Please try again.'))
     } finally {
       setIsTransferring(false)
     }
@@ -1864,10 +1968,12 @@ const Dashboard = ({ isAdmin = false }) => {
       if (status === null) {
         // Clear individually when status is null
         for (const id of memberIds) {
-          await markAttendance(id, new Date(targetDate), null)
+          if (memberV2Enabled) await saveMemberV2AttendanceForMembers([id], targetDate, null)
+          else await markAttendance(id, new Date(targetDate), null)
         }
       } else {
-        await bulkAttendance(memberIds, new Date(targetDate), status)
+        if (memberV2Enabled) await saveMemberV2AttendanceForMembers(memberIds, targetDate, status)
+        else await bulkAttendance(memberIds, new Date(targetDate), status)
       }
       // Record action timestamps for chronological sorting
       const multiNow = Date.now()
@@ -1878,7 +1984,7 @@ const Dashboard = ({ isAdmin = false }) => {
       toast.success(`Bulk ${actionText} applied to ${memberIds.length} member(s) for ${dateLabel}.`)
     } catch (error) {
       console.error('Bulk attendance failed:', error)
-      toast.error('Failed to apply bulk update. Please try again.')
+      toast.error(getSafeAttendanceErrorMessage(error, 'Failed to apply bulk update. Please try again.'))
     } finally {
       setIsBulkApplying(false)
     }
@@ -1944,6 +2050,48 @@ const Dashboard = ({ isAdmin = false }) => {
       })
     })
   }
+
+  const memberV2DashboardDerivedRows = memberV2Enabled ? getTabFilteredMembers() : []
+  const memberV2DashboardVisibleRows = searchTerm
+    ? memberV2DashboardDerivedRows
+    : memberV2DashboardDerivedRows.slice(0, displayLimit)
+  useEffect(() => {
+    if (!memberV2Enabled || typeof window === 'undefined') return undefined
+    const trace = window.__datserMemberV2IdTrace
+    if (!trace?.enabled) return undefined
+    const wantedIds = new Set((trace.memberIds || []).map(String))
+    const safeRows = (rows = []) => rows
+      .filter((row) => wantedIds.has(String(row?.id || '')))
+      .map((row) => ({
+        id: String(row.id),
+        referenceId: (() => {
+          trace.objectReferences ||= new WeakMap()
+          trace.nextObjectReferenceId ||= 1
+          if (!trace.objectReferences.has(row)) trace.objectReferences.set(row, trace.nextObjectReferenceId++)
+          return trace.objectReferences.get(row)
+        })(),
+        tableName: row.source_table || row.__source_table || currentTable || null,
+        ownerId: row.workspace_owner_id || row.user_id || null,
+        serverRevision: row.server_revision ?? null,
+        profileValueMatches: trace.expectedProfileValue == null ? null : String(row['Full Name'] ?? row.full_name ?? '') === String(trace.expectedProfileValue),
+        fullNameAliasMatches: trace.expectedProfileValue == null ? null : String(row.full_name ?? row['full_name'] ?? '') === String(trace.expectedProfileValue),
+        memberCardDisplayNameMatches: trace.expectedProfileValue == null ? null : String(row.full_name || row['full_name'] || row['Full Name'] || row.name || row.Name || '') === String(trace.expectedProfileValue),
+        deleted: Boolean(row.deleted_at || row.is_deleted),
+        saveState: row.__member_v2_save_state || row.save_state || null,
+        reactKey: String(getMemberCanonicalId(row) || row.id),
+      }))
+    const diagnostic = {
+      currentTable,
+      contextRows: safeRows(contextFilteredMembers),
+      appContextRows: safeRows(members),
+      derivedRows: safeRows(memberV2DashboardDerivedRows),
+      visibleRows: safeRows(memberV2DashboardVisibleRows),
+    }
+    window.__datserMemberV2DashboardDiagnostic = diagnostic
+    trace.events ||= []
+    trace.events.push({ at: new Date().toISOString(), stage: 'dashboard-derived-list', ...diagnostic })
+    return () => { delete window.__datserMemberV2DashboardDiagnostic }
+  }, [contextFilteredMembers, currentTable, dashboardTab, displayLimit, memberV2DashboardDerivedRows, memberV2DashboardVisibleRows, memberV2Enabled, members, searchTerm])
 
 
 
@@ -2476,7 +2624,9 @@ const Dashboard = ({ isAdmin = false }) => {
     const timer = window.setTimeout(async () => {
       turboCheckInRef.current = { key: runKey, running: true }
       try {
-        const result = await markAttendance(exactMember.id, date, true)
+        const result = memberV2Enabled
+          ? await saveMemberV2Attendance(exactMember, dateKey, true)
+          : await markAttendance(exactMember.id, date, true)
         if (result?.success === false) throw result.error || new Error('Check-in failed')
         success()
         if (memberCodeTurboNotificationEnabled) {
@@ -2490,6 +2640,7 @@ const Dashboard = ({ isAdmin = false }) => {
         }
       } catch (error) {
         console.error('Turbo code check-in failed:', error)
+        toast.error(getSafeAttendanceErrorMessage(error, 'Check-in failed. Please try again.'))
       } finally {
         turboCheckInRef.current.running = false
       }
@@ -2616,7 +2767,7 @@ const Dashboard = ({ isAdmin = false }) => {
     )
   }
 
-  if ((loading || memberHydrationState !== 'HYDRATED') && (!members || members.length === 0)) {
+  if ((loading || (memberHydrationState !== 'HYDRATED' && memberHydrationState !== 'OFFLINE_UNAVAILABLE')) && (!members || members.length === 0)) {
     return (
       <div className={`${dashboardShellClass} mx-auto mt-8`}>
         <TableSkeleton />
@@ -2626,6 +2777,11 @@ const Dashboard = ({ isAdmin = false }) => {
 
   return (
     <div className={`space-y-2 pb-0 md:pb-14 ${isSearchFocused ? 'keyboard-search-active' : ''} ${dashboardShellClass} mx-auto`}>
+      {memberHydrationState === 'OFFLINE_UNAVAILABLE' && (!members || members.length === 0) && (
+        <div role="status" className="mx-auto mt-6 w-[96%] rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+          Offline member data is not saved on this device. Reconnect to load this workspace.
+        </div>
+      )}
       {/* Header removed; summary now shown in sticky Header */}
 
       {/* Desktop tab navigation removed; use mobile segmented control in Header */}
@@ -2931,7 +3087,7 @@ const Dashboard = ({ isAdmin = false }) => {
                           console.log(`[DELETE] Delete Others clicked - deleting ${toDelete.length} members:`, toDelete)
                           for (const id of toDelete) {
                             try {
-                              await deleteMember(id)
+                              await deleteMemberWithActiveEngine(id)
                             } catch (error) {
                               console.error(`[DELETE] Failed to delete member ${id}:`, error)
                             }
@@ -2979,7 +3135,7 @@ const Dashboard = ({ isAdmin = false }) => {
                             onClick={async () => {
                               console.log(`[DELETE] Delete button clicked for member ID: ${m.id}`)
                               try {
-                                await deleteMember(m.id)
+                                await deleteMemberWithActiveEngine(m)
                               } catch (error) {
                                 console.error(`[DELETE] Failed to delete member ${m.id}:`, error)
                               }

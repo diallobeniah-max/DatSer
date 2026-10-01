@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-rxdb-poc
+dist-rxdb-member-phase1
 *.local
 
 # Editor directories and files
@@ -45,3 +47,8 @@ test-gemini.js
 .vercel
 .env*.local
 .trae/rules/project_rules.md
+
+# Local test evidence may contain synthetic login credentials and auth tokens.
+/output/
+/test-results/
+/playwright-report/

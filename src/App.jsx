@@ -10,6 +10,7 @@ import LoginPage from './components/LoginPage'
 import TutorialPromptBar from './components/TutorialPromptBar'
 import AppUpdatePrompt from './components/AppUpdatePrompt'
 import OfflineStatusBanner from './components/OfflineStatusBanner'
+import RealMemberV2LocalDiagnostics from './experiments/rxdb-member-phase1/RealMemberV2LocalDiagnostics'
 import useHapticFeedback from './hooks/useHapticFeedback'
 import { Check, Minimize2, X } from 'lucide-react'
 import MissingDataModal from './components/MissingDataModal'
@@ -477,13 +478,13 @@ function AppContent({ isMobile }) {
     const tutorialDismissed = localStorage.getItem('tutorialPrompt_dismissed')
     const hasWorkspace = !!preferences?.workspace_name
     const hasMembers = (members?.length || 0) > 0
-    
+
     // Show tutorial prompt bar for new users who haven't dismissed it
     // The full onboarding wizard only opens when user taps Yes on the prompt bar
     if (!tutorialDismissed && !onboardingComplete && (!hasWorkspace || !hasMembers)) {
       setTimeout(() => setShowTutorialPrompt(true), 1000)
     }
-    
+
     setOnboardingAutoChecked(true)
   }, [appLoading, onboardingAutoChecked, members, preferences])
 
@@ -628,6 +629,7 @@ function AppContent({ isMobile }) {
             setNavigateToSettingsSection({ section: 'data', settingId: 'offline_mode' })
           }}
         />
+        <RealMemberV2LocalDiagnostics />
         {currentView === 'dashboard' && (
           <Dashboard isAdmin={isAdmin} />
         )}

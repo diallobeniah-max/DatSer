@@ -95,6 +95,49 @@ describe('Settings Registry & Preference Service', () => {
     expect(invalidWorkspace.code).toBe('UNSUPPORTED_PREFERENCE_KEY')
   })
 
+  it.each(['owner-uuid-123', 'collaborator-uuid'])('hydrates the database personal/workspace contract for %s', async (actorId) => {
+    supabase.rpc.mockResolvedValueOnce({ data: {
+      actor_id: actorId, owner_id: 'owner-uuid-123',
+      personal: { theme_mode: 'dark', calendar_mode: 'manual', manual_month_table: 'September_2026', manual_sunday_date: '2026-09-27' },
+      workspace: { member_code_church_name: 'Saved workspace' },
+      personal_revision: '7', workspace_revision: '9'
+    }, error: null })
+    const bundle = await loadPreferenceBundle('owner-uuid-123')
+    expect(bundle.personalPreferences).toMatchObject({ theme_mode: 'dark', calendar_mode: 'manual', manual_month_table: 'September_2026', manual_sunday_date: '2026-09-27' })
+    expect(bundle.workspacePreferences.member_code_church_name).toBe('Saved workspace')
+    expect(bundle.personalRevision).toBe(7n)
+    expect(bundle.workspaceRevision).toBe(9n)
+    expect(bundle.isOwner).toBe(actorId === 'owner-uuid-123')
+  })
+
+  it('preserves explicit preference and ownership keys when both contracts are present', async () => {
+    supabase.rpc.mockResolvedValueOnce({ data: {
+      personal_preferences: { theme_mode: 'light' }, personal: { theme_mode: 'dark' },
+      workspace_preferences: { member_code_church_name: 'Explicit' }, workspace: { member_code_church_name: 'Fallback' },
+      is_owner: false, actor_id: 'owner-uuid-123', owner_id: 'owner-uuid-123'
+    }, error: null })
+    const bundle = await loadPreferenceBundle('owner-uuid-123')
+    expect(bundle.personalPreferences.theme_mode).toBe('light')
+    expect(bundle.workspacePreferences.member_code_church_name).toBe('Explicit')
+    expect(bundle.isOwner).toBe(false)
+  })
+
+  it('retains server calendar preferences when conflict recovery uses database bundle keys', async () => {
+    supabase.rpc.mockResolvedValueOnce({ data: null, error: { code: '40001', message: 'Revision conflict' } })
+      .mockResolvedValueOnce({ data: {
+        actor_id: 'actor', owner_id: 'owner', personal_revision: '10', workspace_revision: '4',
+        personal: { theme_mode: 'dark', calendar_mode: 'manual', manual_month_table: 'September_2026' },
+        workspace: { member_code_church_name: 'Saved workspace' }
+      }, error: null })
+      .mockResolvedValueOnce({ data: { preferences: { theme_mode: 'light' }, revision: '11' }, error: null })
+    const result = await savePersonalPreferencePatch({ theme_mode: 'light' })
+    expect(result.success).toBe(true)
+    expect(supabase.rpc).toHaveBeenLastCalledWith('save_personal_preferences', expect.objectContaining({ p_expected_revision: 10 }))
+    expect(getCachedPreferenceBundle().personalPreferences).toMatchObject({ theme_mode: 'light', calendar_mode: 'manual', manual_month_table: 'September_2026' })
+    expect(getCachedPreferenceBundle().workspacePreferences.member_code_church_name).toBe('Saved workspace')
+    expect(getCachedPreferenceBundle().isOwner).toBe(false)
+  })
+
   it('saves personal preference patch with request ID and deduplicates in-flight calls', async () => {
     supabase.rpc.mockResolvedValueOnce({
       data: {

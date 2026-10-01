@@ -128,6 +128,25 @@ const getResponsePreferences = (data, scope, fallbackPatch) => {
   return data.workspace_preferences || data.preferences || fallbackPatch
 }
 
+// The database bundle uses personal/workspace; keep explicit client keys
+// compatible while honoring the actor/owner identity returned by the RPC.
+const normalizePreferenceBundle = (data, ownerId) => ({
+  personalPreferences: {
+    ...getPersonalSettingsDefaults(),
+    ...(data.personal_preferences || data.personal || {})
+  },
+  workspacePreferences: {
+    ...getWorkspaceSettingsDefaults(),
+    ...(data.workspace_preferences || data.workspace || {})
+  },
+  personalRevision: toBigIntRevision(data.personal_revision),
+  workspaceRevision: toBigIntRevision(data.workspace_revision),
+  isOwner: data.is_owner === undefined
+    ? (data.actor_id && data.owner_id ? data.actor_id === data.owner_id : true)
+    : Boolean(data.is_owner),
+  ownerId: data.owner_id || ownerId || null
+})
+
 export const generateRequestId = (prefix = 'req') => (
   `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
 )
@@ -173,20 +192,7 @@ export const loadPreferenceBundle = async (ownerId, { timeoutMs = BUNDLE_LOAD_TI
 
       markBackendHealthy()
 
-      inMemoryPreferenceBundle = {
-        personalPreferences: {
-          ...getPersonalSettingsDefaults(),
-          ...(data.personal_preferences || {})
-        },
-        workspacePreferences: {
-          ...getWorkspaceSettingsDefaults(),
-          ...(data.workspace_preferences || {})
-        },
-        personalRevision: toBigIntRevision(data.personal_revision),
-        workspaceRevision: toBigIntRevision(data.workspace_revision),
-        isOwner: data.is_owner === undefined ? true : Boolean(data.is_owner),
-        ownerId: data.owner_id || ownerId || null
-      }
+      inMemoryPreferenceBundle = normalizePreferenceBundle(data, ownerId)
 
       return inMemoryPreferenceBundle
     } finally {
@@ -222,20 +228,7 @@ const loadConfirmedBundleForConflict = async (ownerId) => {
       }
 
       markBackendHealthy()
-      inMemoryPreferenceBundle = {
-        personalPreferences: {
-          ...getPersonalSettingsDefaults(),
-          ...(data.personal_preferences || {})
-        },
-        workspacePreferences: {
-          ...getWorkspaceSettingsDefaults(),
-          ...(data.workspace_preferences || {})
-        },
-        personalRevision: toBigIntRevision(data.personal_revision),
-        workspaceRevision: toBigIntRevision(data.workspace_revision),
-        isOwner: data.is_owner === undefined ? true : Boolean(data.is_owner),
-        ownerId: data.owner_id || ownerId || null
-      }
+      inMemoryPreferenceBundle = normalizePreferenceBundle(data, ownerId)
       return inMemoryPreferenceBundle
     } catch (error) {
       if (isBackendDegradedError(error)) markBackendDegraded(error)

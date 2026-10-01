@@ -17,9 +17,11 @@ import useKeyboardSafeModal, { dismissKeyboardForNonTextControl, dismissMobileKe
 import AttendanceChoice from './AttendanceChoice'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
+import { assertLegacyMemberFlowIsSafe } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 
 const MemberModal = ({ isOpen, onClose }) => {
-  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment } = useApp()
+  const { addMember, markAttendance, currentTable, toggleMemberBadge, updateMemberBadges, updateMember, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, refreshMemberPreviewById, ensureMemberCodeAssignment, applyMemberV2AttendanceState, memberV2Enabled } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { isDarkMode } = useTheme()
   const { selection, success } = useHapticFeedback()
@@ -295,7 +297,81 @@ const MemberModal = ({ isOpen, onClose }) => {
         throw new Error('Unable to determine the workspace owner for this save')
       }
 
-      if (!isSupabaseConfigured()) {
+      if (!memberV2Enabled) {
+        assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId })
+      }
+
+      if (memberV2Enabled) {
+        if (!isSupabaseConfigured()) {
+          throw new Error('Member V2 is available only with the local Supabase test stack.')
+        }
+        if (areOptionalTagsVisible(guidedFormSettings) && selectedTagIds.size > 0) {
+          throw new Error('Workspace tags are not part of the Member V2 experiment. Remove them before saving this profile.')
+        }
+
+        const normalizedGender = typeof formData.gender === 'string'
+          ? (formData.gender.trim().toLowerCase() === 'male'
+            ? 'Male'
+            : formData.gender.trim().toLowerCase() === 'female'
+              ? 'Female'
+              : formData.gender)
+          : formData.gender
+        const result = await (await getRealMemberV2UiAdapter({
+          supabase,
+          userId: user?.id,
+          ownerId,
+        })).create({
+          tableName: currentTable,
+          attendance: sundayAttendance,
+          payload: {
+            'Full Name': formData.full_name.trim(),
+            Gender: normalizedGender,
+            'Phone Number': formData.phone_number || null,
+            Age: formData.age ? String(formData.age).trim() : null,
+            date_of_birth: formData.date_of_birth ? String(formData.date_of_birth).trim() : null,
+            'Current Level': formData.current_level || null,
+            workspace: preferences?.workspace_name || null,
+            parent_name_1: parentInfo.parent_name_1 || null,
+            parent_phone_1: parentInfo.parent_phone_1 || null,
+            parent_name_2: parentInfo.parent_name_2 || null,
+            parent_phone_2: parentInfo.parent_phone_2 || null,
+            notes: formData.notes || null,
+            is_visitor: formData.is_visitor || false,
+            Member: selectedTags.includes('member') ? 'Yes' : null,
+            Regular: selectedTags.includes('regular') ? 'Yes' : null,
+            Newcomer: selectedTags.includes('newcomer') ? 'Yes' : null,
+          },
+        })
+        savedMemberId = result.member?.id || null
+        await refreshMemberPreviewById?.(savedMemberId, {
+          tableName: currentTable,
+          fallbackMember: result.member,
+          source: 'member-v2-create',
+          action: 'add',
+          summary: 'Created member with Member V2',
+          skipRemote: true,
+          skipBackgroundSync: true,
+        })
+        // The isolated attendance service is the durable authority. Mirror its
+        // accepted local result into the existing card presentation without
+        // invoking the legacy attendance queue.
+        Object.entries(sundayAttendance).forEach(([attendanceDate, attendance]) => {
+          if (attendance === null || attendance === undefined) return
+          applyMemberV2AttendanceState?.({
+            memberId: savedMemberId,
+            tableName: currentTable,
+            attendanceDate,
+            status: attendance ? 'Present' : 'Absent',
+          })
+        })
+        setNewlyAddedMemberId(savedMemberId)
+        onClose()
+        success()
+        setIsOverrideMode(false)
+        submitRequestIdRef.current = null
+        if (result.syncState.pendingChanges || result.syncState.failedChanges || result.syncState.conflicts) toast.info(result.message)
+        else toast.success(result.message)
+      } else if (!isSupabaseConfigured()) {
         const newMember = await addMember({
           ...formData,
           ...parentInfo,

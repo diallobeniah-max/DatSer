@@ -23,6 +23,7 @@ import { toast } from 'react-toastify'
 import LoginButton from './LoginButton'
 import useHapticFeedback from '../hooks/useHapticFeedback'
 import { getCanonicalAttendanceStatus } from '../utils/attendanceRecords'
+import { getMemberV2LocalFlowGuard, getMemberV2LocalFlowStatus, isMemberV2LocalExperimentEnabled, subscribeMemberV2LocalFlowGuard } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 
 const getMemberDisplayName = (member) => (
   member?.full_name || member?.['Full Name'] || member?.name || 'Unknown member'
@@ -131,7 +132,7 @@ const resolveHeaderMemberAttendanceForDate = (member, dateKey, attendanceMap = {
 }
 
 const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember, onCreateMonth, onToggleAIChat }) => {
-  const { preferences, updatePreference } = useAuth()
+  const { preferences, updatePreference, user } = useAuth()
   const {
     searchTerm,
     setSearchTerm,
@@ -168,7 +169,8 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     members,
     membersTotalCount,
     recentMemberEdits,
-    formatMemberName
+    formatMemberName,
+    dataOwnerId
   } = useApp()
   const { selection } = useHapticFeedback()
   const [showMonthPicker, setShowMonthPicker] = useState(false)
@@ -187,6 +189,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   const [apkUpdateBadge, setApkUpdateBadge] = useState(() => (
     typeof window !== 'undefined' && window.localStorage.getItem('datser_apk_update_badge') === 'true'
   ))
+  const [memberV2FlowGuard, setMemberV2FlowGuard] = useState(null)
   // Debounced search input for performance on low-end devices
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm)
 
@@ -194,6 +197,17 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
   useEffect(() => {
     setLocalSearchTerm(searchTerm)
   }, [searchTerm])
+
+  useEffect(() => {
+    if (!isMemberV2LocalExperimentEnabled() || !user?.id) {
+      setMemberV2FlowGuard(null)
+      return undefined
+    }
+    const ownerId = dataOwnerId || user.id
+    const refresh = () => setMemberV2FlowGuard(getMemberV2LocalFlowGuard({ userId: user.id, ownerId }))
+    refresh()
+    return subscribeMemberV2LocalFlowGuard({ userId: user.id, ownerId, listener: setMemberV2FlowGuard })
+  }, [dataOwnerId, user?.id])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -461,6 +475,15 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
     const syncing = memberPreviewSyncStatus?.isSyncing
     const syncError = memberPreviewSyncStatus?.source === 'error'
     const offline = !isOnline || offlineModeStatus === 'offline' || offlineModeStatus === 'forced-offline' || offlineModeStatus === 'online-unavailable'
+    const memberV2Status = getMemberV2LocalFlowStatus(memberV2FlowGuard, { offline })
+    if (memberV2Status) {
+      const tone = memberV2Status.tone === 'conflict'
+        ? 'text-red-700 dark:text-red-300 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20'
+        : memberV2Status.tone === 'failed'
+          ? 'text-red-700 dark:text-red-300 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20'
+          : 'text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20'
+      return { label: memberV2Status.label, tone, Icon: memberV2Status.tone === 'conflict' ? X : WifiOff, spin: false, retry: false }
+    }
     if (syncing) {
       return {
         label: 'Syncing',
@@ -495,7 +518,7 @@ const Header = ({ currentView, setCurrentView, isAdmin, setIsAdmin, onAddMember,
       spin: false,
       retry: false
     }
-  }, [isOnline, memberPreviewSyncStatus?.isSyncing, memberPreviewSyncStatus?.source, offlineModeStatus])
+  }, [isOnline, memberPreviewSyncStatus?.isSyncing, memberPreviewSyncStatus?.source, memberV2FlowGuard, offlineModeStatus])
   const dashboardStatusPreference = preferences?.mobile_dashboard_status_enabled
   const showDashboardStatusBar = currentView === 'dashboard' && (!isPhoneViewport || dashboardStatusPreference === true)
   const dashboardMemberColumns = normalizeDashboardColumns(preferences?.dashboard_member_columns)

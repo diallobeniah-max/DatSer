@@ -19,9 +19,12 @@ import AttendanceChoice from './AttendanceChoice'
 import { getCanonicalAttendanceStatus } from '../utils/attendanceRecords'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
+import { assertLegacyMemberFlowIsSafe } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
+import { normalizeEditablePhoneNumber } from '../utils/memberPhone'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
-  const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById } = useApp()
+  const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById, applyMemberV2AttendanceState, memberV2Enabled } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
@@ -114,13 +117,14 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     stableMemberRef.current = latestMember || member
     const sourceMember = stableMemberRef.current
     if (sourceMember) {
+      setMemberV2Conflict(memberV2Enabled && sourceMember.__member_v2_save_state === 'CONFLICT')
       // Normalize gender to lowercase to match radio button values
       const rawGender = sourceMember['Gender'] || ''
       const normalizedGender = typeof rawGender === 'string' ? rawGender.toLowerCase() : ''
       setFormData({
         full_name: (sourceMember['full_name'] || sourceMember['Full Name'] || ''),
         gender: normalizedGender || (typeof sourceMember.gender === 'string' ? sourceMember.gender.toLowerCase() : ''),
-        phone_number: sourceMember['Phone Number'] || sourceMember.phone_number || '',
+        phone_number: normalizeEditablePhoneNumber(sourceMember['Phone Number'] ?? sourceMember.phone_number ?? ''),
         date_of_birth: sourceMember['date_of_birth'] || sourceMember.date_of_birth || '',
         age: sourceMember['Age'] || sourceMember.age || '',
         current_level: sourceMember['Current Level'] || sourceMember.current_level || '',
@@ -145,6 +149,21 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       isDirtyRef.current = false
     }
   }, [isOpen, member?.id, latestMember])
+
+  useEffect(() => {
+    if (!isOpen || !memberV2Enabled || !member?.id) return undefined
+    let cancelled = false
+    void getRealMemberV2UiAdapter({
+      supabase,
+      userId: user?.id,
+      ownerId: dataOwnerId || user?.id,
+    }).then((adapter) => adapter.hasConflictForMember(member)).then((hasConflict) => {
+      if (!cancelled && hasConflict) setMemberV2Conflict(true)
+    }).catch(() => {
+      // Recovery remains unavailable until the local Member V2 service can be read.
+    })
+    return () => { cancelled = true }
+  }, [dataOwnerId, isOpen, member, memberV2Enabled, user?.id])
 
   useEffect(() => {
     if (!isOpen) {
@@ -242,6 +261,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
   const [isLevelOpen, setIsLevelOpen] = useState(false)
   const [customLevelValue, setCustomLevelValue] = useState('')
   const [overrideMode, setOverrideMode] = useState(false)
+  const [memberV2Conflict, setMemberV2Conflict] = useState(false)
   const [parentInfo, setParentInfo] = useState({
     parent_name_1: '',
     parent_phone_1: '',
@@ -266,6 +286,36 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
       setIsClosingSheet(false)
     }, 300)
   }, [isClosingSheet, onClose, selection])
+
+  const handleUseServerMemberV2ConflictCopy = async () => {
+    if (!memberV2Enabled) return
+    try {
+      setLoading(true)
+      const ownerId = dataOwnerId || user?.id
+      const result = await (await getRealMemberV2UiAdapter({
+        supabase,
+        userId: user?.id,
+        ownerId,
+      })).useServerConflictCopy({ member: latestMember })
+      await refreshMemberPreviewById?.(latestMember.id, {
+        tableName: getMemberSourceTable(latestMember, currentTable),
+        fallbackMember: result.member,
+        source: 'member-v2-conflict-use-server',
+        action: 'update',
+        summary: 'Accepted the server copy for a Member V2 conflict',
+        skipRemote: true,
+        skipBackgroundSync: true,
+        writeOfflineSnapshot: true,
+      })
+      setMemberV2Conflict(false)
+      toast.success('The newer server copy is now shown. Your local conflicting edit was not sent.')
+      closeWithAnimation({ skipHaptic: true })
+    } catch (error) {
+      toast.error(error?.message || 'Unable to use the server copy.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -465,7 +515,81 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         return
       }
 
-      if (!isSupabaseConfigured()) {
+      const ownerId = dataOwnerId || user?.id
+      if (!ownerId) {
+        throw new Error('Unable to determine the workspace owner for this save')
+      }
+      if (!memberV2Enabled) {
+        assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId })
+      }
+
+      if (memberV2Enabled) {
+        if (!isSupabaseConfigured()) {
+          throw new Error('Member V2 is available only with the local Supabase test stack.')
+        }
+        if (tagSelectionChanged) {
+          throw new Error('Workspace tags are not part of the Member V2 experiment. Remove that tag change before saving this profile.')
+        }
+        const targetTable = getMemberSourceTable(latestMember, currentTable)
+        if (attendanceUpdates.length > 0 && targetTable !== currentTable) {
+          throw new Error('Attendance can only be changed from this member\'s selected source month.')
+        }
+        const normalizedUpdates = {
+          ...changedPayload,
+          ...(Object.prototype.hasOwnProperty.call(changedPayload, 'gender')
+            ? { gender: String(changedPayload.gender || '').trim().replace(/^./, (character) => character.toUpperCase()) }
+            : {}),
+        }
+        const adapter = await getRealMemberV2UiAdapter({
+          supabase,
+          userId: user?.id,
+          ownerId,
+        })
+        let result = { member: latestMember, syncState: await adapter.refreshGuard(), message: 'Attendance saved locally.' }
+        if (Object.keys(normalizedUpdates).length > 0) {
+          result = await adapter.update({
+            member: latestMember,
+            tableName: targetTable,
+            updates: normalizedUpdates,
+          })
+          await refreshMemberPreviewById?.(latestMember.id, {
+            tableName: targetTable,
+            fallbackMember: result.member,
+            source: 'member-v2-update',
+            action: 'update',
+            summary: 'Updated member with Member V2',
+            skipRemote: true,
+            skipBackgroundSync: true,
+            writeOfflineSnapshot: true,
+          })
+          recordRecentMemberEdit({ ...currentSnapshot, ...result.member, id: latestMember.id }, new Date().toISOString())
+        }
+        for (const [attendanceDate, attendance] of attendanceUpdates) {
+          const attendanceResult = await adapter.saveAttendance({
+            member: latestMember,
+            tableName: targetTable,
+            attendanceDate,
+            status: attendance === null || attendance === undefined ? null : attendance ? 'Present' : 'Absent',
+          })
+          result = { ...result, syncState: attendanceResult.syncState, message: 'Attendance saved locally.' }
+          applyMemberV2AttendanceState?.({
+            memberId: latestMember.id,
+            tableName: targetTable,
+            attendanceDate,
+            status: attendance === null || attendance === undefined ? null : attendance ? 'Present' : 'Absent',
+          })
+        }
+        submitRequestIdRef.current = null
+        if (result.syncState.conflicts) {
+          setMemberV2Conflict(true)
+          toast.info(result.message)
+        } else {
+          success()
+          onClose()
+          if (result.syncState.pendingChanges || result.syncState.failedChanges) toast.info(result.message)
+          else toast.success(result.message)
+        }
+      } else if (!isSupabaseConfigured()) {
         if (Object.keys(changedPayload).length > 0) {
           await updateMember(latestMember.id, changedPayload)
         }
@@ -532,12 +656,6 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
         })
 
         const attendancePayload = Object.fromEntries(attendanceUpdates)
-        const ownerId = dataOwnerId || user?.id
-
-        if (!ownerId) {
-          throw new Error('Unable to determine the workspace owner for this save')
-        }
-
         const targetTable = getMemberSourceTable(latestMember, currentTable)
         console.info('[EditMemberModal] Submitting bundle update:', {
           table: targetTable,
@@ -638,10 +756,12 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
     } catch (error) {
       console.error('Error updating member:', error)
       const isOfflineNow = typeof navigator !== 'undefined' && navigator.onLine === false
-      if (bundleContext && (isTransientSupabaseError(error) || isOfflineNow)) {
-        // Offline or degraded backend: keep the edit by routing it through the
-        // canonical AppContext member-update path, which queues it for retry
-        // instead of letting it silently disappear.
+      if (memberV2Enabled) {
+        // Member V2 already owns durable offline/retry work. Never reroute a
+        // V2 failure through AppContext's legacy queue or monthly-table write.
+        toast.error(error.message || 'Failed to update member')
+      } else if (bundleContext && (isTransientSupabaseError(error) || isOfflineNow)) {
+        // Legacy form only: retain its established AppContext offline queue.
         try {
           await updateMember(latestMember.id, bundleContext.backendUpdates, {
             targetTable: bundleContext.targetTable,
@@ -1284,6 +1404,16 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
           )}
 
           </div>
+
+          {memberV2Conflict && (
+            <div data-testid="member-v2-conflict-resolution" className="mx-4 mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100 sm:mx-5">
+              <p className="font-semibold">A newer server edit conflicts with this local change.</p>
+              <p className="mt-1 text-xs">Your local value is still preserved. Choose the server copy only if you want to discard this local conflicting edit.</p>
+              <button type="button" data-testid="member-v2-conflict-use-server" disabled={loading} onClick={() => void handleUseServerMemberV2ConflictCopy()} className="mt-3 min-h-[40px] rounded-lg border border-amber-500 bg-white px-3 py-2 text-xs font-bold text-amber-900 disabled:opacity-50 dark:bg-gray-900 dark:text-amber-100">
+                Use server copy
+              </button>
+            </div>
+          )}
 
           {/* Form Actions */}
           <div
