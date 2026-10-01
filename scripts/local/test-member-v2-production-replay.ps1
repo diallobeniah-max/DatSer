@@ -2,6 +2,7 @@ param(
   [switch] $IncludeBrowser,
   [switch] $FullSuite,
   [switch] $Serial,
+  [switch] $KeepForManualTesting,
   [string] $TestName,
   [string] $BrowserTestName,
   [ValidateRange(1, 10)] [int] $BrowserRepeatEach = 1
@@ -104,7 +105,10 @@ foreach ($fixture in $replayCompatibilityFixtures) {
 Copy-Item -LiteralPath (Join-Path $repoRoot 'supabase\tests\member_v2_production_security.test.sql') -Destination (Join-Path $tempTests 'member_v2_production_security.test.sql')
 
 $dbContainer = "supabase_db_$projectId"
+$artifactRoot = Join-Path $repoRoot "output\member-v2-preparation\$projectId"
+New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 $viteProcess = $null
+$validationPassed = $false
 $stackStarted = $false
 $startAttempted = $false
 Push-Location $repoRoot
@@ -173,8 +177,9 @@ try {
   if ($IncludeBrowser) {
     $appPort = $basePort + 5
     $env:PLAYWRIGHT_REAL_MEMBER_V2_URL = "http://127.0.0.1:$appPort"
-    $viteOut = Join-Path $tempRoot 'vite.stdout.log'
-    $viteErr = Join-Path $tempRoot 'vite.stderr.log'
+    $env:DATSER_MEMBER_V2_BROWSER_OUTPUT_DIR = Join-Path $artifactRoot 'browser'
+    $viteOut = Join-Path $artifactRoot 'vite.stdout.log'
+    $viteErr = Join-Path $artifactRoot 'vite.stderr.log'
     $viteEntry = Join-Path $repoRoot 'node_modules\vite\bin\vite.js'
     $viteProcess = Start-Process -FilePath 'node.exe' -ArgumentList @("`"$viteEntry`"",'--host','127.0.0.1','--port',"$appPort",'--strictPort') -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $viteOut -RedirectStandardError $viteErr
     $ready = $false
@@ -189,11 +194,21 @@ try {
     if ($LASTEXITCODE -ne 0) { $browserOutput | ForEach-Object { Write-Output $_ }; throw 'Member V2 browser validation failed.' }
     $browserOutput | ForEach-Object { Write-Output $_ }
   }
+  $validationPassed = $true
 } finally {
-  if ($viteProcess -and -not $viteProcess.HasExited) { Stop-Process -Id $viteProcess.Id -Force -ErrorAction SilentlyContinue }
-  if ($startAttempted) { $null = & $supabaseCli stop --workdir $tempRoot --no-backup 2>&1 }
-  Remove-Item Env:DATSER_LOCAL_SUPABASE_URL, Env:DATSER_LOCAL_SUPABASE_ANON_KEY, Env:DATSER_LOCAL_SUPABASE_SERVICE_ROLE_KEY, Env:DATSER_LOCAL_SUPABASE_DB_CONTAINER, Env:VITE_SUPABASE_URL, Env:VITE_SUPABASE_ANON_KEY, Env:VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION, Env:PLAYWRIGHT_REAL_MEMBER_V2_URL -ErrorAction SilentlyContinue
-  if ((Resolve-Path -LiteralPath $tempRoot).Path.StartsWith((Resolve-Path -LiteralPath $env:TEMP).Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+  $retain = $KeepForManualTesting -and $validationPassed -and $stackStarted
+  if ($retain) {
+    # Ignored local connection material; never print keys or commit this file.
+    $status | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $artifactRoot 'local-status.private.json') -Encoding utf8
+    Write-Output "MANUAL_LOCAL_DATABASE: $dbContainer"
+    Write-Output "MANUAL_SUPABASE_WORKDIR: $tempRoot"
+    if ($viteProcess) { Write-Output "MANUAL_VITE_URL: $($env:PLAYWRIGHT_REAL_MEMBER_V2_URL)/index.html" }
+  } else {
+    if ($viteProcess -and -not $viteProcess.HasExited) { Stop-Process -Id $viteProcess.Id -Force -ErrorAction SilentlyContinue }
+    if ($startAttempted) { $null = & $supabaseCli stop --workdir $tempRoot --no-backup 2>&1 }
+  }
+  Remove-Item Env:DATSER_LOCAL_SUPABASE_URL, Env:DATSER_LOCAL_SUPABASE_ANON_KEY, Env:DATSER_LOCAL_SUPABASE_SERVICE_ROLE_KEY, Env:DATSER_LOCAL_SUPABASE_DB_CONTAINER, Env:VITE_SUPABASE_URL, Env:VITE_SUPABASE_ANON_KEY, Env:VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION, Env:PLAYWRIGHT_REAL_MEMBER_V2_URL, Env:DATSER_MEMBER_V2_BROWSER_OUTPUT_DIR -ErrorAction SilentlyContinue
+  if (-not $retain -and (Resolve-Path -LiteralPath $tempRoot).Path.StartsWith((Resolve-Path -LiteralPath $env:TEMP).Path, [System.StringComparison]::OrdinalIgnoreCase)) {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force
   }
   Pop-Location

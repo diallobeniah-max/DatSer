@@ -260,6 +260,7 @@ describe('EditMemberModal offline fallback routing', () => {
   }, 15000)
 
   it('does not fall back from a Member V2 edit failure into the legacy AppContext queue', async () => {
+    appMock.memberV2Enabled = true
     vi.stubEnv('DEV', true)
     vi.stubEnv('VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION', 'true')
     vi.stubEnv('VITE_SUPABASE_URL', 'http://127.0.0.1:54321')
@@ -278,6 +279,19 @@ describe('EditMemberModal offline fallback routing', () => {
     expect(toast.error).toHaveBeenCalledWith('Failed to fetch')
     expect(onCloseMock).not.toHaveBeenCalled()
   }, 15000)
+
+  it.each(['pendingChanges', 'failedChanges', 'conflicts'])('blocks a legacy edit after eligibility is lost with %s', async (field) => {
+    appMock.memberV2Enabled = false
+    localStorage.getItem.mockImplementation((key) => key === 'datser.member-v2.local-flow-guard:owner-1:owner-1'
+      ? JSON.stringify({ [field]: 1 }) : null)
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+    await editNameAndSubmit(<EditMemberModal {...MODAL_PROPS} />, 'Guarded edit')
+    await wait(100)
+    expect(updateMemberMock).not.toHaveBeenCalled()
+    expect(memberV2AdapterMock.update).not.toHaveBeenCalled()
+    expect(onCloseMock).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/unsynced local work/i))
+  })
 
   it('keeps showing an error for non-transient failures without queueing or closing', async () => {
     const { default: EditMemberModal } = await import('./EditMemberModal')

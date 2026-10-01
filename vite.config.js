@@ -441,7 +441,7 @@ export default defineConfig({
     port: 3000,
     host: true,
     watch: {
-      ignored: ['**/android/**', '**/dist/**']
+      ignored: ['**/android/**', '**/dist/**', '**/output/**', '**/test-results/**']
     }
   },
   test: {

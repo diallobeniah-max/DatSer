@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(26);
 
 select ok(
   (select relrowsecurity from pg_class where oid = 'public.member_v2_rollout_workspaces'::regclass),
@@ -78,6 +78,57 @@ select ok(
   ),
   'every legacy capture relation coordinates locks before its statement'
 );
+
+select ok(has_function_privilege('authenticated', 'public.member_v2_workspace_eligible(uuid)', 'EXECUTE'),
+  'authenticated clients can check an authorized workspace');
+select ok(not has_function_privilege('anon', 'public.member_v2_workspace_eligible(uuid)', 'EXECUTE'),
+  'anonymous clients cannot check eligibility');
+select ok(not has_table_privilege('authenticated', 'public.member_v2_rollout_workspaces', 'SELECT'),
+  'eligibility does not expose the rollout table');
+select is((select prorettype::regtype::text from pg_proc where oid = 'public.member_v2_workspace_eligible(uuid)'::regprocedure),
+  'boolean', 'eligibility exposes only a boolean');
+select ok((select prosecdef and proconfig @> array['search_path=pg_catalog, public, pg_temp'] from pg_proc
+  where oid = 'public.member_v2_workspace_eligible(uuid)'::regprocedure), 'eligibility pins its privileged search path');
+
+-- Transaction-local synthetic actors only. Rollback removes every fixture.
+insert into auth.users(id, email) values
+  ('d4000000-0000-4000-8000-000000000001', 'eligibility-pilot@local.invalid'),
+  ('d4000000-0000-4000-8000-000000000002', 'eligibility-legacy@local.invalid'),
+  ('d4000000-0000-4000-8000-000000000003', 'eligibility-collaborator@local.invalid');
+insert into public.member_v2_rollout_workspaces(owner_id, enabled)
+  values ('d4000000-0000-4000-8000-000000000001', true);
+insert into public.collaborators(owner_id, collaborator_user_id, email, status) values
+  ('d4000000-0000-4000-8000-000000000001', 'd4000000-0000-4000-8000-000000000003', 'eligibility-collaborator@local.invalid', 'accepted');
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"d4000000-0000-4000-8000-000000000001","is_anonymous":false}', true);
+select is(public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000001'), true, 'enabled owner is eligible');
+select throws_ok($$select public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000002')$$,
+  '42501', 'Not authorized for this workspace', 'another owner cannot inspect eligibility');
+select throws_ok($$select public.member_v2_workspace_eligible(null)$$,
+  '22023', 'Workspace owner is required', 'null owner is rejected');
+select set_config('request.jwt.claims', '{"sub":"d4000000-0000-4000-8000-000000000002","is_anonymous":false}', true);
+select is(public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000002'), false, 'missing rollout row stays ineligible');
+reset role;
+insert into public.member_v2_rollout_workspaces(owner_id, enabled)
+  values ('d4000000-0000-4000-8000-000000000002', false);
+set local role authenticated;
+select is(public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000002'), false, 'disabled rollout row stays ineligible');
+select set_config('request.jwt.claims', '{"sub":"d4000000-0000-4000-8000-000000000003","is_anonymous":false}', true);
+select is(public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000001'), true, 'accepted collaborator can check its owner');
+reset role;
+update public.collaborators set status = 'pending'
+  where owner_id = 'd4000000-0000-4000-8000-000000000001' and collaborator_user_id = 'd4000000-0000-4000-8000-000000000003';
+set local role authenticated;
+select throws_ok($$select public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000001')$$,
+  '42501', 'Not authorized for this workspace', 'pending collaborator cannot check its owner');
+select set_config('request.jwt.claims', '{"sub":"d4000000-0000-4000-8000-000000000001","is_anonymous":true}', true);
+select throws_ok($$select public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000001')$$,
+  '42501', 'A permanent authenticated user is required', 'anonymous authenticated sessions are rejected');
+set local role anon;
+select throws_ok($$select public.member_v2_workspace_eligible('d4000000-0000-4000-8000-000000000001')$$,
+  '42501', null, 'anon cannot execute the eligibility RPC');
+reset role;
 
 select * from finish();
 rollback;

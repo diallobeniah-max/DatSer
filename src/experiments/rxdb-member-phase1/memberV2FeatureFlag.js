@@ -36,21 +36,21 @@ export const isMemberV2LocalExperimentEnabled = (env = import.meta.env) => (
 )
 
 // Routing is separate from the local experiment guard. Hosted routing requires
-// a production build and an explicit public deployment flag; server RPCs also
-// enforce workspace eligibility before accepting any mutation.
+// a production build, an explicit public deployment flag, and a positive
+// workspace-scoped eligibility decision. Mutation RPCs enforce the server gate.
 export const isMemberV2HostedRolloutAllowed = (env = import.meta.env) => (
   env?.PROD === true
   && env?.VITE_DATSER_MEMBER_V2_HOSTED_ROLLOUT === 'true'
 )
 
-export const isMemberV2SharedRouteEnabled = (env = import.meta.env) => (
+export const isMemberV2SharedRouteEnabled = (env = import.meta.env, workspaceEligible = false) => (
   isMemberV2LocalExperimentEnabled(env)
   || (
     env?.DEV === true
     && env?.VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION === 'true'
     && localSupabaseUrl(env?.VITE_SUPABASE_URL)
   )
-  || isMemberV2HostedRolloutAllowed(env)
+  || (isMemberV2HostedRolloutAllowed(env) && workspaceEligible === true)
 )
 
 export const isMemberV2ImplementationAvailable = () => true

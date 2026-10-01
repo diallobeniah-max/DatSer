@@ -39,7 +39,23 @@ const ensureLocalPreferenceColumns = () => {
   const docker = process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : 'docker'
   const container = readLocalSupabaseDbContainer()
   if (!container) throw new Error('Local Supabase database container is required for the real UI test.')
+  // Catalog-only hosted verification on 2026-10-01 confirms these
+  // preference prerequisites. Historical replay does not create them.
   execFileSync(docker, ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', `alter table public.user_preferences
+    add column if not exists theme_mode text default 'system',
+    add column if not exists calendar_mode text default 'auto',
+    add column if not exists manual_month_table text,
+    add column if not exists manual_sunday_date date,
+    add column if not exists manual_override_until timestamptz,
+    add column if not exists settings_search_quick_actions_enabled boolean default true,
+    add column if not exists command_palette_auto_scan_settings boolean default true,
+    add column if not exists haptic_feedback_enabled boolean default true,
+    add column if not exists haptic_feedback_strength numeric default 1,
+    add column if not exists compact_ui_enabled boolean default false,
+    add column if not exists mobile_dashboard_status_enabled boolean default false,
+    add column if not exists motion_and_sounds_enabled boolean default true,
+    add column if not exists smart_compact_prompt_enabled boolean default true,
+    add column if not exists dashboard_member_columns smallint default 3,
     add column if not exists workspace_member_codes_enabled boolean,
     add column if not exists member_code_quick_pass_enabled boolean,
     add column if not exists member_code_show_logo boolean,
@@ -128,6 +144,17 @@ const createFixture = async ({ phoneNumber = '0240000000' } = {}) => {
   if (january.error || september.error) throw january.error || september.error
   ensureCurrentAppColumns(january.data.table_name)
   ensureCurrentAppColumns(september.data.table_name)
+  // These journeys assert September identities and Sunday cells. Persist a
+  // normal Manual selection so they do not depend on today's calendar month.
+  const bundle = await client.rpc('get_preference_bundle', { p_owner_id: userId })
+  if (bundle.error) throw bundle.error
+  const preferences = await client.rpc('save_personal_preferences', {
+    p_preferences: { calendar_mode: 'manual', current_month_table: september.data.table_name,
+      manual_month_table: september.data.table_name, manual_sunday_date: '2026-09-27',
+      manual_override_until: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString() },
+    p_expected_revision: bundle.data.personal_revision, p_request_id: crypto.randomUUID(),
+  })
+  if (preferences.error) throw preferences.error
   const suffix = crypto.randomUUID().slice(0, 8)
   const originalName = `Real UI offline original ${suffix}`
   const editedName = `Real UI offline edited ${suffix}`
@@ -159,7 +186,14 @@ const createFixture = async ({ phoneNumber = '0240000000' } = {}) => {
 }
 
 const signInToRealDatser = async (page, fixture, diagnostics = null, { waitForMemberCard = true } = {}) => {
+  // The failed initial-navigation trace had all local modules loaded while this
+  // optional CDN stylesheet was still pending. Font delivery is outside this
+  // local mutation gate; keep the real load deadline and UI readiness checks.
+  await page.route('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/open-dyslexic-regular.min.css', (route) => route.fulfill({
+    status: 200, contentType: 'text/css', body: '/* Optional external font excluded from local behavior validation. */',
+  }))
   await page.goto('/index.html')
+  await expect(page.getByPlaceholder('Email')).toBeVisible({ timeout: 10000 })
   await page.getByPlaceholder('Email').fill(fixture.email)
   await page.getByPlaceholder('Password').fill(fixture.password)
   await page.getByRole('button', { name: 'Sign In', exact: true }).click()

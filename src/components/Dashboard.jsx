@@ -29,7 +29,6 @@ import { dismissMobileKeyboard } from '../hooks/useKeyboardSafeModal'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import SearchScopeModal from './SearchScopeModal'
 import { formatHistoricalScopeSummary } from '../utils/historicalSearchSettings'
-import { isMemberV2SharedRouteEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 import { getRecentCsvImportMemberProvenance, fetchRecentCsvImportMemberProvenance } from '../utils/csvImportMemberProvenance'
 import {
@@ -463,12 +462,12 @@ const Dashboard = ({ isAdmin = false }) => {
     workspaceMemberCodeStatus,
     guidedFormSettings,
     recentMemberEdits,
-    formatMemberName
+    formatMemberName,
+    memberV2Enabled
   } = useApp()
   const { user } = useAuth()
   const { isDarkMode } = useTheme()
   const workspaceOwnerId = dataOwnerId || user?.id
-  const memberV2Enabled = isMemberV2SharedRouteEnabled()
   const [recentCsvImportMembers, setRecentCsvImportMembers] = useState(() => getRecentCsvImportMemberProvenance({ ownerId: workspaceOwnerId }))
 
   useEffect(() => {

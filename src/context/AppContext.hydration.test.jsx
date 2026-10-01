@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import React, { useEffect } from 'react'
-import { render, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invalidateRequestScope } from '../utils/runtimeRequestRegistry'
+import { updateMemberV2LocalFlowGuard } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 
 const localAdapterConfig = vi.hoisted(() => ({
   listLocalMembers: async () => [],
   offlineSnapshot: async () => null,
+  eligibility: async () => ({ data: false, error: null }),
+  eligibilityRequests: [],
 }))
 
 // Configurable per-test controls for the mocked supabase client.
@@ -40,7 +43,9 @@ const createMemoryStorage = () => {
 vi.mock('../lib/supabase', () => {
   preferenceListeners = []
   preferencesRow = {
-    admin_sticky_month: 'January_2026',
+    // Owner-switch tests hold the selected month constant; calendar overrides
+    // belong in their own tests rather than racing the hydration request.
+    admin_sticky_month: null,
     admin_sticky_sundays: [],
     locked_default_date: null,
     admin_sync_mode: 'banner'
@@ -96,8 +101,13 @@ vi.mock('../lib/supabase', () => {
   return {
     supabase: {
       from: (table) => makeQuery(table),
-      rpc: (name) => {
-        if (name === 'get_current_user_access_context') return Promise.resolve({ data: testConfig.accessContext, error: null })
+      rpc: (name, args) => {
+        if (name === 'member_v2_workspace_eligible') {
+          localAdapterConfig.eligibilityRequests.push(args)
+          return localAdapterConfig.eligibility(args)
+        }
+        if (name === 'get_current_user_access_context') return typeof testConfig.accessContext === 'function'
+          ? testConfig.accessContext() : Promise.resolve({ data: testConfig.accessContext, error: null })
         if (name === 'get_owner_workspace_name') return Promise.resolve({ data: 'Workspace', error: null })
         if (name === 'get_owner_locked_date') return Promise.resolve({ data: null, error: null })
         if (name === 'get_available_month_tables') {
@@ -169,6 +179,8 @@ describe('AppContext member hydration', () => {
     testConfig.accessContext = { has_access: true, is_collaborator: false, owner_id: 'owner-1' }
     localAdapterConfig.listLocalMembers = async () => []
     localAdapterConfig.offlineSnapshot = async () => null
+    localAdapterConfig.eligibility = async () => ({ data: false, error: null })
+    localAdapterConfig.eligibilityRequests = []
     vi.stubEnv('DEV', true)
     vi.stubEnv('VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION', 'true')
     vi.stubEnv('VITE_SUPABASE_URL', 'http://127.0.0.1:54321')
@@ -200,7 +212,7 @@ describe('AppContext member hydration', () => {
       const state = useApp()
       useEffect(() => {
         onState(state)
-      }, [state.memberHydrationState, state.membersTotalCount, state.currentTable, state.loading, state.members, state.dataOwnerId, state.offlineStatusMessage, state.offlineMode, state.offlineCacheMeta])
+      }, [state.memberHydrationState, state.membersTotalCount, state.currentTable, state.loading, state.members, state.dataOwnerId, state.offlineStatusMessage, state.offlineMode, state.offlineCacheMeta, state.memberV2Enabled])
       return null
     }
     let latest = null
@@ -213,6 +225,81 @@ describe('AppContext member hydration', () => {
     currentUnmount = unmount
     return { unmount, rerender: () => rerender(renderTree()), getLatest: () => latest }
   }
+
+  const enableHostedBuild = () => {
+    vi.stubEnv('DEV', false)
+    vi.stubEnv('PROD', true)
+    vi.stubEnv('VITE_DATSER_MEMBER_V2_HOSTED_ROLLOUT', 'true')
+  }
+
+  it.each([true, false, 'failure'])('publishes the resolved workspace route for eligibility %s', async (eligible) => {
+    enableHostedBuild()
+    localAdapterConfig.eligibility = async () => eligible === 'failure'
+      ? { data: null, error: { message: 'eligibility unavailable' } } : { data: eligible, error: null }
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(localAdapterConfig.eligibilityRequests).toHaveLength(1))
+    await waitFor(() => expect(getLatest()?.memberV2Enabled).toBe(eligible === true))
+    expect(localAdapterConfig.eligibilityRequests[0]).toEqual({ p_owner_id: 'owner-1' })
+  })
+
+  it('does not publish a late eligible response for the previous workspace', async () => {
+    enableHostedBuild()
+    let finishPilotCheck
+    localAdapterConfig.eligibility = async ({ p_owner_id }) => p_owner_id === 'owner-1'
+      ? new Promise((resolve) => { finishPilotCheck = () => resolve({ data: true, error: null }) })
+      : { data: false, error: null }
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(finishPilotCheck).toBeTypeOf('function'))
+    testConfig.accessContext = { has_access: true, is_collaborator: true, owner_id: 'owner-2' }
+    await act(async () => getLatest().checkCollaboratorStatus())
+    await waitFor(() => expect(getLatest()?.dataOwnerId).toBe('owner-2'))
+    await act(async () => finishPilotCheck())
+    expect(getLatest().memberV2Enabled).toBe(false)
+  })
+
+  it('invalidates eligibility during an actor switch before access resolves', async () => {
+    enableHostedBuild()
+    localAdapterConfig.eligibility = async () => ({ data: true, error: null })
+    const { getLatest, rerender } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberV2Enabled).toBe(true))
+    testConfig.user = { id: 'actor-2', email: 'actor-2@local.invalid' }
+    testConfig.authLoading = true
+    rerender()
+    expect(getLatest().memberV2Enabled).toBe(false)
+    expect(localAdapterConfig.eligibilityRequests).toHaveLength(1)
+  })
+
+  it('ignores a superseded access lookup after switching workspaces', async () => {
+    enableHostedBuild()
+    localAdapterConfig.eligibility = async ({ p_owner_id }) => ({ data: p_owner_id === 'owner-1', error: null })
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberV2Enabled).toBe(true))
+    let finishOldAccess
+    testConfig.accessContext = () => new Promise((resolve) => { finishOldAccess = resolve })
+    let oldLookup
+    act(() => { oldLookup = getLatest().checkCollaboratorStatus() })
+    testConfig.accessContext = { has_access: true, is_collaborator: true, owner_id: 'owner-2' }
+    await act(async () => getLatest().checkCollaboratorStatus())
+    await waitFor(() => expect(getLatest()?.dataOwnerId).toBe('owner-2'))
+    await act(async () => {
+      finishOldAccess({ data: { has_access: true, is_collaborator: false, owner_id: 'owner-1' }, error: null })
+      await oldLookup
+    })
+    expect(getLatest().dataOwnerId).toBe('owner-2')
+    expect(getLatest().memberV2Enabled).toBe(false)
+  })
+
+  it.each(['pendingChanges', 'failedChanges', 'conflicts'])('blocks legacy profile entry points when V2 eligibility is unavailable with %s', async (field) => {
+    enableHostedBuild()
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.dataOwnerId).toBe('owner-1'))
+    updateMemberV2LocalFlowGuard({ userId: 'owner-1', ownerId: 'owner-1', syncState: { [field]: 1 } })
+    expect(getLatest().memberV2Enabled).toBe(false)
+    await expect(getLatest().addMember({ full_name: 'Guarded' })).rejects.toThrow(/unsynced local work/i)
+    await expect(getLatest().updateMember('m1', { 'Full Name': 'Guarded' })).rejects.toThrow(/unsynced local work/i)
+    await expect(getLatest().deleteMember('m1')).rejects.toThrow(/unsynced local work/i)
+    expect(getLatest().members).toEqual([])
+  })
 
   it('hydrates to HYDRATED with auto-loaded members on a clean startup', async () => {
     testConfig.rangeResult = {

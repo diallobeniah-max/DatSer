@@ -85,7 +85,7 @@ import {
   isMemberStaleDeleted,
   readMemberDeleteTombstones
 } from '../utils/memberDeleteTombstones'
-import { isMemberV2SharedRouteEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { useMemberV2WorkspaceRoute } from '../hooks/useMemberV2WorkspaceRoute'
 import { setRealDatserMemberV2Connection } from '../experiments/rxdb-member-phase1/realDatserConnectivity'
 import { initNetworkMonitoring } from '../utils/networkService'
 import { getRealMemberV2UiAdapter, wakeRealMemberV2Sync } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
@@ -832,7 +832,8 @@ export const AppProvider = ({ children }) => {
   const [monthResolved, setMonthResolved] = useState(false)
 
   // Collaborator state - tracks if current user is viewing someone else's data
-  const [dataOwnerId, setDataOwnerId] = useState(null) // The owner whose data we're viewing
+  const [dataOwnerContext, setDataOwnerContext] = useState(null)
+  const dataOwnerId = dataOwnerContext?.ownerId || null // The owner whose data we're viewing
   const [isCollaborator, setIsCollaborator] = useState(false)
   const [isAdminCollaborator, setIsAdminCollaborator] = useState(false)
   const [ownerEmail, setOwnerEmail] = useState(null)
@@ -868,6 +869,14 @@ export const AppProvider = ({ children }) => {
     isCollaborator
   }), [dataOwnerId, isCollaborator, user?.id])
   const runtimeRequestScopeRef = useRef(null)
+  const collaboratorLookupRef = useRef(0)
+  const setDataOwnerId = useCallback((ownerId) => {
+    // A late access lookup from the previous sign-in cannot confirm an owner
+    // for the current actor, even when both actors can access that workspace.
+    if (runtimeRequestScopeRef.current?.authenticatedUser !== user?.id) return
+    setDataOwnerContext((previous) => previous?.ownerId === ownerId && previous?.userId === user?.id
+      ? previous : { ownerId, userId: user?.id })
+  }, [user?.id])
   const [attendanceData, setAttendanceData] = useState({})
   const attendanceDataRef = useRef({})
   useEffect(() => {
@@ -883,6 +892,9 @@ export const AppProvider = ({ children }) => {
       authenticatedUser: user?.id || null
     }
     const previous = runtimeRequestScopeRef.current
+    if (!previous || previous.workspace !== nextScope.workspace || previous.authenticatedUser !== nextScope.authenticatedUser) {
+      collaboratorLookupRef.current += 1
+    }
     if (previous && (
       previous.workspace !== nextScope.workspace ||
       previous.owner !== nextScope.owner ||
@@ -1161,6 +1173,14 @@ export const AppProvider = ({ children }) => {
   const normalizedAttendanceBackendAvailableRef = useRef(null)
   const syncOfflineChangesRef = useRef(null)
   const [backendHealthy, setBackendHealthy] = useState(() => isBackendHealthy())
+  const memberV2Enabled = useMemberV2WorkspaceRoute({
+    client: supabase,
+    userId: user?.id,
+    ownerId: dataOwnerId,
+    workspace: workspaceCacheScope,
+    ready: !authLoading && hasAccess && dataOwnerContext?.userId === user?.id && Boolean(dataOwnerId),
+    online: isOnline && offlineMode !== 'offline' && backendHealthy,
+  })
   const syncFlushSchedulerRef = useRef(null)
   const createActiveSyncFlushScheduler = useCallback(() => createSyncFlushScheduler({
     run: () => syncOfflineChangesRef.current?.().catch((error) => {
@@ -1218,7 +1238,7 @@ export const AppProvider = ({ children }) => {
     }
     // Do not wait for React's later effect cycle: a deliberate Offline ->
     // Online choice must immediately wake both existing Member V2 queues.
-    if (isMemberV2SharedRouteEnabled()) {
+    if (memberV2Enabled) {
       setRealDatserMemberV2Connection({
         isOnline: browserOnline,
         offlineMode: nextMode,
@@ -1269,7 +1289,7 @@ export const AppProvider = ({ children }) => {
     } else if (nextMode === 'offline') {
       setOfflineStatusMessage(isBrowserOnline() ? '' : 'Offline Mode - using saved local data.')
     }
-  }, [])
+  }, [memberV2Enabled])
 
   const setOfflineSaveNoticeThreshold = useCallback((value) => {
     const numericValue = Number(value)
@@ -1363,16 +1383,16 @@ export const AppProvider = ({ children }) => {
         ? 'online'
         : 'online-unavailable'
   useEffect(() => {
-    if (!isMemberV2SharedRouteEnabled()) return
+    if (!memberV2Enabled) return
     setRealDatserMemberV2Connection({ isOnline, offlineMode, offlineModeStatus })
-  }, [isOnline, offlineMode, offlineModeStatus])
+  }, [isOnline, memberV2Enabled, offlineMode, offlineModeStatus])
   useEffect(() => {
     // The real application needs its Member V2 snapshot while it is still
     // online.  Without this one local-development bootstrap, selecting the
     // real Offline control before opening Edit Details would leave the V2
     // service unable to locate an otherwise-visible legacy member.
     if (
-      !isMemberV2SharedRouteEnabled()
+      !memberV2Enabled
       || !supabase
       || !user?.id
       || !(dataOwnerId || user.id)
@@ -1459,9 +1479,9 @@ export const AppProvider = ({ children }) => {
       unsubscribe?.()
       unsubscribeAttendance?.()
     }
-  }, [currentTable, dataOwnerId, memberHydrationState, user?.id])
+  }, [currentTable, dataOwnerId, memberHydrationState, memberV2Enabled, user?.id])
   useEffect(() => {
-    if (!isMemberV2SharedRouteEnabled() || typeof window === 'undefined') return undefined
+    if (!memberV2Enabled || typeof window === 'undefined') return undefined
     // Local-only browser-test visibility. It exposes connection and sync
     // counters, never member data or credentials, and is not present in a
     // production build because the experiment flag is impossible there.
@@ -1534,7 +1554,7 @@ export const AppProvider = ({ children }) => {
       } : {}),
     }
     return () => { delete window.__datserMemberV2LocalDiagnostic }
-  }, [currentTable, dataOwnerId, isOnline, loading, memberHydrationState, members, offlineMode, offlineModeStatus, preferencesError, preferencesHydrated, user?.id, workspaceCacheScope])
+  }, [currentTable, dataOwnerId, isOnline, loading, memberHydrationState, memberV2Enabled, members, offlineMode, offlineModeStatus, preferencesError, preferencesHydrated, user?.id, workspaceCacheScope])
   const shouldShowOfflineSaveNotice = useCallback((count = pendingSyncCount) => {
     const isOfflineOnly = offlineMode === 'offline' || !isOnline
     return isOfflineOnly && Number(count || 0) >= offlineSaveNoticeThreshold
@@ -1631,7 +1651,7 @@ export const AppProvider = ({ children }) => {
     const handleOnline = async () => {
       const requestScope = runtimeRequestScopeRef.current
       setIsOnline(true)
-      if (isMemberV2SharedRouteEnabled()) {
+      if (memberV2Enabled) {
         setRealDatserMemberV2Connection({
           isOnline: true,
           offlineMode,
@@ -1661,7 +1681,7 @@ export const AppProvider = ({ children }) => {
     const handleOffline = async () => {
       const requestScope = runtimeRequestScopeRef.current
       setIsOnline(false)
-      if (isMemberV2SharedRouteEnabled()) {
+      if (memberV2Enabled) {
         setRealDatserMemberV2Connection({
           isOnline: false,
           offlineMode,
@@ -1689,7 +1709,7 @@ export const AppProvider = ({ children }) => {
     return () => {
       unsubscribeNetwork()
     }
-  }, [applyOfflineSnapshot, offlineMode, refreshOfflineStatus])
+  }, [applyOfflineSnapshot, memberV2Enabled, offlineMode, refreshOfflineStatus])
 
   useEffect(() => {
     if (!shouldUseOfflineData) return
@@ -2363,6 +2383,9 @@ export const AppProvider = ({ children }) => {
   // Check if current user is a collaborator and get the owner's ID
   const checkCollaboratorStatus = async () => {
     const requestScope = runtimeRequestScopeRef.current
+    const lookup = ++collaboratorLookupRef.current
+    const accessStillCurrent = () => lookup === collaboratorLookupRef.current
+      && requestScope?.authenticatedUser === runtimeRequestScopeRef.current?.authenticatedUser
     appContextLog('=== checkCollaboratorStatus STARTED ===')
     appContextLog('User email:', user?.email)
     appContextLog('User ID:', user?.id)
@@ -2402,6 +2425,7 @@ export const AppProvider = ({ children }) => {
 
     if (shouldUseOfflineData) {
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+      if (!accessStillCurrent()) return null
       const snapshot = snapshotRecord?.snapshot
       if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord, requestScope, !dataOwnerId)) {
         setIsCollaborator(Boolean(snapshot.is_collaborator))
@@ -2421,6 +2445,7 @@ export const AppProvider = ({ children }) => {
     // endpoints while the backend health coordinator is cooling down.
     if (!isBackendHealthy()) {
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+      if (!accessStillCurrent()) return null
       const snapshot = snapshotRecord?.snapshot
       const confirmedOwnerId = snapshot?.data_owner_id || dataOwnerId || null
       if (confirmedOwnerId) {
@@ -2440,6 +2465,7 @@ export const AppProvider = ({ children }) => {
       let error = null
 
       const { data: accessContext, error: accessContextError } = await supabase.rpc('get_current_user_access_context')
+      if (!accessStillCurrent()) return null
       if (!accessContextError && accessContext) {
         appContextLog('Access context RPC result:', accessContext)
         if (!accessContext.has_access) {
@@ -2481,6 +2507,7 @@ export const AppProvider = ({ children }) => {
         if (isBackendDegradedError(accessContextError)) {
           markBackendDegraded(accessContextError)
           const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+          if (!accessStillCurrent()) return null
           if (requestScope !== runtimeRequestScopeRef.current) return null
           const snapshot = snapshotRecord?.snapshot
           const confirmedOwnerId = (snapshot?.authenticated_user_id === user.id ? snapshot?.data_owner_id : null) || dataOwnerId || null
@@ -2506,6 +2533,7 @@ export const AppProvider = ({ children }) => {
           ? collaboratorQuery.maybeSingle()
           : collaboratorQuery.single()
       )
+      if (!accessStillCurrent()) return null
 
       data = userLookup.data
       error = userLookup.error
@@ -2527,6 +2555,7 @@ export const AppProvider = ({ children }) => {
               .in('status', ['accepted', 'active'])
               .single()
         )
+        if (!accessStillCurrent()) return null
         data = emailLookup.data
         error = emailLookup.error
       }
@@ -2539,6 +2568,7 @@ export const AppProvider = ({ children }) => {
           markBackendDegraded(error)
         }
         const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+        if (!accessStillCurrent()) return null
         const snapshot = snapshotRecord?.snapshot
         const resolvedOwnerId = snapshot?.data_owner_id || dataOwnerId || null
         setIsCollaborator(Boolean(snapshot?.is_collaborator ?? Boolean(resolvedOwnerId && resolvedOwnerId !== user?.id)))
@@ -2559,12 +2589,14 @@ export const AppProvider = ({ children }) => {
           .select('id')
           .eq('user_id', user.id)
           .limit(1)
+        if (!accessStillCurrent()) return null
 
         const { data: prefs, error: prefsError } = await supabase
           .from('user_preferences')
           .select('id')
           .eq('user_id', user.id)
           .limit(1)
+        if (!accessStillCurrent()) return null
 
         if (ownerError || prefsError) {
           console.warn('Owner access check failed; keeping access open until the next retry.', ownerError || prefsError)
@@ -2618,6 +2650,7 @@ export const AppProvider = ({ children }) => {
       const { data: ownerWsName, error: wsError } = await supabase.rpc('get_owner_workspace_name', {
         owner_uuid: data.owner_id
       })
+      if (!accessStillCurrent()) return null
 
       if (!wsError && ownerWsName) {
         appContextLog('Loaded owner workspace name:', ownerWsName)
@@ -2629,6 +2662,7 @@ export const AppProvider = ({ children }) => {
         .select('owner_id')
         .eq('owner_id', data.owner_id)
         .limit(1)
+      if (!accessStillCurrent()) return null
 
       // Get owner email from auth.users via a different method
       setOwnerEmail(null) // We'll show owner_id for now
@@ -2636,8 +2670,10 @@ export const AppProvider = ({ children }) => {
       appContextLog('=== checkCollaboratorStatus COMPLETE - User is COLLABORATOR ===')
       return data.owner_id
     } catch (err) {
+      if (!accessStillCurrent()) return null
       console.error('ERROR in checkCollaboratorStatus:', err)
       const snapshotRecord = await getOfflineSnapshot().catch(() => null)
+      if (!accessStillCurrent()) return null
       const snapshot = snapshotRecord?.snapshot
       if (shouldUseOfflineData && snapshot?.authenticated_user_id === user.id && applyOfflineSnapshot(snapshotRecord, requestScope, !dataOwnerId)) {
         setIsCollaborator(Boolean(snapshot.is_collaborator))
@@ -3309,7 +3345,7 @@ export const AppProvider = ({ children }) => {
           return filterDeletedMembers(snapshotRecord?.snapshot?.members || [])
         }
         if (offlineMode === 'offline') {
-          if (isMemberV2SharedRouteEnabled() && supabase && user?.id && (dataOwnerId || user.id)) {
+          if (memberV2Enabled && supabase && user?.id && (dataOwnerId || user.id)) {
             try {
               // A forced-offline reload may have no full legacy offline
               // snapshot. Member V2 already has a durable local projection;
@@ -3793,6 +3829,7 @@ export const AppProvider = ({ children }) => {
 
   // Add new member to current monthly table
   const addMember = async (memberData) => {
+    assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId: dataOwnerId || user?.id })
     let transformedDataForQueue = null
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
@@ -5267,6 +5304,7 @@ export const AppProvider = ({ children }) => {
     const identityMember = members.find(m => m.id === id) || requestedIdentity || {}
     const targetTable = requestedTargetTable || getMemberSourceTable(identityMember, currentTable)
     const targetOwnerId = requestedOwnerId || getMemberOwnerId(identityMember, dataOwnerId || user?.id)
+    assertLegacyMemberFlowIsSafe({ userId: user?.id, ownerId: targetOwnerId })
     try {
       if (isDeveloperBypass || !isSupabaseConfigured()) {
         // Demo mode - update local state
@@ -5796,6 +5834,10 @@ export const AppProvider = ({ children }) => {
 
   // Delete member
   const deleteMember = async (memberId) => {
+    assertLegacyMemberFlowIsSafe({
+      userId: user?.id,
+      ownerId: getMemberOwnerId(members.find((member) => String(member.id) === String(memberId)), dataOwnerId || user?.id),
+    })
 
     // Validate memberId
     if (!memberId) {
@@ -9128,6 +9170,7 @@ export const AppProvider = ({ children }) => {
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value = useMemo(() => ({
+    memberV2Enabled,
     checkCollaboratorStatus,
     logActivity,
     updateWorkspaceForAllTables,
@@ -9267,7 +9310,7 @@ export const AppProvider = ({ children }) => {
     retryPreferenceHydration,
     getDevCounters: () => devCountersRef.current
   }), [
-    members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, memberHydrationState, preferences, memberNameStyle, formatDisplayMemberName, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, ensureMemberCodeAssignment, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
+    memberV2Enabled, members, membersTotalCount, membersLoadedAll, memberPreviewSyncStatus, recentMemberEdits, recordRecentMemberEdit, filteredMembers, loading, memberHydrationState, preferences, memberNameStyle, formatDisplayMemberName, memberCodeFormat, memberCodeLength, workspaceMemberCodeAssignments, workspaceMemberCodeStatus, loadWorkspaceMemberCodes, ensureMemberCodeAssignment, convertWorkspaceMemberCodeFormat, searchTerm, serverSearchResults, searchResultSections,
     attendanceData, currentTable, monthlyTables, selectedAttendanceDate,
     availableSundayDates, badgeFilter, dashboardTab, uiAction,
     logActivity, checkCollaboratorStatus, updateWorkspaceForAllTables,

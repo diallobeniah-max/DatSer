@@ -52,7 +52,10 @@ describe('Member V2 local feature boundary', () => {
   it('requires both production build mode and the explicit hosted rollout flag', () => {
     const hosted = { PROD: true, VITE_DATSER_MEMBER_V2_HOSTED_ROLLOUT: 'true' }
     expect(isMemberV2HostedRolloutAllowed(hosted)).toBe(true)
-    expect(isMemberV2SharedRouteEnabled(hosted)).toBe(true)
+    expect(isMemberV2SharedRouteEnabled(hosted)).toBe(false)
+    expect(isMemberV2SharedRouteEnabled(hosted, true)).toBe(true)
+    expect(isMemberV2SharedRouteEnabled(hosted, false)).toBe(false)
+    expect(isMemberV2SharedRouteEnabled(hosted, 'true')).toBe(false)
     expect(isMemberV2HostedRolloutAllowed({ ...hosted, PROD: false })).toBe(false)
     expect(isMemberV2HostedRolloutAllowed({ ...hosted, VITE_DATSER_MEMBER_V2_HOSTED_ROLLOUT: 'false' })).toBe(false)
     expect(isMemberV2SharedRouteEnabled({ PROD: true })).toBe(false)

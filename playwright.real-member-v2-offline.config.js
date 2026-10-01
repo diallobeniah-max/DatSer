@@ -12,10 +12,10 @@ process.env.DATSER_LOCAL_SUPABASE_SERVICE_ROLE_KEY = local.serviceKey
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: 'real-member-v2-offline.spec.js',
+  testMatch: ['real-member-v2-offline.spec.js', 'member-v2-hosted-routing.spec.js'],
   timeout: 90000,
   fullyParallel: false,
-  outputDir: 'output/playwright/real-member-v2',
+  outputDir: process.env.DATSER_MEMBER_V2_BROWSER_OUTPUT_DIR || 'output/playwright/real-member-v2',
   use: { baseURL: process.env.PLAYWRIGHT_REAL_MEMBER_V2_URL || 'http://127.0.0.1:5176', trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 })

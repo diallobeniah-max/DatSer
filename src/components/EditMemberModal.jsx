@@ -19,16 +19,15 @@ import AttendanceChoice from './AttendanceChoice'
 import { getCanonicalAttendanceStatus } from '../utils/attendanceRecords'
 import { areOptionalTagsVisible } from '../utils/tagVisibility'
 import GuardianSectionHeader from './GuardianSectionHeader'
-import { assertLegacyMemberFlowIsSafe, isMemberV2SharedRouteEnabled } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
+import { assertLegacyMemberFlowIsSafe } from '../experiments/rxdb-member-phase1/memberV2FeatureFlag'
 import { getRealMemberV2UiAdapter } from '../experiments/rxdb-member-phase1/realMemberUiAdapter'
 import { normalizeEditablePhoneNumber } from '../utils/memberPhone'
 
 const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
-  const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById, applyMemberV2AttendanceState } = useApp()
+  const { updateMember, markAttendance, currentTable, attendanceData, members, isCollaborator, dataOwnerId, isSupabaseConfigured, guidedFormSettings, recordRecentMemberEdit, refreshMemberPreviewById, applyMemberV2AttendanceState, memberV2Enabled } = useApp()
   const { user, preferences, isDeveloperBypass } = useAuth()
   const { selection, success } = useHapticFeedback()
   const { isDarkMode } = useTheme()
-  const memberV2Enabled = isMemberV2SharedRouteEnabled()
 
   // Get the latest member data from the members array to ensure we have up-to-date info
   const latestMember = useMemo(() => {
