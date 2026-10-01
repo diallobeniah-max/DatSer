@@ -74,6 +74,18 @@ to own their existing RPC flows and become visible through the trigger.
 
 ## Local-only fixtures and clean replay
 
+The pending September CSV UPDATE-policy syntax repair restores an obsolete
+session-first path and creator-only predicate. Current uploads use
+`owner/session/sheet/file`; the deployed August policy permits permanent,
+authorized workspace members to replace those objects. The forward-only
+`20261001102955_preserve_csv_import_owner_scoped_update_policy.sql` restores
+that contract after the September repair without changing historical migrations,
+other policies, table grants, business data, or rollout eligibility. Include both
+pending versions in order when reviewing the hosted batch. The transactional
+`csv_import_storage_update.test.sql` verifies owner and collaborator updates,
+unauthorized/anonymous denial, path reassignment checks, and canonical renames
+using synthetic metadata only. Storage binary upload behavior is a separate gate.
+
 POC prerequisites and the previous isolated attendance harness live under
 `tests/fixtures/local-only-migrations`; they are not part of the Supabase
 production migration path. `scripts/local/test-member-v2-production-replay.ps1`

@@ -103,6 +103,7 @@ foreach ($fixture in $replayCompatibilityFixtures) {
   Copy-Item -LiteralPath (Join-Path $repoRoot "tests\fixtures\local-only-migrations\$($fixture.Source)") -Destination (Join-Path $tempMigrations $fixture.Target)
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'supabase\tests\member_v2_production_security.test.sql') -Destination (Join-Path $tempTests 'member_v2_production_security.test.sql')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'supabase\tests\csv_import_storage_update.test.sql') -Destination (Join-Path $tempTests 'csv_import_storage_update.test.sql')
 
 $dbContainer = "supabase_db_$projectId"
 $artifactRoot = Join-Path $repoRoot "output\member-v2-preparation\$projectId"
