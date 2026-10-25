@@ -318,6 +318,7 @@ const MemberCard = memo(({
         prev.selectionMode === next.selectionMode &&
         prev.attendanceStatus === next.attendanceStatus &&
         prev.attendanceLoading === next.attendanceLoading &&
+        prev.attendanceLoadingByDate === next.attendanceLoadingByDate &&
         prev.attendanceData === next.attendanceData &&
         prev.memberTags === next.memberTags &&
         prev.showTags === next.showTags &&

@@ -711,6 +711,7 @@ const EditMemberModal = ({ isOpen, onClose, member, onTagsChange }) => {
               id: latestMember.id,
               updated_at: editedAt
             },
+            ...(attendanceUpdates.length > 0 ? { confirmedAttendance: attendancePayload } : {}),
             source: 'member-bundle-update',
             action: 'update',
             summary: 'Updated member details',

@@ -808,6 +808,8 @@ export const AppProvider = ({ children }) => {
   const isDeveloperBypassActive = isDeveloperBypass || isDeveloperBypassStorageEnabled()
   const isAdminCodeLogin = authContext?.preferences?.admin_code_login === true || user?.app_metadata?.provider === 'admin-code'
   const [members, setMembers] = useState([])
+  const membersStateRef = useRef(members)
+  membersStateRef.current = members
   const [membersTotalCount, setMembersTotalCount] = useState(0)
   const [membersLoadedAll, setMembersLoadedAll] = useState(false)
   const [memberPreviewSyncStatus, setMemberPreviewSyncStatus] = useState({
@@ -3116,6 +3118,11 @@ export const AppProvider = ({ children }) => {
     }))
 
     return runScopedRequest(syncKey, 'member-reconciliation', async () => {
+      const requestScope = runtimeRequestScopeRef.current
+      if (requestScope?.workspace !== workspaceCacheScope
+        || requestScope?.owner !== (dataOwnerId || user?.id)
+        || requestScope?.authenticatedUser !== user?.id) return
+      const attendanceVersions = captureAttendanceVersions(tableName)
       await ensureMemberPreviewSyncColumns(tableName)
 
       let offset = 0
@@ -3166,10 +3173,14 @@ export const AppProvider = ({ children }) => {
       // A row is treated as deleted when the server confirms deleted_at OR when a
       // local tombstone says it was deleted more recently than the fetched row
       // (stale in-flight pre-delete data must never resurrect a deleted member).
+      if (requestScope !== runtimeRequestScopeRef.current) return
       const tombstoneList = readMemberDeleteTombstones()
       const deletedRows = remoteRows.filter((row) => row?.deleted_at || isMemberStaleDeleted(row, tombstoneList))
       const deletedIds = deletedRows.map((row) => String(row.id))
-      const activeRows = remoteRows.filter((row) => !row?.deleted_at && !isMemberStaleDeleted(row, tombstoneList))
+      const activeRows = preserveChangedAttendanceColumns(
+        remoteRows.filter((row) => !row?.deleted_at && !isMemberStaleDeleted(row, tombstoneList)),
+        tableName, attendanceVersions
+      )
 
       if (deletedRows.length > 0) {
         // Persist a tombstone for every remotely-confirmed delete so a later
@@ -3181,7 +3192,8 @@ export const AppProvider = ({ children }) => {
 
       if (activeRows.length > 0) {
         await saveMemberPreviewMembers(workspaceCacheScope, tableName, activeRows)
-        applyAttendanceColumnsFromMemberRows(activeRows, tableName)
+        if (requestScope !== runtimeRequestScopeRef.current) return
+        applyAttendanceColumnsFromMemberRows(activeRows, tableName, attendanceVersions)
       }
 
       if (deletedIds.length > 0) {
@@ -3197,6 +3209,7 @@ export const AppProvider = ({ children }) => {
       const indexedMembers = await readMemberPreviewIndex(tableName)
       const filteredMembers = filterDeletedMembers(indexedMembers)
       const pendingChanges = await getPendingOfflineChanges().catch(() => [])
+      if (requestScope !== runtimeRequestScopeRef.current) return
       const cachePayload = {
         data: filteredMembers,
         ts: Date.now(),
@@ -3211,7 +3224,7 @@ export const AppProvider = ({ children }) => {
         setMembers((prev) => {
           const remoteReconciled = mergeMemberPreviewPages(
             prev.filter((member) => !deletedIds.includes(String(member.id))),
-            activeRows
+            preserveChangedAttendanceColumns(activeRows, tableName, attendanceVersions)
           )
           const effectiveMembers = applyPendingChangesToMemberSnapshot(
             remoteReconciled,
@@ -4600,15 +4613,41 @@ export const AppProvider = ({ children }) => {
     })
   }, [currentTable])
 
-  const applyAttendanceColumnsFromMemberRows = useCallback((rows = [], tableName = currentTable) => {
+  const captureAttendanceVersions = (tableName, localChangesOnly = false) => new Map(
+    getAttendanceColumnsForMonthTable(tableName).map(({ column_name }) => {
+      const date = resolveAttendanceDateKeyFromColumn(column_name, tableName)
+      return [date, localChangesOnly
+        ? attendanceSnapshotVersionRef.current.captureLocalVersion(tableName, date)
+        : attendanceSnapshotVersionRef.current.captureVersion(tableName, date)]
+    })
+  )
+
+  // Profile previews usually omit attendance. A legacy full-row fallback must
+  // preserve any date changed while that request was in flight, including caches.
+  const preserveChangedAttendanceColumns = (rows, tableName, versions, localChangesOnly = false) => rows.map((row) => {
+    const next = { ...row }
+    Object.keys(next).forEach((column) => {
+      const date = resolveAttendanceDateKeyFromColumn(column, tableName)
+      if (!date) return
+      const canApply = localChangesOnly ? attendanceSnapshotVersionRef.current.canApplyLocalVersion : attendanceSnapshotVersionRef.current.canApplyRead
+      if (canApply(tableName, date, versions.get(date))) return
+      const current = attendanceDataRef.current[date]?.[row.id]
+      next[column] = current === true ? 'Present' : current === false ? 'Absent' : null
+    })
+    return next
+  })
+
+  const applyAttendanceColumnsFromMemberRows = useCallback((rows = [], tableName = currentTable, readVersions = null, localChangesOnly = false) => {
     if (!Array.isArray(rows) || rows.length === 0) return
-    setAttendanceData((prev) => {
+    const mergeRows = (prev) => {
       const next = { ...prev }
       rows.forEach((row) => {
         if (!row?.id) return
         Object.entries(row).forEach(([key, value]) => {
           const dateKey = resolveAttendanceDateKeyFromColumn(key, tableName)
           if (!dateKey) return
+          const canApply = localChangesOnly ? attendanceSnapshotVersionRef.current.canApplyLocalVersion : attendanceSnapshotVersionRef.current.canApplyRead
+          if (readVersions && !canApply(tableName, dateKey, readVersions.get(dateKey))) return
           if (value === 'Present' || value === true) {
             next[dateKey] = { ...(next[dateKey] || {}), [row.id]: true }
           } else if (value === 'Absent' || value === false) {
@@ -4624,9 +4663,10 @@ export const AppProvider = ({ children }) => {
         tableName,
         overlay: memberV2AttendanceOverlayRef.current,
       })
-      attendanceDataRef.current = merged
       return merged
-    })
+    }
+    attendanceDataRef.current = mergeRows(attendanceDataRef.current)
+    setAttendanceData(mergeRows)
   }, [currentTable])
 
   const removeMemberFromAttendanceData = useCallback((memberId) => {
@@ -6600,6 +6640,7 @@ export const AppProvider = ({ children }) => {
   }, [currentTable, fetchMembers, members.length])
 
   const refreshMemberPreviewById = useCallback(async (memberId, options = {}) => {
+    const requestScope = runtimeRequestScopeRef.current
     const tableName = options.tableName || currentTable
     if (!memberId || !tableName) return null
 
@@ -6644,6 +6685,15 @@ export const AppProvider = ({ children }) => {
       }
     }
 
+    // A bundle receipt belongs to the workspace/month that initiated its save.
+    // Do not project it into a different active scope after an awaited read.
+    if (options.confirmedAttendance && (
+      requestScope !== runtimeRequestScopeRef.current
+      || requestScope?.workspace !== workspaceCacheScope
+      || requestScope?.authenticatedUser !== user?.id
+      || requestScope?.table !== tableName
+    )) return null
+
     if (options.requireRemote && !remoteMember) {
       throw new Error(options.remoteFailureMessage || 'The server did not confirm the saved member.')
     }
@@ -6661,7 +6711,32 @@ export const AppProvider = ({ children }) => {
       inserted_at: mergedMember.inserted_at || mergedMember.created_at || nowIso
     })
 
+    // The profile preview SELECT omits attendance columns. The successful
+    // bundle receipt confirms these cells, even if the fallback row is stale.
+    const confirmedAttendance = Object.entries(options.confirmedAttendance || {})
+      .filter(([date, value]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && (value === null || typeof value === 'boolean'))
+    if (confirmedAttendance.length > 0) {
+      // Preserve attendance outside this receipt from the current live row,
+      // rather than the modal's older opening snapshot.
+      const liveMember = membersStateRef.current.find((member) => String(member.id) === String(memberId))
+      for (const column of Object.keys(patchedMember)) {
+        if (resolveAttendanceDateKeyFromColumn(column, tableName)) delete patchedMember[column]
+      }
+      for (const [column, value] of Object.entries(liveMember || {})) {
+        if (resolveAttendanceDateKeyFromColumn(column, tableName)) patchedMember[column] = value
+      }
+    }
+    for (const [date, value] of confirmedAttendance) {
+      const status = value === null ? null : value ? 'Present' : 'Absent'
+      for (const column of Object.keys(patchedMember)) {
+        if (resolveAttendanceDateKeyFromColumn(column, tableName) === date) patchedMember[column] = status
+      }
+      patchedMember['attendance_' + date.replace(/-/g, '_')] = status
+    }
+
     if (!patchedMember?.id) return null
+
+
 
     if (patchedMember.deleted_at || options.deleted) {
       setDeletedMemberSearchTombstones((prev) => [
@@ -6681,6 +6756,17 @@ export const AppProvider = ({ children }) => {
       setServerSearchResults((prev) => prev ? prev.filter((member) => String(member.id) !== String(memberId)) : prev)
       refreshSearch()
       return null
+    }
+
+    if (confirmedAttendance.length > 0) {
+      const confirmedRow = { id: memberId }
+      for (const [date] of confirmedAttendance) {
+        const column = 'attendance_' + date.replace(/-/g, '_')
+        confirmedRow[column] = patchedMember[column]
+        attendanceSnapshotVersionRef.current.markLocalChange(tableName, date)
+      }
+      invalidateRequestScope(requestScope.owner + ':' + tableName, 'attendance-reconciliation')
+      applyAttendanceColumnsFromMemberRows([confirmedRow], tableName)
     }
 
     setDeletedMemberSearchTombstones((prev) => prev.filter((member) => String(member.id) !== String(memberId)))
@@ -6727,7 +6813,7 @@ export const AppProvider = ({ children }) => {
         await saveOfflineSnapshot({ ...snapshot, members: snapshotMembers })
       }
     }
-    applyAttendanceColumnsFromMemberRows([patchedMember], tableName)
+    if (confirmedAttendance.length === 0) applyAttendanceColumnsFromMemberRows([patchedMember], tableName)
     markMemberPreviewSyncComplete(tableName, {
       cachedCount: Math.max(nextCount, members.length + (didInsert ? 1 : 0)),
       totalCount: Math.max(membersTotalCount || 0, nextCount),
@@ -7900,6 +7986,10 @@ export const AppProvider = ({ children }) => {
       devCountersRef.current.attendanceFetchCount = (devCountersRef.current.attendanceFetchCount || 0) + 1
 
       const attendanceColumns = getAttendanceColumnsForMonthTable(currentTable)
+      const readVersions = new Map(attendanceColumns.map(({ column_name }) => {
+        const date = resolveAttendanceDateKeyFromColumn(column_name, currentTable)
+        return [date, attendanceSnapshotVersionRef.current.startRead(currentTable, date)]
+      }))
       const attendanceColNames = (attendanceColumns || []).map(c => `"${c.column_name}"`)
       const attendanceSelect = ['id', ...attendanceColNames].join(',')
 
@@ -8005,9 +8095,10 @@ export const AppProvider = ({ children }) => {
       if (runtimeScope !== runtimeRequestScopeRef.current) return attendanceDataRef.current
 
       // Update attendance data state cleanly
-      setAttendanceData(prev => {
+      const mergeSnapshot = (prev) => {
         const next = { ...prev }
         Object.keys(reconciledAttendanceData).forEach(dk => {
+          if (!attendanceSnapshotVersionRef.current.canApplyRead(currentTable, dk, readVersions.get(dk))) return
           next[dk] = { ...(next[dk] || {}), ...reconciledAttendanceData[dk] }
         })
         const merged = mergeMemberV2AttendanceOverlay({
@@ -8015,11 +8106,15 @@ export const AppProvider = ({ children }) => {
           tableName: currentTable,
           overlay: memberV2AttendanceOverlayRef.current,
         })
-        attendanceDataRef.current = merged
         return merged
+      }
+      setAttendanceData(prev => {
+        const next = mergeSnapshot(prev)
+        attendanceDataRef.current = next
+        return next
       })
       console.log('Loaded attendance data for all dates:', Object.keys(reconciledAttendanceData), 'from', allData.length, 'rows')
-      return reconciledAttendanceData
+      return mergeSnapshot(attendanceDataRef.current)
 
     } catch (error) {
       console.error('Error loading attendance data:', error)
@@ -8119,10 +8214,28 @@ export const AppProvider = ({ children }) => {
     }
 
     setIsPreparingOffline(true)
+    const requestScope = runtimeRequestScopeRef.current
+    const assertCurrentScope = () => {
+      if (requestScope !== runtimeRequestScopeRef.current
+        || requestScope?.workspace !== workspaceCacheScope
+        || requestScope?.owner !== (dataOwnerId || user?.id)
+        || requestScope?.authenticatedUser !== user?.id
+        || requestScope?.table !== currentTable) throw new Error('Workspace changed while preparing offline data. Try again.')
+    }
+    const attendanceVersions = captureAttendanceVersions(currentTable, true)
     try {
       const pendingChangesBeforeRefresh = await getPendingOfflineChanges().catch(() => [])
+      assertCurrentScope()
       let snapshotMembers = (members || []).map(normalizeMemberRecord)
       let snapshotAttendanceData = attendanceData
+      const reconcilePreparedAttendance = () => {
+        snapshotMembers = preserveChangedAttendanceColumns(snapshotMembers, currentTable, attendanceVersions, true)
+        attendanceVersions.forEach((version, date) => {
+          if (!attendanceSnapshotVersionRef.current.canApplyLocalVersion(currentTable, date, version)) {
+            snapshotAttendanceData = { ...snapshotAttendanceData, [date]: attendanceDataRef.current[date] || {} }
+          }
+        })
+      }
       if (currentTable) {
         const [freshMembers, freshAttendance] = await Promise.all([
           fetchMembers(currentTable, {
@@ -8139,6 +8252,7 @@ export const AppProvider = ({ children }) => {
             return null
           })
         ])
+        assertCurrentScope()
         if (!Array.isArray(freshMembers)) {
           throw new Error('Could not refresh current member data from the server.')
         }
@@ -8156,6 +8270,8 @@ export const AppProvider = ({ children }) => {
             ? applyPendingAttendanceChanges(freshAttendance, pendingChangesBeforeRefresh, currentTable)
             : freshAttendance
         }
+
+        reconcilePreparedAttendance()
 
         const latestSnapshotUpdate = snapshotMembers.reduce((latest, member) => {
           const updated = getMemberFreshnessTime(member)
@@ -8175,7 +8291,8 @@ export const AppProvider = ({ children }) => {
           totalCount: snapshotMembers.length,
           source: 'offline-prepare'
         })
-        applyAttendanceColumnsFromMemberRows(snapshotMembers, currentTable)
+        assertCurrentScope()
+        applyAttendanceColumnsFromMemberRows(snapshotMembers, currentTable, attendanceVersions, true)
         markMemberPreviewSyncComplete(currentTable, {
           cachedCount: snapshotMembers.length,
           totalCount: snapshotMembers.length,
@@ -8187,6 +8304,8 @@ export const AppProvider = ({ children }) => {
         })
       }
 
+      assertCurrentScope()
+      reconcilePreparedAttendance()
       const cachedAt = await saveOfflineSnapshot({
         members: snapshotMembers,
         monthlyTables,
