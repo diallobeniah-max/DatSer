@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import MemberCard from './MemberCard'
 
@@ -217,4 +217,44 @@ describe('MemberCard', () => {
     expect(onAttendance).toHaveBeenNthCalledWith(1, 'member-1', true)
     expect(onAttendance).toHaveBeenNthCalledWith(2, 'member-1', false)
   })
+
+  it.each([
+    ['Present', true, 'present'], ['Absent', false, 'absent'], ['Clear', null, 'clear'],
+  ])('clears dated %s saving feedback without another interaction', async (_label, value, tone) => {
+    const firstDate = '2026-01-04', otherDate = '2026-01-11'
+    const member = { id: 'dated-feedback-member', full_name: 'Synthetic Feedback Member' }
+    const props = { member, isExpanded: true, monthSundays: [firstDate, otherDate],
+      currentTable: 'January_2026', getMonthDisplayName: () => 'January 2026' }
+    let finishSave
+    const save = new Promise(resolve => { finishSave = resolve })
+    function PendingCard() {
+      const [data, setData] = React.useState({
+        [firstDate]: { [member.id]: value === null ? true : null }, [otherDate]: { [member.id]: false },
+      })
+      const [pending, setPending] = React.useState({})
+      const selectDate = async (memberId, status, date) => {
+        setPending(previous => ({ ...previous, [memberId + '_' + date]: true }))
+        setData(previous => ({ ...previous, [date]: { ...previous[date], [memberId]: status } }))
+        await save
+        setPending(previous => ({ ...previous, [memberId + '_' + date]: false }))
+      }
+      return <MemberCard {...props} attendanceData={data} attendanceLoadingByDate={pending} onAttendanceForDate={selectDate} />
+    }
+    render(<PendingCard />)
+    const selected = screen.getByTestId('member-card-attendance-' + member.id + '-' + firstDate + '-' + tone)
+    fireEvent.click(selected)
+    expect(selected.getAttribute('data-selected')).toBe('true')
+    expect(selected.getAttribute('aria-busy')).toBe('true')
+    expect(selected.disabled).toBe(true)
+    await act(async () => { finishSave(); await save })
+    // Only the saving map changed; the saved value and member stayed identical.
+    expect(selected.getAttribute('data-selected')).toBe('true')
+    expect(selected.getAttribute('aria-busy')).toBeNull()
+    expect(selected.disabled).toBe(false)
+    expect(selected.closest('[role="group"]').getAttribute('data-state')).toBe('idle')
+    const untouched = screen.getByTestId('member-card-attendance-' + member.id + '-' + otherDate + '-absent')
+    expect(untouched.getAttribute('data-selected')).toBe('true')
+    expect(untouched.getAttribute('aria-busy')).toBeNull()
+  })
+
 })

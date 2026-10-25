@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react'
-import { render, fireEvent, screen, cleanup } from '@testing-library/react'
+import { render, fireEvent, screen, cleanup, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { toast } from 'react-toastify'
 
@@ -158,6 +158,40 @@ describe('EditMemberModal offline fallback routing', () => {
 
   afterEach(() => {
     cleanup()
+  })
+
+
+  it.each([true, false, null])('passes only confirmed bundle attendance %s to the dashboard projection', async (saved) => {
+    const date = '2026-01-04'
+    appMock.attendanceData = { [date]: { 'm-1': saved !== true }, '2026-01-11': { 'm-1': true } }
+    appMock.refreshMemberPreviewById = vi.fn(async () => appMock.members[0])
+    rpcSpy = vi.fn(async (name, args) => {
+      if (name !== 'update_member_bundle_resilient') return { data: [], error: null }
+      expect(args.p_attendance).toEqual({ [date]: saved })
+      return { data: { success: true }, error: null }
+    })
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+    render(<EditMemberModal isOpen onClose={onCloseMock} member={{ id: 'm-1' }} />)
+    const tone = saved === null ? 'clear' : saved ? 'present' : 'absent'
+    fireEvent.click(await screen.findByTestId('edit-form-attendance-' + date + '-' + tone))
+    fireEvent.click(screen.getByTestId('edit-form-submit'))
+    await waitFor(() => expect(onCloseMock).toHaveBeenCalled())
+    expect(appMock.refreshMemberPreviewById).toHaveBeenCalledWith('m-1', expect.objectContaining({
+      tableName: 'January_2026', confirmedAttendance: { [date]: saved },
+    }))
+    expect(appMock.markAttendance).not.toHaveBeenCalled()
+  })
+
+  it('does not project attendance when the bundle save is rejected', async () => {
+    rpcSpy = vi.fn(async () => ({ data: { success: false, error_message: 'Attendance rejected' }, error: null }))
+    const { default: EditMemberModal } = await import('./EditMemberModal')
+    render(<EditMemberModal isOpen onClose={onCloseMock} member={{ id: 'm-1' }} />)
+    fireEvent.click(await screen.findByTestId('edit-form-attendance-2026-01-04-present'))
+    fireEvent.click(screen.getByTestId('edit-form-submit'))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Attendance rejected'))
+    expect(appMock.refreshMemberPreviewById).not.toHaveBeenCalled()
+    expect(appMock.markAttendance).not.toHaveBeenCalled()
+    expect(onCloseMock).not.toHaveBeenCalled()
   })
 
   it('routes a transient backend failure through the canonical updateMember queue path', async () => {

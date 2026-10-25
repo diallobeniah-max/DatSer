@@ -18,6 +18,8 @@ export const runScopedRequest = (
   const promise = Promise.resolve()
     .then(loader)
     .then((value) => {
+      // Invalidation retires this entry even if its request finishes later.
+      if (requestRegistry.get(key) !== entry) return value
       if (cacheResult) {
         entry.value = value
         entry.hasValue = true
@@ -27,6 +29,7 @@ export const runScopedRequest = (
       return value
     })
     .catch((error) => {
+      if (requestRegistry.get(key) !== entry) throw error
       // A failed request is retryable. Preserve the last confirmed value, if any.
       entry.promise = null
       if (entry.hasValue) requestRegistry.set(key, entry)

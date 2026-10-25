@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React, { useEffect } from 'react'
+import MemberCard from '../components/MemberCard'
 import { act, render, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { invalidateRequestScope } from '../utils/runtimeRequestRegistry'
@@ -10,6 +11,8 @@ const localAdapterConfig = vi.hoisted(() => ({
   offlineSnapshot: async () => null,
   eligibility: async () => ({ data: false, error: null }),
   eligibilityRequests: [],
+  previewRows: null,
+  preparedSnapshot: null,
 }))
 
 // Configurable per-test controls for the mocked supabase client.
@@ -69,7 +72,7 @@ vi.mock('../lib/supabase', () => {
       limit: () => base,
       order: () => base,
       is: () => base,
-      range: (from, to) => Promise.resolve(testConfig.rangeResultForTable?.(table, from, to) ?? testConfig.rangeResult),
+      range: (from, to) => Promise.resolve(testConfig.rangeResultForTable?.(table, from, to, base._columns) ?? testConfig.rangeResult),
       single: () => {
         if (table === 'user_preferences') {
           return Promise.resolve({ data: preferencesRow, error: null })
@@ -158,6 +161,10 @@ vi.mock('../utils/offlineStore', async (importOriginal) => {
   return {
     ...actual,
     getOfflineSnapshot: async (...args) => localAdapterConfig.offlineSnapshot(...args),
+    saveOfflineSnapshot: async (...args) => localAdapterConfig.preparedSnapshot !== null
+      ? (localAdapterConfig.preparedSnapshot = args[0], new Date().toISOString()) : actual.saveOfflineSnapshot(...args),
+    saveMemberPreviewMembers: async (...args) => localAdapterConfig.previewRows !== null
+      ? (localAdapterConfig.previewRows = args[2], args[2].length) : actual.saveMemberPreviewMembers(...args),
   }
 })
 
@@ -181,6 +188,8 @@ describe('AppContext member hydration', () => {
     localAdapterConfig.offlineSnapshot = async () => null
     localAdapterConfig.eligibility = async () => ({ data: false, error: null })
     localAdapterConfig.eligibilityRequests = []
+    localAdapterConfig.previewRows = null
+    localAdapterConfig.preparedSnapshot = null
     vi.stubEnv('DEV', true)
     vi.stubEnv('VITE_DATSER_MEMBER_V2_SHARED_WEB_VALIDATION', 'true')
     vi.stubEnv('VITE_SUPABASE_URL', 'http://127.0.0.1:54321')
@@ -207,13 +216,16 @@ describe('AppContext member hydration', () => {
     resetHealthCoordinator()
   })
 
-  const renderProbe = async () => {
+  const renderProbe = async (showAttendanceCard = false) => {
     const StateProbe = ({ onState }) => {
       const state = useApp()
       useEffect(() => {
         onState(state)
-      }, [state.memberHydrationState, state.membersTotalCount, state.currentTable, state.loading, state.members, state.dataOwnerId, state.offlineStatusMessage, state.offlineMode, state.offlineCacheMeta, state.memberV2Enabled])
-      return null
+      }, [state.memberHydrationState, state.membersTotalCount, state.currentTable, state.loading, state.members, state.dataOwnerId, state.offlineStatusMessage, state.offlineMode, state.offlineCacheMeta, state.memberV2Enabled, state.attendanceData, state.memberPreviewSyncStatus])
+      return showAttendanceCard && state.members[0] ? <MemberCard
+        member={state.members[0]} isExpanded monthSundays={['2026-08-02', '2026-08-09']}
+        attendanceData={state.attendanceData} currentTable={state.currentTable}
+        getMonthDisplayName={(table) => table} /> : null
     }
     let latest = null
     const renderTree = () => (
@@ -225,6 +237,150 @@ describe('AppContext member hydration', () => {
     currentUnmount = unmount
     return { unmount, rerender: () => rerender(renderTree()), getLatest: () => latest }
   }
+
+
+  it.each([true, false, null])('projects confirmed bundle attendance %s into the dated card without realtime', async (saved) => {
+    const member = { id: 'attendance-member', full_name: 'Synthetic Attendance Member', attendance_2026_08_02: saved === true ? 'Absent' : 'Present', attendance_2026_08_09: 'Present' }
+    testConfig.rangeResult = { data: [member], error: null }
+    const { getLatest } = await renderProbe(true)
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
+    const initial = { '2026-08-02': { 'attendance-member': saved !== true, 'other-member': false }, '2026-08-09': { 'attendance-member': true } }
+    act(() => getLatest().setAttendanceData(initial))
+    await waitFor(() => expect(getLatest().attendanceData['2026-08-09']?.[member.id]).toBe(true))
+    // A successful receipt means subsequent backend reads return the saved value.
+    testConfig.rangeResultForTable = (_table, _from, _to, columns) => ({
+      data: [columns === '*' || columns?.includes('attendance_')
+        ? { ...member, attendance_2026_08_02: saved === null ? null : saved ? 'Present' : 'Absent' }
+        : { id: member.id, full_name: member.full_name }], error: null,
+    })
+    await getLatest().refreshMemberPreviewById(member.id, {
+      tableName: 'August_2026', skipRemote: true, skipBackgroundSync: true,
+      fallbackMember: { ...member, attendance_2026_08_09: 'Absent' }, confirmedAttendance: { '2026-08-02': saved },
+    })
+    if (saved === null) {
+      // An unmarked date has neither P nor A selected in the existing card UI.
+      for (const tone of ['present', 'absent']) await waitFor(() => expect(document.querySelector('[data-testid="member-card-attendance-attendance-member-2026-08-02-' + tone + '"]')?.getAttribute('data-selected')).toBe('false'))
+    } else {
+      const tone = saved ? 'present' : 'absent'
+      await waitFor(() => expect(document.querySelector('[data-testid="member-card-attendance-attendance-member-2026-08-02-' + tone + '"]')?.getAttribute('data-selected')).toBe('true'))
+    }
+    expect(getLatest().members[0].attendance_2026_08_09).toBe('Present')
+    expect(getLatest().attendanceData['2026-08-02']['other-member']).toBe(false)
+    expect(getLatest().attendanceData['2026-08-09']).toEqual(initial['2026-08-09'])
+    if (saved === null) expect(getLatest().attendanceData['2026-08-02']).not.toHaveProperty(member.id)
+    else expect(getLatest().attendanceData['2026-08-02'][member.id]).toBe(saved)
+  })
+
+  it('does not let an attendance read started before bundle confirmation undo the saved cell', async () => {
+    const member = { id: 'attendance-race', full_name: 'Synthetic Attendance Race', attendance_2026_08_02: 'Absent' }
+    testConfig.rangeResult = { data: [member], error: null }
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
+    let finishRead
+    testConfig.rangeResultForTable = (_table, _from, _to, columns) => columns === 'id, "attendance_2026_08_02"' ? new Promise((resolve) => { finishRead = () => resolve({ data: [member], error: null }) }) : { data: [member], error: null }
+    const staleRead = getLatest().fetchAndApplyAttendanceForDate(new Date(2026, 7, 2))
+    await waitFor(() => expect(finishRead).toBeTypeOf('function'))
+    await getLatest().refreshMemberPreviewById(member.id, {
+      skipRemote: true, skipBackgroundSync: true, fallbackMember: member,
+      confirmedAttendance: { '2026-08-02': true },
+    })
+    finishRead(); await staleRead
+    await waitFor(() => expect(getLatest().attendanceData['2026-08-02']?.[member.id]).toBe(true))
+    expect(getLatest().attendanceData['2026-08-02'][member.id]).toBe(true)
+  })
+
+
+  it('keeps confirmed attendance through late whole-month reads and a subsequent cached reload', async () => {
+    const member = { id: 'attendance-month-race', full_name: 'Synthetic Month Race', attendance_2026_08_02: 'Absent' }
+    testConfig.rangeResult = { data: [member], error: null }
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
+    let finishRead
+    testConfig.rangeResultForTable = (_table, _from, _to, columns) => columns?.includes('attendance_2026_08_09')
+      ? new Promise((resolve) => { finishRead = () => resolve({ data: [member], error: null }) }) : { data: [member], error: null }
+    const staleRead = getLatest().loadAllAttendanceData({ forceOnline: true })
+    await waitFor(() => expect(finishRead).toBeTypeOf('function'))
+    await getLatest().refreshMemberPreviewById(member.id, {
+      skipRemote: true, skipBackgroundSync: true, fallbackMember: member,
+      confirmedAttendance: { '2026-08-02': true },
+    })
+    finishRead()
+    await staleRead
+    await waitFor(() => expect(getLatest().attendanceData['2026-08-02']?.[member.id]).toBe(true))
+    const freshRows = vi.fn(() => ({ data: [{ ...member, attendance_2026_08_02: 'Present' }], error: null }))
+    testConfig.rangeResultForTable = freshRows
+    await getLatest().loadAllAttendanceData()
+    expect(freshRows).toHaveBeenCalled()
+    await waitFor(() => expect(getLatest().attendanceData['2026-08-02']?.[member.id]).toBe(true))
+  })
+
+
+  it('preserves a confirmed cell and cached row when a legacy full-row preview resolves late', async () => {
+    const member = { id: 'preview-attendance-race', full_name: 'Synthetic Preview Race', attendance_2026_08_02: 'Absent', attendance_2026_08_09: 'Present' }
+    testConfig.rangeResult = { data: [member], error: null }
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
+    let finishRead
+    localAdapterConfig.previewRows = []
+    testConfig.rangeResultForTable = (_table, _from, _to, columns) => columns === '*'
+      ? new Promise((resolve) => { finishRead = () => resolve({ data: [member], error: null }) })
+      : { data: null, error: { code: '42703', message: 'preview column does not exist' } }
+    const readStorage = localStorage.getItem.bind(localStorage)
+    const metadataRead = vi.spyOn(localStorage, 'getItem').mockImplementation((key) => key.startsWith('datser_member_preview_') ? null : readStorage(key))
+    await getLatest().refreshMemberPreviewById(member.id, { skipRemote: true, fallbackMember: member })
+    await waitFor(() => expect(finishRead).toBeTypeOf('function'))
+    metadataRead.mockRestore()
+    await getLatest().refreshMemberPreviewById(member.id, {
+      skipRemote: true, skipBackgroundSync: true, fallbackMember: member,
+      confirmedAttendance: { '2026-08-02': true },
+    })
+    finishRead()
+    await waitFor(() => expect(getLatest().memberPreviewSyncStatus.isSyncing).toBe(false))
+    expect(getLatest().attendanceData['2026-08-02'][member.id]).toBe(true)
+    expect(getLatest().members.find((row) => row.id === member.id).attendance_2026_08_02).toBe('Present')
+    expect(localAdapterConfig.previewRows[0].attendance_2026_08_02).toBe('Present')
+    expect(localAdapterConfig.previewRows[0].attendance_2026_08_09).toBe('Present')
+  })
+
+  it.each([false, true])('prepares offline attendance with concurrent confirmation=%s', async (confirmDuringRead) => {
+    const member = { id: 'offline-attendance-race', full_name: 'Synthetic Offline Race', attendance_2026_08_02: 'Absent' }
+    testConfig.rangeResult = { data: [member], error: null }
+    const { getLatest } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
+    localAdapterConfig.preparedSnapshot = {}
+    let finishRead
+    const freshMember = { ...member, attendance_2026_08_02: 'Present' }
+    testConfig.rangeResultForTable = (_table, _from, _to, columns) => confirmDuringRead && columns === '*'
+      ? new Promise((resolve) => { finishRead = () => resolve({ data: [member], error: null }) })
+      : { data: [confirmDuringRead ? member : freshMember], error: null }
+    const preparing = getLatest().prepareOfflineData()
+    if (confirmDuringRead) {
+      await waitFor(() => expect(finishRead).toBeTypeOf('function'))
+      await getLatest().refreshMemberPreviewById(member.id, {
+        skipRemote: true, skipBackgroundSync: true, fallbackMember: member,
+        confirmedAttendance: { '2026-08-02': true },
+      })
+      finishRead()
+    }
+    await expect(preparing).resolves.toMatchObject({ success: true })
+    await waitFor(() => expect(getLatest().attendanceData['2026-08-02']?.[member.id]).toBe(true))
+    expect(localAdapterConfig.preparedSnapshot.attendanceData['2026-08-02'][member.id]).toBe(true)
+    expect(localAdapterConfig.preparedSnapshot.members.find((row) => row.id === member.id).attendance_2026_08_02).toBe('Present')
+  })
+
+  it('does not apply a confirmed bundle through a preview callback from the previous workspace', async () => {
+    testConfig.rangeResult = { data: [{ id: 'scope-member', full_name: 'Synthetic Scope Member' }], error: null }
+    const { getLatest, rerender } = await renderProbe()
+    await waitFor(() => expect(getLatest()?.memberHydrationState).toBe('HYDRATED'))
+    const oldRefresh = getLatest().refreshMemberPreviewById
+    testConfig.user = { id: 'owner-2' }
+    testConfig.session = { user: { id: 'owner-2' } }
+    testConfig.accessContext = { has_access: true, is_collaborator: false, owner_id: 'owner-2' }
+    rerender()
+    await waitFor(() => expect(getLatest().dataOwnerId).toBe('owner-2'))
+    await expect(oldRefresh('scope-member', { skipRemote: true, confirmedAttendance: { '2026-08-02': true } })).resolves.toBeNull()
+    expect(getLatest().attendanceData['2026-08-02']?.['scope-member']).not.toBe(true)
+  })
 
   const enableHostedBuild = () => {
     vi.stubEnv('DEV', false)

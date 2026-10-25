@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { createAttendanceSnapshotVersionRegistry } from './attendanceSnapshot'
 
 describe('attendance snapshot version registry', () => {
+  it('captures a profile read without retiring an active attendance read', () => {
+    const registry = createAttendanceSnapshotVersionRegistry()
+    const attendanceRead = registry.startRead('July_2099', '2099-07-19')
+    expect(registry.captureVersion('July_2099', '2099-07-19')).toBe(attendanceRead)
+    expect(registry.canApplyRead('July_2099', '2099-07-19', attendanceRead)).toBe(true)
+    registry.markLocalChange('July_2099', '2099-07-19')
+    expect(registry.canApplyRead('July_2099', '2099-07-19', attendanceRead)).toBe(false)
+  })
+
   it('rejects a stale refresh after an optimistic attendance change', () => {
     const registry = createAttendanceSnapshotVersionRegistry()
     const startedAt = registry.startRead('July_2099', '2099-07-19')
